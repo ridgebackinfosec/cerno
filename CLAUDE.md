@@ -410,6 +410,30 @@ Version is defined in `pyproject.toml:project.version` (single source of truth).
 
 **When bumping version**: Update `pyproject.toml` only. Do NOT hardcode version elsewhere.
 
+#### Version Increment SOP
+
+**CRITICAL**: Whenever the user requests a version increment, you MUST automatically update BOTH files in a single operation:
+
+1. **Update `pyproject.toml`**: Change `project.version` to the new version number
+2. **Update `CHANGELOG.md`**: Add a new release entry with:
+   - Version number and current date in format: `## [X.Y.Z] - YYYY-MM-DD`
+   - Appropriate sections (Added/Changed/Fixed/Deprecated/Removed/Security)
+   - Relevant details about the changes made in this release
+
+**This is mandatory** - never increment the version without updating the changelog. The two operations must happen together to ensure the automated release workflow has complete information.
+
+**Example changelog entry**:
+```markdown
+## [1.1.1] - 2026-01-10
+
+### Fixed
+- Resolved race condition in session persistence
+- Fixed terminal width detection on Windows
+
+### Changed
+- Improved error messages for invalid plugin IDs
+```
+
 #### Automated Release Workflow
 
 **File**: `.github/workflows/release.yml`
