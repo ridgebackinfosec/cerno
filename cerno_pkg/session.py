@@ -187,7 +187,7 @@ def _db_save_session(
 
             if row:
                 # Session exists - statistics will be computed via v_session_stats view
-                # No need to update aggregate columns (removed in schema v5)
+                # Aggregate statistics are computed by SQL views, not cached in columns
                 session_id = row["session_id"]
             else:
                 # Create new session
@@ -217,7 +217,7 @@ def _db_end_session(scan_id: int) -> None:
         from .database import db_transaction
 
         with db_transaction() as conn:
-            # End active session (duration_seconds computed via v_session_stats view in schema v5)
+            # End active session (duration_seconds computed via v_session_stats view)
             now = datetime.now().isoformat()
             conn.execute(
                 """

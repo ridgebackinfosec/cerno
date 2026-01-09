@@ -11,7 +11,7 @@ Complete reference for the tool registry and unified workflow pattern.
 3. [Tool Registry System](#tool-registry-system)
 4. [Unified Workflow Pattern](#unified-workflow-pattern)
 5. [Adding a New Tool](#adding-a-new-tool)
-6. [Migration Guide](#migration-guide)
+6. [Custom Tool Development Guide](#migration-guide)
 7. [Troubleshooting](#troubleshooting)
 
 ---
@@ -364,9 +364,13 @@ def register_all_tools() -> None:
 
 ---
 
-## Migration Guide
+## Custom Tool Development Guide
 
-### Old Pattern (Before Unified Workflow)
+### Legacy Pattern (For Reference)
+
+If you're updating existing custom tools, here's the pattern comparison:
+
+#### Old Pattern
 
 ```python
 def _build_mytool_workflow(
@@ -379,7 +383,7 @@ def _build_mytool_workflow(
     return cmd, cmd, f"Output: {output}"
 ```
 
-### New Pattern (Unified Workflow)
+#### Current Pattern (Recommended)
 
 ```python
 def _build_mytool_workflow(ctx: ToolContext) -> Optional[CommandResult]:

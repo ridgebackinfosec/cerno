@@ -339,5 +339,5 @@ When updating code to follow these standards:
 
 ---
 
-**Last Updated**: 2025-01-13
-**Applies To**: cerno v2.0+
+**Last Updated**: 2026-01-09
+**Applies To**: cerno v1.0+

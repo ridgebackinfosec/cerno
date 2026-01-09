@@ -359,7 +359,7 @@ def handle_finding_view(
             # After tool completes, loop back to show menu again
             continue
 
-        # Legacy support for Enter/skip - treat as back
+        # Enter/skip keys treated as back navigation
         if action_choice in ("", "n", "none", "skip"):
             return "back"
 

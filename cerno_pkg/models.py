@@ -224,7 +224,7 @@ class Plugin:
     """Represents a Nessus plugin (finding type).
 
     NOTE: "plugin" is internal terminology. User-facing commands use "findings".
-    Updated in v2.0.8 (schema v5) - severity_label not in plugins table, fetch from v_plugins_with_severity view.
+    The severity_label is fetched from the v_plugins_with_severity view, not stored in plugins table.
     """
 
     plugin_id: int
@@ -319,8 +319,7 @@ class Plugin:
 class Finding:
     """Represents a finding (plugin instance) for a specific scan.
 
-    Streamlined in v1.9.0 - removed duplicate/unnecessary fields.
-    Updated in v2.0.8 (schema v5) - removed host_count/port_count (use v_finding_stats view).
+    Host and port counts are computed via the v_finding_stats view rather than stored as columns.
     """
 
     finding_id: Optional[int] = None
@@ -944,7 +943,7 @@ class ToolExecution:
 class Artifact:
     """Represents a generated artifact file (nmap output, logs, etc.).
 
-    Updated in v2.0.8 (schema v5) - artifact_type replaced with artifact_type_id FK.
+    The artifact_type_id is a foreign key reference to the artifact_types lookup table.
     Use v_artifacts_with_types view to get type_name.
     """
 

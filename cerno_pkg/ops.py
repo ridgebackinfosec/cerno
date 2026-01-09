@@ -326,7 +326,7 @@ def _log_tool_execution_impl(
                 session_id = row["session_id"]
 
         # Note: finding_id is optional and can remain None
-        # In v1.9.0+, file_path is no longer stored in database
+        # File paths are not stored in the database - findings are referenced by IDs
         # Tool executions are still tracked, just not linked to specific findings
 
         # Create tool execution record
@@ -408,7 +408,7 @@ def _log_artifact_impl(
         from .database import compute_file_hash, query_one
         from .models import Artifact, now_iso
 
-        # Look up artifact_type_id from artifact_types table (schema v5)
+        # Look up artifact_type_id from artifact_types lookup table
         row = query_one(
             conn,
             "SELECT artifact_type_id FROM artifact_types WHERE type_name = ?",

@@ -174,7 +174,7 @@ class TestLogToolExecution:
             assert execution_id is not None
 
     @pytest.mark.integration
-    @pytest.mark.skip(reason="v1.9.0: file_path column removed, cannot link executions by path")
+    @pytest.mark.skip(reason="file_path column not present, cannot link executions by path")
     def test_log_execution_with_file_link(self, temp_db, temp_dir):
         """Test logging execution linked to a plugin file."""
         from cerno_pkg.models import Scan, Plugin, Finding

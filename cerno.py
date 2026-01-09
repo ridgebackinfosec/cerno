@@ -367,7 +367,7 @@ def browse_file_list(
         Returns:
             Tuple of (host_count, ports_string) - computed from v_finding_stats view
         """
-        # Query v_finding_stats view for computed counts (schema v2.1.12+)
+        # Query v_finding_stats view for computed host/port counts
         from cerno_pkg.database import query_one, get_connection
         with get_connection() as conn:
             row = query_one(

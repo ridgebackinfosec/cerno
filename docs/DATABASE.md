@@ -8,7 +8,7 @@ Cerno uses an **integrated SQLite database** with a fully normalized schema for 
 
 - [Overview](#overview)
 - [Database Location](#database-location)
-- [Normalized Schema Architecture (v2.x)](#normalized-schema-architecture-v2x)
+- [Normalized Schema Architecture](#normalized-schema-architecture)
 - [Schema Overview](#schema-overview)
 - [Foundation Tables](#foundation-tables)
 - [Core Tables](#core-tables)
@@ -16,8 +16,6 @@ Cerno uses an **integrated SQLite database** with a fully normalized schema for 
 - [Query Examples](#query-examples)
 - [Cross-Scan Tracking](#cross-scan-tracking)
 - [Schema Reference](#schema-reference)
-- [Migration from v2.1.11 to v2.1.12](#migration-from-v2111-to-v2112)
-- [Migration from v1.x to v2.x](#migration-from-v1x-to-v2x)
 
 ---
 
@@ -50,11 +48,11 @@ The database is global across all scans, enabling cross-scan queries and histori
 
 ---
 
-## Normalized Schema Architecture (v2.x)
+## Normalized Schema Architecture
 
-**As of version 2.0.0**, Cerno uses a **fully normalized database schema** following relational best practices.
+Cerno uses a **fully normalized database schema** following relational best practices.
 
-### Key Improvements in v2.x
+### Key Design Principles
 
 1. **Normalized Lookup Tables**
    - `severity_levels` - Centralized severity reference data
@@ -62,13 +60,12 @@ The database is global across all scans, enabling cross-scan queries and histori
    - `hosts` - Deduplicated host data across scans
    - `ports` - Port metadata
 
-2. **Eliminated Redundant Columns**
-   - `findings`: Removed `host_count`, `port_count` (computed via views)
-   - `plugins`: Removed `severity_label` (JOIN with `severity_levels`)
-   - `sessions`: Removed cached statistics (computed via views)
-   - `finding_affected_hosts`: Removed `is_ipv4`, `is_ipv6` (now in `hosts` table)
+2. **Computed Values via Views**
+   - Host/port counts computed on-demand via SQL views
+   - Session statistics aggregated dynamically
+   - No cached or redundant data stored in columns
 
-3. **SQL Views for Computed Statistics**
+3. **SQL Views for Statistics**
    - `v_finding_stats` - Host/port counts per finding
    - `v_session_stats` - Session duration and file counts
    - `v_plugins_with_severity` - Plugins with severity labels
@@ -87,12 +84,6 @@ The database is global across all scans, enabling cross-scan queries and histori
 - **Cross-Scan Queries**: Track hosts across multiple scans
 - **Data Integrity**: Foreign keys prevent orphaned records
 - **Better Performance**: Optimized indexes on all foreign keys
-
-### Breaking Changes from v1.x
-
-⚠️ **Version 2.x requires re-importing all scans**. Existing databases cannot be automatically migrated due to extensive structural changes.
-
-See [Migration from v1.x](#migration-from-v1x) for details.
 
 ---
 
@@ -117,7 +108,7 @@ The database consists of **13 tables** and **5 views**:
 
 ### Review & Execution Tracking
 
-10. **sessions** - Review session tracking (simplified in v2.x)
+10. **sessions** - Review session tracking
 11. **tool_executions** - Commands run during reviews
 12. **artifacts** - Generated output files
 13. **workflow_executions** - Custom workflow tracking
@@ -127,7 +118,7 @@ The database consists of **13 tables** and **5 views**:
 - **v_finding_stats** - Host/port counts per finding (replaces columns)
 - **v_session_stats** - Session statistics (replaces columns)
 - **v_plugins_with_severity** - Plugins with severity labels (replaces column)
-- **v_host_findings** - Cross-scan host analysis (NEW in v2.x)
+- **v_host_findings** - Cross-scan host analysis
 - **v_artifacts_with_types** - Artifacts with type information (replaces column)
 
 ---
@@ -235,7 +226,7 @@ Plugin metadata - one row per Nessus plugin ID.
 | `plugin_url` | TEXT | Tenable plugin URL |
 | `metadata_fetched_at` | TIMESTAMP | When CVEs were fetched |
 
-**REMOVED in v2.x**: `severity_label` column - use `v_plugins_with_severity` view or JOIN with `severity_levels`
+**Note**: The `severity_label` is accessed via the `v_plugins_with_severity` view or by JOINing with `severity_levels`.
 
 **Foreign Keys**: `severity_int` → `severity_levels.severity_int`
 
@@ -261,7 +252,7 @@ Normalized host data - one row per unique host address across ALL scans.
 | `first_seen` | TIMESTAMP | First appearance across all scans |
 | `last_seen` | TIMESTAMP | Most recent appearance |
 
-**NEW in v2.x**: Enables cross-scan host tracking
+**Purpose**: Enables cross-scan host tracking.
 
 **Constraints**:
 - `UNIQUE(host_address)`
@@ -281,7 +272,7 @@ Port metadata - one row per port number.
 | `service_name` | TEXT | Common service name (future) |
 | `description` | TEXT | Service description (future) |
 
-**NEW in v2.x**: Allows port metadata to be maintained separately
+**Purpose**: Allows port metadata to be maintained separately from host:port combinations.
 
 **Constraints**:
 - `CHECK(port_number BETWEEN 1 AND 65535)`
@@ -304,12 +295,7 @@ Finding records - one row per plugin per scan.
 | `reviewed_by` | TEXT | User tracking (future feature) |
 | `review_notes` | TEXT | User notes (future feature) |
 
-**REMOVED in v2.x**:
-- `host_count` - Use `v_finding_stats` view
-- `port_count` - Use `v_finding_stats` view
-- `file_path` - No longer stored
-- `severity_dir` - Derived from JOIN with plugins
-- `file_created_at`, `file_modified_at`, `last_parsed_at` - Unnecessary timestamps
+**Note**: Host and port counts are computed via `v_finding_stats` view rather than stored as columns. File paths are not stored - findings are referenced by IDs.
 
 **Foreign Keys**:
 - `scan_id` → `scans.scan_id` (CASCADE DELETE)
@@ -325,23 +311,17 @@ Finding records - one row per plugin per scan.
 
 ### finding_affected_hosts
 
-Host:port combinations per finding - **normalized structure in v2.x**.
+Host:port combinations per finding using normalized foreign keys.
 
 | Column | Type | Description |
 |---|---|---|
-| `fah_id` | INTEGER | Primary key (renamed from `host_id` in v2.x) |
+| `fah_id` | INTEGER | Primary key |
 | `finding_id` | INTEGER | Foreign key to findings |
-| `host_id` | INTEGER | **Foreign key to hosts** (NEW in v2.x) |
-| `port_number` | INTEGER | **Foreign key to ports** (NEW in v2.x) |
+| `host_id` | INTEGER | Foreign key to normalized hosts table |
+| `port_number` | INTEGER | Foreign key to ports table |
 | `plugin_output` | TEXT | Plugin output from Nessus scanner |
 
-**CHANGED in v2.x**:
-- `host_id` renamed to `fah_id` (avoid confusion)
-- `host` TEXT column → `host_id` INTEGER foreign key
-- `port` INTEGER column → `port_number` INTEGER foreign key
-
-**REMOVED in v2.x**:
-- `is_ipv4`, `is_ipv6` - Host type now in `hosts` table
+**Note**: This table uses foreign keys to normalized `hosts` and `ports` tables rather than storing host addresses and port numbers directly. The host type (`ipv4`, `ipv6`, `hostname`) is stored in the `hosts` table.
 
 **Foreign Keys**:
 - `finding_id` → `findings.finding_id` (CASCADE DELETE)
@@ -357,7 +337,7 @@ Host:port combinations per finding - **normalized structure in v2.x**.
 
 ### sessions
 
-Review session tracking - **simplified in v2.x**.
+Review session tracking.
 
 | Column | Type | Description |
 |---|---|---|
@@ -366,13 +346,7 @@ Review session tracking - **simplified in v2.x**.
 | `session_start` | TIMESTAMP | Session start time |
 | `session_end` | TIMESTAMP | Session end time |
 
-**REMOVED in v2.x**:
-- `duration_seconds` - Use `v_session_stats` view
-- `files_reviewed` - Use `v_session_stats` view
-- `files_completed` - Use `v_session_stats` view
-- `files_skipped` - Use `v_session_stats` view
-- `tools_executed` - Use `v_session_stats` view
-- `cves_extracted` - Use `v_session_stats` view
+**Note**: Session duration and statistics are computed via the `v_session_stats` view rather than stored as columns.
 
 **Foreign Keys**:
 - `scan_id` → `scans.scan_id` (CASCADE DELETE)
@@ -419,16 +393,14 @@ Generated output files - one row per artifact file.
 | `artifact_id` | INTEGER | Primary key |
 | `execution_id` | INTEGER | Foreign key to tool_executions |
 | `artifact_path` | TEXT | Absolute path (unique) |
-| `artifact_type_id` | INTEGER | **Foreign key to artifact_types** (NEW in v2.x) |
+| `artifact_type_id` | INTEGER | Foreign key to artifact_types lookup table |
 | `file_size_bytes` | INTEGER | File size in bytes |
 | `file_hash` | TEXT | SHA256 hash |
 | `created_at` | TIMESTAMP | Creation timestamp |
 | `last_accessed_at` | TIMESTAMP | Last access time |
 | `metadata` | TEXT | JSON metadata (NSE scripts, UDP flag, etc.) |
 
-**CHANGED in v2.x**:
-- `artifact_type` TEXT column → `artifact_type_id` INTEGER foreign key
-- Use `v_artifacts_with_types` view to get type names
+**Note**: Artifact type names are accessed via the `v_artifacts_with_types` view by JOINing with `artifact_types`.
 
 **Foreign Keys**:
 - `execution_id` → `tool_executions.execution_id` (SET NULL DELETE)
@@ -520,7 +492,7 @@ ORDER BY severity_int DESC, cvss3_score DESC;
 
 ### v_host_findings
 
-**NEW in v2.x** - Cross-scan host analysis.
+Cross-scan host analysis view.
 
 **Columns**:
 - `host_id`, `host_address`, `host_type`, `first_seen`, `last_seen`
@@ -570,7 +542,7 @@ SELECT finding_id, scan_id, plugin_id, host_count, port_count
 FROM findings
 WHERE finding_id = 123;
 
--- New (v2.x): Query view for computed counts
+-- Query view for computed host/port counts
 SELECT finding_id, scan_id, plugin_id, host_count, port_count
 FROM v_finding_stats
 WHERE finding_id = 123;
@@ -586,7 +558,7 @@ SELECT plugin_id, plugin_name, severity_label, cvss3_score
 FROM plugins
 WHERE plugin_id = 57608;
 
--- New (v2.x): Query view with JOIN to severity_levels
+-- Query view with severity labels from lookup table
 SELECT plugin_id, plugin_name, severity_label, cvss3_score
 FROM v_plugins_with_severity
 WHERE plugin_id = 57608;
@@ -596,7 +568,7 @@ WHERE plugin_id = 57608;
 
 ### Find All Findings for a Specific Host Across All Scans
 
-**NEW capability in v2.x** - enabled by normalized hosts table:
+Enabled by the normalized hosts table:
 
 ```sql
 SELECT
@@ -620,7 +592,7 @@ ORDER BY s.created_at DESC, sl.severity_order DESC;
 
 ### Get Hosts that Appeared in Multiple Scans
 
-**NEW capability in v2.x**:
+Using the `v_host_findings` view:
 
 ```sql
 SELECT
@@ -718,7 +690,7 @@ ORDER BY total_mb DESC;
 
 ## Cross-Scan Tracking
 
-The normalized schema in v2.x enables powerful cross-scan queries:
+The normalized schema enables powerful cross-scan queries:
 
 ### Track Host Appearance History
 
@@ -869,140 +841,6 @@ artifact_types
 
 ---
 
-## Migration from v2.1.11 to v2.1.12
-
-⚠️ **Version 2.1.12 renamed database tables for clarity**. Users must delete existing database after upgrading.
-
-### What Changed in v2.1.12
-
-**Table Renames** (Database-First Naming):
-- `plugin_files` → `findings` - More accurate: represents vulnerability findings
-- `plugin_file_hosts` → `finding_affected_hosts` - Clearer: affected host:port combinations per finding
-- `finding_id` column (was `file_id`) - Consistent with entity semantics
-- `fah_id` column (was `pfh_id`) - Consistent with new table alias
-- `v_finding_stats` view (was `v_plugin_file_stats`) - View aligned with new table name
-
-**Rationale**: The old names (`plugin_files`, `plugin_file_hosts`) were legacy from v1.x filesystem-based architecture. Since v2.x is database-only, the new names better reflect that findings are stored in the database, not files.
-
-### Migration Steps
-
-1. **Delete existing database**:
-   ```bash
-   rm ~/.cerno/cerno.db
-   # Windows: del %USERPROFILE%\.cerno\cerno.db
-   ```
-
-2. **Upgrade Cerno to v2.1.12**:
-   ```bash
-   pipx upgrade cerno
-   ```
-
-3. **Database will be recreated automatically** with new schema on next run:
-   ```bash
-   cerno scan list  # Creates database with v2.1.12 schema
-   ```
-
-4. **Re-import scans**:
-   ```bash
-   cerno import nessus <file>.nessus
-   ```
-
-### What's Lost in v2.1.12 Upgrade
-
-❌ **Lost**:
-- Review state (reviewed/completed/skipped)
-- Session history
-- Tool execution history
-- Generated artifacts
-- Review notes and timestamps
-
-**Recommendation**: Complete all reviews before upgrading to v2.1.12.
-
----
-
-## Migration from v1.x to v2.x
-
-⚠️ **Version 2.x requires re-importing all scans**. The schema changes are too extensive for automatic migration.
-
-### What Changed
-
-**Removed Columns**:
-- `findings`: `host_count`, `port_count`, `file_path`, `severity_dir`, `file_created_at`, `file_modified_at`, `last_parsed_at`
-- `plugins`: `severity_label`
-- `sessions`: `duration_seconds`, `files_reviewed`, `files_completed`, `files_skipped`, `tools_executed`, `cves_extracted`
-- `finding_affected_hosts`: `is_ipv4`, `is_ipv6`, `host` TEXT column
-- `artifacts`: `artifact_type` TEXT column
-
-**Added Tables**:
-- `severity_levels` - Normalized severity reference data
-- `artifact_types` - Artifact type definitions
-- `hosts` - Deduplicated hosts across scans
-- `ports` - Port metadata
-- `audit_log` - Change tracking (future feature)
-
-**Added Views**:
-- `v_finding_stats` - Computed host/port counts
-- `v_session_stats` - Computed session statistics
-- `v_plugins_with_severity` - Plugins with severity labels
-- `v_host_findings` - Cross-scan host analysis
-- `v_artifacts_with_types` - Artifacts with type names
-
-### Migration Steps
-
-1. **Backup v1.x database**:
-   ```bash
-   cp ~/.cerno/cerno.db ~/.cerno/cerno.db.v1.backup
-   ```
-
-2. **Delete old database**:
-   ```bash
-   rm ~/.cerno/cerno.db
-   ```
-
-3. **Upgrade Cerno to v2.x**:
-   ```bash
-   pipx upgrade cerno
-   # or: pip install --upgrade cerno
-   ```
-
-4. **Re-import scans**:
-   ```bash
-   cerno import nessus scan1.nessus
-   cerno import nessus scan2.nessus
-   # ... repeat for all scans
-   ```
-
-5. **Verify**:
-   ```bash
-   cerno scan list
-   sqlite3 ~/.cerno/cerno.db "SELECT COUNT(*) FROM scans;"
-   ```
-
-### Why Re-Import is Required
-
-- Structural changes to core tables (`finding_affected_hosts` now uses foreign keys)
-- Denormalization → normalization (extracting hosts/ports into separate tables)
-- View-based statistics replace cached columns
-- No backward-compatible migration path without data loss risk
-
-### What's Preserved After Re-Import
-
-✅ **Preserved**:
-- Plugin metadata (IDs, names, severity, CVEs, Metasploit modules)
-- Host:port combinations (now normalized)
-- Plugin output text
-
-❌ **Lost**:
-- Review state (reviewed/completed/skipped)
-- Session history
-- Tool execution history
-- Generated artifacts
-- Review notes and timestamps
-
-**Recommendation**: Complete all reviews before upgrading to v2.x.
-
----
-
 ## Database Maintenance
 
 ### Direct Database Access
@@ -1063,6 +901,6 @@ Planned database features:
 
 ---
 
-**Last Updated**: 2025-01-09 (v2.1.12 - Database-First Naming)
+**Last Updated**: 2026-01-09 (v1.0.0 - Cerno Initial Release)
 **Maintained By**: Ridgeback InfoSec, LLC
 **Schema Version**: 1

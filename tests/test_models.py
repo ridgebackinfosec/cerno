@@ -225,7 +225,7 @@ class TestFindingModel:
         plugin = Plugin(plugin_id=12345, plugin_name="Test", severity_int=2)
         plugin.save(temp_db)
 
-        # Create plugin file (host_count removed in schema v5)
+        # Create plugin file (host_count computed by view, not stored)
         pf = Finding(
             scan_id=scan_id,
             plugin_id=12345
@@ -236,11 +236,11 @@ class TestFindingModel:
         assert finding_id is not None
         assert finding_id > 0
 
-    @pytest.mark.skip(reason="file_path column removed in v1.9.0 schema optimization")
+    @pytest.mark.skip(reason="file_path column not present in current schema")
     def test_finding_get_by_path(self):
         """Test retrieving plugin file by path."""
         # This test is skipped because Finding.get_by_path() was removed when
-        # the file_path column was eliminated from the findings table in v1.9.0.
+        # The file_path column is not present in the current schema.
         # Database now uses scan_id + plugin_id as the primary lookup method.
         pytest.skip("get_by_path method no longer exists")
 
@@ -351,7 +351,7 @@ class TestFindingModel:
         # Should be sorted from highest to lowest severity
         assert severity_dirs == ["4_Critical", "3_High", "2_Medium", "0_Info"]
 
-    @pytest.mark.skip(reason="v1.9.0: cannot create duplicate scan_id+plugin_id (UNIQUE constraint)")
+    @pytest.mark.skip(reason="Cannot create duplicate scan_id+plugin_id due to UNIQUE constraint")
     def test_get_severity_dirs_for_scan_deduplicates(self, temp_db):
         """Test get_severity_dirs_for_scan deduplicates severity directories."""
         # Setup scan
@@ -811,7 +811,7 @@ class TestArtifactModel:
         )
         artifact_id = artifact.save(temp_db)
 
-        # Verify link via join using v_artifacts_with_types view (schema v5)
+        # Verify link via join using v_artifacts_with_types view
         cursor = temp_db.execute(
             """
             SELECT te.tool_name, a.artifact_type

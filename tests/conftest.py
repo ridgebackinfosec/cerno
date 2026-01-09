@@ -147,7 +147,7 @@ def reset_environment(monkeypatch):
 
     This ensures tests don't interfere with each other through env vars or cached config.
     """
-    # Clear database-related env vars (legacy - no longer used in v2.3.0+)
+    # Clear database-related env vars (no longer used - config file only)
     monkeypatch.delenv("CERNO_RESULTS_ROOT", raising=False)
     monkeypatch.delenv("NPH_RESULTS_ROOT", raising=False)
     monkeypatch.delenv("CERNO_USE_DB", raising=False)

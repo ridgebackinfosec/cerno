@@ -58,8 +58,6 @@ pip install -e .
 cerno --install-completion  # Enable tab completion for your shell
 ```
 
-**Upgrading from v1.x:** v2.0 introduced breaking schema changes. Delete old database and re-import scans. See [docs/DATABASE.md](docs/DATABASE.md).
-
 ---
 
 ## Requirements

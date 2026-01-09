@@ -148,7 +148,7 @@ class TestSaveSession:
 
         assert session_id is not None
 
-        # Verify session in database (schema v5: use v_session_stats view)
+        # Verify session in database (use v_session_stats view for computed stats)
         cursor = temp_db.execute(
             """
             SELECT vs.files_reviewed, vs.files_completed, vs.files_skipped,
@@ -493,7 +493,7 @@ class TestDeleteSession:
         # Delete session
         delete_session(scan_id)
 
-        # Verify session is ended (use v_session_stats view for duration_seconds in schema v5)
+        # Verify session is ended (use v_session_stats view for duration_seconds)
         cursor = temp_db.execute(
             "SELECT session_end, duration_seconds FROM v_session_stats WHERE scan_id = ?",
             (scan_id,)

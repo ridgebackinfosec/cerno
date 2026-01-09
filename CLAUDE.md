@@ -60,11 +60,11 @@ This includes:
 3. **Temporal Tracking**: Add `first_seen` / `last_seen` timestamps to track entity history across scans
 4. **Global Queries**: Design schema to enable "all findings for host X across all scans" type queries
 
-### Schema Changes Strategy
-1. **Breaking Changes**: Schema changes currently require major version bump (e.g., 2.x → 3.0)
-2. **User Impact**: Users must re-import scans after schema changes
-3. **Fresh Start**: Database created directly in final normalized structure
-4. **Future Work**: Migration system will be implemented from clean slate in future release
+### Schema Management
+- Database uses normalized structure created on initialization
+- Schema version tracked in `database.py:SCHEMA_VERSION` (current: 1)
+- Future schema changes will include migration system when needed
+- Always test schema changes with fresh database before release
 
 ### Anti-Patterns to Avoid
 ❌ **Never** store counts/sums in tables when you can compute them with SQL
@@ -281,14 +281,13 @@ mypy cerno_pkg/
 
 ## Architecture
 
-### Database-Only Design (v2.0.0+)
+### Database Architecture
 
 Cerno uses a **fully normalized database architecture** with SQLite as the source of truth:
 
 - **Location**: `~/.cerno/cerno.db` (global, cross-scan)
 - **Schema version**: Tracked in `database.py:SCHEMA_VERSION` (current: 1)
-- **Schema approach**: Single-version, normalized structure created on initialization
-- **No migration system**: Breaking changes require major version bump and re-import
+- **Schema approach**: Normalized structure created on initialization
 - `.txt` files are **reference only** - all data lives in database
 
 **Key design principles**:
@@ -296,8 +295,8 @@ Cerno uses a **fully normalized database architecture** with SQLite as the sourc
 - File browsing queries database directly (no filesystem walks during review)
 - Review state tracked in `findings.review_state` column, synchronized to filename prefixes
 - CVEs cached in `plugins.cves` JSON column after fetching from Tenable
-- **NEW in v2.x**: Normalized host/port tables enable cross-scan tracking
-- **NEW in v2.x**: SQL views compute statistics on-demand (no redundant cached data)
+- Normalized host/port tables enable cross-scan tracking
+- SQL views compute statistics on-demand (no redundant cached data)
 
 ### Module Structure
 
@@ -335,12 +334,11 @@ cerno_pkg/
   └── _version.py          # Version resolution (importlib.metadata → pyproject.toml)
 ```
 
-**Refactoring summary** (v2.4.0+):
-- `cerno.py` reduced from 3,699 to 1,679 lines (54.6% reduction)
-- Extended 5 existing modules: `tool_context.py`, `tools.py`, `render.py`, `fs.py`, `session.py`
-- Created 2 new modules: `tui.py` (interactive navigation), `enums.py` (type-safe choices)
-- Introduced `ReviewContext` dataclass to eliminate massive parameter lists (8-11 params → 1 context object)
+**Module organization**:
+- Modular design with clear separation of concerns
+- Context dataclasses eliminate massive parameter lists (`ReviewContext`: 14 fields)
 - Clear separation: `tui.py` handles navigation, `fs.py` handles file operations, `render.py` handles display
+- Database objects (`Plugin`, `Finding`) flow through entire call chain
 
 ### Core Data Flow
 
@@ -349,7 +347,7 @@ cerno_pkg/
 3. **Tools**: TUI menu → Pass `Plugin`/`Finding` objects → `tools.py` → Execute command → `tool_executions` + `artifacts` tables
 4. **Session**: Auto-save to `sessions` table (start time, duration, statistics)
 
-**Key principle (v2.4.6+)**: Plugin and Finding database objects flow through entire call chain. No filename parsing for plugin_id extraction - synthetic paths used only for display/directory structure.
+**Key principle**: Plugin and Finding database objects flow through entire call chain. No filename parsing for plugin_id extraction - synthetic paths used only for display/directory structure.
 
 ### Parsing Architecture
 
@@ -368,9 +366,9 @@ cerno_pkg/
 - Decouples tool definitions from execution logic
 - Enables adding new tools without modifying core code
 
-### Database Schema (v2.x Normalized)
+### Database Schema
 
-**Foundation Tables** (NEW in v2.x):
+**Foundation Tables**:
 - `severity_levels`: Normalized severity reference data (0-4, labels, colors)
 - `artifact_types`: Artifact type definitions
 - `hosts`: Normalized host data across ALL scans (enables cross-scan tracking)
@@ -380,26 +378,26 @@ cerno_pkg/
 **Core Tables**:
 - `scans`: Top-level scan metadata (scan_name, export_root, .nessus hash)
 - `plugins`: Plugin metadata (plugin_id, severity_int, CVSS, CVEs, Metasploit modules)
-  - **REMOVED in v2.x**: `severity_label` column (now in `severity_levels` table)
+  - Note: `severity_label` accessed via `severity_levels` table JOIN
 - `findings`: Findings per scan (scan_id + plugin_id, review_state)
-  - **REMOVED in v2.x**: `host_count`, `port_count` (computed via `v_finding_stats` view)
+  - Note: `host_count`, `port_count` computed via `v_finding_stats` view
 - `finding_affected_hosts`: Host:port combinations (finding_id, host_id FK, port_number FK, plugin_output)
-  - **CHANGED in v2.x**: `host`/`port` columns → foreign keys to normalized tables
+  - Uses foreign keys to normalized `hosts` and `ports` tables
 - `sessions`: Review session tracking (start time, end time)
-  - **REMOVED in v2.x**: cached statistics (computed via `v_session_stats` view)
+  - Note: Statistics computed via `v_session_stats` view
 - `tool_executions`: Command history (tool_name, command_text, exit_code, duration, sudo usage)
 - `artifacts`: Generated files (artifact_path, artifact_type_id FK, file_hash, file_size, metadata JSON)
-  - **CHANGED in v2.x**: `artifact_type` TEXT → `artifact_type_id` INTEGER FK
+  - Uses `artifact_type_id` foreign key to `artifact_types` table
 - `workflow_executions`: Custom workflow tracking
 
 **SQL Views** (Computed Statistics):
-- `v_finding_stats`: Host/port counts per finding (replaces cached columns)
-- `v_session_stats`: Session duration and statistics (replaces cached columns)
-- `v_plugins_with_severity`: Plugins with severity labels (replaces `severity_label` column)
-- `v_host_findings`: Cross-scan host analysis (NEW capability in v2.x)
-- `v_artifacts_with_types`: Artifacts with type names (replaces `artifact_type` column)
+- `v_finding_stats`: Host/port counts per finding
+- `v_session_stats`: Session duration and statistics
+- `v_plugins_with_severity`: Plugins with severity labels
+- `v_host_findings`: Cross-scan host analysis
+- `v_artifacts_with_types`: Artifacts with type names
 
-**Schema changes**: Update `database.py:SCHEMA_SQL_TABLES` and `SCHEMA_SQL_VIEWS`. Breaking changes require major version bump and user re-import.
+**Schema changes**: Update `database.py:SCHEMA_SQL_TABLES` and `SCHEMA_SQL_VIEWS`. Test with fresh database before release.
 
 ### Version Management
 
@@ -422,7 +420,7 @@ Version is defined in `pyproject.toml:project.version` (single source of truth).
 - `cerno config get <key>` - Get current value of a setting
 - `cerno config reset` - Reset configuration to defaults (creates backup)
 
-**Note**: As of v2.3.0, environment variables are no longer checked for configuration. Use `config.yaml` for all settings including:
+**Note**: Environment variables are not used for configuration. Use `config.yaml` for all settings including:
 - `results_root` - Artifact storage path (default: `~/.cerno/artifacts`)
 - `log_path` - Log file location (default: `~/.cerno/cerno.log`)
 - `debug_logging` - Enable DEBUG level logging (default: `false`)
