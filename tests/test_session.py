@@ -93,6 +93,7 @@ class TestSaveSession:
         # Create scan in database
         scan = Scan(scan_name="test_scan", export_root="/tmp")
         scan_id = scan.save(temp_db)
+        assert scan_id is not None
 
         session_start = datetime(2024, 1, 15, 10, 30, 0)
 
@@ -173,6 +174,7 @@ class TestSaveSession:
         # Create scan
         scan = Scan(scan_name="test_scan", export_root="/tmp")
         scan_id = scan.save(temp_db)
+        assert scan_id is not None
 
         # Verify last_reviewed_at is initially None
         cursor = temp_db.execute("SELECT last_reviewed_at FROM scans WHERE scan_id = ?", (scan_id,))
@@ -194,6 +196,7 @@ class TestSaveSession:
         # Create scan
         scan = Scan(scan_name="test_scan", export_root="/tmp")
         scan_id = scan.save(temp_db)
+        assert scan_id is not None
 
         session_start = datetime(2024, 1, 15, 10, 0, 0)
         review_time = (session_start + __import__('datetime').timedelta(minutes=5)).isoformat()
@@ -271,6 +274,7 @@ class TestSaveSession:
         # Create scan
         scan = Scan(scan_name="empty_scan", export_root="/tmp")
         scan_id = scan.save(temp_db)
+        assert scan_id is not None
 
         session_start = datetime(2024, 1, 15, 10, 0, 0)
 
@@ -309,6 +313,7 @@ class TestLoadSession:
         # Create scan
         scan = Scan(scan_name="test_scan", export_root="/tmp")
         scan_id = scan.save(temp_db)
+        assert scan_id is not None
 
         # Create session first to get session_start
         session_start = datetime(2024, 1, 15, 10, 30, 0)
@@ -379,6 +384,7 @@ class TestLoadSession:
         # Create scan without session
         scan = Scan(scan_name="no_session_scan", export_root="/tmp")
         scan_id = scan.save(temp_db)
+        assert scan_id is not None
 
         state = load_session(scan_id)
 
@@ -391,6 +397,7 @@ class TestLoadSession:
         # Create scan and session
         scan = Scan(scan_name="ended_scan", export_root="/tmp")
         scan_id = scan.save(temp_db)
+        assert scan_id is not None
 
         session_start = datetime(2024, 1, 15, 10, 0, 0)
         save_session(scan_id=scan_id, session_start=session_start, reviewed_count=1)
@@ -409,6 +416,7 @@ class TestLoadSession:
         # Create scan
         scan = Scan(scan_name="test_scan", export_root="/tmp")
         scan_id = scan.save(temp_db)
+        assert scan_id is not None
 
         # Create session first to get session_start
         session_start = datetime(2024, 1, 15, 10, 0, 0)
@@ -469,6 +477,7 @@ class TestDeleteSession:
         # Create scan and session
         scan = Scan(scan_name="test_scan", export_root="/tmp")
         scan_id = scan.save(temp_db)
+        assert scan_id is not None
 
         session_start = datetime(2024, 1, 15, 10, 0, 0)
         save_session(scan_id=scan_id, session_start=session_start, reviewed_count=1)
@@ -501,6 +510,7 @@ class TestDeleteSession:
         # Create scan without session
         scan = Scan(scan_name="no_session_scan", export_root="/tmp")
         scan_id = scan.save(temp_db)
+        assert scan_id is not None
 
         # Should not raise exception
         delete_session(scan_id)
@@ -512,6 +522,7 @@ class TestDeleteSession:
         # Create scan and session
         scan = Scan(scan_name="test_scan", export_root="/tmp")
         scan_id = scan.save(temp_db)
+        assert scan_id is not None
 
         session_start = datetime(2024, 1, 15, 10, 0, 0)
         save_session(scan_id=scan_id, session_start=session_start, reviewed_count=1)
@@ -540,6 +551,7 @@ class TestSessionLifecycle:
         # Create scan
         scan = Scan(scan_name="lifecycle_scan", export_root="/tmp")
         scan_id = scan.save(temp_db)
+        assert scan_id is not None
 
         # Create plugins - need unique plugin_id for each Finding due to UNIQUE(scan_id, plugin_id)
         for i in range(1, 7):
@@ -669,6 +681,7 @@ class TestSessionLifecycle:
         # Create scan
         scan = Scan(scan_name="multi_session_scan", export_root="/tmp")
         scan_id = scan.save(temp_db)
+        assert scan_id is not None
 
         # Session 1
         session1_start = datetime(2024, 1, 15, 10, 0, 0)

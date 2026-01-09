@@ -141,13 +141,14 @@ class TestLogToolExecution:
         # Create scan and session
         scan = Scan(scan_name="test_scan", export_root="/tmp/test")
         scan_id = scan.save(temp_db)
+        assert scan_id is not None
 
-        cursor = temp_db.execute(
+        # Create session for linking test
+        temp_db.execute(
             "INSERT INTO sessions (scan_id, session_start) VALUES (?, datetime('now'))",
             (scan_id,)
         )
         temp_db.commit()
-        session_id = cursor.lastrowid
 
         # Create scan directory for linking
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -181,6 +182,7 @@ class TestLogToolExecution:
         # Create dependencies
         scan = Scan(scan_name="test_scan", export_root="/tmp/test")
         scan_id = scan.save(temp_db)
+        assert scan_id is not None
 
         plugin = Plugin(plugin_id=12345, plugin_name="Test", severity_int=2)
         plugin.save(temp_db)
@@ -236,6 +238,7 @@ class TestLogArtifact:
             duration_seconds=10.0
         )
         exec_id = execution.save(temp_db)
+        assert exec_id is not None
 
         # Create artifact file
         artifact_file = temp_dir / "scan.xml"
@@ -278,6 +281,7 @@ class TestLogArtifact:
             duration_seconds=10.0
         )
         exec_id = execution.save(temp_db)
+        assert exec_id is not None
 
         artifact_file = temp_dir / "scan.xml"
         artifact_file.write_text("test")
@@ -315,6 +319,7 @@ class TestLogArtifact:
             duration_seconds=10.0
         )
         exec_id = execution.save(temp_db)
+        assert exec_id is not None
 
         nonexistent = temp_dir / "nonexistent.xml"
 
@@ -352,6 +357,7 @@ class TestLogArtifactsForNmap:
             duration_seconds=10.0
         )
         exec_id = execution.save(temp_db)
+        assert exec_id is not None
 
         # Create all three nmap output files
         oabase = temp_dir / "scan"
@@ -383,6 +389,7 @@ class TestLogArtifactsForNmap:
             duration_seconds=10.0
         )
         exec_id = execution.save(temp_db)
+        assert exec_id is not None
 
         # Create only XML file
         oabase = temp_dir / "scan"
@@ -411,6 +418,7 @@ class TestLogArtifactsForNmap:
             duration_seconds=10.0
         )
         exec_id = execution.save(temp_db)
+        assert exec_id is not None
 
         oabase = temp_dir / "scan"
 
@@ -430,6 +438,7 @@ class TestLogArtifactsForNmap:
             duration_seconds=10.0
         )
         exec_id = execution.save(temp_db)
+        assert exec_id is not None
 
         oabase = temp_dir / "scan"
         (temp_dir / "scan.xml").write_text("<nmaprun/>")

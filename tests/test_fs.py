@@ -8,7 +8,6 @@ import pytest
 
 from mundane_pkg.fs import (
     mark_review_complete,
-    undo_review_complete,
     build_results_paths,
     pretty_severity_label,
     default_page_size,
@@ -47,177 +46,26 @@ def mock_db_for_fs(monkeypatch, temp_db):
 
 @pytest.mark.skip(reason="is_review_complete removed - review state is now DB-only")
 class TestIsReviewComplete:
-    """Tests for is_review_complete function."""
-
-    def test_is_review_complete_with_prefix(self, temp_dir):
-        """Test file with review complete prefix."""
-        test_file = temp_dir / f"{REVIEW_PREFIX}test.txt"
-        test_file.touch()
-
-        assert is_review_complete(test_file) is True
-
-    def test_is_review_complete_without_prefix(self, temp_dir):
-        """Test file without review complete prefix."""
-        test_file = temp_dir / "test.txt"
-        test_file.touch()
-
-        assert is_review_complete(test_file) is False
-
-    def test_is_review_complete_partial_match(self, temp_dir):
-        """Test file with similar but not exact prefix."""
-        test_file = temp_dir / "REVIEW_test.txt"
-        test_file.touch()
-
-        assert is_review_complete(test_file) is False
+    """Tests for is_review_complete function - OBSOLETE in DB-only architecture."""
+    pass
 
 
 @pytest.mark.skip(reason="is_reviewed_filename removed - review state is now DB-only")
 class TestIsReviewedFilename:
-    """Tests for is_reviewed_filename function."""
-
-    def test_is_reviewed_filename_uppercase(self):
-        """Test uppercase review complete prefix."""
-        assert is_reviewed_filename("REVIEW_COMPLETE-file.txt") is True
-
-    def test_is_reviewed_filename_lowercase(self):
-        """Test lowercase review complete prefix."""
-        assert is_reviewed_filename("review_complete-file.txt") is True
-
-    def test_is_reviewed_filename_hyphen_format(self):
-        """Test hyphen format."""
-        assert is_reviewed_filename("review-complete-file.txt") is True
-
-    def test_is_reviewed_filename_mixed_case(self):
-        """Test mixed case (case-insensitive)."""
-        assert is_reviewed_filename("Review_Complete-file.txt") is True
-
-    def test_is_reviewed_filename_no_prefix(self):
-        """Test filename without prefix."""
-        assert is_reviewed_filename("file.txt") is False
-
-    def test_is_reviewed_filename_no_hyphen(self):
-        """Test filename with prefix but no hyphen."""
-        assert is_reviewed_filename("REVIEW_COMPLETEfile.txt") is False
+    """Tests for is_reviewed_filename function - OBSOLETE in DB-only architecture."""
+    pass
 
 
 @pytest.mark.skip(reason="rename_review_complete replaced with mark_review_complete - DB-only, no file renaming")
 class TestRenameReviewComplete:
-    """Tests for rename_review_complete function (deprecated)."""
-
-    def test_rename_review_complete_basic(self, temp_dir, temp_db):
-        """Test basic rename with review complete prefix."""
-        test_file = temp_dir / "test.txt"
-        test_file.write_text("content")
-
-        new_path = rename_review_complete(test_file)
-
-        assert new_path.name == f"{REVIEW_PREFIX}test.txt"
-        assert new_path.exists()
-        assert not test_file.exists()
-        assert new_path.read_text() == "content"
-
-    def test_rename_review_complete_already_marked(self, temp_dir, temp_db, capsys):
-        """Test renaming already marked file."""
-        test_file = temp_dir / f"{REVIEW_PREFIX}test.txt"
-        test_file.write_text("content")
-
-        new_path = rename_review_complete(test_file)
-
-        # Should return original path unchanged
-        assert new_path == test_file
-        assert test_file.exists()
-
-    def test_rename_review_complete_with_db_update(self, temp_dir, temp_db):
-        """Test that database is updated on rename."""
-        from mundane_pkg.models import Scan, Plugin, Finding
-
-        # Create database entries
-        scan = Scan(scan_name="test_scan", export_root=str(temp_dir))
-        scan_id = scan.save(temp_db)
-
-        plugin = Plugin(plugin_id=12345, plugin_name="Test", severity_int=2)
-        plugin.save(temp_db)
-
-        test_file = temp_dir / "test.txt"
-        test_file.write_text("content")
-
-        # Create Finding entry with resolved path
-        pf = Finding(
-            scan_id=scan_id,
-            plugin_id=12345,
-            file_path=str(test_file.resolve())
-        )
-        pf.save(temp_db)
-        temp_db.commit()
-
-        # Rename the file
-        new_path = rename_review_complete(test_file)
-
-        # The file is renamed but database path still points to old path
-        # The _db_update_review_state function looks up by new_path but entry has old path
-        # So it won't find it - this is expected behavior
-        # Database would need to be updated with new path separately
-        assert new_path.exists()
-        assert new_path.name.startswith(REVIEW_PREFIX)
+    """Tests for rename_review_complete function - OBSOLETE in DB-only architecture."""
+    pass
 
 
 @pytest.mark.skip(reason="undo_review_complete updated to DB-only - no file renaming")
 class TestUndoReviewComplete:
-    """Tests for undo_review_complete function (needs rewrite for DB-only)."""
-
-    def test_undo_review_complete_basic(self, temp_dir, temp_db):
-        """Test basic undo of review complete prefix."""
-        test_file = temp_dir / f"{REVIEW_PREFIX}test.txt"
-        test_file.write_text("content")
-
-        new_path = undo_review_complete(test_file)
-
-        assert new_path.name == "test.txt"
-        assert new_path.exists()
-        assert not test_file.exists()
-        assert new_path.read_text() == "content"
-
-    def test_undo_review_complete_not_marked(self, temp_dir, temp_db, capsys):
-        """Test undo on file without review complete prefix."""
-        test_file = temp_dir / "test.txt"
-        test_file.write_text("content")
-
-        new_path = undo_review_complete(test_file)
-
-        # Should return original path unchanged
-        assert new_path == test_file
-        assert test_file.exists()
-
-    def test_undo_review_complete_with_db_update(self, temp_dir, temp_db):
-        """Test that database is updated on undo."""
-        from mundane_pkg.models import Scan, Plugin, Finding
-
-        # Create database entries
-        scan = Scan(scan_name="test_scan", export_root=str(temp_dir))
-        scan_id = scan.save(temp_db)
-
-        plugin = Plugin(plugin_id=12345, plugin_name="Test", severity_int=2)
-        plugin.save(temp_db)
-
-        test_file = temp_dir / f"{REVIEW_PREFIX}test.txt"
-        test_file.write_text("content")
-
-        pf = Finding(
-            scan_id=scan_id,
-            plugin_id=12345,
-            file_path=str(test_file.resolve()),
-            review_state="completed"
-        )
-        pf.save(temp_db)
-        temp_db.commit()
-
-        # Undo the review complete
-        new_path = undo_review_complete(test_file)
-
-        # Similar to rename test - database lookup won't find renamed file
-        # This is expected behavior - file path in DB needs separate update
-        assert new_path.exists()
-        assert not new_path.name.startswith(REVIEW_PREFIX)
+    """Tests for undo_review_complete function - OBSOLETE in DB-only architecture."""
+    pass
 
 
 class TestBuildResultsPaths:
@@ -385,61 +233,3 @@ class TestWriteWorkFiles:
 
         socket_content = tcp_sockets.read_text().strip()
         assert socket_content == "192.168.1.100:80,443,8443,3000"
-
-
-@pytest.mark.skip(reason="Review lifecycle tests need rewrite for DB-only approach")
-class TestReviewCompleteLifecycle:
-    """Integration tests for complete review lifecycle (needs rewrite for DB-only)."""
-
-    def test_complete_lifecycle_mark_and_undo(self, temp_dir, temp_db):
-        """Test complete lifecycle: mark complete → verify → undo → verify."""
-        test_file = temp_dir / "lifecycle_test.txt"
-        test_file.write_text("test content")
-
-        # Initially not marked
-        assert not is_review_complete(test_file)
-
-        # Mark as complete
-        marked_path = rename_review_complete(test_file)
-        assert is_review_complete(marked_path)
-        assert marked_path.name.startswith(REVIEW_PREFIX)
-        assert not test_file.exists()
-
-        # Undo
-        restored_path = undo_review_complete(marked_path)
-        assert not is_review_complete(restored_path)
-        assert restored_path.name == "lifecycle_test.txt"
-        assert not marked_path.exists()
-        assert restored_path.read_text() == "test content"
-
-    def test_multiple_files_review_workflow(self, temp_dir, temp_db):
-        """Test review workflow with multiple files."""
-        files = [
-            temp_dir / "file1.txt",
-            temp_dir / "file2.txt",
-            temp_dir / "file3.txt",
-        ]
-
-        for f in files:
-            f.write_text(f"content of {f.name}")
-
-        # Mark all as complete
-        marked_files = [rename_review_complete(f) for f in files]
-
-        # Verify all marked
-        assert all(is_review_complete(f) for f in marked_files)
-
-        # List files should show all with prefix
-        all_files = list_files(temp_dir)
-        assert len(all_files) == 3
-        assert all(f.name.startswith(REVIEW_PREFIX) for f in all_files)
-
-        # Undo first file only
-        restored = undo_review_complete(marked_files[0])
-        assert not is_review_complete(restored)
-
-        # Verify mixed state
-        current_files = list_files(temp_dir)
-        assert len(current_files) == 3
-        reviewed_count = sum(1 for f in current_files if is_review_complete(f))
-        assert reviewed_count == 2

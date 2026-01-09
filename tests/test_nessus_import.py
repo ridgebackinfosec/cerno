@@ -295,11 +295,12 @@ class TestNessusImport:
         # Use get_by_scan_with_plugin to filter by severity_int via JOIN
         for sev_int in result.severities.keys():
             # Construct severity_dir format for filtering (e.g., "4_Critical")
-            from mundane_pkg.nessus_import import _severity_label_from_int
-            sev_label = _severity_label_from_int(sev_int)
+            from mundane_pkg.nessus_import import severity_label_from_int
+            sev_label = severity_label_from_int(sev_int)
             sev_dir = f"{sev_int}_{sev_label}"
 
             # Query plugin files for this severity
+            assert scan.scan_id is not None
             sev_files = Finding.get_by_scan_with_plugin(
                 scan.scan_id, temp_db, severity_dirs=[sev_dir]
             )
@@ -762,21 +763,25 @@ class TestCVEAndMetasploitExtraction:
 
         # Manually modify CVEs and Metasploit names to simulate stale data
         plugin = Plugin.get_by_id(65821, conn=temp_db)
+        assert plugin is not None
         plugin.cves = ["CVE-STALE-DATA"]
         plugin.save(conn=temp_db)
         temp_db.commit()
 
         # Verify stale data was saved
         plugin_check = Plugin.get_by_id(65821, conn=temp_db)
+        assert plugin_check is not None
         assert plugin_check.cves == ["CVE-STALE-DATA"], "Stale data should be saved"
 
         plugin_10043 = Plugin.get_by_id(10043, conn=temp_db)
+        assert plugin_10043 is not None
         plugin_10043.metasploit_names = ["STALE_MODULE"]
         plugin_10043.save(conn=temp_db)
         temp_db.commit()
 
         # Verify stale data was saved
         plugin_check_10043 = Plugin.get_by_id(10043, conn=temp_db)
+        assert plugin_check_10043 is not None
         assert plugin_check_10043.metasploit_names == ["STALE_MODULE"], "Stale data should be saved"
 
         # Re-import same file
@@ -788,11 +793,15 @@ class TestCVEAndMetasploitExtraction:
 
         # CVEs should be refreshed from XML (overwriting stale data)
         plugin = Plugin.get_by_id(65821, conn=temp_db)
+        assert plugin is not None
+        assert plugin.cves is not None
         assert plugin.cves == ["CVE-2013-2566", "CVE-2015-2808"]
         assert "CVE-STALE-DATA" not in plugin.cves
         assert plugin.metadata_fetched_at is None  # No web scraping
 
         # Metasploit names should be refreshed from XML
         plugin_10043 = Plugin.get_by_id(10043, conn=temp_db)
+        assert plugin_10043 is not None
+        assert plugin_10043.metasploit_names is not None
         assert plugin_10043.metasploit_names == ["Chargen Probe Utility"]
         assert "STALE_MODULE" not in plugin_10043.metasploit_names

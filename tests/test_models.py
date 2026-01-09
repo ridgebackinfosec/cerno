@@ -57,6 +57,8 @@ class TestScanModel:
         """Test retrieving scan by ID."""
         scan = Scan(scan_name="test_scan", export_root="/tmp")
         scan_id = scan.save(temp_db)
+        assert scan_id is not None
+        assert isinstance(scan_id, int)
 
         retrieved = Scan.get_by_id(scan_id, temp_db)
 
@@ -71,18 +73,20 @@ class TestScanModel:
 
     def test_scan_get_all_orders_by_last_reviewed(self, temp_db):
         """Test get_all returns scans ordered by last_reviewed_at DESC."""
-        from mundane_pkg.models import now_iso
         from datetime import datetime, timedelta
 
         # Create 3 scans with different last_reviewed_at
         scan1 = Scan(scan_name="old_scan", export_root="/tmp/old")
         scan1_id = scan1.save(temp_db)
+        assert scan1_id is not None
 
         scan2 = Scan(scan_name="recent_scan", export_root="/tmp/recent")
         scan2_id = scan2.save(temp_db)
+        assert scan2_id is not None
 
         scan3 = Scan(scan_name="never_reviewed", export_root="/tmp/never")
         scan3_id = scan3.save(temp_db)
+        assert scan3_id is not None
 
         # Update last_reviewed_at for scan1 and scan2
         old_time = (datetime.now() - timedelta(days=7)).isoformat()
@@ -111,6 +115,7 @@ class TestScanModel:
         """Test updating existing scan."""
         scan = Scan(scan_name="test_scan", export_root="/tmp")
         scan_id = scan.save(temp_db)
+        assert scan_id is not None
 
         # Update
         scan.scan_id = scan_id
@@ -119,6 +124,7 @@ class TestScanModel:
 
         # Retrieve and verify
         retrieved = Scan.get_by_id(scan_id, temp_db)
+        assert retrieved is not None
         assert retrieved.nessus_file_hash == "abc123"
 
     def test_scan_unique_constraint(self, temp_db):
@@ -202,6 +208,7 @@ class TestPluginModel:
         plugin.save(temp_db)
 
         retrieved = Plugin.get_by_id(12345, temp_db)
+        assert retrieved is not None
         assert retrieved.cves == ["CVE-2024-0001"]
 
 
@@ -213,6 +220,7 @@ class TestFindingModel:
         # Create dependencies
         scan = Scan(scan_name="test_scan", export_root="/tmp")
         scan_id = scan.save(temp_db)
+        assert scan_id is not None
 
         plugin = Plugin(plugin_id=12345, plugin_name="Test", severity_int=2)
         plugin.save(temp_db)
@@ -229,31 +237,19 @@ class TestFindingModel:
         assert finding_id > 0
 
     @pytest.mark.skip(reason="file_path column removed in v1.9.0 schema optimization")
-    def test_finding_get_by_path(self, temp_db):
+    def test_finding_get_by_path(self):
         """Test retrieving plugin file by path."""
-        # Setup
-        scan = Scan(scan_name="test_scan", export_root="/tmp")
-        scan_id = scan.save(temp_db)
-        plugin = Plugin(plugin_id=12345, plugin_name="Test", severity_int=2)
-        plugin.save(temp_db)
-
-        pf = Finding(
-            scan_id=scan_id,
-            plugin_id=12345,
-        )
-        pf.save(temp_db)
-
-        # Retrieve
-        retrieved = Finding.get_by_path("/tmp/test/plugin.txt", temp_db)
-
-        assert retrieved is not None
-        assert retrieved.file_path == "/tmp/test/plugin.txt"
+        # This test is skipped because Finding.get_by_path() was removed when
+        # the file_path column was eliminated from the findings table in v1.9.0.
+        # Database now uses scan_id + plugin_id as the primary lookup method.
+        pytest.skip("get_by_path method no longer exists")
 
     def test_finding_update_review_state(self, temp_db):
         """Test updating plugin file review state."""
         # Setup
         scan = Scan(scan_name="test_scan", export_root="/tmp")
         scan_id = scan.save(temp_db)
+        assert scan_id is not None
         plugin = Plugin(plugin_id=12345, plugin_name="Test", severity_int=2)
         plugin.save(temp_db)
 
@@ -263,6 +259,7 @@ class TestFindingModel:
             review_state="pending"
         )
         finding_id = pf.save(temp_db)
+        assert finding_id is not None
 
         # Update review state
         pf.finding_id = finding_id
@@ -270,6 +267,7 @@ class TestFindingModel:
 
         # Verify
         retrieved = Finding.get_by_id(finding_id, temp_db)
+        assert retrieved is not None
         assert retrieved.review_state == "completed"
         assert retrieved.reviewed_at is not None
 
@@ -277,6 +275,7 @@ class TestFindingModel:
         """Test default review state is 'pending'."""
         scan = Scan(scan_name="test_scan", export_root="/tmp")
         scan_id = scan.save(temp_db)
+        assert scan_id is not None
         plugin = Plugin(plugin_id=12345, plugin_name="Test", severity_int=2)
         plugin.save(temp_db)
 
@@ -285,8 +284,10 @@ class TestFindingModel:
             plugin_id=12345,
         )
         finding_id = pf.save(temp_db)
+        assert finding_id is not None
 
         retrieved = Finding.get_by_id(finding_id, temp_db)
+        assert retrieved is not None
         assert retrieved.review_state == "pending"
 
     def test_get_severity_dirs_for_scan_empty(self, temp_db):
@@ -294,6 +295,7 @@ class TestFindingModel:
         # Create scan without any plugin files
         scan = Scan(scan_name="empty_scan", export_root="/tmp")
         scan_id = scan.save(temp_db)
+        assert scan_id is not None
 
         # Query severity directories
         severity_dirs = Finding.get_severity_dirs_for_scan(scan_id, temp_db)
@@ -305,6 +307,7 @@ class TestFindingModel:
         # Setup scan
         scan = Scan(scan_name="test_scan", export_root="/tmp")
         scan_id = scan.save(temp_db)
+        assert scan_id is not None
 
         # Create plugins with different severities
         plugin1 = Plugin(plugin_id=1001, plugin_name="Critical Plugin", severity_int=4)
@@ -317,6 +320,7 @@ class TestFindingModel:
         plugin4.save(temp_db)
 
         # Create plugin files with severity directories
+        assert isinstance(scan_id, int)
         pf1 = Finding(
             scan_id=scan_id,
             plugin_id=1001,
@@ -353,6 +357,8 @@ class TestFindingModel:
         # Setup scan
         scan = Scan(scan_name="test_scan", export_root="/tmp")
         scan_id = scan.save(temp_db)
+        assert scan_id is not None
+        assert isinstance(scan_id, int)
 
         # Create plugin
         plugin = Plugin(plugin_id=1001, plugin_name="High Plugin", severity_int=3)
@@ -382,6 +388,8 @@ class TestFindingModel:
         # Setup
         scan = Scan(scan_name="test_scan", export_root="/tmp")
         scan_id = scan.save(temp_db)
+        assert scan_id is not None
+        assert isinstance(scan_id, int)
         plugin = Plugin(plugin_id=12345, plugin_name="Test", severity_int=2)
         plugin.save(temp_db)
 
@@ -403,6 +411,8 @@ class TestFindingModel:
         # Setup
         scan = Scan(scan_name="test_scan", export_root="/tmp")
         scan_id = scan.save(temp_db)
+        assert scan_id is not None
+        assert isinstance(scan_id, int)
         plugin = Plugin(plugin_id=12345, plugin_name="Test", severity_int=2)
         plugin.save(temp_db)
 
@@ -468,6 +478,8 @@ class TestFindingModel:
         # Setup
         scan = Scan(scan_name="test_scan", export_root="/tmp")
         scan_id = scan.save(temp_db)
+        assert scan_id is not None
+        assert isinstance(scan_id, int)
         plugin = Plugin(plugin_id=12345, plugin_name="Test", severity_int=2)
         plugin.save(temp_db)
 
@@ -511,6 +523,8 @@ class TestFindingModel:
         # Setup
         scan = Scan(scan_name="test_scan", export_root="/tmp")
         scan_id = scan.save(temp_db)
+        assert scan_id is not None
+        assert isinstance(scan_id, int)
         plugin = Plugin(plugin_id=12345, plugin_name="Test", severity_int=2)
         plugin.save(temp_db)
 
@@ -531,6 +545,8 @@ class TestFindingModel:
         # Setup
         scan = Scan(scan_name="test_scan", export_root="/tmp")
         scan_id = scan.save(temp_db)
+        assert scan_id is not None
+        assert isinstance(scan_id, int)
         plugin = Plugin(plugin_id=12345, plugin_name="Test", severity_int=2)
         plugin.save(temp_db)
 
@@ -586,6 +602,8 @@ class TestFindingModel:
         # Setup
         scan = Scan(scan_name="test_scan", export_root="/tmp")
         scan_id = scan.save(temp_db)
+        assert scan_id is not None
+        assert isinstance(scan_id, int)
         plugin = Plugin(plugin_id=12345, plugin_name="Test", severity_int=2)
         plugin.save(temp_db)
 
@@ -620,6 +638,8 @@ class TestFindingModel:
         # Setup
         scan = Scan(scan_name="test_scan", export_root="/tmp")
         scan_id = scan.save(temp_db)
+        assert scan_id is not None
+        assert isinstance(scan_id, int)
         plugin = Plugin(plugin_id=12345, plugin_name="Test", severity_int=2)
         plugin.save(temp_db)
 
@@ -864,6 +884,8 @@ class TestModelRelationships:
         # Create chain: scan -> plugin -> finding
         scan = Scan(scan_name="test_scan", export_root="/tmp")
         scan_id = scan.save(temp_db)
+        assert scan_id is not None
+        assert isinstance(scan_id, int)
 
         plugin = Plugin(plugin_id=12345, plugin_name="Test", severity_int=2)
         plugin.save(temp_db)
