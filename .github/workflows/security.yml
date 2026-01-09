@@ -29,13 +29,13 @@ jobs:
 
     - name: Run Bandit security scan
       run: |
-        bandit -r cerno.py cerno_pkg/ -f json -o bandit-report.json
+        bandit -r mundane.py mundane_pkg/ -f json -o bandit-report.json
       continue-on-error: true
 
     - name: Display Bandit results
       if: always()
       run: |
-        bandit -r cerno.py cerno_pkg/ -f screen
+        bandit -r mundane.py mundane_pkg/ -f screen
       continue-on-error: true
 
     - name: Upload Bandit report

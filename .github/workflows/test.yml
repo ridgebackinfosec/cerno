@@ -31,7 +31,7 @@ jobs:
 
     - name: Run tests with pytest
       run: |
-        pytest --cov=cerno_pkg --cov-report=xml --cov-report=term-missing --cov-report=html -v
+        pytest --cov=mundane_pkg --cov-report=xml --cov-report=term-missing --cov-report=html -v
       continue-on-error: ${{ matrix.python-version == '3.13' }}
 
     - name: Archive coverage HTML report
@@ -69,12 +69,12 @@ jobs:
 
     - name: Check code formatting with black
       run: |
-        black --check cerno.py cerno_pkg/ tests/
+        black --check mundane.py mundane_pkg/ tests/
       continue-on-error: true
 
     - name: Type check with mypy
       run: |
-        mypy cerno.py cerno_pkg/ --ignore-missing-imports
+        mypy mundane.py mundane_pkg/ --ignore-missing-imports
       continue-on-error: true
 
   test-package:
@@ -100,10 +100,10 @@ jobs:
     - name: Inspect package contents
       run: |
         echo "=== Wheel contents ==="
-        unzip -l dist/*.whl | grep cerno_pkg
+        unzip -l dist/*.whl | grep mundane_pkg
         echo ""
-        echo "=== Verifying cerno_pkg is included ==="
-        unzip -l dist/*.whl | grep "cerno_pkg/__init__.py" || (echo "ERROR: cerno_pkg not found in wheel!" && exit 1)
+        echo "=== Verifying mundane_pkg is included ==="
+        unzip -l dist/*.whl | grep "mundane_pkg/__init__.py" || (echo "ERROR: mundane_pkg not found in wheel!" && exit 1)
 
     - name: Install from wheel
       run: |
@@ -111,14 +111,14 @@ jobs:
 
     - name: Test imports
       run: |
-        python -c "import cerno_pkg"
-        python -c "from cerno_pkg import __version__; print(f'Version: {__version__}')"
-        python -c "from cerno_pkg.database import initialize_database; print('Database module imported successfully')"
+        python -c "import mundane_pkg"
+        python -c "from mundane_pkg import __version__; print(f'Version: {__version__}')"
+        python -c "from mundane_pkg.database import initialize_database; print('Database module imported successfully')"
 
     - name: Smoke test CLI
       run: |
-        cerno --version
-        cerno --help
+        mundane --version
+        mundane --help
 
     - name: Upload built packages
       uses: actions/upload-artifact@v4
