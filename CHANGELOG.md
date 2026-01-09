@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Enhanced Version Increment SOP in CLAUDE.md with mandatory incremental changelog updates and user confirmation workflow
+  - Added "Incremental Changelog Updates" section requiring [Unreleased] updates after all code changes
+  - Updated "Version Increment SOP" with 4-phase process: gather changes, present for approval, update atomically, validate
+  - Modified "Documentation" principle to mandate [Unreleased] section updates for user-visible changes
+  - Version increments now require reviewing git history, [Unreleased] section, and user confirmation before proceeding
+
 ## [1.1.0] - 2026-01-10
 
 ### Added
