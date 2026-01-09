@@ -58,3 +58,6 @@ test_goad_export/
 .mypy_cache/
 .dmypy.json
 dmypy.json
+pylance-report.json
+.pyright/
+pyrightcache/

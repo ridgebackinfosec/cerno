@@ -275,9 +275,47 @@ pytest --durations=10
 # Format code with black
 black cerno.py cerno_pkg/ tests/
 
-# Type checking with mypy
-mypy cerno_pkg/
+# Type checking with mypy (primary checker)
+mypy cerno.py cerno_pkg/ --ignore-missing-imports
+
+# Type checking with pyright (secondary checker)
+pyright cerno.py cerno_pkg/
+
+# Generate full type checking report (JSON)
+pyright . --outputjson > pylance-report.json
+
+# Check specific file
+pyright cerno_pkg/tui.py
 ```
+
+### Type Checking Philosophy
+
+Cerno uses **dual type checking** for maximum coverage:
+
+- **MyPy**: Primary checker, runs in CI/CD (currently `continue-on-error: true`)
+- **Pyright**: Secondary checker, catches edge cases MyPy misses, used locally
+
+**When to use each:**
+- Always run both locally before committing
+- Fix mypy errors first (will eventually block CI/CD)
+- Fix pyright errors to maintain type safety and prevent Pylance issues
+- Use tool-specific ignore comments sparingly and document why
+
+**Type annotation standards:**
+- All public functions must have parameter and return type hints
+- Use `from __future__ import annotations` for forward references
+- Use `TYPE_CHECKING` guards for circular imports
+- Prefer explicit types over `Any` (use `Any` only when truly dynamic)
+- Document complex types with docstring examples
+
+**Configuration files:**
+- `pyproject.toml`: Contains `[tool.mypy]` configuration
+- `pyrightconfig.json`: Contains pyright configuration (typeCheckingMode: "basic")
+
+**Known type checking issues** (as of v1.1.0):
+- Current CI/CD mypy checks set to `continue-on-error: true` (non-blocking)
+- Several modules have type errors revealed in `pylance-report.json`
+- Type checking will become stricter in future releases as issues are resolved
 
 ## Architecture
 
