@@ -540,6 +540,34 @@ python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['pro
 
 **Cleanup**: Auto-delete session after successful completion.
 
+### Terminal Responsiveness
+
+**Terminal width detection**: `ansi.py:get_terminal_width()` detects current terminal width with graceful fallback to 80 chars.
+
+**Responsive layouts**: UI adapts to terminal width for optimal display:
+- **Action footer** (`render.py:render_actions_footer()`):
+  - Wide terminal (≥100 chars): 2-column grid layout
+  - Narrow terminal (<100 chars): Single-column layout to prevent wrapping
+- **Status line** (`cerno.py:browse_file_list()`):
+  - Wide terminal (≥120 chars): Single line with separators
+  - Medium terminal (80-119 chars): Two-line layout
+  - Narrow terminal (<80 chars): Multi-line layout (one item per line)
+
+**Group filter descriptions**: Enhanced `group_filter` tuple from `(index, plugin_ids)` to `(index, plugin_ids, description)` to provide context in status line (e.g., "Group #1: Identical host:port combinations").
+
+**Page size configuration**: Users can override auto-detected page size via `config.yaml`:
+```yaml
+default_page_size: 20  # Fixed page size (overrides auto-detection)
+```
+Set to `null` or omit for automatic detection from terminal height. Falls back to 12 if detection fails (logs debug hint).
+
+**UI Improvements**:
+- **Streamlined file view**: Default to grouped format, offer post-view menu for Copy/Change format/Back (reduces 4 steps to 1-2)
+- **Smart CVE format**: Auto-selects combined format for 1-2 findings, separated for 3+ (shows preview before asking)
+- **MSF indicator**: Metasploit module indicator moved to panel subtitle for cleaner visual hierarchy
+- **Completed findings clarity**: Renamed from "Reviewed findings (read-only)" to "Completed Findings (Undo Available)" with updated help text
+- **Comparison groups pager**: Large group details (>8 findings) accessible via [D] option to view full list in pager
+
 ## Testing Practices
 
 ### Fixture Usage

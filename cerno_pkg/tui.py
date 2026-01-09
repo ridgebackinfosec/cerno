@@ -28,7 +28,7 @@ ActionResult = Tuple[
     Optional[str],  # action_type: None, "back", "file_selected", "help", "mark_all"
     str,  # file_filter
     str,  # reviewed_filter
-    Optional[Tuple[int, set]],  # group_filter
+    Optional[Tuple[int, set, str]],  # group_filter: (index, plugin_ids, description)
     str,  # sort_mode
     int   # page_idx
 ]
@@ -268,7 +268,7 @@ def handle_finding_list_actions(
         return None, file_filter, reviewed_filter, group_filter, sort_mode, page_idx
 
     if ans == "r":
-        header("Reviewed findings (read-only)")
+        header("Completed Findings (Undo Available)")
         _console_global.print(f"Current filter: '{reviewed_filter or '*'}'")
         filtered_reviewed = [
             (pf, p)
@@ -290,7 +290,7 @@ def handle_finding_list_actions(
 
         print_action_menu([
             ("?", "Help"),
-            ("U", "Undo review-complete"),
+            ("U", "Undo completion"),
             ("F", "Filter"),
             ("C", "Clear filter"),
             ("B", "Back")
@@ -494,7 +494,9 @@ def handle_finding_list_actions(
             if choice.startswith("g") and choice[1:].isdigit():
                 idx = int(choice[1:]) - 1
                 if 0 <= idx < len(groups):
-                    group_filter = (idx + 1, set(groups[idx]))
+                    # Enhanced tuple with description
+                    group_desc = "Identical host:port combinations"
+                    group_filter = (idx + 1, set(groups[idx]), group_desc)
                     ok(f"Applied group filter #{idx+1} ({len(groups[idx])} findings).")
                     page_idx = 0
 
@@ -527,7 +529,9 @@ def handle_finding_list_actions(
             if choice.startswith("g") and choice[1:].isdigit():
                 idx = int(choice[1:]) - 1
                 if 0 <= idx < len(groups):
-                    group_filter = (idx + 1, set(groups[idx]))
+                    # Enhanced tuple with description
+                    group_desc = "Superset findings"
+                    group_filter = (idx + 1, set(groups[idx]), group_desc)
                     ok(
                         f"Applied superset group #{idx+1} "
                         f"({len(groups[idx])} findings)."

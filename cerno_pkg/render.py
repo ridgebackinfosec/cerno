@@ -335,11 +335,33 @@ def render_compare_tables(
         groups_table.add_column("Count", justify="right", no_wrap=True, max_width=12)
         groups_table.add_column("Findings (sample)", overflow="fold")
         for i, names in enumerate(groups_sorted, 1):
-            sample = "\n".join(names[:8]) + (
-                f"\n... (+{len(names)-8} more)" if len(names) > 8 else ""
-            )
+            sample = "\n".join(names[:8])
+            if len(names) > 8:
+                sample += f"\n... (+{len(names)-8} more - press [D] to view details)"
             groups_table.add_row(str(i), str(len(names)), sample)
         _console_global.print(groups_table)
+
+        # Offer details view for large groups
+        if any(len(names) > 8 for names in groups_sorted):
+            from rich.prompt import Prompt
+            try:
+                detail_choice = Prompt.ask(
+                    "\nPress [D] for full group details, or [Enter] to continue",
+                    default=""
+                ).strip().lower()
+
+                if detail_choice == "d":
+                    # Display full group details using pager
+                    full_text = ""
+                    for i, names in enumerate(groups_sorted, 1):
+                        full_text += f"\nGroup #{i} ({len(names)} findings):\n"
+                        full_text += "\n".join(f"  - {name}" for name in names)
+                        full_text += "\n"
+
+                    from .fs import menu_pager
+                    menu_pager(full_text)
+            except KeyboardInterrupt:
+                pass
     else:
         info("\nAll filtered files fall into a single identical group.")
 
@@ -353,7 +375,10 @@ def render_actions_footer(
     can_next: bool,
     can_prev: bool,
 ) -> None:
-    """Render a three-row, two-column action footer with available commands.
+    """Render action footer with responsive layout based on terminal width.
+
+    Uses two-column grid for wide terminals (≥100 chars) and single-column
+    layout for narrow terminals (<100 chars) to prevent wrapping.
 
     Args:
         group_applied: Whether a group filter is currently active
@@ -362,6 +387,8 @@ def render_actions_footer(
         can_next: Whether next page is available
         can_prev: Whether previous page is available
     """
+    from .ansi import get_terminal_width
+
     # Row 1: Navigation basics + filtering controls
     left_row1 = join_actions_texts(
         [
@@ -410,13 +437,27 @@ def render_actions_footer(
     )
     right_row3 = Text()  # Empty for now, reserved for future actions
 
-    grid = Table.grid(expand=True, padding=(0, 1))
-    grid.add_column(ratio=1)
-    grid.add_column(ratio=1)
-    grid.add_row(left_row1, right_row1)
-    grid.add_row(left_row2, right_row2)
-    grid.add_row(left_row3, right_row3)
-    _console_global.print(grid)
+    # Detect terminal width for responsive layout
+    term_width = get_terminal_width()
+
+    if term_width >= 100:
+        # Wide terminal: use 2-column grid layout
+        grid = Table.grid(expand=True, padding=(0, 1))
+        grid.add_column(ratio=1)
+        grid.add_column(ratio=1)
+        grid.add_row(left_row1, right_row1)
+        grid.add_row(left_row2, right_row2)
+        grid.add_row(left_row3, right_row3)
+        _console_global.print(grid)
+    else:
+        # Narrow terminal: single-column layout to prevent wrapping
+        _console_global.print(left_row1)
+        _console_global.print(right_row1)
+        _console_global.print(left_row2)
+        _console_global.print(right_row2)
+        _console_global.print(left_row3)
+        if right_row3.plain:  # Only print if not empty
+            _console_global.print(right_row3)
 
 
 def show_actions_help(
@@ -478,15 +519,22 @@ def show_actions_help(
 
 
 def show_reviewed_help() -> None:
-    """Render help panel for reviewed files view."""
+    """Render help panel for completed findings view."""
     table = Table.grid(padding=(0, 1))
-    table.add_row(
-        Text("Filtering", style="bold"),
-        key_text("F", "Set filter"),
-        key_text("C", "Clear filter"),
+    table.add_column(style=style_if_enabled("cyan"), no_wrap=True)
+    table.add_column()
+
+    table.add_row("Purpose", "View findings marked as completed during review")
+    table.add_row("Undo", "Press [U] to restore findings to pending state")
+    table.add_row("Filter", "Press [F] to filter by plugin name")
+    table.add_row("", "")
+    table.add_row("Note", "This is a management view - select findings in main list to work with them")
+
+    panel = Panel(
+        table,
+        title="[bold cyan]Completed Findings Help[/]",
+        border_style=style_if_enabled("cyan")
     )
-    table.add_row(Text("Exit", style="bold"), key_text("B", "Back"))
-    panel = Panel(table, title="Reviewed Files — Actions", border_style=style_if_enabled("cyan"))
     _console_global.print(panel)
 
 
@@ -879,11 +927,6 @@ def _display_finding_preview(
     # Check for Metasploit module from plugin metadata
     is_msf = plugin.has_metasploit
 
-    # Add centered MSF indicator below title if applicable
-    if is_msf:
-        content.append("⚡ Metasploit module available!", style=style_if_enabled("bold red"))
-        content.append("\n\n")  # Blank line after MSF indicator
-
     # Nessus Plugin ID
     content.append("Nessus Plugin ID: ", style=style_if_enabled("cyan"))
     content.append(f"{plugin.plugin_id}\n", style=style_if_enabled("yellow"))
@@ -922,10 +965,16 @@ def _display_finding_preview(
         content.append("Ports detected: ", style=style_if_enabled("cyan"))
         content.append(f"{ports_str}", style=style_if_enabled("yellow"))
 
-    # Create panel with plugin name as title
+    # Create panel with plugin name as title and MSF indicator in subtitle
+    subtitle = None
+    if is_msf:
+        subtitle = "⚡ Metasploit module available"
+
     panel = Panel(
         content,
         title=f"[bold cyan]{plugin.plugin_name}[/]",
+        subtitle=subtitle,
+        subtitle_align="center",
         title_align="center",
         border_style=style_if_enabled("cyan")
     )
@@ -1013,7 +1062,10 @@ def bulk_extract_cves_for_findings(files: List[Path]) -> None:
 
 
 def _display_bulk_cve_results(results: dict[str, list[str]]) -> None:
-    """Display CVE extraction results in separated or combined format.
+    """Display CVE extraction results with preview and smart format selection.
+
+    Shows CVE count preview before asking for format choice.
+    Auto-selects combined format for 1-2 findings, separated for 3+.
 
     Args:
         results: Dictionary mapping plugin name/filename to list of CVEs
@@ -1023,35 +1075,46 @@ def _display_bulk_cve_results(results: dict[str, list[str]]) -> None:
 
     # Display results
     if results:
-        # Ask user for display format
+        # Count total findings and unique CVEs
+        total_findings = len(results)
+        all_cves = set()
+        for cves in results.values():
+            all_cves.update(cves)
+        total_unique_cves = len(all_cves)
+
+        # Show preview before asking for format
+        info(f"\nFound {total_unique_cves} unique CVE(s) across {total_findings} finding(s)")
+
+        # Smart default: 1-2 findings → combined, 3+ → separated
+        default_format = "c" if total_findings <= 2 else "s"
+        default_label = "Combined" if default_format == "c" else "Separated"
+
+        # Ask user for display format with smart default
         print_action_menu([
             ("S", "Separated (by finding)"),
-            ("C", "Combined (all unique CVEs)")
+            ("C", "Combined (all unique CVEs)"),
+            ("", f"[Enter] for {default_label}")
         ])
         try:
             format_choice = Prompt.ask(
                 "Choose format",
-                default="s"
+                default=default_format
             ).lower()
         except KeyboardInterrupt:
             return
 
         if format_choice in ("c", "combined"):
             # Combined list: all unique CVEs across all findings
-            all_cves = set()
-            for cves in results.values():
-                all_cves.update(cves)
-
-            info(f"\nFound {len(all_cves)} unique CVE(s) across {len(results)} finding(s):\n")
+            info(f"\nAll unique CVEs ({total_unique_cves}):\n")
             for cve in sorted(all_cves):
-                info(f"{cve}")
+                info(f"  {cve}")
         else:
             # Separated by file (default)
-            info(f"\nFound CVEs for {len(results)} finding(s):\n")
+            info(f"\nCVEs by finding ({total_findings}):\n")
             for plugin_name, cves in sorted(results.items()):
                 info(f"{plugin_name}:")
                 for cve in cves:
-                    info(f"{cve}")
+                    info(f"  {cve}")
                 _console_global.print()  # Blank line between plugins
     else:
         warn("No CVEs found for any of the filtered findings.")

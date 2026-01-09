@@ -27,7 +27,7 @@ class CernoConfig:
 
     # Display preferences
     default_page_size: Optional[int] = None
-    """Default number of items per page in paginated views."""
+    """Default items per page. Use None for auto-detection from terminal height, or specify integer (min 8)."""
 
     top_ports_count: Optional[int] = None
     """Default number of top ports to display in summaries."""

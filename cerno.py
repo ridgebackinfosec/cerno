@@ -429,26 +429,48 @@ def browse_file_list(
 
         try:
             from cerno_pkg import breadcrumb
+            from cerno_pkg.ansi import get_terminal_width
+
             filter_info = f"filtered: '{file_filter}'" if file_filter else "Findings"
             bc = breadcrumb(scan_dir.name, severity_label, filter_info)
             header(bc if bc else f"Severity: {severity_label}")
-            status = (
-                f"Unreviewed findings ({len(unreviewed)}). "
-                f"Current filter: '{file_filter or '*'}'"
-            )
+
+            # Build status line components
+            status_parts = [
+                f"Unreviewed findings ({len(unreviewed)})",
+                f"Filter: '{file_filter or '*'}'",
+            ]
+
             if group_filter:
-                status += (
-                    f" | Group filter: #{group_filter[0]} "
-                    f"({len(group_filter[1])})"
-                )
+                # Enhanced group filter with description (backward compatible)
+                group_desc = group_filter[2] if len(group_filter) > 2 else f"{len(group_filter[1])} findings"
+                status_parts.append(f"Group #{group_filter[0]}: {group_desc} ({len(group_filter[1])})")
+
             sort_label = {
-                "plugin_id": "Plugin ID ASC",
-                "hosts": "Host count DESC",
-                "name": "Name A-Z"
-            }.get(sort_mode, "Plugin ID ASC")
-            status += f" | Sort: {sort_label}"
-            status += f" | Page: {page_idx+1}/{total_pages}"
-            _console_global.print(status)
+                "plugin_id": "Plugin ID ↑",
+                "hosts": "Host count ↓",
+                "name": "Name A↑Z"
+            }.get(sort_mode, "Plugin ID ↑")
+            status_parts.append(f"Sort: {sort_label}")
+            status_parts.append(f"Page: {page_idx+1}/{total_pages}")
+
+            # Responsive layout based on terminal width
+            term_width = get_terminal_width()
+
+            if term_width >= 120:
+                # Wide terminal: single line with separators
+                status = " | ".join(status_parts)
+                _console_global.print(status)
+            elif term_width >= 80:
+                # Medium terminal: two lines
+                status_line1 = f"{status_parts[0]} | {status_parts[1]}"
+                status_line2 = " | ".join(status_parts[2:])
+                _console_global.print(status_line1)
+                _console_global.print(status_line2)
+            else:
+                # Narrow terminal: multi-line (one per part)
+                for part in status_parts:
+                    _console_global.print(part)
 
             render_finding_list_table(
                 page_items, sort_mode, get_counts_for, row_offset=start,

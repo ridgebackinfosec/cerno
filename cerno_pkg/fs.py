@@ -146,16 +146,41 @@ def pretty_severity_label(name: str) -> str:
     return " ".join(w[:1].upper() + w[1:] for w in label.split())
 
 
+# Module-level flag to track if fallback warning has been shown
+_page_size_fallback_warned = False
+
+
 def default_page_size() -> int:
-    """Calculate a sensible default page size based on terminal height.
+    """Calculate page size from config or terminal height.
+
+    Checks config for user override first, then auto-detects from terminal.
+    Falls back to 12 if detection fails (logs hint on first occurrence).
 
     Returns:
-        Number of items per page (minimum 8, max terminal_height - 15)
+        Number of items per page (minimum 8)
     """
+    global _page_size_fallback_warned
+
+    # Check config first for manual override
+    from .config import load_config
+    config = load_config()
+
+    if config.default_page_size:
+        return max(8, config.default_page_size)
+
+    # Auto-detect from terminal height
     try:
         terminal_height = shutil.get_terminal_size((80, 24)).lines
         return max(8, terminal_height - 15)
     except Exception:
+        # Fallback to 12, log hint once
+        if not _page_size_fallback_warned:
+            from .logging_setup import _log_debug
+            _log_debug(
+                "Terminal height detection failed, using default page size (12). "
+                "Set 'default_page_size' in config.yaml to override."
+            )
+            _page_size_fallback_warned = True
         return 12
 
 
@@ -306,7 +331,7 @@ def handle_finding_view(
         action_text.append("[D] ", style=style_if_enabled("cyan"))
         action_text.append("Finding Details", style=None)
         action_text.append("[V] ", style=style_if_enabled("cyan"))
-        action_text.append("View host(s) / ", style=None)
+        action_text.append("View host(s) (grouped) / ", style=None)
         action_text.append("[E] ", style=style_if_enabled("cyan"))
         action_text.append("CVE info / ", style=None)
         if has_workflow:
@@ -422,80 +447,84 @@ def handle_finding_view(
 
             continue
 
-        # Handle View file action
+        # Handle View file action - streamlined workflow
         if not action_choice in ("v", "view"):
             warn("Invalid action choice.")
             continue
 
-        # Step 2: Ask for format (only applies to view now)
-        print_action_menu([
-            ("R", "Raw"),
-            ("G", "Grouped (host:port)"),
-            ("H", "Hosts only")
-        ])
-        try:
-            format_choice = Prompt.ask(
-                "Choose format",
-                default="g"
-            ).lower()
-        except KeyboardInterrupt:
-            return
-
-        # Check if plugin_file is available (database mode)
-        if finding is None:
+        # Check if finding/plugin is available (database mode)
+        if finding is None or plugin is None:
             warn("Database not available - cannot view file contents")
             continue
 
-        # Check if plugin is available for display
-        if plugin is None:
-            warn("Plugin metadata not available - cannot view file contents")
-            continue
+        # Default to grouped format (no prompt) for instant viewing
+        text = _grouped_paged_text(finding, plugin)
+        payload = _grouped_payload_text(finding)
 
-        # Initialize variables to None for defensive programming
-        text = None
-        payload = None
-
-        # Strip whitespace from format_choice
-        format_choice = format_choice.strip()
-
-        # Default to grouped
-        if format_choice in ("", "g", "grouped"):
-            text = _grouped_paged_text(finding, plugin)
-            payload = _grouped_payload_text(finding)
-        elif format_choice in ("h", "hosts", "hosts-only"):
-            text = _hosts_only_paged_text(finding, plugin)
-            payload = _hosts_only_payload_text(finding)
-        elif format_choice in ("r", "raw"):
-            text = _file_raw_paged_text(finding, plugin)
-            payload = _file_raw_payload_text(finding)
-        else:
-            warn("Invalid format choice.")
-            continue
-
-        # Guard: Ensure text and payload were successfully generated
         if text is None or payload is None:
-            warn("Failed to generate content for selected format.")
+            warn("Failed to generate content.")
             continue
 
-        # Step 3: Display file content
+        # Display content immediately
         menu_pager(text)
 
-        # Step 4: Offer to copy to clipboard
+        # Post-view actions: Copy, Change format, or Back
+        print_action_menu([
+            ("C", "Copy to clipboard"),
+            ("F", "Change format"),
+            ("B", "Back to menu")
+        ])
+
         try:
-            if Confirm.ask("Copy to clipboard?", default=True):
-                copy_choice = "y"
-            else:
-                copy_choice = "n"
+            post_choice = Prompt.ask("Action", default="b").strip().lower()
         except KeyboardInterrupt:
             continue
 
-        if copy_choice in ("y", "yes"):
+        if post_choice in ("c", "copy"):
             ok_flag, detail = copy_to_clipboard(payload)
             if ok_flag:
                 ok("Copied to clipboard.")
             else:
                 warn(f"{detail} Printing below for manual copy:")
                 _console_global.print(payload)
+
+        elif post_choice in ("f", "format"):
+            # Offer format change
+            print_action_menu([
+                ("R", "Raw"),
+                ("H", "Hosts only"),
+                ("G", "Grouped (current)")
+            ])
+            try:
+                format_choice = Prompt.ask("Choose format", default="g").lower()
+            except KeyboardInterrupt:
+                continue
+
+            # Generate new format
+            if format_choice in ("r", "raw"):
+                text = _file_raw_paged_text(finding, plugin)
+                payload = _file_raw_payload_text(finding)
+            elif format_choice in ("h", "hosts", "hosts-only"):
+                text = _hosts_only_paged_text(finding, plugin)
+                payload = _hosts_only_payload_text(finding)
+            else:
+                continue  # Already in grouped
+
+            if text and payload:
+                menu_pager(text)
+                # Offer clipboard after format change
+                try:
+                    if Confirm.ask("Copy to clipboard?", default=True):
+                        ok_flag, detail = copy_to_clipboard(payload)
+                        if ok_flag:
+                            ok("Copied to clipboard.")
+                        else:
+                            warn(f"{detail}")
+                except KeyboardInterrupt:
+                    pass
+
+        # Loop back to main action menu
+        continue
 
 
 def process_single_finding(

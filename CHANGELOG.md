@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-01-10
+
+### Added
+- **Terminal responsiveness** with adaptive layouts for different screen widths
+  - Terminal width detection utility (`ansi.py:get_terminal_width()`) with graceful fallback to 80 chars
+  - Responsive action footer: 2-column grid for wide terminals (≥100 chars), single-column for narrow (<100 chars)
+  - Responsive status line: adapts layout based on width (single-line ≥120, two-line 80-119, multi-line <80)
+- **Smart CVE format selection** with preview and auto-defaults
+  - Shows "Found N unique CVE(s) across M finding(s)" preview before format selection
+  - Auto-selects combined format for 1-2 findings, separated format for 3+ findings
+  - Manual override still available
+- **Group filter descriptions** for better context
+  - Enhanced tuple from `(index, plugin_ids)` to `(index, plugin_ids, description)`
+  - Status line now shows "Group #1: Identical host:port combinations (N)" instead of cryptic "Group #1 (N)"
+- **Page size configuration support** via `config.yaml`
+  - Users can set `default_page_size: 20` to override auto-detection
+  - Falls back to 12 if terminal height detection fails (logs debug hint)
+- **Comparison groups pager** for large result sets
+  - Groups with >8 findings show "... (+N more - press [D] to view details)"
+  - [D] option displays full list in pager without truncation
+
+### Changed
+- **Streamlined file detail view workflow** (reduced from 4 steps to 1-2 steps)
+  - View action now defaults to grouped format immediately (no format prompt)
+  - Post-view menu offers Copy/Change format/Back options
+  - Menu shows "[V] View host(s) (grouped)" to indicate default format
+- **Improved visual hierarchy** for Metasploit indicators
+  - Moved ⚡ indicator from first content line to panel subtitle
+  - Cleaner separation between metadata and plugin data
+- **Clarified completed findings section** to reduce confusion
+  - Renamed from "Reviewed findings (read-only)" to "Completed Findings (Undo Available)"
+  - Updated action from "Undo review-complete" to "Undo completion"
+  - Enhanced help text explaining management view purpose
+
+### Documentation
+- Added "Terminal Responsiveness" section to CLAUDE.md documenting all UI improvements
+- Documented group filter tuple enhancement and backward compatibility approach
+- Added page size configuration examples
+
 ## [1.0.2] - 2026-01-09
 
 ### Added
