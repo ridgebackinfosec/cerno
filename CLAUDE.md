@@ -410,6 +410,55 @@ Version is defined in `pyproject.toml:project.version` (single source of truth).
 
 **When bumping version**: Update `pyproject.toml` only. Do NOT hardcode version elsewhere.
 
+#### Automated Release Workflow
+
+**File**: `.github/workflows/release.yml`
+
+The release workflow is **automatically triggered** when `pyproject.toml` is modified on the `main` branch (via PR merge or direct commit).
+
+**Workflow steps**:
+1. **Version detection**: Compares current `pyproject.toml` version with previous commit
+2. **Validation**: Ensures version follows semver format (X.Y.Z)
+3. **Changelog extraction**: Parses `CHANGELOG.md` using `scripts/extract_changelog.py`
+4. **Build**: Creates wheel and source distribution (`python -m build`)
+5. **Tag creation**: Creates annotated git tag (e.g., `v1.0.1`) as `github-actions[bot]`
+6. **Release creation**: Creates GitHub Release with extracted changelog and distribution artifacts
+7. **Mark as latest**: Release is automatically marked as latest
+
+**Key features**:
+- Works for both PR merges and direct commits to main
+- Idempotent (re-running doesn't duplicate releases)
+- Skips release if version unchanged (prevents false triggers)
+- Attaches built wheel/sdist to release for distribution
+
+**Creating a new release**:
+1. Update version in `pyproject.toml` (e.g., `1.0.1` → `1.0.2`)
+2. Add release entry to `CHANGELOG.md` with format: `## [X.Y.Z] - YYYY-MM-DD`
+3. Commit changes and push/merge to `main`
+4. Workflow automatically creates tag and GitHub Release
+
+**Changelog format**: Must follow [Keep a Changelog](https://keepachangelog.com/) format:
+```markdown
+## [1.0.2] - 2026-01-10
+
+### Added
+- New feature description
+
+### Fixed
+- Bug fix description
+```
+
+**Helper script**: `scripts/extract_changelog.py` extracts version-specific sections from `CHANGELOG.md`
+
+**Testing locally**:
+```bash
+# Test changelog extraction
+python scripts/extract_changelog.py 1.0.1
+
+# Verify version parsing
+python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])"
+```
+
 ### Constants & Configuration
 
 **Configuration** (`~/.cerno/config.yaml`): All user preferences managed via config file. Auto-created with defaults on first run. All configuration values are set through this file only.

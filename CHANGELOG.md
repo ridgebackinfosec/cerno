@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-01-09
+
+### Added
+- Automated GitHub release workflow triggered by version changes in `pyproject.toml`
+- Changelog extraction script (`scripts/extract_changelog.py`) for generating release notes
+- GitHub Actions workflow (`.github/workflows/release.yml`) that:
+  - Detects version changes on push to main (PR merges or direct commits)
+  - Validates semantic versioning format
+  - Creates annotated git tags automatically
+  - Generates GitHub Releases marked as "latest"
+  - Extracts release notes from CHANGELOG.md
+  - Builds and attaches distribution artifacts (wheel and sdist)
+
+### Changed
+- Updated README.md with new "Releases" section explaining automated release process
+- Expanded CLAUDE.md "Version Management" section with detailed workflow documentation
+
 ## [1.0.1] - 2026-01-09
 
 ### Documentation

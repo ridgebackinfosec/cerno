@@ -82,6 +82,23 @@ cerno --install-completion  # Enable tab completion for your shell
 
 ---
 
+## Releases
+
+Cerno uses **automated releases** triggered by version changes in [pyproject.toml](pyproject.toml).
+
+**How it works:**
+- When `pyproject.toml` version is updated and merged to `main`, GitHub Actions automatically:
+  - Creates a git tag (e.g., `v1.0.1`)
+  - Generates a GitHub Release marked as "latest"
+  - Extracts release notes from [CHANGELOG.md](CHANGELOG.md)
+  - Attaches built wheel and source distribution
+
+**View releases:** [github.com/ridgebackinfosec/cerno/releases](https://github.com/ridgebackinfosec/cerno/releases)
+
+**For contributors:** To create a new release, update the version in `pyproject.toml` and add an entry to `CHANGELOG.md` following [Keep a Changelog](https://keepachangelog.com/) format. The release workflow runs automatically when changes are merged to `main`.
+
+---
+
 ## Requirements
 
 - **Python 3.11+**
