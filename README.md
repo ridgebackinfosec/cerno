@@ -33,6 +33,28 @@ cerno review
 
 ---
 
+## About the Name
+
+**Cerno** comes from the Latin verb *cernō*, meaning:
+- To discern, distinguish, perceive
+- To separate, sift through
+- To decide, determine, resolve
+
+The name reflects this tool's core purpose: **to help security professionals discern what matters** in large vulnerability scans. Just as *cernō* means to sift through and distinguish the important from the noise, Cerno helps you:
+
+- **Discern** which findings require immediate action vs. can be deferred
+- **Separate** findings by severity, host, and exploitability
+- **Perceive** patterns across hosts and identify verification paths
+- **Determine** the most efficient approach to vulnerability validation
+- **Resolve** findings through organized, tracked remediation workflows
+
+In penetration testing and vulnerability management, clarity through careful examination is essential—that's Cerno.
+
+
+**Pronunciation:** In Classical Latin, *cerno* is pronounced **KEHR-noh** (IPA: [ˈkɛr.noː])—the 'c' as a hard 'k' sound, the 'e' as in 'bed', and the 'o' as in 'no' (long). [Audio sample](https://www.howtopronounce.com/latin/cerno)
+
+---
+
 ## Installation
 
 **Recommended (pipx):**

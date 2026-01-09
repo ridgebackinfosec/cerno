@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-01-09
+
+### Documentation
+- Added "About the Name" section to README explaining Cerno etymology and pronunciation
+- Includes Latin origin (*cernō* - to discern, distinguish, perceive)
+- Provides pronunciation guide (KEHR-noh / IPA: [ˈkɛr.noː]) with audio sample link
+- Explains connection between name meaning and tool purpose
+
 ## [1.0.0] - 2026-01-09
 
 ### Initial Release
