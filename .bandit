@@ -1,5 +1,5 @@
 [bandit]
-# Bandit configuration for Mundane project
+# Bandit configuration for Cerno project
 # https://bandit.readthedocs.io/en/latest/config.html
 
 # Exclude test files from security scanning

@@ -1,11 +1,11 @@
-"""Tests for mundane_pkg.session module (database-only mode)."""
+"""Tests for cerno_pkg.session module (database-only mode)."""
 
 from datetime import datetime
 from pathlib import Path
 
 import pytest
 
-from mundane_pkg.session import (
+from cerno_pkg.session import (
     SessionState,
     save_session,
     load_session,
@@ -17,7 +17,7 @@ from mundane_pkg.session import (
 @pytest.fixture(autouse=True)
 def ensure_db_enabled(monkeypatch, temp_db):
     """Ensure database is enabled and use temp_db for all tests."""
-    import mundane_pkg.database
+    import cerno_pkg.database
 
     # Monkeypatch get_connection to return our temp_db
     # Create a wrapper that prevents the connection from being closed
@@ -41,7 +41,7 @@ def ensure_db_enabled(monkeypatch, temp_db):
     def mock_get_connection(database_path=None):
         return UnclosableConnection(temp_db)
 
-    monkeypatch.setattr(mundane_pkg.database, "get_connection", mock_get_connection)
+    monkeypatch.setattr(cerno_pkg.database, "get_connection", mock_get_connection)
 
 
 class TestSessionState:
@@ -88,7 +88,7 @@ class TestSaveSession:
 
     def test_save_session_basic(self, temp_db):
         """Test basic session save to database."""
-        from mundane_pkg.models import Scan, Plugin, Finding
+        from cerno_pkg.models import Scan, Plugin, Finding
 
         # Create scan in database
         scan = Scan(scan_name="test_scan", export_root="/tmp")
@@ -169,7 +169,7 @@ class TestSaveSession:
 
     def test_save_session_updates_scan_last_reviewed(self, temp_db):
         """Test that save_session updates scan's last_reviewed_at."""
-        from mundane_pkg.models import Scan
+        from cerno_pkg.models import Scan
 
         # Create scan
         scan = Scan(scan_name="test_scan", export_root="/tmp")
@@ -191,7 +191,7 @@ class TestSaveSession:
 
     def test_save_session_updates_existing_session(self, temp_db):
         """Test that save_session updates existing active session."""
-        from mundane_pkg.models import Scan, Plugin, Finding
+        from cerno_pkg.models import Scan, Plugin, Finding
 
         # Create scan
         scan = Scan(scan_name="test_scan", export_root="/tmp")
@@ -269,7 +269,7 @@ class TestSaveSession:
 
     def test_save_session_with_zero_counts(self, temp_db):
         """Test saving session with all zero counts."""
-        from mundane_pkg.models import Scan
+        from cerno_pkg.models import Scan
 
         # Create scan
         scan = Scan(scan_name="empty_scan", export_root="/tmp")
@@ -308,7 +308,7 @@ class TestLoadSession:
 
     def test_load_session_success(self, temp_db):
         """Test loading active session from database."""
-        from mundane_pkg.models import Scan, Plugin, Finding
+        from cerno_pkg.models import Scan, Plugin, Finding
 
         # Create scan
         scan = Scan(scan_name="test_scan", export_root="/tmp")
@@ -379,7 +379,7 @@ class TestLoadSession:
 
     def test_load_session_nonexistent(self, temp_db):
         """Test loading when no session exists."""
-        from mundane_pkg.models import Scan
+        from cerno_pkg.models import Scan
 
         # Create scan without session
         scan = Scan(scan_name="no_session_scan", export_root="/tmp")
@@ -392,7 +392,7 @@ class TestLoadSession:
 
     def test_load_session_ended_session_returns_none(self, temp_db):
         """Test that ended sessions are not loaded."""
-        from mundane_pkg.models import Scan
+        from cerno_pkg.models import Scan
 
         # Create scan and session
         scan = Scan(scan_name="ended_scan", export_root="/tmp")
@@ -411,7 +411,7 @@ class TestLoadSession:
 
     def test_load_session_with_findings(self, temp_db):
         """Test that load_session aggregates review states from findings."""
-        from mundane_pkg.models import Scan, Plugin, Finding
+        from cerno_pkg.models import Scan, Plugin, Finding
 
         # Create scan
         scan = Scan(scan_name="test_scan", export_root="/tmp")
@@ -472,7 +472,7 @@ class TestDeleteSession:
 
     def test_delete_session_ends_active_session(self, temp_db):
         """Test that delete_session marks database session as ended."""
-        from mundane_pkg.models import Scan
+        from cerno_pkg.models import Scan
 
         # Create scan and session
         scan = Scan(scan_name="test_scan", export_root="/tmp")
@@ -505,7 +505,7 @@ class TestDeleteSession:
 
     def test_delete_session_no_active_session(self, temp_db):
         """Test delete_session when no active session exists."""
-        from mundane_pkg.models import Scan
+        from cerno_pkg.models import Scan
 
         # Create scan without session
         scan = Scan(scan_name="no_session_scan", export_root="/tmp")
@@ -517,7 +517,7 @@ class TestDeleteSession:
 
     def test_delete_session_with_already_ended_session(self, temp_db):
         """Test delete_session when session is already ended."""
-        from mundane_pkg.models import Scan
+        from cerno_pkg.models import Scan
 
         # Create scan and session
         scan = Scan(scan_name="test_scan", export_root="/tmp")
@@ -546,7 +546,7 @@ class TestSessionLifecycle:
 
     def test_complete_session_lifecycle(self, temp_db):
         """Test complete session lifecycle: save → load → update → delete."""
-        from mundane_pkg.models import Scan, Plugin, Finding
+        from cerno_pkg.models import Scan, Plugin, Finding
 
         # Create scan
         scan = Scan(scan_name="lifecycle_scan", export_root="/tmp")
@@ -676,7 +676,7 @@ class TestSessionLifecycle:
 
     def test_multiple_sessions_for_same_scan(self, temp_db):
         """Test multiple sequential sessions for the same scan."""
-        from mundane_pkg.models import Scan
+        from cerno_pkg.models import Scan
 
         # Create scan
         scan = Scan(scan_name="multi_session_scan", export_root="/tmp")

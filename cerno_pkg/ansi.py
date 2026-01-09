@@ -8,7 +8,7 @@ import os
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .config import MundaneConfig
+    from .config import CernoConfig
 
 from .constants import SEVERITY_COLORS
 
@@ -32,7 +32,7 @@ class C:
     MAGENTA: str = ""
 
 
-def initialize_colors(config: Optional["MundaneConfig"] = None) -> None:
+def initialize_colors(config: Optional["CernoConfig"] = None) -> None:
     """Initialize color constants from configuration.
 
     Args:
@@ -58,7 +58,7 @@ def initialize_colors(config: Optional["MundaneConfig"] = None) -> None:
     C.MAGENTA = "\u001b[35m"
 
 
-def get_no_color(config: Optional["MundaneConfig"] = None) -> bool:
+def get_no_color(config: Optional["CernoConfig"] = None) -> bool:
     """Check if colors should be disabled.
 
     Args:
@@ -78,7 +78,7 @@ def get_no_color(config: Optional["MundaneConfig"] = None) -> bool:
 _console_cache = None
 
 
-def get_console(config: Optional["MundaneConfig"] = None):
+def get_console(config: Optional["CernoConfig"] = None):
     """Get Rich Console instance configured with no_color setting.
 
     Returns a cached Console instance to ensure consistency across the application.
@@ -106,7 +106,7 @@ def get_console(config: Optional["MundaneConfig"] = None):
     return _console_cache
 
 
-def style_if_enabled(style_name: str, config: Optional["MundaneConfig"] = None) -> str:
+def style_if_enabled(style_name: str, config: Optional["CernoConfig"] = None) -> str:
     """Return style name or empty string based on no_color configuration.
 
     Use this to conditionally apply Rich styles based on user configuration.

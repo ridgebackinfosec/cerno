@@ -6,9 +6,9 @@ Adapted from DefensiveOrigins/NessusPluginHosts
 Repository: https://github.com/DefensiveOrigins/NessusPluginHosts
 Contributors: DefensiveOrigins, ChrisTraynor
 
-Integrated into mundane with enhancements:
+Integrated into cerno with enhancements:
 - Type hints and comprehensive docstrings
-- Integration with mundane's logging infrastructure
+- Integration with cerno's logging infrastructure
 - Database-first import (no file creation required)
 - Rich progress reporting support
 - Cleaner API design for programmatic use

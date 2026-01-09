@@ -37,12 +37,12 @@ env/
 .DS_Store
 
 # Project specific
-nessus/mundane_artifacts/
+nessus/cerno_artifacts/
 nessus/scan_artifacts/  # Legacy
 scan_artifacts/  # Legacy
 *.log
 .session.json
-.mundane_session.json  # Legacy
+.cerno_session.json  # Legacy
 
 # Testing
 .pytest_cache/

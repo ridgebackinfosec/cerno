@@ -1,5 +1,5 @@
 
-"""Internal package for the mundane CLI (split from monolithic script)."""
+"""Internal package for the cerno CLI (split from monolithic script)."""
 from ._version import __version__
 from .ansi import C, header, ok, warn, err, info, fmt_action, fmt_reviewed, cyan_label, colorize_severity_label, breadcrumb, initialize_colors, get_no_color, style_if_enabled
 from .banner import display_banner
@@ -86,7 +86,7 @@ from .workflow_mapper import (
     WorkflowMapper,
 )
 from .config import (
-    MundaneConfig,
+    CernoConfig,
     load_config,
     save_config,
     get_config_path,

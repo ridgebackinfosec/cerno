@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .config import MundaneConfig
+    from .config import CernoConfig
     from .models import Plugin, Finding
 
 import pyperclip
@@ -82,7 +82,7 @@ MSF_PATTERN = re.compile(r"Metasploit[:\-\s]*\(?([^)]+)\)?", re.IGNORECASE)
 
 # ========== NSE Profile Selection ==========
 
-def choose_nse_profile(config: Optional["MundaneConfig"] = None) -> tuple[list[str], bool]:
+def choose_nse_profile(config: Optional["CernoConfig"] = None) -> tuple[list[str], bool]:
     """
     Prompt user to select an NSE (Nmap Scripting Engine) profile.
 
@@ -240,7 +240,7 @@ def build_netexec_cmd(
 
 # ========== Tool Selection ==========
 
-def choose_tool(config: Optional["MundaneConfig"] = None) -> Optional[str]:
+def choose_tool(config: Optional["CernoConfig"] = None) -> Optional[str]:
     """
     Prompt user to select a security tool.
 
@@ -323,7 +323,7 @@ def choose_tool(config: Optional["MundaneConfig"] = None) -> Optional[str]:
         warn("Invalid choice.")
 
 
-def choose_netexec_protocol(config: Optional["MundaneConfig"] = None) -> Optional[str]:
+def choose_netexec_protocol(config: Optional["CernoConfig"] = None) -> Optional[str]:
     """
     Prompt user to select a netexec protocol.
 
@@ -573,7 +573,7 @@ def show_msf_available(plugin_url: str) -> None:
 
 
 # ===================================================================
-# Tool Workflow Orchestration (moved from mundane.py)
+# Tool Workflow Orchestration (moved from cerno.py)
 # ===================================================================
 
 

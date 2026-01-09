@@ -1,6 +1,6 @@
-# Mundane Database Documentation
+# Cerno Database Documentation
 
-Mundane uses an **integrated SQLite database** with a fully normalized schema for tracking scan metadata, review state, tool executions, and generated artifacts. The database provides an audit trail, enables historical analysis, cross-scan queries, and maintains referential integrity through foreign key constraints.
+Cerno uses an **integrated SQLite database** with a fully normalized schema for tracking scan metadata, review state, tool executions, and generated artifacts. The database provides an audit trail, enables historical analysis, cross-scan queries, and maintains referential integrity through foreign key constraints.
 
 ---
 
@@ -23,7 +23,7 @@ Mundane uses an **integrated SQLite database** with a fully normalized schema fo
 
 ## Overview
 
-The Mundane database tracks:
+The Cerno database tracks:
 
 - **Scans**: Nessus export metadata (scan name, export root, .nessus file hash)
 - **Plugins**: Vulnerability definitions (plugin ID, name, severity, CVSS scores, CVEs, Metasploit modules)
@@ -40,11 +40,11 @@ All operations work **transparently** - no manual database management required.
 
 ## Database Location
 
-**Default Path**: `~/.mundane/mundane.db`
+**Default Path**: `~/.cerno/cerno.db`
 
 The database is global across all scans, enabling cross-scan queries and historical analysis.
 
-**Directory**: `~/.mundane/` is created automatically on first use.
+**Directory**: `~/.cerno/` is created automatically on first use.
 
 **Schema Version**: 1 (single-version, normalized structure - no migration system)
 
@@ -52,7 +52,7 @@ The database is global across all scans, enabling cross-scan queries and histori
 
 ## Normalized Schema Architecture (v2.x)
 
-**As of version 2.0.0**, Mundane uses a **fully normalized database schema** following relational best practices.
+**As of version 2.0.0**, Cerno uses a **fully normalized database schema** following relational best practices.
 
 ### Key Improvements in v2.x
 
@@ -806,7 +806,7 @@ Full schema available in [`../schema.sql`](../schema.sql).
 
 ### Database Initialization
 
-The database is initialized automatically on first use. Schema creation is handled by `mundane_pkg/database.py:initialize_database()`.
+The database is initialized automatically on first use. Schema creation is handled by `cerno_pkg/database.py:initialize_database()`.
 
 **Key Points**:
 - Schema version: 1 (single-version, no migration system)
@@ -888,23 +888,23 @@ artifact_types
 
 1. **Delete existing database**:
    ```bash
-   rm ~/.mundane/mundane.db
-   # Windows: del %USERPROFILE%\.mundane\mundane.db
+   rm ~/.cerno/cerno.db
+   # Windows: del %USERPROFILE%\.cerno\cerno.db
    ```
 
-2. **Upgrade Mundane to v2.1.12**:
+2. **Upgrade Cerno to v2.1.12**:
    ```bash
-   pipx upgrade mundane
+   pipx upgrade cerno
    ```
 
 3. **Database will be recreated automatically** with new schema on next run:
    ```bash
-   mundane scan list  # Creates database with v2.1.12 schema
+   cerno scan list  # Creates database with v2.1.12 schema
    ```
 
 4. **Re-import scans**:
    ```bash
-   mundane import nessus <file>.nessus
+   cerno import nessus <file>.nessus
    ```
 
 ### What's Lost in v2.1.12 Upgrade
@@ -951,31 +951,31 @@ artifact_types
 
 1. **Backup v1.x database**:
    ```bash
-   cp ~/.mundane/mundane.db ~/.mundane/mundane.db.v1.backup
+   cp ~/.cerno/cerno.db ~/.cerno/cerno.db.v1.backup
    ```
 
 2. **Delete old database**:
    ```bash
-   rm ~/.mundane/mundane.db
+   rm ~/.cerno/cerno.db
    ```
 
-3. **Upgrade Mundane to v2.x**:
+3. **Upgrade Cerno to v2.x**:
    ```bash
-   pipx upgrade mundane
-   # or: pip install --upgrade mundane
+   pipx upgrade cerno
+   # or: pip install --upgrade cerno
    ```
 
 4. **Re-import scans**:
    ```bash
-   mundane import nessus scan1.nessus
-   mundane import nessus scan2.nessus
+   cerno import nessus scan1.nessus
+   cerno import nessus scan2.nessus
    # ... repeat for all scans
    ```
 
 5. **Verify**:
    ```bash
-   mundane scan list
-   sqlite3 ~/.mundane/mundane.db "SELECT COUNT(*) FROM scans;"
+   cerno scan list
+   sqlite3 ~/.cerno/cerno.db "SELECT COUNT(*) FROM scans;"
    ```
 
 ### Why Re-Import is Required
@@ -1009,26 +1009,26 @@ artifact_types
 
 ```bash
 # Open database in sqlite3 CLI
-sqlite3 ~/.mundane/mundane.db
+sqlite3 ~/.cerno/cerno.db
 
 # Run a query
-sqlite3 ~/.mundane/mundane.db "SELECT * FROM v_host_findings LIMIT 10;"
+sqlite3 ~/.cerno/cerno.db "SELECT * FROM v_host_findings LIMIT 10;"
 
 # Export to CSV
-sqlite3 -csv ~/.mundane/mundane.db "SELECT * FROM v_session_stats;" > sessions.csv
+sqlite3 -csv ~/.cerno/cerno.db "SELECT * FROM v_session_stats;" > sessions.csv
 ```
 
 ### Health Checks
 
 ```bash
 # Check database integrity
-sqlite3 ~/.mundane/mundane.db "PRAGMA integrity_check;"
+sqlite3 ~/.cerno/cerno.db "PRAGMA integrity_check;"
 
 # Optimize database (reclaim space)
-sqlite3 ~/.mundane/mundane.db "VACUUM;"
+sqlite3 ~/.cerno/cerno.db "VACUUM;"
 
 # Database statistics
-sqlite3 ~/.mundane/mundane.db "
+sqlite3 ~/.cerno/cerno.db "
   SELECT
     (page_count * page_size) / 1024.0 / 1024.0 as size_mb
   FROM (
@@ -1042,10 +1042,10 @@ sqlite3 ~/.mundane/mundane.db "
 
 ```bash
 # Simple copy
-cp ~/.mundane/mundane.db ~/.mundane/mundane.db.backup
+cp ~/.cerno/cerno.db ~/.cerno/cerno.db.backup
 
 # SQLite backup command (safer during active use)
-sqlite3 ~/.mundane/mundane.db ".backup ~/.mundane/mundane.db.backup"
+sqlite3 ~/.cerno/cerno.db ".backup ~/.cerno/cerno.db.backup"
 ```
 
 ---

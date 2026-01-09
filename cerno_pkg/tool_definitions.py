@@ -2,12 +2,12 @@
 Tool Definitions and Registration
 ==================================
 
-This module registers all available tools in the mundane tool registry.
+This module registers all available tools in the cerno tool registry.
 Import this module to populate the TOOL_REGISTRY with all available tools.
 
 To add a new tool:
 1. Write the command builder function in tools.py
-2. Write the workflow function in mundane.py
+2. Write the workflow function in cerno.py
 3. Add a Tool registration below with appropriate metadata
 4. The tool will automatically appear in menus
 """
@@ -132,9 +132,9 @@ def register_all_tools() -> None:
 # Auto-register tools on module import
 # ============================================================================
 # Note: Registration is deferred to avoid circular imports.
-# Call register_all_tools() explicitly after mundane module is fully loaded,
+# Call register_all_tools() explicitly after cerno module is fully loaded,
 # or use lazy registration on first access.
 # ============================================================================
 
-# DO NOT auto-register here - causes circular import with mundane.py
+# DO NOT auto-register here - causes circular import with cerno.py
 # Instead, registration happens lazily on first tool access

@@ -1,8 +1,8 @@
-"""Tests for mundane_pkg.parsing module."""
+"""Tests for cerno_pkg.parsing module."""
 
 import pytest
 
-from mundane_pkg.parsing import (
+from cerno_pkg.parsing import (
     split_host_port,
     is_ipv4,
     is_ipv6,

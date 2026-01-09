@@ -1,14 +1,14 @@
 -- ============================================================================
--- MUNDANE DATABASE SCHEMA (Version 2.1.12 - Database-First Naming)
+-- CERNO DATABASE SCHEMA (Version 2.1.12 - Database-First Naming)
 -- ============================================================================
 -- SQLite schema for tracking Nessus findings, review state, tool executions,
 -- and generated artifacts. This file serves as reference documentation.
 --
--- Database location: ~/.mundane/mundane.db (global, cross-scan queries)
+-- Database location: ~/.cerno/cerno.db (global, cross-scan queries)
 -- Schema version: 1 (single-version, normalized structure)
 --
 -- IMPORTANT: This file is DOCUMENTATION ONLY
--- - Actual schema initialization: mundane_pkg/database.py (SCHEMA_SQL_TABLES + SCHEMA_SQL_VIEWS)
+-- - Actual schema initialization: cerno_pkg/database.py (SCHEMA_SQL_TABLES + SCHEMA_SQL_VIEWS)
 -- - Schema is created directly in normalized form on first run
 -- - No migration system (breaking changes require major version bump and re-import)
 --

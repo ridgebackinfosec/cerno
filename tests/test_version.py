@@ -10,21 +10,21 @@ from unittest.mock import patch
 
 def test_version_module_exports():
     """Test that _version module exports __version__."""
-    from mundane_pkg._version import __version__
+    from cerno_pkg._version import __version__
     assert isinstance(__version__, str)
     assert len(__version__) > 0
 
 
 def test_version_available_from_package():
-    """Test that __version__ is available from mundane_pkg."""
-    import mundane_pkg
-    assert hasattr(mundane_pkg, "__version__")
-    assert isinstance(mundane_pkg.__version__, str)
+    """Test that __version__ is available from cerno_pkg."""
+    import cerno_pkg
+    assert hasattr(cerno_pkg, "__version__")
+    assert isinstance(cerno_pkg.__version__, str)
 
 
 def test_version_format():
     """Test that version follows semantic versioning format or is 'unknown'."""
-    from mundane_pkg._version import __version__
+    from cerno_pkg._version import __version__
 
     if __version__ == "unknown":
         pytest.skip("Version is unknown - acceptable fallback")
@@ -39,21 +39,21 @@ def test_version_format():
 
 def test_get_version_function():
     """Test the main get_version() function."""
-    from mundane_pkg._version import get_version
+    from cerno_pkg._version import get_version
 
     version = get_version()
     assert isinstance(version, str)
     assert len(version) > 0
 
 
-@patch('mundane_pkg._version._get_version_from_metadata')
-@patch('mundane_pkg._version._get_version_from_pyproject')
+@patch('cerno_pkg._version._get_version_from_metadata')
+@patch('cerno_pkg._version._get_version_from_pyproject')
 def test_get_version_prefers_metadata(mock_pyproject, mock_metadata):
     """Test that get_version() prefers importlib.metadata when available."""
     mock_metadata.return_value = "1.2.3"
     mock_pyproject.return_value = "9.9.9"
 
-    from mundane_pkg._version import get_version
+    from cerno_pkg._version import get_version
     # Since __version__ is cached, we need to call get_version directly
     version = get_version()
 
@@ -61,14 +61,14 @@ def test_get_version_prefers_metadata(mock_pyproject, mock_metadata):
     mock_metadata.assert_called_once()
 
 
-@patch('mundane_pkg._version._get_version_from_metadata')
-@patch('mundane_pkg._version._get_version_from_pyproject')
+@patch('cerno_pkg._version._get_version_from_metadata')
+@patch('cerno_pkg._version._get_version_from_pyproject')
 def test_get_version_falls_back_to_pyproject(mock_pyproject, mock_metadata):
     """Test that get_version() falls back to pyproject.toml if metadata fails."""
     mock_metadata.return_value = None
     mock_pyproject.return_value = "1.2.3"
 
-    from mundane_pkg._version import get_version
+    from cerno_pkg._version import get_version
     version = get_version()
 
     assert version == "1.2.3"
@@ -76,14 +76,14 @@ def test_get_version_falls_back_to_pyproject(mock_pyproject, mock_metadata):
     mock_pyproject.assert_called()
 
 
-@patch('mundane_pkg._version._get_version_from_metadata')
-@patch('mundane_pkg._version._get_version_from_pyproject')
+@patch('cerno_pkg._version._get_version_from_metadata')
+@patch('cerno_pkg._version._get_version_from_pyproject')
 def test_get_version_falls_back_to_unknown(mock_pyproject, mock_metadata):
     """Test that get_version() returns 'unknown' if all methods fail."""
     mock_metadata.return_value = None
     mock_pyproject.return_value = None
 
-    from mundane_pkg._version import get_version
+    from cerno_pkg._version import get_version
     version = get_version()
 
     assert version == "unknown"
@@ -91,7 +91,7 @@ def test_get_version_falls_back_to_unknown(mock_pyproject, mock_metadata):
 
 def test_get_version_from_pyproject_real():
     """Test that _get_version_from_pyproject() can read actual pyproject.toml."""
-    from mundane_pkg._version import _get_version_from_pyproject
+    from cerno_pkg._version import _get_version_from_pyproject
 
     version = _get_version_from_pyproject()
 
@@ -107,8 +107,8 @@ def test_get_version_from_pyproject_real():
 
 def test_version_consistency():
     """Test that version is consistent across imports."""
-    from mundane_pkg._version import __version__ as v1
-    from mundane_pkg import __version__ as v2
+    from cerno_pkg._version import __version__ as v1
+    from cerno_pkg import __version__ as v2
 
     assert v1 == v2, "Version should be consistent across imports"
 
@@ -116,10 +116,10 @@ def test_version_consistency():
 def test_banner_uses_version():
     """Test that banner.py imports and uses __version__."""
     # This is a smoke test - just verify the import doesn't fail
-    from mundane_pkg.banner import display_banner
+    from cerno_pkg.banner import display_banner
 
     # Verify banner module has access to version
-    import mundane_pkg.banner as banner_module
+    import cerno_pkg.banner as banner_module
     # The module should import _version at module level
     assert hasattr(banner_module, '__version__')
 
@@ -133,9 +133,9 @@ def test_version_in_installed_package():
     """
     try:
         from importlib.metadata import version
-        installed_version = version("mundane")
+        installed_version = version("cerno")
 
-        from mundane_pkg import __version__
+        from cerno_pkg import __version__
         assert __version__ == installed_version
     except Exception:
         pytest.skip("Package not installed in standard mode")
@@ -143,7 +143,7 @@ def test_version_in_installed_package():
 
 def test_get_version_from_metadata():
     """Test _get_version_from_metadata() helper function."""
-    from mundane_pkg._version import _get_version_from_metadata
+    from cerno_pkg._version import _get_version_from_metadata
 
     version = _get_version_from_metadata()
     # Should return string or None (depending on if package is installed)
@@ -152,10 +152,10 @@ def test_get_version_from_metadata():
 
 def test_version_cached():
     """Test that version is cached and not recalculated."""
-    from mundane_pkg._version import __version__ as v1
+    from cerno_pkg._version import __version__ as v1
 
     # Import again - should get same cached value
-    from mundane_pkg._version import __version__ as v2
+    from cerno_pkg._version import __version__ as v2
 
     # They should be the exact same object (not just equal)
     assert v1 is v2, "Version should be cached (same object)"

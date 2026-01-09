@@ -1,4 +1,4 @@
-"""Pytest configuration and shared fixtures for mundane tests."""
+"""Pytest configuration and shared fixtures for cerno tests."""
 
 import sqlite3
 import tempfile
@@ -15,7 +15,7 @@ def temp_db() -> Generator[sqlite3.Connection, None, None]:
     Yields:
         sqlite3.Connection: In-memory database connection with schema initialized
     """
-    from mundane_pkg.database import SCHEMA_SQL_TABLES, SCHEMA_SQL_VIEWS
+    from cerno_pkg.database import SCHEMA_SQL_TABLES, SCHEMA_SQL_VIEWS
 
     # Use in-memory database
     conn = sqlite3.connect(":memory:")
@@ -148,14 +148,14 @@ def reset_environment(monkeypatch):
     This ensures tests don't interfere with each other through env vars or cached config.
     """
     # Clear database-related env vars (legacy - no longer used in v2.3.0+)
-    monkeypatch.delenv("MUNDANE_RESULTS_ROOT", raising=False)
+    monkeypatch.delenv("CERNO_RESULTS_ROOT", raising=False)
     monkeypatch.delenv("NPH_RESULTS_ROOT", raising=False)
-    monkeypatch.delenv("MUNDANE_USE_DB", raising=False)
-    monkeypatch.delenv("MUNDANE_DB_ONLY", raising=False)
-    monkeypatch.delenv("MUNDANE_LOG", raising=False)
-    monkeypatch.delenv("MUNDANE_DEBUG", raising=False)
+    monkeypatch.delenv("CERNO_USE_DB", raising=False)
+    monkeypatch.delenv("CERNO_DB_ONLY", raising=False)
+    monkeypatch.delenv("CERNO_LOG", raising=False)
+    monkeypatch.delenv("CERNO_DEBUG", raising=False)
     monkeypatch.delenv("NO_COLOR", raising=False)
 
     # Reset cached config values
-    from mundane_pkg.constants import reset_results_root_cache
+    from cerno_pkg.constants import reset_results_root_cache
     reset_results_root_cache()

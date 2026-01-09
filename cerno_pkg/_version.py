@@ -1,4 +1,4 @@
-"""Version management for mundane package.
+"""Version management for cerno package.
 
 Provides a hybrid approach to reading version:
 1. Try importlib.metadata (for installed packages)
@@ -18,7 +18,7 @@ def _get_version_from_metadata() -> Optional[str]:
     """
     try:
         from importlib.metadata import version
-        return version("mundane")
+        return version("cerno")
     except Exception:
         # Package not installed or importlib.metadata not available
         return None
@@ -35,8 +35,8 @@ def _get_version_from_pyproject() -> Optional[str]:
 
         # Find pyproject.toml relative to this file
         current_file = Path(__file__).resolve()
-        pkg_dir = current_file.parent  # mundane_pkg
-        repo_root = pkg_dir.parent  # mundane repo root
+        pkg_dir = current_file.parent  # cerno_pkg
+        repo_root = pkg_dir.parent  # cerno repo root
         pyproject_path = repo_root / "pyproject.toml"
 
         if not pyproject_path.exists():
@@ -51,7 +51,7 @@ def _get_version_from_pyproject() -> Optional[str]:
 
 
 def get_version() -> str:
-    """Get mundane version from the best available source.
+    """Get cerno version from the best available source.
 
     Priority:
     1. Installed package metadata (importlib.metadata)

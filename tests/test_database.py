@@ -1,4 +1,4 @@
-"""Tests for mundane_pkg.database module."""
+"""Tests for cerno_pkg.database module."""
 
 import sqlite3
 import tempfile
@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from mundane_pkg.database import (
+from cerno_pkg.database import (
     get_connection,
     db_transaction,
     initialize_database,

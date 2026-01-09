@@ -1,4 +1,4 @@
-"""ORM models and CRUD operations for mundane database.
+"""ORM models and CRUD operations for cerno database.
 
 This module provides dataclass-based models and database operations for
 tracking findings, review state, tool executions, and artifacts.

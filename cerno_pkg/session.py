@@ -1,4 +1,4 @@
-"""Session persistence for mundane review sessions.
+"""Session persistence for cerno review sessions.
 
 Database-only mode: all session state stored in SQLite database.
 """
@@ -14,7 +14,7 @@ from .logging_setup import log_error, log_info
 @dataclass
 class SessionState:
     """
-    Represents the state of a mundane review session.
+    Represents the state of a cerno review session.
 
     In database-only mode, file lists are replaced with counts queried
     from the findings table review_state field.
@@ -233,7 +233,7 @@ def _db_end_session(scan_id: int) -> None:
 
 
 # ===================================================================
-# Scan Summary and Statistics Display (moved from mundane.py)
+# Scan Summary and Statistics Display (moved from cerno.py)
 # ===================================================================
 
 

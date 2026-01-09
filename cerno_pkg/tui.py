@@ -1,4 +1,4 @@
-"""Terminal User Interface (TUI) components for mundane.
+"""Terminal User Interface (TUI) components for cerno.
 
 This module handles interactive navigation, menus, and action handling:
 - Generic menu selectors (choose_from_list, parse_severity_selection)
@@ -577,11 +577,11 @@ def handle_finding_list_actions(
 
 
 # Note: browse_file_list and browse_workflow_groups are complex, large functions
-# They will be implemented in mundane.py for now and moved in Phase 6 during cleanup
+# They will be implemented in cerno.py for now and moved in Phase 6 during cleanup
 
 
 # ===================================================================
 # Workflow Navigation
 # ===================================================================
 
-# Note: browse_workflow_groups will be moved from mundane.py in Phase 6
+# Note: browse_workflow_groups will be moved from cerno.py in Phase 6

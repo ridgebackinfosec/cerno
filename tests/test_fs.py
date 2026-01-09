@@ -1,4 +1,4 @@
-"""Tests for mundane_pkg.fs module."""
+"""Tests for cerno_pkg.fs module."""
 
 import os
 from pathlib import Path
@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from mundane_pkg.fs import (
+from cerno_pkg.fs import (
     mark_review_complete,
     build_results_paths,
     pretty_severity_label,
@@ -19,9 +19,9 @@ from mundane_pkg.fs import (
 @pytest.fixture(autouse=True)
 def mock_db_for_fs(monkeypatch, temp_db):
     """Mock database connection for fs module tests."""
-    monkeypatch.setenv("MUNDANE_USE_DB", "1")
+    monkeypatch.setenv("CERNO_USE_DB", "1")
 
-    import mundane_pkg.database
+    import cerno_pkg.database
 
     class UnclosableConnection:
         """Wrapper that prevents connection from being closed."""
@@ -42,7 +42,7 @@ def mock_db_for_fs(monkeypatch, temp_db):
     def mock_get_connection(database_path=None):
         return UnclosableConnection(temp_db)
 
-    monkeypatch.setattr(mundane_pkg.database, "get_connection", mock_get_connection)
+    monkeypatch.setattr(cerno_pkg.database, "get_connection", mock_get_connection)
 
 @pytest.mark.skip(reason="is_review_complete removed - review state is now DB-only")
 class TestIsReviewComplete:
@@ -74,8 +74,8 @@ class TestBuildResultsPaths:
     def test_build_results_paths_basic(self, temp_dir, monkeypatch):
         """Test building result paths."""
         # Mock get_results_root() to return temp directory
-        import mundane_pkg.constants
-        monkeypatch.setattr(mundane_pkg.constants, "_results_root_cache", temp_dir / "results")
+        import cerno_pkg.constants
+        monkeypatch.setattr(cerno_pkg.constants, "_results_root_cache", temp_dir / "results")
 
         scan_dir = temp_dir / "my_scan"
         sev_dir = scan_dir / "4_Critical"
@@ -93,8 +93,8 @@ class TestBuildResultsPaths:
     def test_build_results_paths_creates_dirs(self, temp_dir, monkeypatch):
         """Test that output directory is created."""
         # Mock get_results_root() to return temp directory
-        import mundane_pkg.constants
-        monkeypatch.setattr(mundane_pkg.constants, "_results_root_cache", temp_dir / "results")
+        import cerno_pkg.constants
+        monkeypatch.setattr(cerno_pkg.constants, "_results_root_cache", temp_dir / "results")
 
         scan_dir = temp_dir / "scan"
         sev_dir = scan_dir / "3_High"

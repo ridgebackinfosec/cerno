@@ -1,8 +1,8 @@
 """
-Tool Registry for Mundane
+Tool Registry for Cerno
 ==========================
 
-This module provides a centralized registry for all available tools in mundane.
+This module provides a centralized registry for all available tools in cerno.
 The registry pattern makes adding and removing tools trivial - just add/remove
 a Tool entry to the TOOL_REGISTRY.
 
@@ -13,7 +13,7 @@ Architecture:
 
 Adding a New Tool:
 1. Write command builder in tools.py (e.g., build_mytool_cmd)
-2. Write workflow function in mundane.py (e.g., _build_mytool_workflow)
+2. Write workflow function in cerno.py (e.g., _build_mytool_workflow)
 3. Add Tool entry to TOOL_REGISTRY with references to above functions
 """
 
@@ -25,7 +25,7 @@ from pathlib import Path
 @dataclass
 class Tool:
     """
-    Represents a tool available in mundane.
+    Represents a tool available in cerno.
 
     Attributes:
         id: Unique identifier (used in dispatch logic)
@@ -65,7 +65,7 @@ class Tool:
 #
 # Lazy Loading:
 # The registry is populated on first access to avoid circular import issues
-# with mundane.py. Call _ensure_registered() before accessing the registry.
+# with cerno.py. Call _ensure_registered() before accessing the registry.
 # ============================================================================
 
 TOOL_REGISTRY: dict[str, Tool] = {}
@@ -77,7 +77,7 @@ def _ensure_registered() -> None:
     Ensure tools are registered. Called automatically on first registry access.
 
     This lazy initialization avoids circular import issues where:
-    mundane.py → mundane_pkg → tool_definitions → mundane.py (circular!)
+    cerno.py → cerno_pkg → tool_definitions → cerno.py (circular!)
 
     Instead, tools are registered on first access after all modules are loaded.
     """

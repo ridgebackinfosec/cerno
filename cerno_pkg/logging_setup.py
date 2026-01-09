@@ -2,7 +2,7 @@
 
 This module sets up file-based logging with configurable paths and levels
 via config.yaml:
-  - log_path: Path to log file (default: ~/.mundane/mundane.log)
+  - log_path: Path to log file (default: ~/.cerno/cerno.log)
   - debug_logging: Enable DEBUG level (default: False)
 
 Prefers loguru if available, falls back to stdlib logging otherwise.
@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Callable, TypeVar, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .config import MundaneConfig
+    from .config import CernoConfig
 
 
 # ========== Logger backend selection ==========
@@ -52,14 +52,14 @@ def env_truthy(name: str, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
-def init_logger(config: Optional["MundaneConfig"] = None) -> None:
+def init_logger(config: Optional["CernoConfig"] = None) -> None:
     """Initialize the logging system from configuration.
 
     Args:
         config: Configuration object. If None, uses inline defaults.
 
     Configures file logging with:
-    - Log path from config (default: ~/.mundane/mundane.log)
+    - Log path from config (default: ~/.cerno/cerno.log)
     - Log level from config (DEBUG if debug_logging=True, else INFO)
     - Rotation at 1 MB with 3 file retention (loguru only)
 
@@ -70,10 +70,10 @@ def init_logger(config: Optional["MundaneConfig"] = None) -> None:
 
     # Get config values with defaults
     if config:
-        log_path = config.log_path or str(Path.home() / ".mundane" / "mundane.log")
+        log_path = config.log_path or str(Path.home() / ".cerno" / "cerno.log")
         debug = config.debug_logging
     else:
-        log_path = str(Path.home() / ".mundane" / "mundane.log")
+        log_path = str(Path.home() / ".cerno" / "cerno.log")
         debug = False
 
     level = "DEBUG" if debug else "INFO"
@@ -229,7 +229,7 @@ def log_timing(fn: F) -> F:
 
 
 # ========== Public API ==========
-def setup_logging(config: Optional["MundaneConfig"] = None) -> None:
+def setup_logging(config: Optional["CernoConfig"] = None) -> None:
     """Public wrapper to initialize logging from config.
 
     Args:

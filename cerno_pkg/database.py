@@ -1,10 +1,10 @@
-"""SQLite database connection and management for mundane.
+"""SQLite database connection and management for cerno.
 
 This module provides SQLite connection management, schema initialization,
 and transaction helpers for tracking findings, review state, tool executions,
 and artifacts.
 
-Database location: ~/.mundane/mundane.db (global, cross-scan queries)
+Database location: ~/.cerno/cerno.db (global, cross-scan queries)
 """
 
 from __future__ import annotations
@@ -21,14 +21,14 @@ from .logging_setup import log_error, log_info
 # ========== Database Configuration ==========
 
 def get_database_path() -> Path:
-    """Get path to mundane database file.
+    """Get path to cerno database file.
 
     Returns:
-        Path to ~/.mundane/mundane.db
+        Path to ~/.cerno/cerno.db
     """
-    db_dir = Path.home() / ".mundane"
+    db_dir = Path.home() / ".cerno"
     db_dir.mkdir(parents=True, exist_ok=True)
-    return db_dir / "mundane.db"
+    return db_dir / "cerno.db"
 
 
 DATABASE_PATH = get_database_path()
@@ -558,5 +558,5 @@ def check_database_health(database_path: Optional[Path] = None) -> bool:
 # ========== Auto-initialization ==========
 
 # Note: Database initialization removed from module import to prevent premature logging.
-# Database is now initialized explicitly in mundane.py:main_callback() after logger setup.
+# Database is now initialized explicitly in cerno.py:main_callback() after logger setup.
 # Call initialize_database() from your main entry point after init_logger().

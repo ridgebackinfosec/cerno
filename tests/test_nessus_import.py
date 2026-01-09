@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from mundane_pkg.nessus_import import (
+from cerno_pkg.nessus_import import (
     ExportResult,
     cvss_to_sev,
     import_nessus_file,
@@ -286,7 +286,7 @@ class TestNessusImport:
         assert result.plugins_exported > 0
 
         # Check database records were created
-        from mundane_pkg.models import Scan, Finding
+        from cerno_pkg.models import Scan, Finding
         scan = Scan.get_by_name(result.scan_name, temp_db)
         assert scan is not None
         assert scan.scan_name == result.scan_name
@@ -295,7 +295,7 @@ class TestNessusImport:
         # Use get_by_scan_with_plugin to filter by severity_int via JOIN
         for sev_int in result.severities.keys():
             # Construct severity_dir format for filtering (e.g., "4_Critical")
-            from mundane_pkg.nessus_import import severity_label_from_int
+            from cerno_pkg.nessus_import import severity_label_from_int
             sev_label = severity_label_from_int(sev_int)
             sev_dir = f"{sev_int}_{sev_label}"
 
@@ -485,9 +485,9 @@ class TestNessusImportDatabaseIntegration:
     @pytest.fixture(autouse=True)
     def mock_db_for_export(self, monkeypatch, temp_db):
         """Mock database connection for export tests."""
-        monkeypatch.setenv("MUNDANE_USE_DB", "1")
+        monkeypatch.setenv("CERNO_USE_DB", "1")
 
-        import mundane_pkg.database
+        import cerno_pkg.database
 
         class UnclosableConnection:
             """Wrapper that prevents connection from being closed."""
@@ -508,7 +508,7 @@ class TestNessusImportDatabaseIntegration:
         def mock_get_connection(database_path=None):
             return UnclosableConnection(temp_db)
 
-        monkeypatch.setattr(mundane_pkg.database, "get_connection", mock_get_connection)
+        monkeypatch.setattr(cerno_pkg.database, "get_connection", mock_get_connection)
 
     @pytest.mark.integration
     def test_export_populates_database(self, minimal_nessus_fixture, temp_dir, temp_db):
@@ -596,9 +596,9 @@ class TestCVEAndMetasploitExtraction:
     @pytest.fixture(autouse=True)
     def mock_db_for_cve_tests(self, monkeypatch, temp_db):
         """Mock database connection for CVE extraction tests."""
-        monkeypatch.setenv("MUNDANE_USE_DB", "1")
+        monkeypatch.setenv("CERNO_USE_DB", "1")
 
-        import mundane_pkg.database
+        import cerno_pkg.database
 
         class UnclosableConnection:
             """Wrapper that prevents connection from being closed."""
@@ -619,7 +619,7 @@ class TestCVEAndMetasploitExtraction:
         def mock_get_connection(database_path=None):
             return UnclosableConnection(temp_db)
 
-        monkeypatch.setattr(mundane_pkg.database, "get_connection", mock_get_connection)
+        monkeypatch.setattr(cerno_pkg.database, "get_connection", mock_get_connection)
 
     @pytest.fixture
     def nessus_with_cves_and_msf(self, temp_dir) -> Path:
@@ -657,7 +657,7 @@ class TestCVEAndMetasploitExtraction:
     @pytest.mark.integration
     def test_import_extracts_cves_from_xml(self, nessus_with_cves_and_msf, temp_dir, temp_db):
         """Verify CVEs are extracted from .nessus XML during import."""
-        from mundane_pkg.models import Plugin
+        from cerno_pkg.models import Plugin
 
         result = import_nessus_file(
             nessus_with_cves_and_msf,
@@ -683,7 +683,7 @@ class TestCVEAndMetasploitExtraction:
     @pytest.mark.integration
     def test_import_extracts_metasploit_names_from_xml(self, nessus_with_cves_and_msf, temp_dir, temp_db):
         """Verify Metasploit module names are extracted from .nessus XML during import."""
-        from mundane_pkg.models import Plugin
+        from cerno_pkg.models import Plugin
 
         result = import_nessus_file(
             nessus_with_cves_and_msf,
@@ -716,7 +716,7 @@ class TestCVEAndMetasploitExtraction:
     @pytest.mark.integration
     def test_import_handles_plugins_without_cves(self, nessus_with_cves_and_msf, temp_dir, temp_db):
         """Verify plugins without CVEs store None, not empty list."""
-        from mundane_pkg.models import Plugin
+        from cerno_pkg.models import Plugin
 
         result = import_nessus_file(
             nessus_with_cves_and_msf,
@@ -733,7 +733,7 @@ class TestCVEAndMetasploitExtraction:
     @pytest.mark.integration
     def test_import_handles_plugins_without_metasploit_names(self, nessus_with_cves_and_msf, temp_dir, temp_db):
         """Verify plugins without Metasploit names store None, not empty list."""
-        from mundane_pkg.models import Plugin
+        from cerno_pkg.models import Plugin
 
         result = import_nessus_file(
             nessus_with_cves_and_msf,
@@ -752,7 +752,7 @@ class TestCVEAndMetasploitExtraction:
     @pytest.mark.skip(reason="Re-import behavior needs investigation - INSERT OR REPLACE should work but test fails")
     def test_reimport_overwrites_cves_and_metasploit_names(self, nessus_with_cves_and_msf, temp_dir, temp_db):
         """Verify CVEs and Metasploit names are refreshed from XML on re-import."""
-        from mundane_pkg.models import Plugin
+        from cerno_pkg.models import Plugin
 
         # First import
         import_nessus_file(

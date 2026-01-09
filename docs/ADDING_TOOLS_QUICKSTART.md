@@ -1,6 +1,6 @@
 # Quick Start: Adding a Tool
 
-Add a new tool to mundane in **3 simple steps**.
+Add a new tool to cerno in **3 simple steps**.
 
 **See [TOOL_SYSTEM_GUIDE.md](TOOL_SYSTEM_GUIDE.md) for complete documentation.**
 
@@ -15,7 +15,7 @@ Add a new tool to mundane in **3 simple steps**.
 
 ## 3-Step Process
 
-### Step 1: Command Builder (`mundane_pkg/tools.py`)
+### Step 1: Command Builder (`cerno_pkg/tools.py`)
 
 ```python
 def build_mytool_cmd(param1: str, output: Path) -> list[str]:
@@ -23,13 +23,13 @@ def build_mytool_cmd(param1: str, output: Path) -> list[str]:
     return ["mytool", "--flag", param1, "-o", str(output)]
 ```
 
-### Step 2: Workflow (`mundane.py`)
+### Step 2: Workflow (`cerno.py`)
 
 ```python
 def _build_mytool_workflow(ctx: ToolContext) -> Optional[CommandResult]:
     """Build mytool command through prompts."""
-    from mundane_pkg.tool_context import CommandResult
-    from mundane_pkg.tools import build_mytool_cmd
+    from cerno_pkg.tool_context import CommandResult
+    from cerno_pkg.tools import build_mytool_cmd
 
     try:
         param1 = input("Enter param1: ").strip()
@@ -50,11 +50,11 @@ def _build_mytool_workflow(ctx: ToolContext) -> Optional[CommandResult]:
     )
 ```
 
-### Step 3: Register (`mundane_pkg/tool_definitions.py`)
+### Step 3: Register (`cerno_pkg/tool_definitions.py`)
 
 ```python
 def register_all_tools() -> None:
-    import mundane as mundane_module
+    import cerno as cerno_module
     from . import tools
 
     # ... existing tools ...
@@ -64,7 +64,7 @@ def register_all_tools() -> None:
             id="mytool",
             name="mytool",
             description="Brief description",
-            workflow_builder=mundane_module._build_mytool_workflow,
+            workflow_builder=cerno_module._build_mytool_workflow,
             command_builder=tools.build_mytool_cmd,
             requires=["mytool"],
             menu_order=5,

@@ -3,8 +3,8 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "mundane"
-version = "2.4.10"
+name = "cerno"
+version = "1.0.0"
 description = "Modern CLI for Nessus findings review and security tool orchestration"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -49,19 +49,19 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/ridgebackinfosec/mundane"
-Repository = "https://github.com/ridgebackinfosec/mundane"
-Issues = "https://github.com/ridgebackinfosec/mundane/issues"
+Homepage = "https://github.com/ridgebackinfosec/cerno"
+Repository = "https://github.com/ridgebackinfosec/cerno"
+Issues = "https://github.com/ridgebackinfosec/cerno/issues"
 
 [project.scripts]
-mundane = "mundane:app"
+cerno = "cerno:app"
 
 [tool.setuptools]
-packages = ["mundane_pkg"]
-py-modules = ["mundane"]
+packages = ["cerno_pkg"]
+py-modules = ["cerno"]
 
 [tool.setuptools.package-data]
-mundane_pkg = ["*.yaml"]
+cerno_pkg = ["*.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -72,7 +72,7 @@ addopts = [
     "-v",
     "--strict-markers",
     "--tb=short",
-    "--cov=mundane_pkg",
+    "--cov=cerno_pkg",
     "--cov-report=term-missing",
     "--cov-report=html",
     "--cov-report=xml",
@@ -85,7 +85,7 @@ markers = [
 timeout = 300
 
 [tool.coverage.run]
-source = ["mundane_pkg"]
+source = ["cerno_pkg"]
 omit = ["tests/*", "*/test_*.py"]
 
 [tool.coverage.report]

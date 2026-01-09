@@ -1,11 +1,11 @@
-"""Tests for mundane_pkg.ops module."""
+"""Tests for cerno_pkg.ops module."""
 
 import tempfile
 from pathlib import Path
 
 import pytest
 
-from mundane_pkg.ops import (
+from cerno_pkg.ops import (
     ExecutionMetadata,
     log_tool_execution,
     log_artifact,
@@ -136,7 +136,7 @@ class TestLogToolExecution:
     @pytest.mark.integration
     def test_log_execution_with_session_link(self, temp_db):
         """Test logging execution linked to a session."""
-        from mundane_pkg.models import Scan
+        from cerno_pkg.models import Scan
 
         # Create scan and session
         scan = Scan(scan_name="test_scan", export_root="/tmp/test")
@@ -177,7 +177,7 @@ class TestLogToolExecution:
     @pytest.mark.skip(reason="v1.9.0: file_path column removed, cannot link executions by path")
     def test_log_execution_with_file_link(self, temp_db, temp_dir):
         """Test logging execution linked to a plugin file."""
-        from mundane_pkg.models import Scan, Plugin, Finding
+        from cerno_pkg.models import Scan, Plugin, Finding
 
         # Create dependencies
         scan = Scan(scan_name="test_scan", export_root="/tmp/test")
@@ -227,7 +227,7 @@ class TestLogArtifact:
 
     def test_log_artifact_basic(self, temp_db, temp_dir):
         """Test logging a basic artifact."""
-        from mundane_pkg.models import ToolExecution, now_iso
+        from cerno_pkg.models import ToolExecution, now_iso
 
         # Create tool execution first
         execution = ToolExecution(
@@ -270,7 +270,7 @@ class TestLogArtifact:
 
     def test_log_artifact_with_metadata(self, temp_db, temp_dir):
         """Test logging artifact with metadata."""
-        from mundane_pkg.models import ToolExecution, now_iso
+        from cerno_pkg.models import ToolExecution, now_iso
         import json
 
         execution = ToolExecution(
@@ -309,7 +309,7 @@ class TestLogArtifact:
 
     def test_log_artifact_nonexistent_file(self, temp_db, temp_dir):
         """Test logging artifact for nonexistent file."""
-        from mundane_pkg.models import ToolExecution, now_iso
+        from cerno_pkg.models import ToolExecution, now_iso
 
         execution = ToolExecution(
             tool_name="nmap",
@@ -347,7 +347,7 @@ class TestLogArtifactsForNmap:
 
     def test_log_nmap_artifacts_all_formats(self, temp_db, temp_dir):
         """Test logging all nmap output formats."""
-        from mundane_pkg.models import ToolExecution, now_iso
+        from cerno_pkg.models import ToolExecution, now_iso
 
         execution = ToolExecution(
             tool_name="nmap",
@@ -379,7 +379,7 @@ class TestLogArtifactsForNmap:
 
     def test_log_nmap_artifacts_partial(self, temp_db, temp_dir):
         """Test logging when only some nmap files exist."""
-        from mundane_pkg.models import ToolExecution, now_iso
+        from cerno_pkg.models import ToolExecution, now_iso
 
         execution = ToolExecution(
             tool_name="nmap",
@@ -408,7 +408,7 @@ class TestLogArtifactsForNmap:
 
     def test_log_nmap_artifacts_none_exist(self, temp_db, temp_dir):
         """Test logging when no nmap files exist."""
-        from mundane_pkg.models import ToolExecution, now_iso
+        from cerno_pkg.models import ToolExecution, now_iso
 
         execution = ToolExecution(
             tool_name="nmap",
@@ -428,7 +428,7 @@ class TestLogArtifactsForNmap:
 
     def test_log_nmap_artifacts_with_metadata(self, temp_db, temp_dir):
         """Test logging nmap artifacts with metadata."""
-        from mundane_pkg.models import ToolExecution, now_iso
+        from cerno_pkg.models import ToolExecution, now_iso
 
         execution = ToolExecution(
             tool_name="nmap",
@@ -465,14 +465,14 @@ class TestCommandAvailability:
 
     def test_require_cmd_available(self):
         """Test require_cmd with an available command."""
-        from mundane_pkg.ops import require_cmd
+        from cerno_pkg.ops import require_cmd
 
         # Python should always be available in test environment
         require_cmd("python")  # Should not raise
 
     def test_require_cmd_unavailable(self):
         """Test require_cmd with unavailable command."""
-        from mundane_pkg.ops import require_cmd
+        from cerno_pkg.ops import require_cmd
 
         # This should exit
         with pytest.raises(SystemExit) as exc_info:
@@ -482,7 +482,7 @@ class TestCommandAvailability:
 
     def test_resolve_cmd_first_available(self):
         """Test resolve_cmd returns first available command."""
-        from mundane_pkg.ops import resolve_cmd
+        from cerno_pkg.ops import resolve_cmd
 
         # Python should be available, fake command won't be
         result = resolve_cmd(["python", "fake-command-xyz"])
@@ -490,28 +490,28 @@ class TestCommandAvailability:
 
     def test_resolve_cmd_second_available(self):
         """Test resolve_cmd returns second when first unavailable."""
-        from mundane_pkg.ops import resolve_cmd
+        from cerno_pkg.ops import resolve_cmd
 
         result = resolve_cmd(["fake-command-xyz", "python"])
         assert result == "python"
 
     def test_resolve_cmd_none_available(self):
         """Test resolve_cmd returns None when no commands available."""
-        from mundane_pkg.ops import resolve_cmd
+        from cerno_pkg.ops import resolve_cmd
 
         result = resolve_cmd(["fake-cmd-1", "fake-cmd-2", "fake-cmd-3"])
         assert result is None
 
     def test_resolve_cmd_empty_list(self):
         """Test resolve_cmd with empty list."""
-        from mundane_pkg.ops import resolve_cmd
+        from cerno_pkg.ops import resolve_cmd
 
         result = resolve_cmd([])
         assert result is None
 
     def test_root_or_sudo_available(self):
         """Test checking for root/sudo availability."""
-        from mundane_pkg.ops import root_or_sudo_available
+        from cerno_pkg.ops import root_or_sudo_available
         import shutil
 
         result = root_or_sudo_available()

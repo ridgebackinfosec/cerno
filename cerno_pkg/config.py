@@ -1,6 +1,6 @@
-"""User configuration management for mundane.
+"""User configuration management for cerno.
 
-This module handles loading and managing user preferences from ~/.mundane/config.yaml.
+This module handles loading and managing user preferences from ~/.cerno/config.yaml.
 Configuration is optional - the application works with defaults if no config file exists.
 """
 
@@ -15,8 +15,8 @@ import yaml
 
 
 @dataclass
-class MundaneConfig:
-    """User configuration for mundane application.
+class CernoConfig:
+    """User configuration for cerno application.
 
     All settings are optional and will fall back to application defaults if not specified.
     """
@@ -48,7 +48,7 @@ class MundaneConfig:
 
     # Logging preferences
     log_path: Optional[str] = None
-    """Path to log file (default: ~/.mundane/mundane.log)."""
+    """Path to log file (default: ~/.cerno/cerno.log)."""
 
     debug_logging: bool = False
     """Enable DEBUG level logging (default: False)."""
@@ -65,19 +65,19 @@ def get_config_path() -> Path:
     """Get the path to the user's config file.
 
     Returns:
-        Path to ~/.mundane/config.yaml
+        Path to ~/.cerno/config.yaml
     """
-    config_dir = Path.home() / ".mundane"
+    config_dir = Path.home() / ".cerno"
     return config_dir / "config.yaml"
 
 
-def load_config() -> MundaneConfig:
-    """Load user configuration from ~/.mundane/config.yaml.
+def load_config() -> CernoConfig:
+    """Load user configuration from ~/.cerno/config.yaml.
 
     Auto-creates config file with defaults if it doesn't exist.
 
     Returns:
-        MundaneConfig object with user preferences, or default config if file doesn't exist.
+        CernoConfig object with user preferences, or default config if file doesn't exist.
     """
     config_path = get_config_path()
 
@@ -93,10 +93,10 @@ def load_config() -> MundaneConfig:
 
         if not data:
             # Note: Don't log here since logger isn't initialized yet
-            return MundaneConfig()
+            return CernoConfig()
 
         # Extract config values, using None for missing keys
-        config = MundaneConfig(
+        config = CernoConfig(
             results_root=data.get("results_root"),
             default_page_size=data.get("default_page_size"),
             top_ports_count=data.get("top_ports_count"),
@@ -116,11 +116,11 @@ def load_config() -> MundaneConfig:
     except Exception as e:
         # Note: Don't log here since logger isn't initialized yet
         # Silently fall back to defaults if config load fails
-        return MundaneConfig()
+        return CernoConfig()
 
 
-def save_config(config: MundaneConfig) -> bool:
-    """Save user configuration to ~/.mundane/config.yaml.
+def save_config(config: CernoConfig) -> bool:
+    """Save user configuration to ~/.cerno/config.yaml.
 
     Args:
         config: Configuration object to save
@@ -171,15 +171,15 @@ def create_example_config() -> bool:
     """
     # Create default config - only set boolean defaults explicitly
     # Optional fields (None) will show as "Default" in config show
-    default_config = MundaneConfig(
-        results_root=None,  # Uses ~/.mundane/artifacts by default
+    default_config = CernoConfig(
+        results_root=None,  # Uses ~/.cerno/artifacts by default
         default_page_size=None,  # auto
         top_ports_count=None,  # Uses DEFAULT_TOP_PORTS (5)
         custom_workflows_path=None,
         default_tool=None,
         default_netexec_protocol=None,
         nmap_default_profile=None,
-        log_path=None,  # Uses ~/.mundane/mundane.log by default
+        log_path=None,  # Uses ~/.cerno/cerno.log by default
         debug_logging=False,
         no_color=False,
         term_override=None,

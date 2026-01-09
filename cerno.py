@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Mundane - Modern CLI for Nessus finding host review and security tool orchestration.
+Cerno - Modern CLI for Nessus finding host review and security tool orchestration.
 
 This tool provides an interactive TUI for reviewing Nessus finding exports,
 running security tools (nmap, netexec, metasploit), and tracking progress.
 """
 
-# --- import path shim (supports both `python mundane.py` and `python -m mundane`) ---
+# --- import path shim (supports both `python cerno.py` and `python -m cerno`) ---
 import sys
 from pathlib import Path
 
@@ -14,7 +14,7 @@ _here = Path(__file__).resolve().parent
 if str(_here) not in sys.path:
     sys.path.insert(0, str(_here))
 
-from mundane_pkg import (
+from cerno_pkg import (
     # version
     __version__,
     # ops
@@ -130,8 +130,8 @@ from collections import Counter
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from mundane_pkg.models import Plugin, Finding
-    from mundane_pkg.config import MundaneConfig
+    from cerno_pkg.models import Plugin, Finding
+    from cerno_pkg.config import CernoConfig
 
 # === Third-party imports ===
 import click
@@ -147,7 +147,7 @@ from rich.table import Table
 from rich.traceback import install as rich_tb_install
 
 # Create a console for the interactive flow (configured with no_color setting)
-from mundane_pkg.ansi import get_console
+from cerno_pkg.ansi import get_console
 _console_global = get_console()
 
 # Install pretty tracebacks, but suppress for Typer/Click exit exceptions
@@ -157,11 +157,11 @@ rich_tb_install(show_locals=False, suppress=["typer", "click"])
 import contextvars
 from typing import Optional as Opt
 
-_config_context: contextvars.ContextVar[Opt['MundaneConfig']] = contextvars.ContextVar('config', default=None)
+_config_context: contextvars.ContextVar[Opt['CernoConfig']] = contextvars.ContextVar('config', default=None)
 
 def get_current_config():
     """Get config from context or load fresh."""
-    from mundane_pkg import MundaneConfig, load_config
+    from cerno_pkg import CernoConfig, load_config
     config = _config_context.get()
     if config is None:
         config = load_config()
@@ -169,7 +169,7 @@ def get_current_config():
 
 
 # === CLI functions start here ===
-# All helper functions have been moved to mundane_pkg modules
+# All helper functions have been moved to cerno_pkg modules
 
 
 
@@ -185,7 +185,7 @@ def browse_workflow_groups(
     reviewed_total: List[str],
     completed_total: List[str],
     workflow_mapper,
-    config: Optional["MundaneConfig"] = None,
+    config: Optional["CernoConfig"] = None,
 ) -> None:
     """
     Browse workflow groups and findings within selected workflow.
@@ -205,7 +205,7 @@ def browse_workflow_groups(
     """
     # Load config if not provided (defensive programming)
     if config is None:
-        from mundane_pkg.config import load_config
+        from cerno_pkg.config import load_config
         config = load_config()
 
     scan_dir = Path(scan.export_root) / scan.scan_name
@@ -215,7 +215,7 @@ def browse_workflow_groups(
 
     while True:
         # Build table of workflows
-        from mundane_pkg import breadcrumb
+        from cerno_pkg import breadcrumb
         bc = breadcrumb(scan_dir.name, "Workflow Mapped Findings")
         header(bc if bc else "Workflow Mapped Findings - Select Workflow")
 
@@ -286,7 +286,7 @@ def browse_workflow_groups(
 
         # Refresh workflow files from database to get updated review_state values
         # This ensures the statistics display shows current counts after marking files reviewed
-        from mundane_pkg.models import Finding
+        from cerno_pkg.models import Finding
         refreshed_files = Finding.get_by_scan_with_plugin(
             scan_id=scan.scan_id,
             plugin_ids=plugin_ids if plugin_ids else None,
@@ -313,7 +313,7 @@ def browse_file_list(
     has_metasploit_filter: Optional[bool] = None,
     plugin_ids_filter: Optional[list[int]] = None,
     severity_dirs_filter: Optional[list[str]] = None,
-    config: Optional["MundaneConfig"] = None,
+    config: Optional["CernoConfig"] = None,
 ) -> None:
     """
     Browse and interact with file list (unified for severity and MSF modes).
@@ -333,11 +333,11 @@ def browse_file_list(
         has_metasploit_filter: Optional filter for metasploit plugins
         plugin_ids_filter: Optional list of specific plugin IDs to include
     """
-    from mundane_pkg.models import Finding, Scan
+    from cerno_pkg.models import Finding, Scan
 
     # Load config if not provided (defensive programming)
     if config is None:
-        from mundane_pkg.config import load_config
+        from cerno_pkg.config import load_config
         config = load_config()
 
     file_filter = ""
@@ -368,7 +368,7 @@ def browse_file_list(
             Tuple of (host_count, ports_string) - computed from v_finding_stats view
         """
         # Query v_finding_stats view for computed counts (schema v2.1.12+)
-        from mundane_pkg.database import query_one, get_connection
+        from cerno_pkg.database import query_one, get_connection
         with get_connection() as conn:
             row = query_one(
                 conn,
@@ -428,7 +428,7 @@ def browse_file_list(
         page_items = display[start:end]
 
         try:
-            from mundane_pkg import breadcrumb
+            from cerno_pkg import breadcrumb
             filter_info = f"filtered: '{file_filter}'" if file_filter else "Findings"
             bc = breadcrumb(scan_dir.name, severity_label, filter_info)
             header(bc if bc else f"Severity: {severity_label}")
@@ -502,7 +502,7 @@ def browse_file_list(
             continue
         elif action_type == "mark_all":
             # Always require confirmation for bulk operations
-            from mundane_pkg.fs import mark_review_complete
+            from cerno_pkg.fs import mark_review_complete
             from rich.prompt import Confirm
 
             try:
@@ -616,7 +616,7 @@ def show_session_statistics(
     header("Session Statistics")
 
     # Overall stats table
-    from mundane_pkg.ansi import style_if_enabled
+    from cerno_pkg.ansi import style_if_enabled
     overall_table = Table(show_header=True, header_style=style_if_enabled("bold cyan"))
     overall_table.add_column("Metric", style=style_if_enabled("cyan"))
     overall_table.add_column("Count", justify="right", style=style_if_enabled("yellow"))
@@ -636,8 +636,8 @@ def show_session_statistics(
 
         # Use database if available, otherwise fall back to filesystem
         if scan_id is not None:
-            from mundane_pkg.models import Finding
-            from mundane_pkg.database import db_transaction, query_all
+            from cerno_pkg.models import Finding
+            from cerno_pkg.database import db_transaction, query_all
 
             # Query database for completed findings grouped by severity
             with db_transaction() as conn:
@@ -686,7 +686,7 @@ def main(args: types.SimpleNamespace) -> None:
     Args:
         args: Command-line arguments namespace containing:
             - export_root (Optional[Path]): DEPRECATED. Path to export directory.
-              Review mode now requires database. Use 'mundane import' first.
+              Review mode now requires database. Use 'cerno import' first.
             - no_tools (bool): Skip tool execution workflow if True.
             - custom_workflows (Optional[Path]): Custom workflow YAML to supplement defaults.
             - custom_workflows_only (Optional[Path]): Use only this workflow YAML.
@@ -700,7 +700,7 @@ def main(args: types.SimpleNamespace) -> None:
     config = get_current_config()
 
     # Validate results root is writable before proceeding
-    from mundane_pkg import validate_results_root
+    from cerno_pkg import validate_results_root
     results_root = get_results_root()
     is_valid, error_msg = validate_results_root(results_root)
     if not is_valid:
@@ -775,7 +775,7 @@ def main(args: types.SimpleNamespace) -> None:
 
     # If no export_root specified, use database scan selection
     if export_root is None:
-        from mundane_pkg.models import Scan, Finding
+        from cerno_pkg.models import Scan, Finding
         from datetime import datetime
 
         # Outer loop for scan selection
@@ -790,14 +790,14 @@ def main(args: types.SimpleNamespace) -> None:
 
             if not all_scans:
                 err("No scans found in database.")
-                info("Import a scan first: mundane import <nessus_file>")
+                info("Import a scan first: cerno import <nessus_file>")
                 return
 
             # Display scan selection menu
             header("Available Scans")
             from rich.table import Table
             from rich import box
-            from mundane_pkg.ansi import style_if_enabled
+            from cerno_pkg.ansi import style_if_enabled
 
             scan_table = Table(show_header=True, header_style=style_if_enabled("bold cyan"), box=box.SIMPLE)
             scan_table.add_column("#", style=style_if_enabled("cyan"), justify="right")
@@ -904,7 +904,7 @@ def main(args: types.SimpleNamespace) -> None:
 
             # Severity loop (inner loop)
             while True:
-                from mundane_pkg import breadcrumb
+                from cerno_pkg import breadcrumb
                 bc = breadcrumb(scan_dir.name, "Choose severity")
                 header(bc if bc else f"Scan: {scan_dir.name} — choose severity")
 
@@ -1125,21 +1125,21 @@ def main(args: types.SimpleNamespace) -> None:
         delete_session(scan_id)
 
     _console_global.print() # Empty line
-    ok("Now run \"mundane review\" to start reviewing findings.")
+    ok("Now run \"cerno review\" to start reviewing findings.")
 
 
 # === Typer CLI ===
 # Main app + sub-apps (import, scan, config)
 
 app = typer.Typer(
-    help="mundane — faster review & tooling runner for vulnerability scans",
+    help="cerno — faster review & tooling runner for vulnerability scans",
     add_completion=True,
 )
 _console = _console_global
 
 # Sub-applications
 import_app = typer.Typer(
-    help="Import data from various sources into mundane"
+    help="Import data from various sources into cerno"
 )
 
 scan_app = typer.Typer(
@@ -1160,7 +1160,7 @@ app.add_typer(config_app, name="config")
 def version_callback(value: bool):
     """Print version and exit."""
     if value:
-        print(f"mundane {__version__}")
+        print(f"cerno {__version__}")
         raise typer.Exit()
 
 
@@ -1175,11 +1175,11 @@ def main_callback(
         help="Show version and exit",
     )
 ):
-    """mundane CLI - faster review & tooling runner for vulnerability scans."""
+    """cerno CLI - faster review & tooling runner for vulnerability scans."""
     # Load configuration (auto-creates with defaults if missing)
-    from mundane_pkg import load_config, initialize_colors
-    from mundane_pkg.logging_setup import init_logger
-    from mundane_pkg.database import initialize_database
+    from cerno_pkg import load_config, initialize_colors
+    from cerno_pkg.logging_setup import init_logger
+    from cerno_pkg.database import initialize_database
 
     config = load_config()
 
@@ -1197,7 +1197,7 @@ def main_callback(
 @app.command(help="Interactive review of findings.")
 def review(
     export_root: Optional[Path] = typer.Option(
-        None, "--export-root", "-r", help="DEPRECATED: Scan root (use 'mundane import' instead)."
+        None, "--export-root", "-r", help="DEPRECATED: Scan root (use 'cerno import' instead)."
     ),
     no_tools: bool = typer.Option(
         False, "--no-tools", help="Disable tool prompts (review-only)."
@@ -1221,15 +1221,15 @@ def review(
     Run interactive review mode with database-driven workflow.
 
     This command requires scans to be imported into the database first.
-    Use 'mundane import' to import scans before reviewing.
+    Use 'cerno import' to import scans before reviewing.
 
     Note: The --export-root flag has been deprecated. All review operations
     now require database mode for improved performance and features like
     workflow mapping, Metasploit module detection, and session tracking.
 
     Usage:
-        mundane review              # Select from imported scans
-        mundane import scan.nessus  # Import scan first if needed
+        cerno review              # Select from imported scans
+        cerno import scan.nessus  # Import scan first if needed
     """
     # Display promotional banner (unless suppressed)
     if not quiet:
@@ -1282,7 +1282,7 @@ def show_nessus_tool_suggestions(nessus_file: Path) -> None:
 
 
 # === Import Sub-App Commands ===
-# Grouped under 'mundane import'
+# Grouped under 'cerno import'
 
 @import_app.command(name="nessus", help="Import .nessus file and populate database with findings")
 def import_scan(
@@ -1293,10 +1293,10 @@ def import_scan(
     """
     Import .nessus file and export finding host lists to organized directory.
 
-    Auto-detects scan name from .nessus file and exports to ~/.mundane/scans/<scan_name>.
+    Auto-detects scan name from .nessus file and exports to ~/.cerno/scans/<scan_name>.
     """
-    from mundane_pkg.nessus_import import import_nessus_file, extract_scan_name_from_nessus
-    from mundane_pkg.constants import SCANS_ROOT
+    from cerno_pkg.nessus_import import import_nessus_file, extract_scan_name_from_nessus
+    from cerno_pkg.constants import SCANS_ROOT
 
     # Always extract scan name from .nessus file for consistency with database
     scan_name = extract_scan_name_from_nessus(nessus)
@@ -1307,8 +1307,8 @@ def import_scan(
     # info(f"Findings location: {out_dir}")
 
     # Check for duplicate imports
-    from mundane_pkg.database import compute_file_hash
-    from mundane_pkg.models import Scan
+    from cerno_pkg.database import compute_file_hash
+    from cerno_pkg.models import Scan
 
     new_file_hash = compute_file_hash(nessus)
     existing_scan = Scan.get_by_name(scan_name)
@@ -1380,12 +1380,12 @@ def import_scan(
         if result.severities:
             from rich.table import Table
             from rich import box
-            from mundane_pkg.render import severity_cell
-            from mundane_pkg.nessus_import import severity_label_from_int
+            from cerno_pkg.render import severity_cell
+            from cerno_pkg.nessus_import import severity_label_from_int
 
             _console_global.print()  # Blank line before table
             info("Severity Breakdown:")
-            from mundane_pkg.ansi import style_if_enabled
+            from cerno_pkg.ansi import style_if_enabled
             sev_table = Table(show_header=True, header_style=style_if_enabled("bold cyan"), box=box.SIMPLE)
             sev_table.add_column("Severity", style=style_if_enabled("cyan"))
             sev_table.add_column("Plugins", justify="right", style=style_if_enabled("yellow"))
@@ -1409,22 +1409,22 @@ def import_scan(
 
 
 # === Scan Sub-App Commands ===
-# Grouped under 'mundane scan'
+# Grouped under 'cerno scan'
 
 @scan_app.command(name="list", help="List all imported scans with statistics and review progress")
 def list_scans() -> None:
     """Display all scans in the database with finding counts and severity breakdown."""
-    from mundane_pkg.models import Scan
+    from cerno_pkg.models import Scan
     from rich.table import Table
 
     scans = Scan.get_all_with_stats()
 
     if not scans:
         info("No scans found in database.")
-        info("Tip: Use 'mundane import nessus <scan.nessus>' to import a scan")
+        info("Tip: Use 'cerno import nessus <scan.nessus>' to import a scan")
         return
 
-    from mundane_pkg.ansi import style_if_enabled
+    from cerno_pkg.ansi import style_if_enabled
 
     # Create summary table
     table = Table(title="Imported Scans", show_header=True, header_style=style_if_enabled("bold cyan"))
@@ -1469,7 +1469,7 @@ def list_scans() -> None:
     _console_global.print(table)
     _console_global.print()  # Blank line
     info(f"Total scans: {len(scans)}")
-    info("Use 'mundane review' to start reviewing a scan")
+    info("Use 'cerno review' to start reviewing a scan")
 
 
 @scan_app.command(name="delete", help="Delete a scan and all associated data from database")
@@ -1487,13 +1487,13 @@ def delete_scan(
 
     This action cannot be undone!
     """
-    from mundane_pkg.models import Scan
+    from cerno_pkg.models import Scan
 
     # Check if scan exists
     scan = Scan.get_by_name(scan_name)
     if not scan:
         err(f"Scan not found: {scan_name}")
-        info("Use 'mundane list' to see available scans")
+        info("Use 'cerno list' to see available scans")
         raise typer.Exit(1)
 
     # Confirm deletion
@@ -1525,12 +1525,12 @@ def delete_scan(
 
 
 # === Config Sub-App Commands ===
-# Grouped under 'mundane config'
+# Grouped under 'cerno config'
 
 @config_app.command(name="reset", help="Reset configuration file to defaults")
 def config_reset() -> None:
-    """Reset config file at ~/.mundane/config.yaml to defaults."""
-    from mundane_pkg import create_example_config, get_config_path
+    """Reset config file at ~/.cerno/config.yaml to defaults."""
+    from cerno_pkg import create_example_config, get_config_path
     import shutil
 
     config_path = get_config_path()
@@ -1552,7 +1552,7 @@ def config_reset() -> None:
 @config_app.command(name="show", help="Display current configuration with all settings and paths")
 def config_show() -> None:
     """Display current configuration (merged from file and defaults)."""
-    from mundane_pkg import load_config, get_config_path, MundaneConfig, DEFAULT_TOP_PORTS
+    from cerno_pkg import load_config, get_config_path, CernoConfig, DEFAULT_TOP_PORTS
     from rich.table import Table
 
     config_path = get_config_path()
@@ -1570,7 +1570,7 @@ def config_show() -> None:
     table.add_column("Status", style=style_if_enabled("green"))
 
     # Get defaults for comparison
-    defaults = MundaneConfig()
+    defaults = CernoConfig()
 
     # Collect all rows for sorting
     rows = []
@@ -1600,7 +1600,7 @@ def config_show() -> None:
                 config.nmap_default_profile == defaults.nmap_default_profile, "NSE profile name"))
 
     # Logging
-    rows.append(("log_path", config.log_path or str(Path.home() / ".mundane" / "mundane.log"),
+    rows.append(("log_path", config.log_path or str(Path.home() / ".cerno" / "cerno.log"),
                 config.log_path == defaults.log_path, "Log file location"))
     rows.append(("debug_logging", config.debug_logging,
                 config.debug_logging == defaults.debug_logging, "Enable DEBUG logs"))
@@ -1623,8 +1623,8 @@ def config_show() -> None:
     _console.print(table)
     _console_global.print()
     info(f"Edit config: {config_path}")
-    info("Change values: mundane config set <key> <value>")
-    info("Reset to defaults: mundane config reset")
+    info("Change values: cerno config set <key> <value>")
+    info("Reset to defaults: cerno config reset")
 
 
 @config_app.command(name="get", help="Retrieve value of a specific configuration key")
@@ -1632,7 +1632,7 @@ def config_get(
     key: str = typer.Argument(..., help="Config key to retrieve")
 ) -> None:
     """Get and display a specific configuration value."""
-    from mundane_pkg import load_config
+    from cerno_pkg import load_config
 
     config = load_config()
 
@@ -1656,8 +1656,8 @@ def config_set(
     key: str = typer.Argument(..., help="Config key to set"),
     value: str = typer.Argument(..., help="Value to set")
 ) -> None:
-    """Set a configuration value in ~/.mundane/config.yaml."""
-    from mundane_pkg import load_config, save_config, get_config_path
+    """Set a configuration value in ~/.cerno/config.yaml."""
+    from cerno_pkg import load_config, save_config, get_config_path
 
     config = load_config()
 

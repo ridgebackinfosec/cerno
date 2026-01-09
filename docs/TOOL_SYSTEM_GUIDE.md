@@ -1,4 +1,4 @@
-# Mundane Tool System Guide
+# Cerno Tool System Guide
 
 Complete reference for the tool registry and unified workflow pattern.
 
@@ -18,7 +18,7 @@ Complete reference for the tool registry and unified workflow pattern.
 
 ## Overview
 
-Mundane uses two key patterns that make adding tools simple and maintainable:
+Cerno uses two key patterns that make adding tools simple and maintainable:
 
 1. **Tool Registry** - Centralized database of all available tools
 2. **Unified Workflow** - Standardized parameters and return types
@@ -60,7 +60,7 @@ Together, these eliminate hardcoded tool definitions and per-tool dispatch logic
                             │
 ┌──────────────────────┬────────────────────────────────────────┐
 │   COMMAND BUILDERS   │     WORKFLOW BUILDERS                  │
-│  File: tools.py      │     File: mundane.py                   │
+│  File: tools.py      │     File: cerno.py                   │
 │  Pure functions      │     Interactive prompts               │
 │  Return: list[str]   │     Use: ToolContext                  │
 │                      │     Return: CommandResult             │
@@ -99,7 +99,7 @@ Command displayed for review/execution
 | `tool_definitions.py` | Tool registration | register_all_tools(), Tool() entries |
 | `tool_context.py` | Unified types | ToolContext, CommandResult dataclasses |
 | `tools.py` | Command builders | build_*_cmd() functions |
-| `mundane.py` | Workflows & dispatch | _build_*_workflow() functions, dispatch logic |
+| `cerno.py` | Workflows & dispatch | _build_*_workflow() functions, dispatch logic |
 
 ---
 
@@ -109,12 +109,12 @@ Command displayed for review/execution
 
 Defines tool metadata and behavior.
 
-**File:** `mundane_pkg/tool_registry.py`
+**File:** `cerno_pkg/tool_registry.py`
 
 ```python
 @dataclass
 class Tool:
-    """Represents a tool available in mundane."""
+    """Represents a tool available in cerno."""
 
     id: str                             # Unique identifier
     name: str                           # Display name in menus
@@ -131,7 +131,7 @@ class Tool:
 - **id**: Lowercase, no spaces (e.g., "nmap", "netexec")
 - **name**: Human-readable (can match id)
 - **description**: Shown after "—" in menu (e.g., "Network mapper")
-- **workflow_builder**: Function reference (e.g., `mundane._build_nmap_workflow`)
+- **workflow_builder**: Function reference (e.g., `cerno._build_nmap_workflow`)
 - **command_builder**: Function reference (e.g., `tools.build_nmap_cmd`) or None
 - **requires**: Binary names to check (e.g., `["nmap"]`)
 - **menu_order**: Integer (1, 2, 3...) - controls display order
@@ -141,21 +141,21 @@ class Tool:
 
 **Get a tool:**
 ```python
-from mundane_pkg import get_tool
+from cerno_pkg import get_tool
 
 tool = get_tool("nmap")  # Returns Tool or None
 ```
 
 **Get all tools:**
 ```python
-from mundane_pkg import get_available_tools
+from cerno_pkg import get_available_tools
 
 tools = get_available_tools()  # Returns list sorted by menu_order
 ```
 
 **Register a tool:**
 ```python
-from mundane_pkg import register_tool
+from cerno_pkg import register_tool
 
 register_tool(Tool(id="mytool", ...))
 ```
@@ -168,7 +168,7 @@ register_tool(Tool(id="mytool", ...))
 
 All workflows receive a single `ToolContext` object instead of individual parameters.
 
-**File:** `mundane_pkg/tool_context.py`
+**File:** `cerno_pkg/tool_context.py`
 
 ```python
 @dataclass
@@ -231,7 +231,7 @@ return CommandResult(
 
 ### Dispatch Logic (Automatic)
 
-The dispatch code in `mundane.py` is completely generic:
+The dispatch code in `cerno.py` is completely generic:
 
 ```python
 # Build context once (same for ALL tools)
@@ -267,7 +267,7 @@ artifact_note = result.artifact_note
 
 ### 3-Step Process
 
-#### Step 1: Write Command Builder (`mundane_pkg/tools.py`)
+#### Step 1: Write Command Builder (`cerno_pkg/tools.py`)
 
 ```python
 def build_mytool_cmd(
@@ -289,7 +289,7 @@ def build_mytool_cmd(
     return ["mytool", "--flag", param1, "-i", str(param2), "-o", str(output)]
 ```
 
-#### Step 2: Write Workflow (`mundane.py`)
+#### Step 2: Write Workflow (`cerno.py`)
 
 **Use ToolContext parameter and return CommandResult:**
 
@@ -304,8 +304,8 @@ def _build_mytool_workflow(ctx: ToolContext) -> Optional[CommandResult]:
     Returns:
         CommandResult with command details, or None if cancelled
     """
-    from mundane_pkg.tool_context import CommandResult
-    from mundane_pkg.tools import build_mytool_cmd
+    from cerno_pkg.tool_context import CommandResult
+    from cerno_pkg.tools import build_mytool_cmd
 
     # Gather user input
     try:
@@ -333,13 +333,13 @@ def _build_mytool_workflow(ctx: ToolContext) -> Optional[CommandResult]:
     )
 ```
 
-#### Step 3: Register Tool (`mundane_pkg/tool_definitions.py`)
+#### Step 3: Register Tool (`cerno_pkg/tool_definitions.py`)
 
 Add to `register_all_tools()` function:
 
 ```python
 def register_all_tools() -> None:
-    import mundane as mundane_module
+    import cerno as cerno_module
     from . import tools
 
     # ... existing registrations ...
@@ -352,7 +352,7 @@ def register_all_tools() -> None:
             id="mytool",
             name="mytool",
             description="Brief description",
-            workflow_builder=mundane_module._build_mytool_workflow,
+            workflow_builder=cerno_module._build_mytool_workflow,
             command_builder=tools.build_mytool_cmd,
             requires=["mytool"],
             menu_order=5,
@@ -383,7 +383,7 @@ def _build_mytool_workflow(
 
 ```python
 def _build_mytool_workflow(ctx: ToolContext) -> Optional[CommandResult]:
-    from mundane_pkg.tool_context import CommandResult
+    from cerno_pkg.tool_context import CommandResult
 
     # Access params via ctx
     tcp_ips = ctx.tcp_ips
@@ -404,7 +404,7 @@ def _build_mytool_workflow(ctx: ToolContext) -> Optional[CommandResult]:
 
 1. **Signature:** `ctx: ToolContext` instead of individual params
 2. **Return type:** `Optional[CommandResult]` instead of tuple
-3. **Import:** Add `from mundane_pkg.tool_context import CommandResult`
+3. **Import:** Add `from cerno_pkg.tool_context import CommandResult`
 4. **Return statement:** `return CommandResult(...)` instead of tuple
 5. **Parameter access:** `ctx.field_name` instead of `field_name`
 6. **Dispatch:** Remove tool-specific dispatch code (now automatic)
@@ -501,6 +501,6 @@ def _build_simple_workflow(ctx: ToolContext) -> Optional[CommandResult]:
 ## See Also
 
 - [ADDING_TOOLS_QUICKSTART.md](ADDING_TOOLS_QUICKSTART.md) - Quick reference
-- [tool_context.py](../mundane_pkg/tool_context.py) - ToolContext and CommandResult source
-- [tool_registry.py](../mundane_pkg/tool_registry.py) - Tool registry source
-- [tool_definitions.py](../mundane_pkg/tool_definitions.py) - Tool registration source
+- [tool_context.py](../cerno_pkg/tool_context.py) - ToolContext and CommandResult source
+- [tool_registry.py](../cerno_pkg/tool_registry.py) - Tool registry source
+- [tool_definitions.py](../cerno_pkg/tool_definitions.py) - Tool registration source

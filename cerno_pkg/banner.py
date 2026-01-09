@@ -1,12 +1,12 @@
 """
-Promotional banner for mundane CLI tool.
+Promotional banner for cerno CLI tool.
 """
 
 from rich.panel import Panel
 from rich.text import Text
 
-from mundane_pkg._version import __version__
-from mundane_pkg.ansi import get_console, style_if_enabled
+from cerno_pkg._version import __version__
+from cerno_pkg.ansi import get_console, style_if_enabled
 
 
 def display_banner() -> None:
@@ -20,7 +20,7 @@ def display_banner() -> None:
 
     # Create banner text with colors that work on both light and dark backgrounds
     banner_text = Text()
-    banner_text.append(f"Mundane v{__version__}", style=style_if_enabled("bold cyan"))
+    banner_text.append(f"Cerno v{__version__}", style=style_if_enabled("bold cyan"))
     banner_text.append(" - by ")
     banner_text.append("Ridgeback InfoSec, LLC", style=style_if_enabled("bold magenta"))
     banner_text.append("\n\n")

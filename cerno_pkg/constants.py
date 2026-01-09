@@ -1,6 +1,6 @@
 """Centralized application constants and configuration.
 
-This module contains all constants used throughout the mundane application,
+This module contains all constants used throughout the cerno application,
 including paths, URL templates, protocol lists, and NSE profiles for security
 testing tools integration.
 """
@@ -11,14 +11,14 @@ from pathlib import Path
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .config import MundaneConfig
+    from .config import CernoConfig
 
 
 # ========== Application paths and prefixes ==========
 _results_root_cache: Optional[Path] = None
 
 
-def get_results_root(config: Optional["MundaneConfig"] = None) -> Path:
+def get_results_root(config: Optional["CernoConfig"] = None) -> Path:
     """Get results root directory from config (lazy-loaded with caching).
 
     Args:
@@ -37,7 +37,7 @@ def get_results_root(config: Optional["MundaneConfig"] = None) -> Path:
         if config.results_root:
             _results_root_cache = Path(config.results_root).expanduser()
         else:
-            _results_root_cache = Path.home() / ".mundane" / "artifacts"
+            _results_root_cache = Path.home() / ".cerno" / "artifacts"
 
     return _results_root_cache
 
@@ -47,7 +47,7 @@ def reset_results_root_cache() -> None:
     global _results_root_cache
     _results_root_cache = None
 
-SCANS_ROOT: Path = Path.home() / ".mundane" / "scans"
+SCANS_ROOT: Path = Path.home() / ".cerno" / "scans"
 """Root directory for scan exports (plugin host lists)."""
 
 REVIEW_PREFIX: str = "REVIEW_COMPLETE-"

@@ -1,6 +1,6 @@
 # Error Handling Standards
 
-This document defines the standardized error handling patterns for the mundane codebase.
+This document defines the standardized error handling patterns for the cerno codebase.
 
 ## Principles
 
@@ -340,4 +340,4 @@ When updating code to follow these standards:
 ---
 
 **Last Updated**: 2025-01-13
-**Applies To**: mundane v2.0+
+**Applies To**: cerno v2.0+

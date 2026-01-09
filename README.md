@@ -1,4 +1,4 @@
-# Mundane
+# Cerno
 
 A **TUI tool** for reviewing Nessus scan findings and orchestrating security tools (**nmap**, **NetExec**, custom commands). Import `.nessus` files into a SQLite database for organized, persistent vulnerability verification and exploitation.
 
@@ -14,13 +14,13 @@ A **TUI tool** for reviewing Nessus scan findings and orchestrating security too
 
 ```bash
 # Install with pipx (recommended)
-pipx install git+https://github.com/ridgebackinfosec/mundane.git
+pipx install git+https://github.com/ridgebackinfosec/cerno.git
 
 # Import a Nessus scan
-mundane import nessus scan.nessus
+cerno import nessus scan.nessus
 
 # Review findings interactively
-mundane review
+cerno review
 ```
 
 **That's it!** See [Common Commands](#commands) for more.
@@ -37,25 +37,25 @@ mundane review
 
 **Recommended (pipx):**
 ```bash
-pipx install git+https://github.com/ridgebackinfosec/mundane.git
-mundane --help
+pipx install git+https://github.com/ridgebackinfosec/cerno.git
+cerno --help
 ```
 
 **Alternative (pip):**
 ```bash
-pip install git+https://github.com/ridgebackinfosec/mundane.git
+pip install git+https://github.com/ridgebackinfosec/cerno.git
 ```
 
 **Development:**
 ```bash
-git clone https://github.com/ridgebackinfosec/mundane.git
-cd mundane
+git clone https://github.com/ridgebackinfosec/cerno.git
+cd cerno
 pip install -e .
 ```
 
 **Shell completion:**
 ```bash
-mundane --install-completion  # Enable tab completion for your shell
+cerno --install-completion  # Enable tab completion for your shell
 ```
 
 **Upgrading from v1.x:** v2.0 introduced breaking schema changes. Delete old database and re-import scans. See [docs/DATABASE.md](docs/DATABASE.md).
@@ -72,20 +72,20 @@ mundane --install-completion  # Enable tab completion for your shell
 
 ## Configuration
 
-**Configuration file** (`~/.mundane/config.yaml`):
+**Configuration file** (`~/.cerno/config.yaml`):
 
 Auto-created with defaults on first run. All settings managed via config file.
 
 ```bash
-mundane config show        # View all settings with current values
-mundane config set <key> <value>  # Change a setting
-mundane config reset       # Reset to defaults (creates backup)
+cerno config show        # View all settings with current values
+cerno config set <key> <value>  # Change a setting
+cerno config reset       # Reset to defaults (creates backup)
 ```
 
 <p align="center">
   <img src="docs/images/default-config-values.png" alt="Finding browser with pagination and keyboard shortcuts" width="800">
   <br>
-  <em>Show all configuration values using "mundane config show"</em>
+  <em>Show all configuration values using "cerno config show"</em>
 </p>
 
 ---
@@ -163,7 +163,7 @@ Launch nmap NSE scripts, NetExec, Metasploit, or custom commands with placeholde
 - Reversible review-complete (undo with `[U]`)
 - Session statistics (duration, per-severity breakdown)
 
-**Database:** SQLite-backed persistence at `~/.mundane/mundane.db` tracks scans, findings, sessions, tool executions, and artifacts. Cross-scan tracking enables host history queries. See [docs/DATABASE.md](docs/DATABASE.md) for schema details.
+**Database:** SQLite-backed persistence at `~/.cerno/cerno.db` tracks scans, findings, sessions, tool executions, and artifacts. Cross-scan tracking enables host history queries. See [docs/DATABASE.md](docs/DATABASE.md) for schema details.
 
 ---
 
@@ -171,15 +171,15 @@ Launch nmap NSE scripts, NetExec, Metasploit, or custom commands with placeholde
 
 ```bash
 # Import and review
-mundane import nessus <scan.nessus>
-mundane review [--custom-workflows PATH]
+cerno import nessus <scan.nessus>
+cerno review [--custom-workflows PATH]
 
 # Manage scans
-mundane scan list
-mundane scan delete <scan_name>
+cerno scan list
+cerno scan delete <scan_name>
 
 # Configuration
-mundane config show | reset | get <key> | set <key> <value>
+cerno config show | reset | get <key> | set <key> <value>
 ```
 
 ---
@@ -189,7 +189,7 @@ mundane config show | reset | get <key> | set <key> <value>
 Add plugin-specific verification workflows with `--custom-workflows` (merges & supplements with defaults) or `--custom-workflows-only` (replaces defaults):
 
 ```bash
-mundane review --custom-workflows my_workflows.yaml
+cerno review --custom-workflows my_workflows.yaml
 ```
 
 **Example workflow YAML:**

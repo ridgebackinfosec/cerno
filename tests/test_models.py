@@ -1,11 +1,11 @@
-"""Tests for mundane_pkg.models module."""
+"""Tests for cerno_pkg.models module."""
 
 import json
 from datetime import datetime
 
 import pytest
 
-from mundane_pkg.models import (
+from cerno_pkg.models import (
     Scan,
     Plugin,
     Finding,
@@ -424,7 +424,7 @@ class TestFindingModel:
         pf.finding_id = finding_id
 
         # Insert test data into finding_affected_hosts using normalized schema
-        from mundane_pkg.models import Host, Port
+        from cerno_pkg.models import Host, Port
 
         # Insert 192.168.1.1:80
         host_id_1 = Host.get_or_create("192.168.1.1", "ipv4", conn=temp_db)
@@ -491,7 +491,7 @@ class TestFindingModel:
         pf.finding_id = finding_id
 
         # Insert IPv6 data using normalized schema
-        from mundane_pkg.models import Host, Port
+        from cerno_pkg.models import Host, Port
 
         # Insert 2001:db8::1:80 (IPv6)
         host_id_ipv6 = Host.get_or_create("2001:db8::1", "ipv6", conn=temp_db)
@@ -558,7 +558,7 @@ class TestFindingModel:
         pf.finding_id = finding_id
 
         # Insert test data using normalized schema
-        from mundane_pkg.models import Host, Port
+        from cerno_pkg.models import Host, Port
 
         # Insert 192.168.1.1:80
         host_id_1 = Host.get_or_create("192.168.1.1", "ipv4", conn=temp_db)
@@ -615,7 +615,7 @@ class TestFindingModel:
         pf.finding_id = finding_id
 
         # Insert IPv6 data using normalized schema
-        from mundane_pkg.models import Host, Port
+        from cerno_pkg.models import Host, Port
 
         # Insert 2001:db8::1:80 (IPv6)
         host_id = Host.get_or_create("2001:db8::1", "ipv6", conn=temp_db)
@@ -651,7 +651,7 @@ class TestFindingModel:
         pf.finding_id = finding_id
 
         # Insert data without port using normalized schema
-        from mundane_pkg.models import Host
+        from cerno_pkg.models import Host
 
         # Insert 192.168.1.1 with no port
         host_id = Host.get_or_create("192.168.1.1", "ipv4", conn=temp_db)
@@ -916,7 +916,7 @@ class TestModelRelationships:
         exec_id = execution.save(temp_db)
 
         # Get artifact_type_id for normalized schema
-        from mundane_pkg.models import ArtifactType
+        from cerno_pkg.models import ArtifactType
         artifact_type = ArtifactType.get_by_name("nmap_xml", conn=temp_db)
         artifact_type_id = artifact_type.artifact_type_id if artifact_type else None
 

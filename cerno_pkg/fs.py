@@ -192,7 +192,7 @@ def write_work_files(
 
 
 # ===================================================================
-# File/Finding Processing and Viewing (moved from mundane.py)
+# File/Finding Processing and Viewing (moved from cerno.py)
 # ===================================================================
 
 
@@ -214,7 +214,7 @@ def display_workflow(workflow: "Workflow") -> None:
     _console_global.print()
 
     # Steps
-    from mundane_pkg.ansi import style_if_enabled
+    from cerno_pkg.ansi import style_if_enabled
     for idx, step in enumerate(workflow.steps, 1):
         step_panel = Panel(
             f"[bold cyan]{step.title}[/bold cyan]\n\n"
@@ -299,7 +299,7 @@ def handle_finding_view(
     while True:
         # Build action menu with all available options
         from rich.text import Text
-        from mundane_pkg.ansi import style_if_enabled
+        from cerno_pkg.ansi import style_if_enabled
         action_text = Text()
         action_text.append("[I] ", style=style_if_enabled("cyan"))
         action_text.append("Finding Info / ", style=None)

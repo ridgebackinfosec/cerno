@@ -1,6 +1,6 @@
-# Testing Guide for Mundane
+# Testing Guide for Cerno
 
-This document explains how to run and write tests for the Mundane project.
+This document explains how to run and write tests for the Cerno project.
 
 ## Test Structure
 
@@ -39,7 +39,7 @@ pytest
 ### Run with Coverage
 
 ```bash
-pytest --cov=mundane_pkg --cov-report=term-missing --cov-report=html
+pytest --cov=cerno_pkg --cov-report=term-missing --cov-report=html
 ```
 
 View HTML coverage report:
@@ -133,7 +133,7 @@ Tests are marked with the following markers:
 
 ```python
 import pytest
-from mundane_pkg.parsing import split_host_port
+from cerno_pkg.parsing import split_host_port
 
 def test_ipv4_with_port():
     """Test IPv4 address with port."""
@@ -146,7 +146,7 @@ def test_ipv4_with_port():
 
 ```python
 import pytest
-from mundane_pkg.models import Scan
+from cerno_pkg.models import Scan
 
 @pytest.mark.integration
 def test_scan_save_creates_record(temp_db):
@@ -165,7 +165,7 @@ def test_scan_save_creates_record(temp_db):
 
 ```python
 import pytest
-from mundane_pkg.parsing import split_host_port
+from cerno_pkg.parsing import split_host_port
 
 @pytest.mark.parametrize(
     "input_str,expected_host,expected_port",

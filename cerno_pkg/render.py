@@ -1,4 +1,4 @@
-"""Rich-based table and UI rendering for the mundane TUI.
+"""Rich-based table and UI rendering for the cerno TUI.
 
 This module provides functions to render tables, paginated content, action
 menus, and comparison results using the Rich library for terminal UI.
@@ -647,7 +647,7 @@ def severity_style(label: str) -> str:
 
 
 # ===================================================================
-# Finding Display Formatters (moved from mundane.py)
+# Finding Display Formatters (moved from cerno.py)
 # ===================================================================
 
 
@@ -935,7 +935,7 @@ def _display_finding_preview(
 
 
 # ===================================================================
-# CVE Display Functions (moved from mundane.py)
+# CVE Display Functions (moved from cerno.py)
 # ===================================================================
 
 
