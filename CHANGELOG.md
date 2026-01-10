@@ -7,12 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-01-09
+
 ### Changed
 - Enhanced Version Increment SOP in CLAUDE.md with mandatory incremental changelog updates and user confirmation workflow
   - Added "Incremental Changelog Updates" section requiring [Unreleased] updates after all code changes
   - Updated "Version Increment SOP" with 4-phase process: gather changes, present for approval, update atomically, validate
   - Modified "Documentation" principle to mandate [Unreleased] section updates for user-visible changes
   - Version increments now require reviewing git history, [Unreleased] section, and user confirmation before proceeding
+
+### Documentation
+- Integrated pyright for type checking in development workflow (CLAUDE.md)
+  - Added pyright to dev dependencies in pyproject.toml
+  - Documented dual type checking philosophy (mypy + pyright)
+  - Added pyrightconfig.json configuration reference
+- Added comprehensive version increment SOP to CLAUDE.md
+  - Documents 4-phase process for version bumps with user confirmation
+  - Includes changelog gathering from multiple sources
+  - Ensures atomic updates to pyproject.toml and CHANGELOG.md
 
 ## [1.1.0] - 2026-01-10
 
