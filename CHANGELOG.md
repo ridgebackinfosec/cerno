@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-01-10
+
+### Fixed
+- Resolved all 224 Pylance/Pyright type checking warnings (reduced from 224 to 0)
+  - Fixed 20 unused variable warnings by renaming to `_` prefix convention
+  - Fixed 5 private usage warnings by making tool workflow builders semi-public
+  - Fixed 140 unused import warnings in `cerno_pkg/__init__.py` by adding explicit `__all__` list
+  - Removed 56 unused imports from `cerno.py` after refactoring
+  - Added type ignore comments for intentional test-only private API usage
+
+### Changed
+- Made tool workflow builder functions semi-public in `cerno_pkg/tools.py`
+  - Renamed `_build_nmap_workflow` → `build_nmap_workflow`
+  - Renamed `_build_netexec_workflow` → `build_netexec_workflow`
+  - Renamed `_build_custom_workflow` → `build_custom_workflow`
+  - These functions are part of the tool registry pattern and accessed via tool_definitions.py
+
+### Documentation
+- Added explicit `__all__` list to `cerno_pkg/__init__.py` documenting public API (140 exports)
+- Improved code quality with proper unused variable naming (`_var` convention)
+- Updated Version Increment SOP in CLAUDE.md to check `pyproject.toml` instead of git tags
+  - Git tags are only created on release (main branch merge), not on every version bump
+  - Always check `pyproject.toml` for current version
+
 ## [1.1.1] - 2026-01-09
 
 ### Changed

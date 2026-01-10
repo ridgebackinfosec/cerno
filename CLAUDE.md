@@ -504,22 +504,28 @@ Version is defined in `pyproject.toml:project.version` (single source of truth).
 **CRITICAL**: Whenever the user requests a version increment, you MUST follow this comprehensive process with mandatory user confirmation.
 
 **Phase 1: Gather All Changes**
-1. **Read [Unreleased] section** in CHANGELOG.md (line 8)
+1. **Read current version** from `pyproject.toml` line 7 (`version = "X.Y.Z"`)
+   - This is the last version that was documented
+   - Git tags are only created on release (main branch merge), not on every version bump
+
+2. **Read [Unreleased] section** in CHANGELOG.md (line 8)
    - Extract all documented changes
    - Note which subsections have content (Added/Changed/Fixed/etc.)
 
-2. **Review git commit history** since last version tag:
+3. **Review git commit history** since last version in CHANGELOG.md:
    ```bash
-   git log --oneline $(git describe --tags --abbrev=0)..HEAD
+   # Find the last version section in CHANGELOG.md (e.g., ## [1.1.1])
+   # Then get commits since that version was documented
+   git log --oneline --since="<date from last changelog entry>" HEAD
    ```
    - Identify commits that might not be documented in [Unreleased]
    - Look for conventional commit prefixes (feat:, fix:, docs:, refactor:)
 
-3. **Check for uncommitted changes** in git status
+4. **Check for uncommitted changes** in git status
    - Review modified files that might not be documented yet
    - Cross-reference with [Unreleased] section
 
-4. **Compile comprehensive change list**
+5. **Compile comprehensive change list**
    - Combine [Unreleased] content + undocumented git commits + unstaged changes
    - Organize into Keep a Changelog categories
 
@@ -589,7 +595,11 @@ Only after user confirms the changelog content:
 3. Waiting for explicit approval before updating files
 4. Documenting ALL changes in the final changelog entry
 
-The automated release workflow will fail if CHANGELOG.md is missing the version entry or has incorrect format.
+**Important Notes:**
+- Git tags are created automatically by the release workflow when changes are merged to `main` branch
+- Not every version bump in `pyproject.toml` gets a git tag immediately
+- Always check `pyproject.toml` for current version, not git tags
+- The automated release workflow will fail if CHANGELOG.md is missing the version entry or has incorrect format
 
 **Example transformation:**
 
