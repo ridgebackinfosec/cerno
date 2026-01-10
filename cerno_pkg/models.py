@@ -8,12 +8,11 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Optional
 
-from .database import db_transaction, get_connection, query_all, query_one
+from .database import db_transaction, query_all, query_one
 from .logging_setup import log_error, log_info
 
 

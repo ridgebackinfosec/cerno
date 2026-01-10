@@ -1,7 +1,6 @@
 """Tests for cerno_pkg.session module (database-only mode)."""
 
 from datetime import datetime
-from pathlib import Path
 
 import pytest
 

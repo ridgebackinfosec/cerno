@@ -32,13 +32,13 @@ from .render import (
     render_compare_tables, render_actions_footer, show_actions_help,
     show_reviewed_help, menu_pager, severity_cell, severity_style,
     print_action_menu,
-    _file_raw_payload_text, _file_raw_paged_text,
-    _grouped_payload_text, _grouped_paged_text,
-    _hosts_only_payload_text, _hosts_only_paged_text,
-    _build_plugin_output_details, _display_finding_preview,
+    file_raw_payload_text, file_raw_paged_text,
+    grouped_payload_text, grouped_paged_text,
+    hosts_only_payload_text, hosts_only_paged_text,
+    build_plugin_output_details, display_finding_preview,
     page_text,
     bulk_extract_cves_for_plugins, bulk_extract_cves_for_findings,
-    _display_bulk_cve_results, _color_unreviewed,
+    display_bulk_cve_results, color_unreviewed,
 )
 from .fs import (
     build_results_paths, mark_review_complete, undo_review_complete,

@@ -4,7 +4,6 @@ Tests version retrieval from multiple sources and edge cases.
 """
 
 import pytest
-from pathlib import Path
 from unittest.mock import patch
 
 
@@ -55,7 +54,7 @@ def test_get_version_prefers_metadata(mock_pyproject, mock_metadata):
 
     from cerno_pkg._version import get_version
     # Since __version__ is cached, we need to call get_version directly
-    version = get_version()
+    get_version()
 
     # Should use metadata version (1.2.3), not pyproject (9.9.9)
     mock_metadata.assert_called_once()
@@ -116,7 +115,6 @@ def test_version_consistency():
 def test_banner_uses_version():
     """Test that banner.py imports and uses __version__."""
     # This is a smoke test - just verify the import doesn't fail
-    from cerno_pkg.banner import display_banner
 
     # Verify banner module has access to version
     import cerno_pkg.banner as banner_module

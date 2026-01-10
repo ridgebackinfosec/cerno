@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional, Set, Tuple
 
-from .ansi import err, info, ok
+from .ansi import err, info
 from .logging_setup import log_error, log_info, log_timing
 
 # Severity labels for integer severity levels (0-4)
@@ -415,7 +415,7 @@ def import_nessus_file(
     for pid, meta in sorted(plugins.items(), key=sort_key):
         # Generate virtual file path for database reference (no actual file created)
         msf_suffix = "-MSF" if meta.get("msf") else ""
-        fname = f"{pid}_{sanitize_filename(meta['name'])}{msf_suffix}.txt"
+        f"{pid}_{sanitize_filename(meta['name'])}{msf_suffix}.txt"
 
         # Count hosts for statistics
         hosts = plugin_hosts.get(pid, set())
@@ -463,7 +463,7 @@ def _write_to_database(
     try:
         from .database import db_transaction, compute_file_hash
         from .models import Scan, Plugin, Finding, now_iso
-        from .parsing import is_ipv4, is_ipv6, detect_host_type
+        from .parsing import detect_host_type
         import time
 
         start_time = time.time()
@@ -507,11 +507,7 @@ def _write_to_database(
 
                 for host_entry_data in hosts_data:
                     # Parse host:port (existing logic)
-                    if isinstance(host_entry_data, tuple):
-                        host_entry, plugin_output = host_entry_data
-                    else:
-                        host_entry = host_entry_data
-                        plugin_output = None
+                    host_entry, plugin_output = host_entry_data
 
                     # Parse host:port
                     if ":" in host_entry:
@@ -590,10 +586,7 @@ def _write_to_database(
                 ports_for_plugin = set()
                 for host_entry_data in hosts_data:
                     # Unpack tuple to get host_entry string (ignore plugin_output for counting)
-                    if isinstance(host_entry_data, tuple):
-                        host_entry, _ = host_entry_data  # Extract host:port, ignore plugin_output
-                    else:
-                        host_entry = host_entry_data  # Backward compatibility
+                    host_entry, _ = host_entry_data  # Extract host:port, ignore plugin_output
 
                     # Now parse host:port as before
                     if ":" in host_entry:
@@ -618,11 +611,7 @@ def _write_to_database(
                 junction_records = []
                 for host_entry_data in hosts_data:
                     # Parse (same as before)
-                    if isinstance(host_entry_data, tuple):
-                        host_entry, plugin_output = host_entry_data
-                    else:
-                        host_entry = host_entry_data
-                        plugin_output = None
+                    host_entry, plugin_output = host_entry_data
 
                     # Parse host:port
                     if ":" in host_entry:

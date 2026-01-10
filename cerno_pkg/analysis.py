@@ -8,13 +8,12 @@ and generate scan statistics.
 import re
 from collections import defaultdict
 from pathlib import Path
-from typing import Optional, Union, TYPE_CHECKING, cast
+from typing import Union, TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from .models import Plugin, Finding
 
 from rich import box
-from rich.console import Console
 from rich.progress import (
     Progress,
     SpinnerColumn,

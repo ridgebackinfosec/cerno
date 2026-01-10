@@ -7,31 +7,26 @@ various security tools including nmap, netexec, and metasploit.
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Callable, Optional, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .config import CernoConfig
     from .models import Plugin, Finding
 
 import pyperclip
-from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.prompt import Prompt
 from rich.text import Text
 
-from .ansi import C, fmt_action, header, info, ok, warn
+from .ansi import header, info, ok, warn
 from .constants import (
     NETEXEC_PROTOCOLS,
     NSE_PROFILES,
-    SEARCH_WINDOW_SIZE,
-    MIN_TERM_LENGTH,
 )
 from .tool_context import ToolContext, CommandResult
 
@@ -765,7 +760,7 @@ def run_tool_workflow(
     from .ansi import warn, ok, err, info, header, get_console
     from .constants import SAMPLE_THRESHOLD, get_results_root
     from .fs import build_results_paths, pretty_severity_label, write_work_files
-    from .ops import require_cmd, run_command_with_progress, log_tool_execution, log_artifacts_for_nmap
+    from .ops import run_command_with_progress, log_tool_execution, log_artifacts_for_nmap
     from .tool_registry import get_tool
     from .tool_context import ToolContext
 

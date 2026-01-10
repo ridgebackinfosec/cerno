@@ -55,19 +55,19 @@ from cerno_pkg import (
     severity_style,
     pretty_severity_label,
     default_page_size,
-    _file_raw_payload_text,
-    _file_raw_paged_text,
-    _grouped_payload_text,
-    _grouped_paged_text,
-    _hosts_only_payload_text,
-    _hosts_only_paged_text,
-    _build_plugin_output_details,
-    _display_finding_preview,
+    file_raw_payload_text,
+    file_raw_paged_text,
+    grouped_payload_text,
+    grouped_paged_text,
+    hosts_only_payload_text,
+    hosts_only_paged_text,
+    build_plugin_output_details,
+    display_finding_preview,
     page_text,
     bulk_extract_cves_for_plugins,
     bulk_extract_cves_for_findings,
-    _display_bulk_cve_results,
-    _color_unreviewed,
+    display_bulk_cve_results,
+    color_unreviewed,
     print_action_menu,
     # fs (including newly moved functions):
     build_results_paths,
@@ -118,31 +118,19 @@ from cerno_pkg import (
 )
 
 # === Standard library imports ===
-import ipaddress
 import math
-import random
-import re
-import shutil
-import subprocess
-import tempfile
 import types
-from collections import Counter
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from cerno_pkg.models import Plugin, Finding
     from cerno_pkg.config import CernoConfig
 
 # === Third-party imports ===
-import click
 import typer
 from typer import Exit
 from rich import box
-from rich.console import Console
-from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
-from rich.prompt import Confirm, IntPrompt, Prompt
-from rich.status import Status
+from rich.prompt import Confirm, Prompt
 from rich.table import Table
 from rich.traceback import install as rich_tb_install
 
@@ -161,7 +149,7 @@ _config_context: contextvars.ContextVar[Opt['CernoConfig']] = contextvars.Contex
 
 def get_current_config():
     """Get config from context or load fresh."""
-    from cerno_pkg import CernoConfig, load_config
+    from cerno_pkg import load_config
     config = _config_context.get()
     if config is None:
         config = load_config()
@@ -333,7 +321,7 @@ def browse_file_list(
         has_metasploit_filter: Optional filter for metasploit plugins
         plugin_ids_filter: Optional list of specific plugin IDs to include
     """
-    from cerno_pkg.models import Finding, Scan
+    from cerno_pkg.models import Finding
 
     # Load config if not provided (defensive programming)
     if config is None:
@@ -342,7 +330,7 @@ def browse_file_list(
 
     file_filter = ""
     reviewed_filter = ""
-    group_filter: Optional[Tuple[int, set]] = None
+    group_filter: Optional[Tuple[int, set, str]] = None
     sort_mode = "plugin_id"  # Default sort by plugin ID
 
     # Use config value if set, otherwise calculate based on terminal
@@ -658,7 +646,6 @@ def show_session_statistics(
 
         # Use database if available, otherwise fall back to filesystem
         if scan_id is not None:
-            from cerno_pkg.models import Finding
             from cerno_pkg.database import db_transaction, query_all
 
             # Query database for completed findings grouped by severity

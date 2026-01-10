@@ -11,13 +11,12 @@ from pathlib import Path
 from typing import Any, List, Optional, Union, TYPE_CHECKING
 
 from rich import box
-from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.table import Table
 from rich.text import Text
 
-from .ansi import C, colorize_severity_label, fmt_action, info, warn, get_console, style_if_enabled
+from .ansi import info, warn, get_console, style_if_enabled
 from .constants import SEVERITY_COLORS
 from .fs import default_page_size, pretty_severity_label
 from .logging_setup import log_timing
@@ -358,7 +357,6 @@ def render_compare_tables(
                         full_text += "\n".join(f"  - {name}" for name in names)
                         full_text += "\n"
 
-                    from .fs import menu_pager
                     menu_pager(full_text)
             except KeyboardInterrupt:
                 pass
@@ -699,7 +697,7 @@ def severity_style(label: str) -> str:
 # ===================================================================
 
 
-def _file_raw_payload_text(finding: "Finding") -> str:
+def file_raw_payload_text(finding: "Finding") -> str:
     """
     Get raw file content from database (all host:port lines).
 
@@ -717,7 +715,7 @@ def _file_raw_payload_text(finding: "Finding") -> str:
     return content
 
 
-def _file_raw_paged_text(finding: "Finding", plugin: "Plugin") -> str:
+def file_raw_paged_text(finding: "Finding", plugin: "Plugin") -> str:
     """
     Prepare raw file content for paged viewing with metadata from database.
 
@@ -731,7 +729,7 @@ def _file_raw_paged_text(finding: "Finding", plugin: "Plugin") -> str:
     display_name = f"Plugin {plugin.plugin_id}: {plugin.plugin_name}"
 
     # Get content from database
-    content = _file_raw_payload_text(finding)
+    content = file_raw_payload_text(finding)
     size_bytes = len(content.encode('utf-8'))
 
     lines = [f"Showing: {display_name} ({size_bytes} bytes from database)"]
@@ -750,7 +748,7 @@ def page_text(text: str) -> None:
         _console_global.print(text, end="" if text.endswith("\n") else "\n")
 
 
-def _grouped_payload_text(finding: "Finding") -> str:
+def grouped_payload_text(finding: "Finding") -> str:
     """
     Generate grouped host:port text for copying/viewing from database.
 
@@ -797,7 +795,7 @@ def _grouped_payload_text(finding: "Finding") -> str:
     return "\n".join(out) + ("\n" if out else "")
 
 
-def _grouped_paged_text(finding: "Finding", plugin: "Plugin") -> str:
+def grouped_paged_text(finding: "Finding", plugin: "Plugin") -> str:
     """
     Prepare grouped host:port content for paged viewing from database.
 
@@ -808,12 +806,12 @@ def _grouped_paged_text(finding: "Finding", plugin: "Plugin") -> str:
     Returns:
         Formatted string with header and grouped content
     """
-    body = _grouped_payload_text(finding)
+    body = grouped_payload_text(finding)
     display_name = f"Plugin {plugin.plugin_id}: {plugin.plugin_name}"
     return f"Grouped view: {display_name}\n{body}"
 
 
-def _hosts_only_payload_text(finding: "Finding") -> str:
+def hosts_only_payload_text(finding: "Finding") -> str:
     """
     Extract only hosts (IPs or FQDNs) without port information from database.
 
@@ -828,7 +826,7 @@ def _hosts_only_payload_text(finding: "Finding") -> str:
     return "\n".join(hosts) + ("\n" if hosts else "")
 
 
-def _hosts_only_paged_text(finding: "Finding", plugin: "Plugin") -> str:
+def hosts_only_paged_text(finding: "Finding", plugin: "Plugin") -> str:
     """
     Prepare hosts-only content for paged viewing from database.
 
@@ -839,12 +837,12 @@ def _hosts_only_paged_text(finding: "Finding", plugin: "Plugin") -> str:
     Returns:
         Formatted string with header and host list
     """
-    body = _hosts_only_payload_text(finding)
+    body = hosts_only_payload_text(finding)
     display_name = f"Plugin {plugin.plugin_id}: {plugin.plugin_name}"
     return f"Hosts-only view: {display_name}\n{body}"
 
 
-def _build_plugin_output_details(
+def build_plugin_output_details(
     finding: "Finding",
     plugin: "Plugin"
 ) -> Optional[str]:
@@ -902,7 +900,7 @@ def _build_plugin_output_details(
     return "\n".join(lines)
 
 
-def _display_finding_preview(
+def display_finding_preview(
     plugin: "Plugin",
     finding: "Finding",
     sev_dir: Optional[Path],
@@ -916,7 +914,6 @@ def _display_finding_preview(
         sev_dir: Severity directory path
         chosen: File path (for URL extraction)
     """
-    import re
 
     # Get hosts and ports from database
     hosts, ports_str = finding.get_hosts_and_ports()
@@ -937,7 +934,6 @@ def _display_finding_preview(
     content.append(f"{sev_label}\n", style=severity_style(sev_label))
 
     # Plugin Details (URL)
-    plugin_url = None
     # Import _plugin_details_line from parsing module if needed
     # For now, we'll skip this feature until Phase 5 when we move _plugin_details_line
     # pd_line = _plugin_details_line(chosen)
@@ -1019,7 +1015,7 @@ def bulk_extract_cves_for_plugins(plugins: List[tuple[int, str]]) -> None:
                 pass
 
     # Display results
-    _display_bulk_cve_results(results)
+    display_bulk_cve_results(results)
 
 
 def bulk_extract_cves_for_findings(files: List[Path]) -> None:
@@ -1058,10 +1054,10 @@ def bulk_extract_cves_for_findings(files: List[Path]) -> None:
                 pass
 
     # Display results
-    _display_bulk_cve_results(results)
+    display_bulk_cve_results(results)
 
 
-def _display_bulk_cve_results(results: dict[str, list[str]]) -> None:
+def display_bulk_cve_results(results: dict[str, list[str]]) -> None:
     """Display CVE extraction results with preview and smart format selection.
 
     Shows CVE count preview before asking for format choice.
@@ -1125,7 +1121,7 @@ def _display_bulk_cve_results(results: dict[str, list[str]]) -> None:
         pass
 
 
-def _color_unreviewed(count: int) -> str:
+def color_unreviewed(count: int) -> str:
     """
     Colorize unreviewed file count based on severity.
 

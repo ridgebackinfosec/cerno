@@ -1,8 +1,6 @@
 """Tests for cerno_pkg.database module."""
 
 import sqlite3
-import tempfile
-from pathlib import Path
 
 import pytest
 

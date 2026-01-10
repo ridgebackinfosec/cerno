@@ -13,17 +13,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, List, Any, TYPE_CHECKING
 
-from rich.console import Console
-from rich.progress import (
-    Progress,
-    SpinnerColumn,
-    TextColumn,
-    TimeElapsedColumn,
-)
 from rich.prompt import Prompt, Confirm
 
 from .ansi import err, header, ok, warn, get_console, info
-from .constants import get_results_root, REVIEW_PREFIX
+from .constants import get_results_root
 
 if TYPE_CHECKING:
     from .models import Finding, Plugin
@@ -175,8 +168,8 @@ def default_page_size() -> int:
     except Exception:
         # Fallback to 12, log hint once
         if not _page_size_fallback_warned:
-            from .logging_setup import _log_debug
-            _log_debug(
+            from .logging_setup import log_debug
+            log_debug(
                 "Terminal height detection failed, using default page size (12). "
                 "Set 'default_page_size' in config.yaml to override."
             )
@@ -304,10 +297,10 @@ def handle_finding_view(
     """
     # Lazy imports to avoid circular dependencies
     from .render import (
-        _file_raw_paged_text, _file_raw_payload_text,
-        _grouped_paged_text, _grouped_payload_text,
-        _hosts_only_paged_text, _hosts_only_payload_text,
-        _build_plugin_output_details, _display_finding_preview,
+        file_raw_paged_text, file_raw_payload_text,
+        grouped_paged_text, grouped_payload_text,
+        hosts_only_paged_text, hosts_only_payload_text,
+        build_plugin_output_details, display_finding_preview,
         print_action_menu, menu_pager
     )
     from .tools import copy_to_clipboard, run_tool_workflow
@@ -428,7 +421,7 @@ def handle_finding_view(
             if plugin is None or sev_dir is None or finding is None:
                 warn("Plugin metadata not available - cannot display finding info")
                 continue
-            _display_finding_preview(plugin, finding, sev_dir, chosen)
+            display_finding_preview(plugin, finding, sev_dir, chosen)
             continue
 
         # Handle Finding Details action
@@ -438,7 +431,7 @@ def handle_finding_view(
                 continue
 
             # Generate and display plugin output details
-            details_text = _build_plugin_output_details(finding, plugin)
+            details_text = build_plugin_output_details(finding, plugin)
 
             if details_text:
                 menu_pager(details_text)
@@ -458,8 +451,8 @@ def handle_finding_view(
             continue
 
         # Default to grouped format (no prompt) for instant viewing
-        text = _grouped_paged_text(finding, plugin)
-        payload = _grouped_payload_text(finding)
+        text = grouped_paged_text(finding, plugin)
+        payload = grouped_payload_text(finding)
 
         if text is None or payload is None:
             warn("Failed to generate content.")
@@ -502,11 +495,11 @@ def handle_finding_view(
 
             # Generate new format
             if format_choice in ("r", "raw"):
-                text = _file_raw_paged_text(finding, plugin)
-                payload = _file_raw_payload_text(finding)
+                text = file_raw_paged_text(finding, plugin)
+                payload = file_raw_payload_text(finding)
             elif format_choice in ("h", "hosts", "hosts-only"):
-                text = _hosts_only_paged_text(finding, plugin)
-                payload = _hosts_only_payload_text(finding)
+                text = hosts_only_paged_text(finding, plugin)
+                payload = hosts_only_payload_text(finding)
             else:
                 continue  # Already in grouped
 
@@ -559,7 +552,7 @@ def process_single_finding(
         workflow_mapper: Optional workflow mapper for plugin workflows
     """
     # Lazy imports to avoid circular dependencies
-    from .render import _display_finding_preview
+    from .render import display_finding_preview
 
     # Get hosts and ports from database
     hosts, ports_str = finding.get_hosts_and_ports()
@@ -573,7 +566,7 @@ def process_single_finding(
         return
 
     # Display finding preview panel
-    _display_finding_preview(plugin, finding, sev_dir, chosen)
+    display_finding_preview(plugin, finding, sev_dir, chosen)
 
     # Extract plugin URL for handle_finding_view
     plugin_url = None

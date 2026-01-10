@@ -18,7 +18,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from rich.console import Console
 from rich.progress import (
     Progress,
     SpinnerColumn,
@@ -26,7 +25,7 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 
-from .ansi import C, err, header, ok, get_console
+from .ansi import C, err, get_console
 from .constants import PROCESS_TERMINATE_TIMEOUT
 from .logging_setup import log_error, log_info, log_timing
 
@@ -85,9 +84,8 @@ def run_command_with_progress(
         """Check if a command starts with sudo."""
         if isinstance(c, list):
             return len(c) > 0 and os.path.basename(str(c[0])) == "sudo"
-        if isinstance(c, str):
+        else:
             return bool(re.match(r"^\s*(?:\S*/)?sudo\b", c))
-        return False
 
     used_sudo = _cmd_starts_with_sudo(cmd)
 

@@ -4,7 +4,6 @@ This module provides ANSI color codes and helper functions for colorized
 console output. Color configuration is managed via config.yaml.
 """
 
-import os
 import shutil
 from typing import Optional, TYPE_CHECKING
 

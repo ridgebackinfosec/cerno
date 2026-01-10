@@ -19,7 +19,6 @@ Adding a New Tool:
 
 from dataclasses import dataclass, field
 from typing import Callable, Optional, Any
-from pathlib import Path
 
 
 @dataclass

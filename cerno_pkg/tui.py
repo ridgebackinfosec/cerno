@@ -19,7 +19,7 @@ from .render import print_action_menu, show_actions_help, show_reviewed_help
 from .constants import VISIBLE_GROUPS
 
 if TYPE_CHECKING:
-    from .models import Finding, Plugin
+    from .models import Finding
 
 _console_global = get_console()
 
@@ -170,7 +170,7 @@ def handle_finding_list_actions(
     display: List[Any],  # List of (Finding, Plugin) tuples
     file_filter: str,
     reviewed_filter: str,
-    group_filter: Optional[Tuple[int, set]],
+    group_filter: Optional[Tuple[int, set, str]],
     sort_mode: str,
     page_idx: int,
     total_pages: int,

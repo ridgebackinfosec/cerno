@@ -1,13 +1,10 @@
 """Tests for cerno_pkg.fs module."""
 
-import os
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 from cerno_pkg.fs import (
-    mark_review_complete,
     build_results_paths,
     pretty_severity_label,
     default_page_size,
@@ -47,25 +44,21 @@ def mock_db_for_fs(monkeypatch, temp_db):
 @pytest.mark.skip(reason="is_review_complete removed - review state is now DB-only")
 class TestIsReviewComplete:
     """Tests for is_review_complete function - OBSOLETE in DB-only architecture."""
-    pass
 
 
 @pytest.mark.skip(reason="is_reviewed_filename removed - review state is now DB-only")
 class TestIsReviewedFilename:
     """Tests for is_reviewed_filename function - OBSOLETE in DB-only architecture."""
-    pass
 
 
 @pytest.mark.skip(reason="rename_review_complete replaced with mark_review_complete - DB-only, no file renaming")
 class TestRenameReviewComplete:
     """Tests for rename_review_complete function - OBSOLETE in DB-only architecture."""
-    pass
 
 
 @pytest.mark.skip(reason="undo_review_complete updated to DB-only - no file renaming")
 class TestUndoReviewComplete:
     """Tests for undo_review_complete function - OBSOLETE in DB-only architecture."""
-    pass
 
 
 class TestBuildResultsPaths:

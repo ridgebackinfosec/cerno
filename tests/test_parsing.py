@@ -9,8 +9,6 @@ from cerno_pkg.parsing import (
     is_hostname,
     is_valid_token,
     parse_hosts_ports,
-    build_item_set,
-    normalize_combos,
 )
 
 

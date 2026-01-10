@@ -18,7 +18,7 @@ from .tool_registry import Tool, register_tool
 
 # Avoid circular imports by using TYPE_CHECKING
 if TYPE_CHECKING:
-    from typing import Any
+    pass
 
 
 def register_all_tools() -> None:
