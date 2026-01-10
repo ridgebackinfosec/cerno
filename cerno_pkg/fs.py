@@ -233,9 +233,8 @@ def display_workflow(workflow: "Workflow") -> None:
             _console_global.print(f"  - {ref}")
         _console_global.print()
 
-    info("Press [Enter] to continue...")
     try:
-        Prompt.ask("", default="")
+        Prompt.ask("\nPress Enter to continue", default="")
     except KeyboardInterrupt:
         pass
 
