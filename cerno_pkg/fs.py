@@ -233,9 +233,8 @@ def display_workflow(workflow: "Workflow") -> None:
             _console_global.print(f"  - {ref}")
         _console_global.print()
 
-    info("Press [Enter] to continue...")
     try:
-        Prompt.ask("", default="")
+        Prompt.ask("\nPress Enter to continue", default="")
     except KeyboardInterrupt:
         pass
 
@@ -304,16 +303,14 @@ def handle_finding_view(
         action_text.append("[I] ", style=style_if_enabled("cyan"))
         action_text.append("Finding Info / ", style=None)
         action_text.append("[D] ", style=style_if_enabled("cyan"))
-        action_text.append("Finding Details", style=None)
+        action_text.append("Finding Details /", style=None)
         action_text.append("[V] ", style=style_if_enabled("cyan"))
         action_text.append("View host(s) / ", style=None)
         action_text.append("[E] ", style=style_if_enabled("cyan"))
         action_text.append("CVE info / ", style=None)
         if has_workflow:
-            action_text.append(" / ", style=None)
             action_text.append("[W] ", style=style_if_enabled("cyan"))
-            action_text.append("Workflow", style=None)
-        action_text.append(" / ", style=None)
+            action_text.append("Workflow /", style=None)
         action_text.append("[T] ", style=style_if_enabled("cyan"))
         action_text.append("Run tool / ", style=None)
         action_text.append("[M] ", style=style_if_enabled("cyan"))
