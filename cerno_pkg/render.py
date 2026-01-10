@@ -310,7 +310,7 @@ def render_compare_tables(
         "Explicit combos?", justify="center", no_wrap=True, max_width=16
     )
 
-    for i, (file_path, hosts, ports_set, combos, had_explicit) in enumerate(
+    for i, (file_path, hosts, ports_set, _combos, had_explicit) in enumerate(
         parsed, 1
     ):
         files_table.add_row(

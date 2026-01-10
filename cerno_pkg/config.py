@@ -112,7 +112,7 @@ def load_config() -> CernoConfig:
         # Note: Don't log here since logger isn't initialized yet
         return config
 
-    except Exception as e:
+    except Exception:
         # Note: Don't log here since logger isn't initialized yet
         # Silently fall back to defaults if config load fails
         return CernoConfig()
@@ -157,7 +157,7 @@ def save_config(config: CernoConfig) -> bool:
         # Config saved successfully
         return True
 
-    except Exception as e:
+    except Exception:
         # Failed to save config
         return False
 

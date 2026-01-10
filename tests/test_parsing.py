@@ -189,7 +189,7 @@ class TestIsValidToken:
 
     def test_invalid_malformed(self):
         """Test malformed input."""
-        valid, host, port = is_valid_token("not a valid host")
+        valid, _host, _port = is_valid_token("not a valid host")
         assert valid is False
 
 

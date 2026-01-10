@@ -32,8 +32,8 @@ from .tool_context import ToolContext, CommandResult
 
 # Optional dependencies for Metasploit search
 try:
-    import requests
-    from bs4 import BeautifulSoup, Tag
+    import requests  # type: ignore[reportUnusedImport]
+    from bs4 import BeautifulSoup, Tag  # type: ignore[reportUnusedImport]
     METASPLOIT_DEPS_AVAILABLE = True
 except ImportError:
     requests = None  # type: ignore
@@ -572,7 +572,7 @@ def show_msf_available(plugin_url: str) -> None:
 # ===================================================================
 
 
-def _build_nmap_workflow(ctx: "ToolContext") -> Optional["CommandResult"]:
+def build_nmap_workflow(ctx: "ToolContext") -> Optional["CommandResult"]:
     """
     Build nmap command through interactive prompts.
 
@@ -641,7 +641,7 @@ def _build_nmap_workflow(ctx: "ToolContext") -> Optional["CommandResult"]:
     )
 
 
-def _build_netexec_workflow(ctx: "ToolContext") -> Optional["CommandResult"]:
+def build_netexec_workflow(ctx: "ToolContext") -> Optional["CommandResult"]:
     """
     Build netexec command through interactive prompts.
 
@@ -677,7 +677,7 @@ def _build_netexec_workflow(ctx: "ToolContext") -> Optional["CommandResult"]:
     )
 
 
-def _build_custom_workflow(ctx: "ToolContext") -> Optional["CommandResult"]:
+def build_custom_workflow(ctx: "ToolContext") -> Optional["CommandResult"]:
     """
     Build custom command from user template with placeholder substitution.
 

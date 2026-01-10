@@ -190,7 +190,7 @@ def compare_filtered(files: Union[list['Finding'], list[tuple['Finding', 'Plugin
         task = progress.add_task(
             "Grouping identical host:port combos...", total=len(parsed)
         )
-        for (display_name, h, p, c, e), sig in zip(parsed, combo_signatures):
+        for (display_name, _h, _p, _c, _e), sig in zip(parsed, combo_signatures):
             groups_dict[sig].append(display_name)
             progress.advance(task)
 

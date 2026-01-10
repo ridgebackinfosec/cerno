@@ -423,7 +423,7 @@ def handle_finding_list_actions(
         # Extract plugin info from (Finding, Plugin) tuples for CVE extraction
         # Pass list of (plugin_id, plugin_name) tuples instead of file paths
         from .render import bulk_extract_cves_for_plugins
-        plugin_info_list = [(p.plugin_id, p.plugin_name) for pf, p in candidates]
+        plugin_info_list = [(p.plugin_id, p.plugin_name) for _pf, p in candidates]
         bulk_extract_cves_for_plugins(plugin_info_list)
         return None, file_filter, reviewed_filter, group_filter, sort_mode, page_idx
 

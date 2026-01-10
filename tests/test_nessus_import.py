@@ -659,7 +659,7 @@ class TestCVEAndMetasploitExtraction:
         """Verify CVEs are extracted from .nessus XML during import."""
         from cerno_pkg.models import Plugin
 
-        result = import_nessus_file(
+        _result = import_nessus_file(
             nessus_with_cves_and_msf,
             temp_dir,
             use_database=True
@@ -685,7 +685,7 @@ class TestCVEAndMetasploitExtraction:
         """Verify Metasploit module names are extracted from .nessus XML during import."""
         from cerno_pkg.models import Plugin
 
-        result = import_nessus_file(
+        _result = import_nessus_file(
             nessus_with_cves_and_msf,
             temp_dir,
             use_database=True
@@ -718,7 +718,7 @@ class TestCVEAndMetasploitExtraction:
         """Verify plugins without CVEs store None, not empty list."""
         from cerno_pkg.models import Plugin
 
-        result = import_nessus_file(
+        _result = import_nessus_file(
             nessus_with_cves_and_msf,
             temp_dir,
             use_database=True
@@ -735,7 +735,7 @@ class TestCVEAndMetasploitExtraction:
         """Verify plugins without Metasploit names store None, not empty list."""
         from cerno_pkg.models import Plugin
 
-        result = import_nessus_file(
+        _result = import_nessus_file(
             nessus_with_cves_and_msf,
             temp_dir,
             use_database=True

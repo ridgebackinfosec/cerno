@@ -18,101 +18,42 @@ from cerno_pkg import (
     # version
     __version__,
     # ops
-    require_cmd,
-    resolve_cmd,
     root_or_sudo_available,
-    run_command_with_progress,
     # parsing
-    normalize_combos,
     group_findings_by_workflow,
     # constants
     get_results_root,
-    PLUGIN_DETAILS_BASE,
-    NSE_PROFILES,
-    MAX_FILE_BYTES,
     DEFAULT_TOP_PORTS,
-    SAMPLE_THRESHOLD,
-    VISIBLE_GROUPS,
     # ansi / labels
-    C,
     header,
     ok,
     warn,
     err,
     info,
     fmt_action,
-    cyan_label,
-    colorize_severity_label,
     style_if_enabled,
-    # render (including newly moved functions):
+    # render
     render_severity_table,
     render_finding_list_table,
     render_actions_footer,
-    show_actions_help,
-    show_reviewed_help,
-    menu_pager,
     severity_cell,
-    severity_style,
     pretty_severity_label,
     default_page_size,
-    file_raw_payload_text,
-    file_raw_paged_text,
-    grouped_payload_text,
-    grouped_paged_text,
-    hosts_only_payload_text,
-    hosts_only_paged_text,
-    build_plugin_output_details,
-    display_finding_preview,
-    page_text,
-    bulk_extract_cves_for_plugins,
-    bulk_extract_cves_for_findings,
-    display_bulk_cve_results,
-    color_unreviewed,
     print_action_menu,
-    # fs (including newly moved functions):
-    build_results_paths,
-    write_work_files,
-    display_workflow,
-    handle_finding_view,
+    # fs
     process_single_finding,
-    # tools (including newly moved functions):
-    build_nmap_cmd,
-    build_netexec_cmd,
-    choose_tool,
-    choose_netexec_protocol,
-    custom_command_help,
-    render_placeholders,
-    command_review_menu,
-    copy_to_clipboard,
-    choose_nse_profile,
-    run_tool_workflow,
-    # types/context:
-    ToolContext,
-    CommandResult,
-    ReviewContext,
-    # session (including newly moved functions):
-    SessionState,
+    # session
     save_session,
     load_session,
     delete_session,
     show_scan_summary,
-    # workflow_mapper:
-    Workflow,
-    WorkflowStep,
+    # workflow_mapper
     WorkflowMapper,
     # analysis
-    compare_filtered,
-    analyze_inclusions,
     natural_key,
-    count_reviewed_in_scan,
-    # tui (newly created module):
+    # tui
     parse_severity_selection,
-    choose_from_list,
     handle_finding_list_actions,
-    # enums (newly created module):
-    DisplayFormat,
-    ViewFormat,
-    SortMode,
     # banner
     display_banner,
 )
@@ -252,7 +193,7 @@ def browse_workflow_groups(
 
         # Extract plugin IDs from database records instead of filenames
         plugin_ids = []
-        for finding, plugin in workflow_files:
+        for _finding, plugin in workflow_files:
             plugin_ids.append(plugin.plugin_id)
 
         # Browse findings for this workflow using database query filtered by plugin IDs

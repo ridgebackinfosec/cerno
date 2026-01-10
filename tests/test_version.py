@@ -90,7 +90,7 @@ def test_get_version_falls_back_to_unknown(mock_pyproject, mock_metadata):
 
 def test_get_version_from_pyproject_real():
     """Test that _get_version_from_pyproject() can read actual pyproject.toml."""
-    from cerno_pkg._version import _get_version_from_pyproject
+    from cerno_pkg._version import _get_version_from_pyproject  # type: ignore[reportPrivateUsage]
 
     version = _get_version_from_pyproject()
 
@@ -141,7 +141,7 @@ def test_version_in_installed_package():
 
 def test_get_version_from_metadata():
     """Test _get_version_from_metadata() helper function."""
-    from cerno_pkg._version import _get_version_from_metadata
+    from cerno_pkg._version import _get_version_from_metadata  # type: ignore[reportPrivateUsage]
 
     version = _get_version_from_metadata()
     # Should return string or None (depending on if package is installed)
