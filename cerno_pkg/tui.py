@@ -533,10 +533,10 @@ def handle_finding_list_actions(
                 idx = int(choice[1:]) - 1
                 if 0 <= idx < len(groups):
                     # Enhanced tuple with description
-                    group_desc = "Superset findings"
+                    group_desc = "Overlapping findings"
                     group_filter = (idx + 1, set(groups[idx]), group_desc)
                     ok(
-                        f"Applied superset group #{idx+1} "
+                        f"Applied overlapping group #{idx+1} "
                         f"({len(groups[idx])} findings)."
                     )
                     page_idx = 0

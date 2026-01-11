@@ -408,7 +408,15 @@ def browse_file_list(
                 "hosts": "Host count ↓",
                 "name": "Name A↑Z"
             }.get(sort_mode, "Plugin ID ↑")
-            status_parts.append(f"Sort: {sort_label}")
+
+            # Show next sort mode indicator
+            next_sort_mode = {
+                "plugin_id": "Name A↑Z",
+                "name": "Host count ↓",
+                "hosts": "Plugin ID ↑"
+            }.get(sort_mode, "Name A↑Z")
+
+            status_parts.append(f"Sort: {sort_label} (next: {next_sort_mode})")
             status_parts.append(f"Page: {page_idx+1}/{total_pages}")
 
             # Responsive layout based on terminal width

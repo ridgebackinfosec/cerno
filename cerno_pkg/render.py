@@ -420,7 +420,7 @@ def render_actions_footer(
         [
             key_text("R", "Reviewed"),
             key_text("H", "Compare"),
-            key_text("I", "Superset"),
+            key_text("I", "Overlapping"),
         ]
     )
     right_items_row2 = [
@@ -510,7 +510,7 @@ def show_actions_help(
     table.add_row(
         Text("Analysis", style="bold"),
         key_text("H", "Compare - Find files with identical host:port combinations"),
-        key_text("I", "Superset - Find files where one is a subset of another"),
+        key_text("I", "Overlapping - Find findings that cover all affected systems of another finding"),
         key_text("E", f"CVEs ({candidates_count}) - Extract CVEs for all filtered files"),
     )
     if group_applied:
@@ -1096,14 +1096,26 @@ def display_bulk_cve_results(results: dict[str, list[str]]) -> None:
             all_cves.update(cves)
         total_unique_cves = len(all_cves)
 
-        # Show preview before asking for format
-        info(f"\nFound {total_unique_cves} unique CVE(s) across {total_findings} finding(s)")
+        # Show enhanced preview with CVE distribution
+        info(f"\nFound {total_unique_cves} unique CVE(s) across {total_findings} finding(s):")
+
+        # Show CVE count per finding (limit to first 10 findings for readability)
+        findings_to_show = list(results.items())[:10]
+        for plugin_name, cves in findings_to_show:
+            # Truncate long plugin names
+            display_name = plugin_name if len(plugin_name) <= 60 else plugin_name[:57] + "..."
+            info(f"  {display_name}: {len(cves)} CVE(s)")
+
+        if len(results) > 10:
+            remaining = len(results) - 10
+            info(f"  ... and {remaining} more finding(s)")
 
         # Smart default: 1-2 findings → combined, 3+ → separated
         default_format = "c" if total_findings <= 2 else "s"
         default_label = "Combined" if default_format == "c" else "Separated"
 
         # Ask user for display format with smart default
+        info("")  # Blank line for spacing
         print_action_menu([
             ("S", "Separated (by finding)"),
             ("C", "Combined (all unique CVEs)"),

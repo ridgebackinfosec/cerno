@@ -238,7 +238,7 @@ def analyze_inclusions(files: Union[list['Finding'], list[tuple['Finding', 'Plug
         warn("No files selected for superset analysis.")
         return []
 
-    header("Filtered Files: Superset / Coverage Analysis")
+    header("Filtered Files: Overlapping Findings Analysis")
     info(f"Files analyzed: {len(files)}")
 
     # Detect what type of input we have (database-only)
@@ -386,13 +386,13 @@ def analyze_inclusions(files: Union[list['Finding'], list[tuple['Finding', 'Plug
 
     if groups:
         groups_table = Table(
-            title="Superset Coverage Groups",
+            title="Overlapping Findings Groups",
             box=box.SIMPLE,
             show_lines=False,
             pad_edge=False,
         )
         groups_table.add_column("#", justify="right", no_wrap=True)
-        groups_table.add_column("Superset (root)")
+        groups_table.add_column("Root Finding")
         groups_table.add_column("Covers", justify="right", no_wrap=True)
         groups_table.add_column("Covered findings (sample)")
         for i, (root, covered_list) in enumerate(groups, 1):
