@@ -396,8 +396,8 @@ def browse_file_list(
             # File filter with visual indicator if active
             if file_filter:
                 filter_text = Text()
-                filter_text.append("[FILTER] ", style="bold yellow on red")
-                filter_text.append(f"Name: '{file_filter}'", style="bold")
+                filter_text.append("[FILTER] ", style="bold cyan")
+                filter_text.append(f"Name: '{file_filter}'", style="bold yellow")
                 status_parts.append(filter_text)
             else:
                 status_parts.append("Filter: '*'")
@@ -407,8 +407,8 @@ def browse_file_list(
                 # Enhanced group filter with description (backward compatible)
                 group_desc = group_filter[2] if len(group_filter) > 2 else f"{len(group_filter[1])} findings"
                 group_text = Text()
-                group_text.append("[ACTIVE FILTER] ", style="bold yellow on red")
-                group_text.append(f"Group #{group_filter[0]}: {group_desc} ({len(group_filter[1])})", style="bold")
+                group_text.append("[ACTIVE FILTER] ", style="bold cyan")
+                group_text.append(f"Group #{group_filter[0]}: {group_desc} ({len(group_filter[1])})", style="bold yellow")
                 status_parts.append(group_text)
 
             sort_label = {
