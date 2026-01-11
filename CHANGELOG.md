@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-01-11
+
+### Fixed
+- Fixed jarring yellow-on-red filter indicators - changed to readable bold cyan/yellow text (cerno.py)
+
 ## [1.2.0] - 2026-01-10
 
 ### Added
@@ -38,7 +43,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Fixed ExecutionMetadata type error in post-execution summary (use attribute access instead of dict access)
-- Fixed jarring yellow-on-red filter indicators - changed to readable bold cyan/yellow text (cerno.py)
 
 ## [1.1.2] - 2026-01-10
 
