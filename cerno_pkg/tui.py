@@ -241,6 +241,7 @@ def handle_finding_list_actions(
     if ans == "c":
         file_filter = ""
         page_idx = 0
+        ok("Filter cleared. Showing all findings.")
         return None, file_filter, reviewed_filter, group_filter, sort_mode, page_idx
 
     if ans == "o":

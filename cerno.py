@@ -76,7 +76,7 @@ from rich.table import Table
 from rich.traceback import install as rich_tb_install
 
 # Create a console for the interactive flow (configured with no_color setting)
-from cerno_pkg.ansi import get_console
+from cerno_pkg.ansi import get_console, get_terminal_width
 _console_global = get_console()
 
 # Install pretty tracebacks, but suppress for Typer/Click exit exceptions
@@ -362,7 +362,6 @@ def browse_file_list(
 
         try:
             from cerno_pkg import breadcrumb
-            from cerno_pkg.ansi import get_terminal_width
 
             filter_info = f"filtered: '{file_filter}'" if file_filter else "Findings"
             bc = breadcrumb(scan_dir.name, severity_label, filter_info)
@@ -377,6 +376,12 @@ def browse_file_list(
                 hint.append("[?]", style="bold yellow")
                 hint.append(" for help", style="dim")
                 _console_global.print(hint)
+
+                # Terminal width warning for narrow terminals
+                term_width = get_terminal_width()
+                if term_width < 80:
+                    warn(f"Note: Terminal width is {term_width} chars (recommended: 100+). Some layouts may wrap.")
+
                 _console_global.print()  # Blank line for spacing
                 first_iteration = False
 

@@ -29,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Streamlined nmap workflow to use single configuration screen instead of 3 sequential prompts
 - Enhanced filter prompts with inline examples (e.g., 'apache', 'ssl', 'windows') for better discoverability (tui.py)
 - Improved large group pagination indicator with bold yellow message "Showing 8 of X findings - Press [D] to view all" (render.py)
+- Changed severity table unreviewed count color from green/yellow/red to neutral cyan for progress tracking (render.py:unreviewed_cell())
+- Enhanced workflow display with prominent "Press Enter to continue" hint in bold yellow (fs.py:display_workflow())
+- Added terminal width warning on first review for terminals <80 chars (cerno.py:browse_file_list())
+- Added confirmation feedback when clearing filters with [C] key (tui.py)
 
 ### Fixed
 - Fixed ExecutionMetadata type error in post-execution summary (use attribute access instead of dict access)

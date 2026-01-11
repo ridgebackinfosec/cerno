@@ -251,7 +251,15 @@ def display_workflow(workflow: "Workflow") -> None:
             _console_global.print(f"  - {ref}")
         _console_global.print()
 
-    info("Press [Enter] to continue...")
+    # Prominent continuation hint
+    from rich.text import Text
+    hint = Text()
+    hint.append("[Press ", style="dim")
+    hint.append("Enter", style="bold yellow")
+    hint.append(" to continue]", style="dim")
+    _console_global.print(hint)
+    _console_global.print()
+
     try:
         Prompt.ask("", default="")
     except KeyboardInterrupt:

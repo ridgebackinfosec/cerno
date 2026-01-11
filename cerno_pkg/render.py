@@ -615,6 +615,9 @@ def severity_cell(label: str) -> Any:
 def unreviewed_cell(count: int, total: int) -> Any:
     """Format an unreviewed count cell with percentage and color.
 
+    Uses neutral cyan color for progress tracking (not risk indication).
+    Reserve red/yellow/green for severity labels only.
+
     Args:
         count: Number of unreviewed files
         total: Total number of files
@@ -626,12 +629,8 @@ def unreviewed_cell(count: int, total: int) -> Any:
     if total:
         percentage = round((count / total) * 100)
     text = Text(f"{count} ({percentage}%)")
-    if count == 0:
-        text.stylize(style_if_enabled("green"))
-    elif count <= 10:
-        text.stylize(style_if_enabled("yellow"))
-    else:
-        text.stylize(style_if_enabled("red"))
+    # Use neutral cyan color for progress metrics (not risk colors)
+    text.stylize(style_if_enabled("cyan"))
     return text
 
 
