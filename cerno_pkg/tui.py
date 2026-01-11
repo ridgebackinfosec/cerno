@@ -231,7 +231,10 @@ def handle_finding_list_actions(
     if ans == "f":
         info("Filter help: Enter any text to match finding names (case-insensitive)")
         info("Examples: 'apache' matches 'Apache HTTP Server', 'ssl' matches 'SSL Certificate'")
-        file_filter = Prompt.ask("Enter substring to filter by (or press Enter for none)", default="").strip()
+        file_filter = Prompt.ask(
+            "Enter substring to filter by (e.g., 'apache', 'ssl', 'windows') or press Enter for none",
+            default=""
+        ).strip()
         page_idx = 0
         return None, file_filter, reviewed_filter, group_filter, sort_mode, page_idx
 
@@ -377,7 +380,10 @@ def handle_finding_list_actions(
         if choice == "f":
             info("Filter help: Enter any text to match filenames (case-insensitive)")
             info("Examples: 'apache' matches 'Apache_2.4', 'ssl' matches 'SSL_Certificate'")
-            reviewed_filter = Prompt.ask("Enter substring to filter by (or press Enter for none)", default="").strip()
+            reviewed_filter = Prompt.ask(
+                "Enter substring to filter by (e.g., 'apache', 'ssl', 'windows') or press Enter for none",
+                default=""
+            ).strip()
             return (
                 None,
                 file_filter,

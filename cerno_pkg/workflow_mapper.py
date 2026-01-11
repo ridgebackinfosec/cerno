@@ -281,3 +281,31 @@ class WorkflowMapper:
             warn(f"Failed to load additional workflows from {yaml_path.name}")
 
         return workflows_loaded
+
+    def get_all_workflows(self) -> list[dict[str, str]]:
+        """
+        Get all workflows as a list of dictionaries.
+
+        Returns:
+            List of workflow dictionaries with keys: plugin_id, workflow_name, description
+        """
+        workflows_list = []
+        seen_workflows = set()
+
+        for workflow in self.workflows.values():
+            # Use workflow_name as unique key to avoid duplicate workflows
+            # (same workflow may be registered under multiple plugin IDs)
+            workflow_key = workflow.workflow_name
+
+            if workflow_key not in seen_workflows:
+                workflows_list.append({
+                    "plugin_id": workflow.plugin_id,
+                    "workflow_name": workflow.workflow_name,
+                    "description": workflow.description,
+                })
+                seen_workflows.add(workflow_key)
+
+        # Sort by workflow name
+        workflows_list.sort(key=lambda w: w["workflow_name"])
+
+        return workflows_list

@@ -17,12 +17,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added pre-flight execution summary showing targets, scripts, and output directory (tools.py:command_review_menu())
 - Added post-execution summary panel with duration, exit code, files generated, and next steps (tools.py:run_tool_orchestration())
 - Added consolidated nmap configuration screen combining NSE profile, custom scripts, and UDP options (tools.py:configure_nmap_options())
+- Added port distribution to finding preview showing host count per port (models.py:get_port_distribution(), render.py:display_finding_preview())
+- Added session time indicator to status line with elapsed time and review counts (cerno.py:browse_file_list())
+- Added Metasploit module names to preview panel subtitles (render.py:display_finding_preview())
+- Added `cerno workflow list` CLI command to display all available workflows with descriptions (cerno.py:workflow_list())
 
 ### Changed
 - Changed bulk mark confirmation from typing "mark" to standard Y/N confirmation (tui.py)
 - Improved "Superset" terminology to "Overlapping Findings" throughout UI (render.py, analysis.py, tui.py)
 - Enhanced group filter descriptions to include context (e.g., "Group #1: Identical host:port combinations")
 - Streamlined nmap workflow to use single configuration screen instead of 3 sequential prompts
+- Enhanced filter prompts with inline examples (e.g., 'apache', 'ssl', 'windows') for better discoverability (tui.py)
+- Improved large group pagination indicator with bold yellow message "Showing 8 of X findings - Press [D] to view all" (render.py)
 
 ### Fixed
 - Fixed ExecutionMetadata type error in post-execution summary (use attribute access instead of dict access)

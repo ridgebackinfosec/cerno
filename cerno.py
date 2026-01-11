@@ -115,6 +115,7 @@ def browse_workflow_groups(
     completed_total: List[str],
     workflow_mapper,
     config: Optional["CernoConfig"] = None,
+    session_start_time: Optional[Any] = None,
 ) -> None:
     """
     Browse workflow groups and findings within selected workflow.
@@ -211,6 +212,7 @@ def browse_workflow_groups(
             workflow_mapper=workflow_mapper,
             plugin_ids_filter=plugin_ids if plugin_ids else None,
             config=config,
+            session_start_time=session_start_time,
         )
 
         # Refresh workflow files from database to get updated review_state values
@@ -243,6 +245,7 @@ def browse_file_list(
     plugin_ids_filter: Optional[list[int]] = None,
     severity_dirs_filter: Optional[list[str]] = None,
     config: Optional["CernoConfig"] = None,
+    session_start_time: Optional[Any] = None,
 ) -> None:
     """
     Browse and interact with file list (unified for severity and MSF modes).
@@ -418,6 +421,25 @@ def browse_file_list(
 
             status_parts.append(f"Sort: {sort_label} (next: {next_sort_mode})")
             status_parts.append(f"Page: {page_idx+1}/{total_pages}")
+
+            # Session time indicator
+            if session_start_time:
+                from datetime import datetime
+                elapsed = datetime.now() - session_start_time
+                elapsed_seconds = int(elapsed.total_seconds())
+                hours, remainder = divmod(elapsed_seconds, 3600)
+                minutes, seconds = divmod(remainder, 60)
+
+                if hours > 0:
+                    session_time_str = f"{hours}h {minutes}m"
+                else:
+                    session_time_str = f"{minutes}m {seconds}s"
+
+                # Build session stats string
+                session_stats = f"Session: {session_time_str}"
+                if reviewed_total or completed_total or skipped_total:
+                    session_stats += f" | R:{len(reviewed_total)} C:{len(completed_total)} S:{len(skipped_total)}"
+                status_parts.append(session_stats)
 
             # Responsive layout based on terminal width
             term_width = get_terminal_width()
@@ -1033,6 +1055,7 @@ def main(args: types.SimpleNamespace) -> None:
                         workflow_mapper=workflow_mapper,
                         severity_dirs_filter=severity_dir_names,
                         config=config,
+                        session_start_time=session_start_time,
                     )
 
                 # === Single severity selected (normal or MSF only) ===
@@ -1056,6 +1079,7 @@ def main(args: types.SimpleNamespace) -> None:
                         is_msf_mode=False,
                         workflow_mapper=workflow_mapper,
                         config=config,
+                        session_start_time=session_start_time,
                     )
 
                 # === Metasploit Module only ===
@@ -1075,6 +1099,7 @@ def main(args: types.SimpleNamespace) -> None:
                         workflow_mapper=workflow_mapper,
                         has_metasploit_filter=True,
                         config=config,
+                        session_start_time=session_start_time,
                     )
 
                 # === Workflow Mapped only ===
@@ -1092,6 +1117,7 @@ def main(args: types.SimpleNamespace) -> None:
                         completed_total,
                         workflow_mapper,
                         config=config,
+                        session_start_time=session_start_time,
                     )
 
             # End of severity loop - continue to scan selection loop
@@ -1154,10 +1180,15 @@ config_app = typer.Typer(
     help="Configuration management - view and modify settings"
 )
 
+workflow_app = typer.Typer(
+    help="Workflow management - list and view available workflows"
+)
+
 # Register sub-apps with main app
 app.add_typer(import_app, name="import")
 app.add_typer(scan_app, name="scan")
 app.add_typer(config_app, name="config")
+app.add_typer(workflow_app, name="workflow")
 
 
 # Version callback for --version flag
@@ -1693,6 +1724,66 @@ def config_set(
     except ValueError as e:
         err(f"Invalid value for {key}: {e}")
         raise typer.Exit(1)
+
+
+# ===== Workflow Commands =====
+
+@workflow_app.command(name="list", help="List all available workflows from bundled and custom YAML files")
+def workflow_list(
+    custom_workflows: Optional[Path] = typer.Option(
+        None, "--custom-workflows", "-w", help="Path to custom workflows YAML file"
+    ),
+) -> None:
+    """Display all available workflows with plugin IDs and descriptions."""
+    from cerno_pkg.workflow_mapper import WorkflowMapper
+    from rich.table import Table
+    from rich.console import Console
+
+    console = Console()
+
+    # Initialize workflow mapper (loads bundled workflows)
+    workflow_mapper = WorkflowMapper()
+
+    # Load custom workflows if provided
+    if custom_workflows:
+        if not custom_workflows.exists():
+            err(f"Custom workflows file not found: {custom_workflows}")
+            raise typer.Exit(1)
+        try:
+            count = workflow_mapper.load_additional_workflows(custom_workflows)
+            info(f"Loaded {count} custom workflow(s) from {custom_workflows}")
+        except Exception as e:
+            err(f"Failed to load custom workflows: {e}")
+            raise typer.Exit(1)
+
+    # Get all workflows
+    all_workflows = workflow_mapper.get_all_workflows()
+
+    if not all_workflows:
+        warn("No workflows found")
+        return
+
+    # Build Rich table
+    table = Table(title="[bold cyan]Available Workflows[/]", show_header=True, header_style="bold magenta")
+    table.add_column("Plugin ID(s)", style="cyan", no_wrap=True)
+    table.add_column("Workflow Name", style="yellow")
+    table.add_column("Description", style="dim")
+
+    for workflow in all_workflows:
+        plugin_ids = workflow.get("plugin_id", "")
+        workflow_name = workflow.get("workflow_name", "")
+        description = workflow.get("description", "")
+
+        # Truncate long descriptions
+        if len(description) > 80:
+            description = description[:77] + "..."
+
+        table.add_row(plugin_ids, workflow_name, description)
+
+    console.print()
+    console.print(table)
+    console.print()
+    info(f"Total workflows: {len(all_workflows)}")
 
 
 if __name__ == "__main__":

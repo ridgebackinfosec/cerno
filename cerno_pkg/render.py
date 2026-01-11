@@ -341,7 +341,7 @@ def render_compare_tables(
         for i, names in enumerate(groups_sorted, 1):
             sample = "\n".join(names[:8])
             if len(names) > 8:
-                sample += f"\n... (+{len(names)-8} more - press [D] to view details)"
+                sample += f"\n\n[bold yellow]Showing 8 of {len(names)} findings - Press [D] to view all[/]"
             groups_table.add_row(str(i), str(len(names)), sample)
         _console_global.print(groups_table)
 
@@ -922,8 +922,8 @@ def display_finding_preview(
         workflow_mapper: Optional workflow mapper to check for workflow availability
     """
 
-    # Get hosts and ports from database
-    hosts, ports_str = finding.get_hosts_and_ports()
+    # Get hosts from database
+    hosts, _ = finding.get_hosts_and_ports()
 
     # Build Rich Panel preview
     content = Text()
@@ -954,19 +954,35 @@ def display_finding_preview(
     #     except Exception:
     #         pass
 
-    # Unique hosts
+    # Get port distribution from database
+    port_distribution = finding.get_port_distribution()
+
+    # Unique hosts with port summary
     content.append("Unique hosts: ", style=style_if_enabled("cyan"))
-    content.append(f"{len(hosts)}\n", style=style_if_enabled("yellow"))
+    if port_distribution and len(port_distribution) > 0:
+        port_list = ", ".join(sorted(port_distribution.keys(), key=lambda x: int(x)))
+        content.append(f"{len(hosts)} across {len(port_distribution)} port(s) ({port_list})\n", style=style_if_enabled("yellow"))
+    else:
+        content.append(f"{len(hosts)}\n", style=style_if_enabled("yellow"))
 
-    # Example host
+    # Port distribution details (if multiple ports)
+    if port_distribution and len(port_distribution) > 1:
+        content.append("Distribution: ", style=style_if_enabled("cyan"))
+        dist_parts = []
+        for port in sorted(port_distribution.keys(), key=lambda x: int(x)):
+            count = port_distribution[port]
+            dist_parts.append(f"{count} host{'s' if count != 1 else ''} on port {port}")
+        content.append(", ".join(dist_parts) + "\n", style=style_if_enabled("yellow"))
+
+    # Example host (with port if available)
     if hosts:
-        content.append("Example host: ", style=style_if_enabled("cyan"))
-        content.append(f"{hosts[0]}\n", style=style_if_enabled("yellow"))
-
-    # Ports detected
-    if ports_str:
-        content.append("Ports detected: ", style=style_if_enabled("cyan"))
-        content.append(f"{ports_str}", style=style_if_enabled("yellow"))
+        content.append("Example: ", style=style_if_enabled("cyan"))
+        # Show example host with first port if available
+        if port_distribution:
+            first_port = sorted(port_distribution.keys(), key=lambda x: int(x))[0]
+            content.append(f"{hosts[0]}:{first_port}\n", style=style_if_enabled("yellow"))
+        else:
+            content.append(f"{hosts[0]}\n", style=style_if_enabled("yellow"))
 
     # Create panel with plugin name as title and indicators in subtitle
     subtitle_parts = []
@@ -978,7 +994,12 @@ def display_finding_preview(
 
     # Add badges to subtitle
     if is_msf:
-        subtitle_parts.append("⚡ Metasploit")
+        # Show first Metasploit module name if available
+        if plugin.metasploit_names and len(plugin.metasploit_names) > 0:
+            msf_module = plugin.metasploit_names[0]
+            subtitle_parts.append(f"⚡ Metasploit: {msf_module}")
+        else:
+            subtitle_parts.append("⚡ Metasploit")
     if has_workflow:
         subtitle_parts.append("📋 Workflow")
 
