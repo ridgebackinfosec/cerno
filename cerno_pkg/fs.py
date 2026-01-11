@@ -421,7 +421,7 @@ def handle_finding_view(
             if plugin is None or sev_dir is None or finding is None:
                 warn("Plugin metadata not available - cannot display finding info")
                 continue
-            display_finding_preview(plugin, finding, sev_dir, chosen)
+            display_finding_preview(plugin, finding, sev_dir, chosen, workflow_mapper)
             continue
 
         # Handle Finding Details action
@@ -566,7 +566,7 @@ def process_single_finding(
         return
 
     # Display finding preview panel
-    display_finding_preview(plugin, finding, sev_dir, chosen)
+    display_finding_preview(plugin, finding, sev_dir, chosen, workflow_mapper)
 
     # Extract plugin URL for handle_finding_view
     plugin_url = None

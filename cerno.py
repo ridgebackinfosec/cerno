@@ -283,6 +283,7 @@ def browse_file_list(
         page_size = default_page_size()
 
     page_idx = 0
+    first_iteration = True  # Track first iteration for startup hint
 
     # Derive scan_dir from scan object
     scan_dir = Path(scan.export_root) / scan.scan_name
@@ -364,16 +365,43 @@ def browse_file_list(
             bc = breadcrumb(scan_dir.name, severity_label, filter_info)
             header(bc if bc else f"Severity: {severity_label}")
 
-            # Build status line components
-            status_parts = [
-                f"Unreviewed findings ({len(unreviewed)})",
-                f"Filter: '{file_filter or '*'}'",
-            ]
+            # Show startup hint on first iteration
+            if first_iteration:
+                from rich.text import Text
+                hint = Text()
+                hint.append("Welcome to Cerno Review", style="bold cyan")
+                hint.append(" | Press ", style="dim")
+                hint.append("[?]", style="bold yellow")
+                hint.append(" for help", style="dim")
+                _console_global.print(hint)
+                _console_global.print()  # Blank line for spacing
+                first_iteration = False
 
+            # Build status line components
+            from rich.text import Text
+
+            status_parts = []
+
+            # Unreviewed count
+            status_parts.append(f"Unreviewed findings ({len(unreviewed)})")
+
+            # File filter with visual indicator if active
+            if file_filter:
+                filter_text = Text()
+                filter_text.append("[FILTER] ", style="bold yellow on red")
+                filter_text.append(f"Name: '{file_filter}'", style="bold")
+                status_parts.append(filter_text)
+            else:
+                status_parts.append("Filter: '*'")
+
+            # Group filter with bold visual indicator
             if group_filter:
                 # Enhanced group filter with description (backward compatible)
                 group_desc = group_filter[2] if len(group_filter) > 2 else f"{len(group_filter[1])} findings"
-                status_parts.append(f"Group #{group_filter[0]}: {group_desc} ({len(group_filter[1])})")
+                group_text = Text()
+                group_text.append("[ACTIVE FILTER] ", style="bold yellow on red")
+                group_text.append(f"Group #{group_filter[0]}: {group_desc} ({len(group_filter[1])})", style="bold")
+                status_parts.append(group_text)
 
             sort_label = {
                 "plugin_id": "Plugin ID ↑",
@@ -386,20 +414,38 @@ def browse_file_list(
             # Responsive layout based on terminal width
             term_width = get_terminal_width()
 
+            # Helper to join status parts (handles both str and Text objects)
+            def join_status_parts(parts, separator=" | "):
+                """Join status parts, handling both strings and Rich Text objects."""
+                if not parts:
+                    return ""
+                result = Text()
+                for i, part in enumerate(parts):
+                    if i > 0:
+                        result.append(separator)
+                    if isinstance(part, Text):
+                        result.append(part)
+                    else:
+                        result.append(str(part))
+                return result
+
             if term_width >= 120:
                 # Wide terminal: single line with separators
-                status = " | ".join(status_parts)
+                status = join_status_parts(status_parts)
                 _console_global.print(status)
             elif term_width >= 80:
                 # Medium terminal: two lines
-                status_line1 = f"{status_parts[0]} | {status_parts[1]}"
-                status_line2 = " | ".join(status_parts[2:])
+                status_line1 = join_status_parts(status_parts[:2])
+                status_line2 = join_status_parts(status_parts[2:])
                 _console_global.print(status_line1)
                 _console_global.print(status_line2)
             else:
                 # Narrow terminal: multi-line (one per part)
                 for part in status_parts:
-                    _console_global.print(part)
+                    if isinstance(part, Text):
+                        _console_global.print(part)
+                    else:
+                        _console_global.print(str(part))
 
             render_finding_list_table(
                 page_items, sort_mode, get_counts_for, row_offset=start,

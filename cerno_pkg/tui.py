@@ -439,13 +439,16 @@ def handle_finding_list_actions(
                 page_idx,
             )
 
-        confirm_prompt = (
-            f"[red]You are about to mark {len(candidates)} items as review completed.[/red]\n"
-            "Type 'mark' to confirm, or anything else to cancel"
-        )
-        confirm = Prompt.ask(confirm_prompt).strip().lower()
+        from rich.prompt import Confirm
+        from rich import print as rprint
 
-        if confirm != "mark":
+        # Show warning message
+        rprint(f"[red]You are about to mark {len(candidates)} items as review completed.[/red]")
+
+        # Use standard Confirm.ask pattern
+        confirmed = Confirm.ask("Mark all filtered findings as completed?", default=False)
+
+        if not confirmed:
             info("Canceled.")
             return (
                 None,

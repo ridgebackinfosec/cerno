@@ -208,7 +208,7 @@ def render_finding_list_table(
         sort_mode: Current sort mode ("hosts", "name", or "plugin_id")
         get_counts_for: Function to get (host_count, ports_str) for a Finding object
         row_offset: Starting row number for pagination
-        show_severity: Whether to show severity column (for MSF mode)
+        show_severity: Deprecated - severity column is now always shown
     """
 
     table = Table(
@@ -216,11 +216,10 @@ def render_finding_list_table(
     )
     table.add_column("#", justify="right", no_wrap=True, max_width=5)
     table.add_column("Plugin ID", justify="right", no_wrap=True, max_width=10)
+    table.add_column("Severity", justify="left", no_wrap=True, max_width=10)
     table.add_column("Name", overflow="fold")
     # Always show host count column
     table.add_column("Hosts", justify="right", no_wrap=True, max_width=8)
-    if show_severity:
-        table.add_column("Severity", justify="left", no_wrap=True, max_width=15)
 
     for i, (plugin_file, plugin) in enumerate(display, 1):
         row_number = row_offset + i
@@ -229,21 +228,27 @@ def render_finding_list_table(
         plugin_id_str = str(plugin.plugin_id)
         plugin_name = plugin.plugin_name or "Unknown"
 
-        row_data = [str(row_number), plugin_id_str, plugin_name]
+        # Get severity from plugin metadata
+        from .nessus_import import severity_label_from_int
+        label = severity_label_from_int(plugin.severity_int)
+
+        # Use abbreviated severity labels for compact display
+        sev_abbrev = {
+            "Critical": "Crit",
+            "High": "High",
+            "Medium": "Med",
+            "Low": "Low",
+            "Info": "Info"
+        }.get(label, label)
+
+        # Color-code the abbreviated severity using severity_cell
+        sev_colored = severity_cell(sev_abbrev)
+
+        row_data = [str(row_number), plugin_id_str, sev_colored, plugin_name]
 
         # Always retrieve and show host count from database
         host_count, _ports_str = get_counts_for(plugin_file)
         row_data.append(str(host_count))
-
-        if show_severity:
-            # Get severity from plugin metadata
-            # Schema v5+: severity_label computed from severity_int
-            from .nessus_import import severity_label_from_int
-            label = severity_label_from_int(plugin.severity_int)
-            sev_dir_format = f"{plugin.severity_int}_{label}"
-            sev_label = pretty_severity_label(sev_dir_format)
-            sev_colored = severity_cell(sev_label)
-            row_data.append(sev_colored)
 
         table.add_row(*row_data)
 
@@ -905,6 +910,7 @@ def display_finding_preview(
     finding: "Finding",
     sev_dir: Optional[Path],
     chosen: Path,
+    workflow_mapper: Optional[Any] = None,
 ) -> None:
     """Display finding preview panel with metadata (database-only).
 
@@ -913,6 +919,7 @@ def display_finding_preview(
         finding: Finding database object (required)
         sev_dir: Severity directory path
         chosen: File path (for URL extraction)
+        workflow_mapper: Optional workflow mapper to check for workflow availability
     """
 
     # Get hosts and ports from database
@@ -961,10 +968,21 @@ def display_finding_preview(
         content.append("Ports detected: ", style=style_if_enabled("cyan"))
         content.append(f"{ports_str}", style=style_if_enabled("yellow"))
 
-    # Create panel with plugin name as title and MSF indicator in subtitle
-    subtitle = None
+    # Create panel with plugin name as title and indicators in subtitle
+    subtitle_parts = []
+
+    # Check for workflow availability
+    has_workflow = False
+    if workflow_mapper and plugin:
+        has_workflow = workflow_mapper.has_workflow(str(plugin.plugin_id))
+
+    # Add badges to subtitle
     if is_msf:
-        subtitle = "⚡ Metasploit module available"
+        subtitle_parts.append("⚡ Metasploit")
+    if has_workflow:
+        subtitle_parts.append("📋 Workflow")
+
+    subtitle = " | ".join(subtitle_parts) if subtitle_parts else None
 
     panel = Panel(
         content,
