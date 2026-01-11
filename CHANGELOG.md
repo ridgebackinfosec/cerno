@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Added startup help hint on first review showing "Press [?] for help" banner (cerno.py:browse_file_list())
+- Added active filter visual indicators with bold yellow-on-red badges in status line (cerno.py)
+- Added severity column to all finding list tables (render.py:render_finding_list_table())
+- Added workflow availability badges to finding preview panels (render.py:display_finding_preview())
+- Added next sort mode indicator in status line showing upcoming sort order (cerno.py)
+- Added CVE distribution preview before format selection showing count per finding (render.py:display_bulk_cve_results())
+- Added pre-flight execution summary showing targets, scripts, and output directory (tools.py:command_review_menu())
+- Added post-execution summary panel with duration, exit code, files generated, and next steps (tools.py:run_tool_orchestration())
+- Added consolidated nmap configuration screen combining NSE profile, custom scripts, and UDP options (tools.py:configure_nmap_options())
+
+### Changed
+- Changed bulk mark confirmation from typing "mark" to standard Y/N confirmation (tui.py)
+- Improved "Superset" terminology to "Overlapping Findings" throughout UI (render.py, analysis.py, tui.py)
+- Enhanced group filter descriptions to include context (e.g., "Group #1: Identical host:port combinations")
+- Streamlined nmap workflow to use single configuration screen instead of 3 sequential prompts
+
+### Fixed
+- Fixed ExecutionMetadata type error in post-execution summary (use attribute access instead of dict access)
+
 ## [1.1.2] - 2026-01-10
 
 ### Fixed
