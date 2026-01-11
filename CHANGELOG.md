@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-01-10
+
 ### Added
 - Added startup help hint on first review showing "Press [?] for help" banner (cerno.py:browse_file_list())
 - Added active filter visual indicators with bold yellow-on-red badges in status line (cerno.py)
