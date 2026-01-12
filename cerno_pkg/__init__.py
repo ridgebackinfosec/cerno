@@ -20,7 +20,7 @@ __all__ = [
     # Logging module
     "setup_logging", "log_info", "log_error",
     # Ops module
-    "require_cmd", "resolve_cmd", "root_or_sudo_available",
+    "require_cmd", "resolve_cmd", "root_or_sudo_available", "get_tool_version",
     "run_command_with_progress", "ExecutionMetadata", "log_tool_execution",
     "log_artifact", "log_artifacts_for_nmap",
     # Parsing module
@@ -30,6 +30,7 @@ __all__ = [
     # Render module
     "render_scan_table", "render_severity_table", "render_finding_list_table",
     "render_compare_tables", "render_actions_footer", "show_actions_help",
+    "render_tool_availability_table",
     "show_reviewed_help", "menu_pager", "severity_cell", "severity_style",
     "print_action_menu", "file_raw_payload_text", "file_raw_paged_text",
     "grouped_payload_text", "grouped_paged_text", "hosts_only_payload_text",
@@ -85,7 +86,7 @@ from .constants import (
 )
 from .logging_setup import setup_logging, log_info, log_error
 from .ops import (
-    require_cmd, resolve_cmd, root_or_sudo_available,
+    require_cmd, resolve_cmd, root_or_sudo_available, get_tool_version,
     run_command_with_progress, ExecutionMetadata,
     log_tool_execution, log_artifact, log_artifacts_for_nmap
 )
@@ -100,6 +101,7 @@ from .parsing import (
 from .render import (
     render_scan_table, render_severity_table, render_finding_list_table,
     render_compare_tables, render_actions_footer, show_actions_help,
+    render_tool_availability_table,
     show_reviewed_help, menu_pager, severity_cell, severity_style,
     print_action_menu,
     file_raw_payload_text, file_raw_paged_text,

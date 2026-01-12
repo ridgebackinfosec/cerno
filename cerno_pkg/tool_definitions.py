@@ -91,7 +91,7 @@ def register_all_tools() -> None:
             description="Search for modules",
             workflow_builder=lambda *args, **kwargs: None,  # Metasploit has special handling
             command_builder=None,  # Metasploit doesn't build commands
-            requires=[],  # No system requirements (web-based search)
+            requires=["msfconsole"],  # Requires Metasploit Framework console
             menu_order=3,
             options={
                 "is_search_tool": True,

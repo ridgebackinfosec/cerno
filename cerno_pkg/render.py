@@ -463,6 +463,90 @@ def render_actions_footer(
             _console_global.print(right_row3)
 
 
+def render_tool_availability_table(include_unavailable: bool = True) -> None:
+    """Render a table showing availability and version info for all registered tools.
+
+    Displays each tool's installation status (✅ available, ❌ not found) and
+    version information if available. Automatically adapts when new tools are
+    added to the tool registry.
+
+    Args:
+        include_unavailable: If True, shows all tools regardless of availability.
+                           If False, only shows available tools.
+
+    Example output:
+        Tool         Status  Version/Details
+        ─────────────────────────────────────────
+        nmap         ✅      v7.92
+        netexec      ✅      v1.2.1
+        metasploit   ✅      Available (web-based)
+        custom       ✅      Available (user-defined)
+    """
+    import shutil
+    from .tool_registry import get_available_tools
+    from .ops import get_tool_version
+
+    # Get all registered tools
+    all_tools = get_available_tools(check_requirements=False)
+
+    # Build table data
+    table_rows = []
+    for tool in all_tools:
+        # Check if tool is available
+        if tool.requires:
+            # Tool has binary requirements - check if any are available
+            is_available = any(shutil.which(cmd) for cmd in tool.requires)
+            if is_available:
+                # Get version info
+                version = get_tool_version(tool.name, tool.requires)
+                if version:
+                    details = f"v{version}"
+                else:
+                    details = "Available"
+            else:
+                details = "Not found in PATH"
+        else:
+            # Tool has no binary requirements (user-defined)
+            is_available = True
+            if tool.id == "custom":
+                details = "Available (user-defined)"
+            else:
+                details = "Available"
+
+        # Add row to table data
+        if include_unavailable or is_available:
+            status_icon = "✅" if is_available else "❌"
+            table_rows.append((tool.name, status_icon, details, is_available))
+
+    # Create Rich table
+    table = Table(
+        title="Tool Availability",
+        box=box.SIMPLE,
+        show_lines=False,
+        pad_edge=False,
+    )
+
+    # Add columns with styling
+    table.add_column("Tool", style=style_if_enabled("cyan"), no_wrap=True)
+    table.add_column("Status", justify="center", no_wrap=True, max_width=10)
+    table.add_column("Version/Details", overflow="fold")
+
+    # Populate rows
+    for tool_name, status_icon, details, is_available in table_rows:
+        # Style details based on availability
+        if is_available:
+            details_text = Text(details)
+            details_text.stylize(style_if_enabled("green"))
+        else:
+            details_text = Text(details)
+            details_text.stylize(style_if_enabled("red"))
+
+        table.add_row(tool_name, status_icon, details_text)
+
+    # Print table
+    _console_global.print(table)
+
+
 def show_actions_help(
     *,
     group_applied: bool,
