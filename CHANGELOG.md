@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.6] - 2026-01-12
+
 ### Added
 - Tool availability check at `cerno review` startup showing installation status and versions for all tools (ops.py:get_tool_version(), render.py:render_tool_availability_table(), cerno.py:main())
 - `--check` flag for `cerno review` to display tool availability without entering review mode
