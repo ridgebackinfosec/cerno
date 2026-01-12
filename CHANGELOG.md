@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.5] - 2026-01-11
+
+### Documentation
+- Added `cerno workflow list` command to README.md Commands section
+- Added new "Keyboard Shortcuts" section to README.md documenting all interactive review keybindings ([S], [O], [W], [F], [V], [C], [U], [?])
+- Updated docs/DATABASE.md "Last Updated" reference from v1.0.0 to v1.2.4
+
 ## [1.2.4] - 2026-01-11
 
 ### Fixed

@@ -215,9 +215,26 @@ cerno review [--custom-workflows PATH]
 cerno scan list
 cerno scan delete <scan_name>
 
+# View workflows
+cerno workflow list [--custom-workflows PATH]
+
 # Configuration
 cerno config show | reset | get <key> | set <key> <value>
 ```
+
+---
+
+## Keyboard Shortcuts
+
+**During Interactive Review:**
+- `[S]` - Cycle sort modes (plugin ID, severity, host count)
+- `[O]` - View overlapping findings analysis
+- `[W]` - View workflow verification steps (when available)
+- `[F]` - Filter findings by text (plugin name, description, etc.)
+- `[V]` - Filter findings by severity level
+- `[C]` - Clear all active filters
+- `[U]` - Undo review state (restore to pending)
+- `[?]` - Show help menu with all available actions
 
 ---
 
