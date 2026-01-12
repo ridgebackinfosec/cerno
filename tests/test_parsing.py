@@ -9,8 +9,6 @@ from cerno_pkg.parsing import (
     is_hostname,
     is_valid_token,
     parse_hosts_ports,
-    build_item_set,
-    normalize_combos,
 )
 
 
@@ -191,7 +189,7 @@ class TestIsValidToken:
 
     def test_invalid_malformed(self):
         """Test malformed input."""
-        valid, host, port = is_valid_token("not a valid host")
+        valid, _host, _port = is_valid_token("not a valid host")
         assert valid is False
 
 

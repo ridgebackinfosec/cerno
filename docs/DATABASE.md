@@ -901,6 +901,6 @@ Planned database features:
 
 ---
 
-**Last Updated**: 2026-01-09 (v1.0.0 - Cerno Initial Release)
+**Last Updated**: 2026-01-11 (v1.2.4)
 **Maintained By**: Ridgeback InfoSec, LLC
 **Schema Version**: 1

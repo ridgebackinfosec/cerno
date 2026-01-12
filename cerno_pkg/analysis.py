@@ -8,13 +8,12 @@ and generate scan statistics.
 import re
 from collections import defaultdict
 from pathlib import Path
-from typing import Optional, Union, TYPE_CHECKING, cast
+from typing import Union, TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from .models import Plugin, Finding
 
 from rich import box
-from rich.console import Console
 from rich.progress import (
     Progress,
     SpinnerColumn,
@@ -191,7 +190,7 @@ def compare_filtered(files: Union[list['Finding'], list[tuple['Finding', 'Plugin
         task = progress.add_task(
             "Grouping identical host:port combos...", total=len(parsed)
         )
-        for (display_name, h, p, c, e), sig in zip(parsed, combo_signatures):
+        for (display_name, _h, _p, _c, _e), sig in zip(parsed, combo_signatures):
             groups_dict[sig].append(display_name)
             progress.advance(task)
 
@@ -239,7 +238,7 @@ def analyze_inclusions(files: Union[list['Finding'], list[tuple['Finding', 'Plug
         warn("No files selected for superset analysis.")
         return []
 
-    header("Filtered Files: Superset / Coverage Analysis")
+    header("Filtered Files: Overlapping Findings Analysis")
     info(f"Files analyzed: {len(files)}")
 
     # Detect what type of input we have (database-only)
@@ -387,13 +386,13 @@ def analyze_inclusions(files: Union[list['Finding'], list[tuple['Finding', 'Plug
 
     if groups:
         groups_table = Table(
-            title="Superset Coverage Groups",
+            title="Overlapping Findings Groups",
             box=box.SIMPLE,
             show_lines=False,
             pad_edge=False,
         )
         groups_table.add_column("#", justify="right", no_wrap=True)
-        groups_table.add_column("Superset (root)")
+        groups_table.add_column("Root Finding")
         groups_table.add_column("Covers", justify="right", no_wrap=True)
         groups_table.add_column("Covered findings (sample)")
         for i, (root, covered_list) in enumerate(groups, 1):

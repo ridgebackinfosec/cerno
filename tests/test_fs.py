@@ -1,13 +1,10 @@
 """Tests for cerno_pkg.fs module."""
 
-import os
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 from cerno_pkg.fs import (
-    mark_review_complete,
     build_results_paths,
     pretty_severity_label,
     default_page_size,
@@ -47,25 +44,21 @@ def mock_db_for_fs(monkeypatch, temp_db):
 @pytest.mark.skip(reason="is_review_complete removed - review state is now DB-only")
 class TestIsReviewComplete:
     """Tests for is_review_complete function - OBSOLETE in DB-only architecture."""
-    pass
 
 
 @pytest.mark.skip(reason="is_reviewed_filename removed - review state is now DB-only")
 class TestIsReviewedFilename:
     """Tests for is_reviewed_filename function - OBSOLETE in DB-only architecture."""
-    pass
 
 
 @pytest.mark.skip(reason="rename_review_complete replaced with mark_review_complete - DB-only, no file renaming")
 class TestRenameReviewComplete:
     """Tests for rename_review_complete function - OBSOLETE in DB-only architecture."""
-    pass
 
 
 @pytest.mark.skip(reason="undo_review_complete updated to DB-only - no file renaming")
 class TestUndoReviewComplete:
     """Tests for undo_review_complete function - OBSOLETE in DB-only architecture."""
-    pass
 
 
 class TestBuildResultsPaths:
@@ -187,7 +180,7 @@ class TestWriteWorkFiles:
         hosts = ["192.168.1.1", "192.168.1.2"]
         ports = "53"
 
-        tcp_ips, udp_ips, tcp_sockets = write_work_files(temp_dir, hosts, ports, udp=True)
+        tcp_ips, udp_ips, _tcp_sockets = write_work_files(temp_dir, hosts, ports, udp=True)
 
         # Verify both TCP and UDP files exist
         assert tcp_ips.exists()
@@ -200,7 +193,7 @@ class TestWriteWorkFiles:
         """Test writing work files without ports."""
         hosts = ["192.168.1.1"]
 
-        tcp_ips, udp_ips, tcp_sockets = write_work_files(temp_dir, hosts, "", udp=False)
+        tcp_ips, _udp_ips, tcp_sockets = write_work_files(temp_dir, hosts, "", udp=False)
 
         # TCP IPs should still be written
         assert tcp_ips.exists()
@@ -215,7 +208,7 @@ class TestWriteWorkFiles:
         workdir = temp_dir / "nested" / "work"
         hosts = ["10.0.0.1"]
 
-        tcp_ips, udp_ips, tcp_sockets = write_work_files(workdir, hosts, "22", udp=False)
+        tcp_ips, _udp_ips, _tcp_sockets = write_work_files(workdir, hosts, "22", udp=False)
 
         assert workdir.exists()
         assert workdir.is_dir()
@@ -226,7 +219,7 @@ class TestWriteWorkFiles:
         hosts = ["192.168.1.100"]
         ports = "80,443,8443,3000"
 
-        tcp_ips, udp_ips, tcp_sockets = write_work_files(temp_dir, hosts, ports, udp=False)
+        tcp_ips, _udp_ips, tcp_sockets = write_work_files(temp_dir, hosts, ports, udp=False)
 
         assert tcp_ips.exists()
         assert tcp_sockets.exists()

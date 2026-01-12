@@ -15,7 +15,7 @@ This includes:
 - **Error Handling**: Use specific exception types, proper context managers for resources, and graceful degradation where appropriate
 - **Performance**: Write efficient database queries, implement caching where beneficial, and avoid N+1 query patterns
 - **Security**: Validate all inputs, use parameterized queries to prevent SQL injection, and prevent command injection vulnerabilities
-- **Documentation**: Always update relevant documentation alongside code changes to keep everything synchronized and up-to-date automatically. This includes docstrings, CLAUDE.md, README.md, and any other relevant documentation files
+- **Documentation**: Always update relevant documentation alongside code changes to keep everything synchronized and up-to-date automatically. This includes docstrings, CLAUDE.md, README.md, and **MANDATORY** updates to the [Unreleased] section in CHANGELOG.md for all user-visible code changes
 - **Smoke Testing**: After completing ANY changes (code, documentation, configuration), ALWAYS provide a concise smoke test summary with manual testing steps the user can perform to verify the changes work correctly. Include specific commands, expected outputs, and edge cases to validate
 - **Git Operations**: The user handles all git staging and commits manually. However, ALWAYS provide a concise one-line git commit message suggestion that accurately describes the change following conventional commit format (e.g., "feat: add user authentication", "fix: resolve parsing edge case", "docs: update installation guide", "refactor: extract validation logic"). Keep messages under 72 characters when possible. Do NOT execute git commands like `git add` or `git commit` - only provide the suggested commit message
 
@@ -275,9 +275,47 @@ pytest --durations=10
 # Format code with black
 black cerno.py cerno_pkg/ tests/
 
-# Type checking with mypy
-mypy cerno_pkg/
+# Type checking with mypy (primary checker)
+mypy cerno.py cerno_pkg/ --ignore-missing-imports
+
+# Type checking with pyright (secondary checker)
+pyright cerno.py cerno_pkg/
+
+# Generate full type checking report (JSON)
+pyright . --outputjson > pylance-report.json
+
+# Check specific file
+pyright cerno_pkg/tui.py
 ```
+
+### Type Checking Philosophy
+
+Cerno uses **dual type checking** for maximum coverage:
+
+- **MyPy**: Primary checker, runs in CI/CD (currently `continue-on-error: true`)
+- **Pyright**: Secondary checker, catches edge cases MyPy misses, used locally
+
+**When to use each:**
+- Always run both locally before committing
+- Fix mypy errors first (will eventually block CI/CD)
+- Fix pyright errors to maintain type safety and prevent Pylance issues
+- Use tool-specific ignore comments sparingly and document why
+
+**Type annotation standards:**
+- All public functions must have parameter and return type hints
+- Use `from __future__ import annotations` for forward references
+- Use `TYPE_CHECKING` guards for circular imports
+- Prefer explicit types over `Any` (use `Any` only when truly dynamic)
+- Document complex types with docstring examples
+
+**Configuration files:**
+- `pyproject.toml`: Contains `[tool.mypy]` configuration
+- `pyrightconfig.json`: Contains pyright configuration (typeCheckingMode: "basic")
+
+**Known type checking issues** (as of v1.1.0):
+- Current CI/CD mypy checks set to `continue-on-error: true` (non-blocking)
+- Several modules have type errors revealed in `pylance-report.json`
+- Type checking will become stricter in future releases as issues are resolved
 
 ## Architecture
 
@@ -410,6 +448,200 @@ Version is defined in `pyproject.toml:project.version` (single source of truth).
 
 **When bumping version**: Update `pyproject.toml` only. Do NOT hardcode version elsewhere.
 
+#### Incremental Changelog Updates
+
+**MANDATORY**: All code changes that affect functionality, behavior, or user experience MUST be documented in the `[Unreleased]` section of CHANGELOG.md immediately after implementation.
+
+**When to update [Unreleased] (Required):**
+- ✅ After implementing any feature (Added section)
+- ✅ After fixing any bug (Fixed section)
+- ✅ After modifying existing behavior (Changed section)
+- ✅ After deprecating functionality (Deprecated section)
+- ✅ After removing features (Removed section)
+- ✅ After addressing security issues (Security section)
+
+**When to skip [Unreleased] updates (Exceptions):**
+- Internal refactoring with no user-visible changes
+- Pure documentation updates (README, comments only)
+- Test-only changes with no production code impact
+- Development tooling changes (CI/CD, scripts)
+
+**Process (Automatic):**
+1. After making code changes with Edit/Write tools, IMMEDIATELY update CHANGELOG.md
+2. Locate the `[Unreleased]` section (line 8)
+3. Add bullet points under appropriate subsections (Added/Changed/Fixed/etc.)
+4. Follow existing format and style from recent releases (v1.1.0 as reference)
+5. Include file references where helpful (e.g., `render.py:render_actions_footer()`)
+6. Preserve any existing [Unreleased] content (append, don't replace)
+
+**Format Guidelines:**
+- Start bullets with action verbs (Added, Fixed, Improved, Resolved, Updated)
+- Be specific about what changed and why (not just "updated code")
+- Include file/function references for complex changes
+- Use sub-bullets for multi-part changes
+- Group related changes together
+
+**Example [Unreleased] entry:**
+```markdown
+## [Unreleased]
+
+### Fixed
+- Resolved import optimization bug in render.py affecting color output
+- Fixed host parsing edge case in nessus_import.py for malformed IPv6 addresses
+
+### Changed
+- Improved terminal width detection fallback logic (ansi.py:get_terminal_width())
+- Updated error messages for invalid plugin IDs to include suggestions
+```
+
+**Enforcement:**
+- This is NOT optional - Claude will proactively update [Unreleased] after code changes
+- If you make changes without updating [Unreleased], that is a bug in Claude's behavior
+- You should never need to ask "did you update the changelog?" - it happens automatically
+
+#### Version Increment SOP
+
+**CRITICAL**: Whenever the user requests a version increment, you MUST follow this comprehensive process with mandatory user confirmation.
+
+**Phase 1: Gather All Changes**
+1. **Read current version** from `pyproject.toml` line 7 (`version = "X.Y.Z"`)
+   - This is the last version that was documented
+   - Git tags are only created on release (main branch merge), not on every version bump
+
+2. **Read [Unreleased] section** in CHANGELOG.md (line 8)
+   - Extract all documented changes
+   - Note which subsections have content (Added/Changed/Fixed/etc.)
+
+3. **Review git commit history** since last version in CHANGELOG.md:
+   ```bash
+   # Find the last version section in CHANGELOG.md (e.g., ## [1.1.1])
+   # Then get commits since that version was documented
+   git log --oneline --since="<date from last changelog entry>" HEAD
+   ```
+   - Identify commits that might not be documented in [Unreleased]
+   - Look for conventional commit prefixes (feat:, fix:, docs:, refactor:)
+
+4. **Check for uncommitted changes** in git status
+   - Review modified files that might not be documented yet
+   - Cross-reference with [Unreleased] section
+
+5. **Compile comprehensive change list**
+   - Combine [Unreleased] content + undocumented git commits + unstaged changes
+   - Organize into Keep a Changelog categories
+
+**Phase 2: Present Changes for Approval (MANDATORY)**
+Present the gathered changes to the user in this format:
+
+```
+I found the following changes since version [LAST_VERSION]:
+
+### Added
+- [List all items from [Unreleased] Added section]
+- [Any undocumented features from git history]
+
+### Changed
+- [List all items from [Unreleased] Changed section]
+- [Any undocumented behavior changes from git history]
+
+### Fixed
+- [List all items from [Unreleased] Fixed section]
+- [Any undocumented bug fixes from git history]
+
+[Include other sections as applicable: Deprecated, Removed, Security]
+
+### Undocumented Changes
+[If any commits found without corresponding [Unreleased] entries, list them here]
+- Commit abc123: feat: add new feature (NOT DOCUMENTED)
+- Commit def456: fix: resolve edge case (NOT DOCUMENTED)
+
+---
+
+Questions before proceeding:
+1. Are all changes listed above accurate and complete?
+2. Should any undocumented commits be added to the changelog?
+3. Are there any additional changes to document?
+4. What version number should this be? (Current: X.Y.Z)
+```
+
+**Wait for user confirmation before proceeding to Phase 3.**
+
+**Phase 3: Update Both Files Atomically (After Approval)**
+Only after user confirms the changelog content:
+
+1. **Update `pyproject.toml`**: Change `project.version` to the approved version number
+
+2. **Update `CHANGELOG.md`**:
+   - Create new version section: `## [X.Y.Z] - YYYY-MM-DD` (use current date)
+   - Move all approved content from [Unreleased] to the new version section
+   - Add any additional items the user requested
+   - Organize sections in standard order: Added, Changed, Deprecated, Removed, Fixed, Security
+   - Ensure proper formatting (bullets, sub-bullets, indentation)
+   - Reset [Unreleased] section to empty (keep header `## [Unreleased]`, remove all content below it)
+
+3. **Verify final state**:
+   - New version section exists with format `## [X.Y.Z] - YYYY-MM-DD`
+   - [Unreleased] section is empty and ready for next development cycle
+   - Both files updated in same operation
+
+**Phase 4: Validation**
+- Confirm both files updated atomically
+- Verify changelog entry matches required format for release workflow
+- Check that all user-requested changes are included
+- Ensure [Unreleased] section reset correctly
+
+**This is mandatory** - never increment the version without:
+1. Gathering changes from ALL sources ([Unreleased], git history, user input)
+2. Presenting changes to user for confirmation
+3. Waiting for explicit approval before updating files
+4. Documenting ALL changes in the final changelog entry
+
+**Important Notes:**
+- Git tags are created automatically by the release workflow when changes are merged to `main` branch
+- Not every version bump in `pyproject.toml` gets a git tag immediately
+- Always check `pyproject.toml` for current version, not git tags
+- The automated release workflow will fail if CHANGELOG.md is missing the version entry or has incorrect format
+
+**Example transformation:**
+
+User requests: "Bump version to 1.1.1"
+
+Claude presents:
+```
+I found the following changes since version 1.1.0:
+
+### Fixed
+- Resolved race condition in session persistence (session.py)
+- Fixed terminal width detection on Windows (ansi.py)
+
+### Changed
+- Improved error messages for invalid plugin IDs
+
+### Undocumented Changes
+- Commit a1b2c3d: fix: handle empty host list in parsing.py (NOT DOCUMENTED)
+
+Questions:
+1. Should I add the undocumented parsing fix to the changelog?
+2. Any other changes to include?
+3. Confirm version 1.1.1?
+```
+
+User confirms: "Yes, add the parsing fix, version 1.1.1 is correct"
+
+Claude updates CHANGELOG.md:
+```markdown
+## [Unreleased]
+
+## [1.1.1] - 2026-01-10
+
+### Fixed
+- Resolved race condition in session persistence (session.py)
+- Fixed terminal width detection on Windows (ansi.py)
+- Handle empty host list edge case in parsing.py
+
+### Changed
+- Improved error messages for invalid plugin IDs
+```
+
 #### Automated Release Workflow
 
 **File**: `.github/workflows/release.yml`
@@ -539,6 +771,34 @@ python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['pro
 **Resume prompt**: On startup, shows session details (reviewed/completed/skipped counts, session start time).
 
 **Cleanup**: Auto-delete session after successful completion.
+
+### Terminal Responsiveness
+
+**Terminal width detection**: `ansi.py:get_terminal_width()` detects current terminal width with graceful fallback to 80 chars.
+
+**Responsive layouts**: UI adapts to terminal width for optimal display:
+- **Action footer** (`render.py:render_actions_footer()`):
+  - Wide terminal (≥100 chars): 2-column grid layout
+  - Narrow terminal (<100 chars): Single-column layout to prevent wrapping
+- **Status line** (`cerno.py:browse_file_list()`):
+  - Wide terminal (≥120 chars): Single line with separators
+  - Medium terminal (80-119 chars): Two-line layout
+  - Narrow terminal (<80 chars): Multi-line layout (one item per line)
+
+**Group filter descriptions**: Enhanced `group_filter` tuple from `(index, plugin_ids)` to `(index, plugin_ids, description)` to provide context in status line (e.g., "Group #1: Identical host:port combinations").
+
+**Page size configuration**: Users can override auto-detected page size via `config.yaml`:
+```yaml
+default_page_size: 20  # Fixed page size (overrides auto-detection)
+```
+Set to `null` or omit for automatic detection from terminal height. Falls back to 12 if detection fails (logs debug hint).
+
+**UI Improvements**:
+- **Streamlined file view**: Default to grouped format, offer post-view menu for Copy/Change format/Back (reduces 4 steps to 1-2)
+- **Smart CVE format**: Auto-selects combined format for 1-2 findings, separated for 3+ (shows preview before asking)
+- **MSF indicator**: Metasploit module indicator moved to panel subtitle for cleaner visual hierarchy
+- **Completed findings clarity**: Renamed from "Reviewed findings (read-only)" to "Completed Findings (Undo Available)" with updated help text
+- **Comparison groups pager**: Large group details (>8 findings) accessible via [D] option to view full list in pager
 
 ## Testing Practices
 

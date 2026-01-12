@@ -6,8 +6,7 @@ Configuration is optional - the application works with defaults if no config fil
 
 from __future__ import annotations
 
-import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -27,7 +26,7 @@ class CernoConfig:
 
     # Display preferences
     default_page_size: Optional[int] = None
-    """Default number of items per page in paginated views."""
+    """Default items per page. Use None for auto-detection from terminal height, or specify integer (min 8)."""
 
     top_ports_count: Optional[int] = None
     """Default number of top ports to display in summaries."""
@@ -113,7 +112,7 @@ def load_config() -> CernoConfig:
         # Note: Don't log here since logger isn't initialized yet
         return config
 
-    except Exception as e:
+    except Exception:
         # Note: Don't log here since logger isn't initialized yet
         # Silently fall back to defaults if config load fails
         return CernoConfig()
@@ -158,7 +157,7 @@ def save_config(config: CernoConfig) -> bool:
         # Config saved successfully
         return True
 
-    except Exception as e:
+    except Exception:
         # Failed to save config
         return False
 

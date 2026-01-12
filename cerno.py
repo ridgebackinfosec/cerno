@@ -18,136 +18,65 @@ from cerno_pkg import (
     # version
     __version__,
     # ops
-    require_cmd,
-    resolve_cmd,
     root_or_sudo_available,
-    run_command_with_progress,
     # parsing
-    normalize_combos,
     group_findings_by_workflow,
     # constants
     get_results_root,
-    PLUGIN_DETAILS_BASE,
-    NSE_PROFILES,
-    MAX_FILE_BYTES,
     DEFAULT_TOP_PORTS,
-    SAMPLE_THRESHOLD,
-    VISIBLE_GROUPS,
     # ansi / labels
-    C,
     header,
     ok,
     warn,
     err,
     info,
     fmt_action,
-    cyan_label,
-    colorize_severity_label,
     style_if_enabled,
-    # render (including newly moved functions):
+    # render
     render_severity_table,
     render_finding_list_table,
     render_actions_footer,
-    show_actions_help,
-    show_reviewed_help,
-    menu_pager,
     severity_cell,
-    severity_style,
     pretty_severity_label,
     default_page_size,
-    _file_raw_payload_text,
-    _file_raw_paged_text,
-    _grouped_payload_text,
-    _grouped_paged_text,
-    _hosts_only_payload_text,
-    _hosts_only_paged_text,
-    _build_plugin_output_details,
-    _display_finding_preview,
-    page_text,
-    bulk_extract_cves_for_plugins,
-    bulk_extract_cves_for_findings,
-    _display_bulk_cve_results,
-    _color_unreviewed,
     print_action_menu,
-    # fs (including newly moved functions):
-    build_results_paths,
-    write_work_files,
-    display_workflow,
-    handle_finding_view,
+    # fs
     process_single_finding,
-    # tools (including newly moved functions):
-    build_nmap_cmd,
-    build_netexec_cmd,
-    choose_tool,
-    choose_netexec_protocol,
-    custom_command_help,
-    render_placeholders,
-    command_review_menu,
-    copy_to_clipboard,
-    choose_nse_profile,
-    run_tool_workflow,
-    # types/context:
-    ToolContext,
-    CommandResult,
-    ReviewContext,
-    # session (including newly moved functions):
-    SessionState,
+    # session
     save_session,
     load_session,
     delete_session,
     show_scan_summary,
-    # workflow_mapper:
-    Workflow,
-    WorkflowStep,
+    # workflow_mapper
     WorkflowMapper,
     # analysis
-    compare_filtered,
-    analyze_inclusions,
     natural_key,
-    count_reviewed_in_scan,
-    # tui (newly created module):
+    # tui
     parse_severity_selection,
-    choose_from_list,
     handle_finding_list_actions,
-    # enums (newly created module):
-    DisplayFormat,
-    ViewFormat,
-    SortMode,
     # banner
     display_banner,
 )
 
 # === Standard library imports ===
-import ipaddress
 import math
-import random
-import re
-import shutil
-import subprocess
-import tempfile
 import types
-from collections import Counter
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from cerno_pkg.models import Plugin, Finding
     from cerno_pkg.config import CernoConfig
 
 # === Third-party imports ===
-import click
 import typer
 from typer import Exit
 from rich import box
-from rich.console import Console
-from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
-from rich.prompt import Confirm, IntPrompt, Prompt
-from rich.status import Status
+from rich.prompt import Confirm, Prompt
 from rich.table import Table
 from rich.traceback import install as rich_tb_install
 
 # Create a console for the interactive flow (configured with no_color setting)
-from cerno_pkg.ansi import get_console
+from cerno_pkg.ansi import get_console, get_terminal_width
 _console_global = get_console()
 
 # Install pretty tracebacks, but suppress for Typer/Click exit exceptions
@@ -161,7 +90,7 @@ _config_context: contextvars.ContextVar[Opt['CernoConfig']] = contextvars.Contex
 
 def get_current_config():
     """Get config from context or load fresh."""
-    from cerno_pkg import CernoConfig, load_config
+    from cerno_pkg import load_config
     config = _config_context.get()
     if config is None:
         config = load_config()
@@ -186,6 +115,7 @@ def browse_workflow_groups(
     completed_total: List[str],
     workflow_mapper,
     config: Optional["CernoConfig"] = None,
+    session_start_time: Optional[Any] = None,
 ) -> None:
     """
     Browse workflow groups and findings within selected workflow.
@@ -264,7 +194,7 @@ def browse_workflow_groups(
 
         # Extract plugin IDs from database records instead of filenames
         plugin_ids = []
-        for finding, plugin in workflow_files:
+        for _finding, plugin in workflow_files:
             plugin_ids.append(plugin.plugin_id)
 
         # Browse findings for this workflow using database query filtered by plugin IDs
@@ -282,6 +212,7 @@ def browse_workflow_groups(
             workflow_mapper=workflow_mapper,
             plugin_ids_filter=plugin_ids if plugin_ids else None,
             config=config,
+            session_start_time=session_start_time,
         )
 
         # Refresh workflow files from database to get updated review_state values
@@ -314,6 +245,7 @@ def browse_file_list(
     plugin_ids_filter: Optional[list[int]] = None,
     severity_dirs_filter: Optional[list[str]] = None,
     config: Optional["CernoConfig"] = None,
+    session_start_time: Optional[Any] = None,
 ) -> None:
     """
     Browse and interact with file list (unified for severity and MSF modes).
@@ -333,7 +265,7 @@ def browse_file_list(
         has_metasploit_filter: Optional filter for metasploit plugins
         plugin_ids_filter: Optional list of specific plugin IDs to include
     """
-    from cerno_pkg.models import Finding, Scan
+    from cerno_pkg.models import Finding
 
     # Load config if not provided (defensive programming)
     if config is None:
@@ -342,7 +274,7 @@ def browse_file_list(
 
     file_filter = ""
     reviewed_filter = ""
-    group_filter: Optional[Tuple[int, set]] = None
+    group_filter: Optional[Tuple[int, set, str]] = None
     sort_mode = "plugin_id"  # Default sort by plugin ID
 
     # Use config value if set, otherwise calculate based on terminal
@@ -354,6 +286,7 @@ def browse_file_list(
         page_size = default_page_size()
 
     page_idx = 0
+    first_iteration = True  # Track first iteration for startup hint
 
     # Derive scan_dir from scan object
     scan_dir = Path(scan.export_root) / scan.scan_name
@@ -429,26 +362,125 @@ def browse_file_list(
 
         try:
             from cerno_pkg import breadcrumb
+
             filter_info = f"filtered: '{file_filter}'" if file_filter else "Findings"
             bc = breadcrumb(scan_dir.name, severity_label, filter_info)
             header(bc if bc else f"Severity: {severity_label}")
-            status = (
-                f"Unreviewed findings ({len(unreviewed)}). "
-                f"Current filter: '{file_filter or '*'}'"
-            )
+
+            # Show startup hint on first iteration
+            if first_iteration:
+                from rich.text import Text
+                hint = Text()
+                hint.append("Welcome to Cerno Review", style="bold cyan")
+                hint.append(" | Press ", style="dim")
+                hint.append("[?]", style="bold yellow")
+                hint.append(" for help", style="dim")
+                _console_global.print(hint)
+
+                # Terminal width warning for narrow terminals
+                term_width = get_terminal_width()
+                if term_width < 80:
+                    warn(f"Note: Terminal width is {term_width} chars (recommended: 100+). Some layouts may wrap.")
+
+                _console_global.print()  # Blank line for spacing
+                first_iteration = False
+
+            # Build status line components
+            from rich.text import Text
+
+            status_parts = []
+
+            # Unreviewed count
+            status_parts.append(f"Unreviewed findings ({len(unreviewed)})")
+
+            # File filter with visual indicator if active
+            if file_filter:
+                filter_text = Text()
+                filter_text.append("[FILTER] ", style="bold cyan")
+                filter_text.append(f"Name: '{file_filter}'", style="bold yellow")
+                status_parts.append(filter_text)
+            else:
+                status_parts.append("Filter: '*'")
+
+            # Group filter with bold visual indicator
             if group_filter:
-                status += (
-                    f" | Group filter: #{group_filter[0]} "
-                    f"({len(group_filter[1])})"
-                )
+                # Enhanced group filter with description (backward compatible)
+                group_desc = group_filter[2] if len(group_filter) > 2 else f"{len(group_filter[1])} findings"
+                group_text = Text()
+                group_text.append("[ACTIVE FILTER] ", style="bold cyan")
+                group_text.append(f"Group #{group_filter[0]}: {group_desc} ({len(group_filter[1])})", style="bold yellow")
+                status_parts.append(group_text)
+
             sort_label = {
-                "plugin_id": "Plugin ID ASC",
-                "hosts": "Host count DESC",
-                "name": "Name A-Z"
-            }.get(sort_mode, "Plugin ID ASC")
-            status += f" | Sort: {sort_label}"
-            status += f" | Page: {page_idx+1}/{total_pages}"
-            _console_global.print(status)
+                "plugin_id": "Plugin ID ↑",
+                "hosts": "Host count ↓",
+                "name": "Name A↑Z"
+            }.get(sort_mode, "Plugin ID ↑")
+
+            # Show next sort mode indicator
+            next_sort_mode = {
+                "plugin_id": "Name A↑Z",
+                "name": "Host count ↓",
+                "hosts": "Plugin ID ↑"
+            }.get(sort_mode, "Name A↑Z")
+
+            status_parts.append(f"Sort: {sort_label} (next: {next_sort_mode})")
+            status_parts.append(f"Page: {page_idx+1}/{total_pages}")
+
+            # Session time indicator
+            if session_start_time:
+                from datetime import datetime
+                elapsed = datetime.now() - session_start_time
+                elapsed_seconds = int(elapsed.total_seconds())
+                hours, remainder = divmod(elapsed_seconds, 3600)
+                minutes, seconds = divmod(remainder, 60)
+
+                if hours > 0:
+                    session_time_str = f"{hours}h {minutes}m"
+                else:
+                    session_time_str = f"{minutes}m {seconds}s"
+
+                # Build session stats string
+                session_stats = f"Session: {session_time_str}"
+                if reviewed_total or completed_total or skipped_total:
+                    session_stats += f" | R:{len(reviewed_total)} C:{len(completed_total)} S:{len(skipped_total)}"
+                status_parts.append(session_stats)
+
+            # Responsive layout based on terminal width
+            term_width = get_terminal_width()
+
+            # Helper to join status parts (handles both str and Text objects)
+            def join_status_parts(parts, separator=" | "):
+                """Join status parts, handling both strings and Rich Text objects."""
+                if not parts:
+                    return ""
+                result = Text()
+                for i, part in enumerate(parts):
+                    if i > 0:
+                        result.append(separator)
+                    if isinstance(part, Text):
+                        result.append(part)
+                    else:
+                        result.append(str(part))
+                return result
+
+            if term_width >= 120:
+                # Wide terminal: single line with separators
+                status = join_status_parts(status_parts)
+                _console_global.print(status)
+            elif term_width >= 80:
+                # Medium terminal: two lines
+                status_line1 = join_status_parts(status_parts[:2])
+                status_line2 = join_status_parts(status_parts[2:])
+                _console_global.print(status_line1)
+                _console_global.print(status_line2)
+            else:
+                # Narrow terminal: multi-line (one per part)
+                for part in status_parts:
+                    if isinstance(part, Text):
+                        _console_global.print(part)
+                    else:
+                        _console_global.print(str(part))
 
             render_finding_list_table(
                 page_items, sort_mode, get_counts_for, row_offset=start,
@@ -636,7 +668,6 @@ def show_session_statistics(
 
         # Use database if available, otherwise fall back to filesystem
         if scan_id is not None:
-            from cerno_pkg.models import Finding
             from cerno_pkg.database import db_transaction, query_all
 
             # Query database for completed findings grouped by severity
@@ -779,350 +810,385 @@ def main(args: types.SimpleNamespace) -> None:
         from datetime import datetime
 
         # Outer loop for scan selection
-        while True:
-            # Get all scans from database
-            try:
-                with _console_global.status("[bold green]Loading scans from database..."):
-                    all_scans = Scan.get_all()
-            except Exception as e:
-                err(f"Failed to query scans from database: {e}")
-                return
+        # Wrapped in try/finally to ensure session is saved on ALL exit paths
+        try:
+            while True:
+                # Save previous scan's session before loading next scan menu
+                # This handles the case where user reviews multiple scans (presses 'b' to go back)
+                if scan_id != 0:
+                    save_session(
+                        scan_id,
+                        session_start_time,
+                        reviewed_count=len(reviewed_total),
+                        completed_count=len(completed_total),
+                        skipped_count=len(skipped_total),
+                    )
 
-            if not all_scans:
-                err("No scans found in database.")
-                info("Import a scan first: cerno import <nessus_file>")
-                return
+                    # Show statistics if work was done
+                    if reviewed_total or completed_total or skipped_total:
+                        if scan_dir is not None:
+                            show_session_statistics(
+                                session_start_time,
+                                reviewed_total,
+                                completed_total,
+                                skipped_total,
+                                scan_dir,
+                                scan_id=scan_id,
+                            )
 
-            # Display scan selection menu
-            header("Available Scans")
-            from rich.table import Table
-            from rich import box
-            from cerno_pkg.ansi import style_if_enabled
+                    delete_session(scan_id)
 
-            scan_table = Table(show_header=True, header_style=style_if_enabled("bold cyan"), box=box.SIMPLE)
-            scan_table.add_column("#", style=style_if_enabled("cyan"), justify="right")
-            scan_table.add_column("Scan Name", style=style_if_enabled("yellow"))
-            scan_table.add_column("Last Reviewed", style=style_if_enabled("magenta"))
+                    # Reset tracking for next scan
+                    scan_id = 0
+                    scan_dir = None
+                    reviewed_total = []
+                    completed_total = []
+                    skipped_total = []
 
-            for idx, scan in enumerate(all_scans, 1):
-                last_reviewed = "never"
-                if scan.last_reviewed_at:
-                    try:
-                        dt = datetime.fromisoformat(scan.last_reviewed_at)
-                        now = datetime.now()
-                        delta = now - dt
-                        if delta.days == 0:
-                            if delta.seconds < 3600:
-                                mins = delta.seconds // 60
-                                last_reviewed = f"{mins} min{'s' if mins != 1 else ''} ago"
-                            else:
-                                hours = delta.seconds // 3600
-                                last_reviewed = f"{hours} hour{'s' if hours != 1 else ''} ago"
-                        elif delta.days == 1:
-                            last_reviewed = "yesterday"
-                        elif delta.days < 7:
-                            last_reviewed = f"{delta.days} days ago"
-                        else:
-                            last_reviewed = dt.strftime("%Y-%m-%d")
-                    except Exception:
-                        last_reviewed = scan.last_reviewed_at[:10]  # Just date
-
-                scan_table.add_row(str(idx), scan.scan_name, last_reviewed)
-
-            _console_global.print(scan_table)
-            print_action_menu([("Q", "Quit")])
-
-            try:
-                ans = Prompt.ask("Choose scan").strip().lower()
-            except KeyboardInterrupt:
-                warn("\nInterrupted — exiting.")
-                return
-
-            if ans in ("x", "exit", "q", "quit"):
-                return
-
-            if not ans.isdigit() or not (1 <= int(ans) <= len(all_scans)):
-                warn(f"Invalid choice. Please enter 1-{len(all_scans)} or [Q]uit.")
-                continue  # Back to scan selection
-
-            selected_scan = all_scans[int(ans) - 1]
-            export_root = Path(selected_scan.export_root)
-            scan_dir = export_root / selected_scan.scan_name
-
-            # Note: scan_dir is a Path object used for display (scan_dir.name) only
-            # In database-only mode, the directory doesn't need to exist
-
-            # Type narrowing: ensure scan_id is not None
-            if selected_scan.scan_id is None:
-                warn("Invalid scan - missing scan_id")
-                continue
-
-            scan_id: int = selected_scan.scan_id
-            ok(f"Selected: {selected_scan.scan_name}")
-
-            # Check for existing session
-            previous_session = load_session(scan_id)
-            if previous_session:
-                from datetime import datetime
-                session_date = datetime.fromisoformat(previous_session.session_start)
-                header("Previous Session Found")
-                info(f"Session started: {session_date.strftime('%Y-%m-%d %H:%M:%S')}")
-                info(f"Reviewed: {previous_session.reviewed_count} findings")
-                info(f"Completed: {previous_session.completed_count} findings")
-                info(f"Skipped: {previous_session.skipped_count} findings")
+                # Get all scans from database
                 try:
-                    resume = Confirm.ask("Resume this session?", default=True)
+                    with _console_global.status("[bold green]Loading scans from database..."):
+                        all_scans = Scan.get_all()
+                except Exception as e:
+                    err(f"Failed to query scans from database: {e}")
+                    return
+
+                if not all_scans:
+                    err("No scans found in database.")
+                    info("Import a scan first: cerno import <nessus_file>")
+                    return
+
+                # Display scan selection menu
+                header("Available Scans")
+                from rich.table import Table
+                from rich import box
+                from cerno_pkg.ansi import style_if_enabled
+
+                scan_table = Table(show_header=True, header_style=style_if_enabled("bold cyan"), box=box.SIMPLE)
+                scan_table.add_column("#", style=style_if_enabled("cyan"), justify="right")
+                scan_table.add_column("Scan Name", style=style_if_enabled("yellow"))
+                scan_table.add_column("Last Reviewed", style=style_if_enabled("magenta"))
+
+                for idx, scan in enumerate(all_scans, 1):
+                    last_reviewed = "never"
+                    if scan.last_reviewed_at:
+                        try:
+                            dt = datetime.fromisoformat(scan.last_reviewed_at)
+                            now = datetime.now()
+                            delta = now - dt
+                            if delta.days == 0:
+                                if delta.seconds < 3600:
+                                    mins = delta.seconds // 60
+                                    last_reviewed = f"{mins} min{'s' if mins != 1 else ''} ago"
+                                else:
+                                    hours = delta.seconds // 3600
+                                    last_reviewed = f"{hours} hour{'s' if hours != 1 else ''} ago"
+                            elif delta.days == 1:
+                                last_reviewed = "yesterday"
+                            elif delta.days < 7:
+                                last_reviewed = f"{delta.days} days ago"
+                            else:
+                                last_reviewed = dt.strftime("%Y-%m-%d")
+                        except Exception:
+                            last_reviewed = scan.last_reviewed_at[:10]  # Just date
+
+                    scan_table.add_row(str(idx), scan.scan_name, last_reviewed)
+
+                _console_global.print(scan_table)
+                print_action_menu([("Q", "Quit")])
+
+                try:
+                    ans = Prompt.ask("Choose scan").strip().lower()
                 except KeyboardInterrupt:
                     warn("\nInterrupted — exiting.")
                     return
 
-                if resume:
-                    # Session start time is restored; file tracking continues from database
-                    session_start_time = session_date
-                    ok("Session resumed.")
-                else:
-                    # Start fresh session - end the old one
-                    delete_session(scan_id)
-                    ok("Starting fresh session.")
-            else:
-                # No previous session - start fresh
-                pass
-
-            # Overview immediately after selecting scan
-            # Use config value if set, otherwise use DEFAULT_TOP_PORTS
-            top_ports = config.top_ports_count if config.top_ports_count is not None else DEFAULT_TOP_PORTS
-
-            # Validate range
-            if top_ports <= 0:
-                warn(f"Invalid top_ports_count {top_ports} in config, using default {DEFAULT_TOP_PORTS}")
-                top_ports = DEFAULT_TOP_PORTS
-            elif top_ports > 100:
-                warn(f"top_ports_count {top_ports} is very large, capping at 100")
-                top_ports = 100
-
-            show_scan_summary(scan_dir, top_ports_n=top_ports, scan_id=scan_id)
-
-            # Severity loop (inner loop)
-            while True:
-                from cerno_pkg import breadcrumb
-                bc = breadcrumb(scan_dir.name, "Choose severity")
-                header(bc if bc else f"Scan: {scan_dir.name} — choose severity")
-
-                # Get severity directories from database (database-only mode)
-                severity_dir_names = Finding.get_severity_dirs_for_scan(scan_id)
-                if not severity_dir_names:
-                    warn("No severity directories in this scan.")
-                    break
-
-                # Create virtual Path objects for compatibility with existing render code
-                # Database returns pre-sorted (DESC), so no additional sorting needed
-                severities = [scan_dir / sev_name for sev_name in severity_dir_names]
-
-                # Metasploit Module virtual group (menu counts) - query from database
-                msf_files = Finding.get_by_scan_with_plugin(
-                    scan_id=scan_id,
-                    has_metasploit=True
-                )
-
-                has_msf = len(msf_files) > 0
-                msf_total = len(msf_files)
-                msf_reviewed = sum(
-                    1
-                    for (pf, _p) in msf_files
-                    if pf.review_state == "completed"
-                )
-                msf_unrev = msf_total - msf_reviewed
-
-                msf_summary = (
-                    (len(severities) + 1, msf_unrev, msf_reviewed, msf_total)
-                    if has_msf
-                    else None
-                )
-
-                # Workflow Mapped virtual group (menu counts) - query from database
-                workflow_plugin_ids = workflow_mapper.get_all_plugin_ids()
-                if workflow_plugin_ids:
-                    workflow_plugin_ids_int = [int(pid) for pid in workflow_plugin_ids if pid.isdigit()]
-                    workflow_files = Finding.get_by_scan_with_plugin(
-                        scan_id=scan_id,
-                        plugin_ids=workflow_plugin_ids_int
-                    )
-                else:
-                    workflow_files = []
-
-                has_workflows = len(workflow_files) > 0
-                workflow_total = len(workflow_files)
-                workflow_reviewed = sum(
-                    1
-                    for (pf, _p) in workflow_files
-                    if pf.review_state == "completed"
-                )
-                workflow_unrev = workflow_total - workflow_reviewed
-
-                # Calculate workflow menu index (after severities and MSF if present)
-                workflow_menu_idx = len(severities) + (1 if has_msf else 0) + 1
-
-                workflow_summary = (
-                    (workflow_menu_idx, workflow_unrev, workflow_reviewed, workflow_total)
-                    if has_workflows
-                    else None
-                )
-
-                render_severity_table(severities, msf_summary=msf_summary, workflow_summary=workflow_summary, scan_id=scan_id)
-
-                print_action_menu([("B", "Back")])
-                info("Tip: Multi-select is supported (e.g., 1-3 or 1,3,5)")
-
-                try:
-                    ans = Prompt.ask("Choose").strip().lower()
-                except KeyboardInterrupt:
-                    warn("\nInterrupted — returning to scan menu.")
-                    break
-
-                if ans in ("b", "back"):
-                    break
-                elif ans == "q":
+                if ans in ("x", "exit", "q", "quit"):
                     return
 
-                options_count = len(severities) + (1 if has_msf else 0) + (1 if has_workflows else 0)
+                if not ans.isdigit() or not (1 <= int(ans) <= len(all_scans)):
+                    warn(f"Invalid choice. Please enter 1-{len(all_scans)} or [Q]uit.")
+                    continue  # Back to scan selection
 
-                # Parse selection (supports ranges and comma-separated)
-                selected_indices = parse_severity_selection(ans, options_count)
+                selected_scan = all_scans[int(ans) - 1]
+                export_root = Path(selected_scan.export_root)
+                scan_dir = export_root / selected_scan.scan_name
 
-                if selected_indices is None:
-                    warn("Invalid choice. Use single numbers, ranges (1-3), or comma-separated (1,3,5).")
+                # Note: scan_dir is a Path object used for display (scan_dir.name) only
+                # In database-only mode, the directory doesn't need to exist
+
+                # Type narrowing: ensure scan_id is not None
+                if selected_scan.scan_id is None:
+                    warn("Invalid scan - missing scan_id")
                     continue
 
-                # Check if MSF is included in selection
-                msf_in_selection = has_msf and (len(severities) + 1) in selected_indices
+                scan_id: int = selected_scan.scan_id
+                ok(f"Selected: {selected_scan.scan_name}")
 
-                # Check if Workflow Mapped is included in selection
-                workflow_in_selection = has_workflows and workflow_menu_idx in selected_indices
+                # Check for existing session
+                previous_session = load_session(scan_id)
+                if previous_session:
+                    from datetime import datetime
+                    session_date = datetime.fromisoformat(previous_session.session_start)
+                    header("Previous Session Found")
+                    info(f"Session started: {session_date.strftime('%Y-%m-%d %H:%M:%S')}")
+                    info(f"Reviewed: {previous_session.reviewed_count} findings")
+                    info(f"Completed: {previous_session.completed_count} findings")
+                    info(f"Skipped: {previous_session.skipped_count} findings")
+                    try:
+                        resume = Confirm.ask("Resume this session?", default=True)
+                    except KeyboardInterrupt:
+                        warn("\nInterrupted — exiting.")
+                        return
 
-                # Filter out MSF and Workflow from severity indices
-                severity_indices = [idx for idx in selected_indices if idx <= len(severities)]
+                    if resume:
+                        # Session start time is restored; file tracking continues from database
+                        session_start_time = session_date
+                        ok("Session resumed.")
+                    else:
+                        # Start fresh session - end the old one
+                        delete_session(scan_id)
+                        ok("Starting fresh session.")
+                else:
+                    # No previous session - start fresh
+                    pass
 
-                # === Multiple severities selected (or mix of severities + MSF) ===
-                if len(severity_indices) > 1 or (len(severity_indices) >= 1 and msf_in_selection):
-                    selected_sev_dirs = [severities[idx - 1] for idx in severity_indices]
+                # Overview immediately after selecting scan
+                # Use config value if set, otherwise use DEFAULT_TOP_PORTS
+                top_ports = config.top_ports_count if config.top_ports_count is not None else DEFAULT_TOP_PORTS
 
-                    # Build combined label
-                    sev_labels = [pretty_severity_label(sev.name) for sev in selected_sev_dirs]
-                    if msf_in_selection:
-                        sev_labels.append("Metasploit Module")
+                # Validate range
+                if top_ports <= 0:
+                    warn(f"Invalid top_ports_count {top_ports} in config, using default {DEFAULT_TOP_PORTS}")
+                    top_ports = DEFAULT_TOP_PORTS
+                elif top_ports > 100:
+                    warn(f"top_ports_count {top_ports} is very large, capping at 100")
+                    top_ports = 100
 
-                    combined_label = " + ".join(sev_labels)
+                show_scan_summary(scan_dir, top_ports_n=top_ports, scan_id=scan_id)
 
-                    # For multi-severity selection, pass list of severity directories to filter
-                    severity_dir_names = [sev.name for sev in selected_sev_dirs]
-                    browse_file_list(
-                        selected_scan,
-                        selected_sev_dirs[0] if selected_sev_dirs else None,
-                        None,  # Single severity filter not used for multi-severity
-                        combined_label,
-                        args,
-                        use_sudo,
-                        skipped_total,
-                        reviewed_total,
-                        completed_total,
-                        is_msf_mode=True,  # Show severity labels for each file
-                        workflow_mapper=workflow_mapper,
-                        severity_dirs_filter=severity_dir_names,
-                        config=config,
+                # Severity loop (inner loop)
+                while True:
+                    from cerno_pkg import breadcrumb
+                    bc = breadcrumb(scan_dir.name, "Choose severity")
+                    header(bc if bc else f"Scan: {scan_dir.name} — choose severity")
+
+                    # Get severity directories from database (database-only mode)
+                    severity_dir_names = Finding.get_severity_dirs_for_scan(scan_id)
+                    if not severity_dir_names:
+                        warn("No severity directories in this scan.")
+                        break
+
+                    # Create virtual Path objects for compatibility with existing render code
+                    # Database returns pre-sorted (DESC), so no additional sorting needed
+                    severities = [scan_dir / sev_name for sev_name in severity_dir_names]
+
+                    # Metasploit Module virtual group (menu counts) - query from database
+                    msf_files = Finding.get_by_scan_with_plugin(
+                        scan_id=scan_id,
+                        has_metasploit=True
                     )
 
-                # === Single severity selected (normal or MSF only) ===
-                elif len(severity_indices) == 1:
-                    choice_idx = severity_indices[0]
-                    sev_dir = severities[choice_idx - 1]
+                    has_msf = len(msf_files) > 0
+                    msf_total = len(msf_files)
+                    msf_reviewed = sum(
+                        1
+                        for (pf, _p) in msf_files
+                        if pf.review_state == "completed"
+                    )
+                    msf_unrev = msf_total - msf_reviewed
 
-                    # Use severity directory name as filter (e.g., "3_High")
-                    severity_dir_filter = sev_dir.name
-
-                    browse_file_list(
-                        selected_scan,
-                        sev_dir,
-                        severity_dir_filter,
-                        pretty_severity_label(sev_dir.name),
-                        args,
-                        use_sudo,
-                        skipped_total,
-                        reviewed_total,
-                        completed_total,
-                        is_msf_mode=False,
-                        workflow_mapper=workflow_mapper,
-                        config=config,
+                    msf_summary = (
+                        (len(severities) + 1, msf_unrev, msf_reviewed, msf_total)
+                        if has_msf
+                        else None
                     )
 
-                # === Metasploit Module only ===
-                elif msf_in_selection:
-                    # Query database for metasploit plugins across all severities
-                    browse_file_list(
-                        selected_scan,
-                        None,  # No single severity dir
-                        None,  # No severity filter
-                        "Metasploit Module",
-                        args,
-                        use_sudo,
-                        skipped_total,
-                        reviewed_total,
-                        completed_total,
-                        is_msf_mode=True,
-                        workflow_mapper=workflow_mapper,
-                        has_metasploit_filter=True,
-                        config=config,
+                    # Workflow Mapped virtual group (menu counts) - query from database
+                    workflow_plugin_ids = workflow_mapper.get_all_plugin_ids()
+                    if workflow_plugin_ids:
+                        workflow_plugin_ids_int = [int(pid) for pid in workflow_plugin_ids if pid.isdigit()]
+                        workflow_files = Finding.get_by_scan_with_plugin(
+                            scan_id=scan_id,
+                            plugin_ids=workflow_plugin_ids_int
+                        )
+                    else:
+                        workflow_files = []
+
+                    has_workflows = len(workflow_files) > 0
+                    workflow_total = len(workflow_files)
+                    workflow_reviewed = sum(
+                        1
+                        for (pf, _p) in workflow_files
+                        if pf.review_state == "completed"
+                    )
+                    workflow_unrev = workflow_total - workflow_reviewed
+
+                    # Calculate workflow menu index (after severities and MSF if present)
+                    workflow_menu_idx = len(severities) + (1 if has_msf else 0) + 1
+
+                    workflow_summary = (
+                        (workflow_menu_idx, workflow_unrev, workflow_reviewed, workflow_total)
+                        if has_workflows
+                        else None
                     )
 
-                # === Workflow Mapped only ===
-                elif workflow_in_selection:
-                    # Group findings by workflow name using database records
-                    workflow_groups = group_findings_by_workflow(workflow_files, workflow_mapper)
+                    render_severity_table(severities, msf_summary=msf_summary, workflow_summary=workflow_summary, scan_id=scan_id)
 
-                    browse_workflow_groups(
-                        selected_scan,
-                        workflow_groups,
-                        args,
-                        use_sudo,
-                        skipped_total,
-                        reviewed_total,
-                        completed_total,
-                        workflow_mapper,
-                        config=config,
-                    )
+                    print_action_menu([("B", "Back")])
+                    info("Tip: Multi-select is supported (e.g., 1-3 or 1,3,5)")
 
-            # End of severity loop - continue to scan selection loop
-            # (User pressed 'b' or 'q' from severity menu)
+                    try:
+                        ans = Prompt.ask("Choose").strip().lower()
+                    except KeyboardInterrupt:
+                        warn("\nInterrupted — returning to scan menu.")
+                        break
 
-    # Save session before showing summary
-    if reviewed_total or completed_total or skipped_total:
-        # Type guard: scan_id must be defined if any work was done
-        # (scan_id is defined right after scan selection, before any review work)
-        save_session(
-            scan_id,
-            session_start_time,
-            reviewed_count=len(reviewed_total),
-            completed_count=len(completed_total),
-            skipped_count=len(skipped_total),
-        )
+                    if ans in ("b", "back"):
+                        break
+                    elif ans == "q":
+                        return
 
-    # Session summary with rich statistics (only if work was done)
-    if reviewed_total or completed_total or skipped_total:
-        # Type guard: scan_dir must be defined if any work was done
-        # (scan_dir is defined right after scan selection, before any review work)
-        if scan_dir is None:
-            warn("Cannot show session statistics - scan directory not selected")
-        else:
-            show_session_statistics(
-                session_start_time,
-                reviewed_total,
-                completed_total,
-                skipped_total,
-                scan_dir,
-                scan_id=scan_id,
-            )
+                    options_count = len(severities) + (1 if has_msf else 0) + (1 if has_workflows else 0)
 
-        # Clean up session (mark as ended in database)
-        delete_session(scan_id)
+                    # Parse selection (supports ranges and comma-separated)
+                    selected_indices = parse_severity_selection(ans, options_count)
+
+                    if selected_indices is None:
+                        warn("Invalid choice. Use single numbers, ranges (1-3), or comma-separated (1,3,5).")
+                        continue
+
+                    # Check if MSF is included in selection
+                    msf_in_selection = has_msf and (len(severities) + 1) in selected_indices
+
+                    # Check if Workflow Mapped is included in selection
+                    workflow_in_selection = has_workflows and workflow_menu_idx in selected_indices
+
+                    # Filter out MSF and Workflow from severity indices
+                    severity_indices = [idx for idx in selected_indices if idx <= len(severities)]
+
+                    # === Multiple severities selected (or mix of severities + MSF) ===
+                    if len(severity_indices) > 1 or (len(severity_indices) >= 1 and msf_in_selection):
+                        selected_sev_dirs = [severities[idx - 1] for idx in severity_indices]
+
+                        # Build combined label
+                        sev_labels = [pretty_severity_label(sev.name) for sev in selected_sev_dirs]
+                        if msf_in_selection:
+                            sev_labels.append("Metasploit Module")
+
+                        combined_label = " + ".join(sev_labels)
+
+                        # For multi-severity selection, pass list of severity directories to filter
+                        severity_dir_names = [sev.name for sev in selected_sev_dirs]
+                        browse_file_list(
+                            selected_scan,
+                            selected_sev_dirs[0] if selected_sev_dirs else None,
+                            None,  # Single severity filter not used for multi-severity
+                            combined_label,
+                            args,
+                            use_sudo,
+                            skipped_total,
+                            reviewed_total,
+                            completed_total,
+                            is_msf_mode=True,  # Show severity labels for each file
+                            workflow_mapper=workflow_mapper,
+                            severity_dirs_filter=severity_dir_names,
+                            config=config,
+                            session_start_time=session_start_time,
+                        )
+
+                    # === Single severity selected (normal or MSF only) ===
+                    elif len(severity_indices) == 1:
+                        choice_idx = severity_indices[0]
+                        sev_dir = severities[choice_idx - 1]
+
+                        # Use severity directory name as filter (e.g., "3_High")
+                        severity_dir_filter = sev_dir.name
+
+                        browse_file_list(
+                            selected_scan,
+                            sev_dir,
+                            severity_dir_filter,
+                            pretty_severity_label(sev_dir.name),
+                            args,
+                            use_sudo,
+                            skipped_total,
+                            reviewed_total,
+                            completed_total,
+                            is_msf_mode=False,
+                            workflow_mapper=workflow_mapper,
+                            config=config,
+                            session_start_time=session_start_time,
+                        )
+
+                    # === Metasploit Module only ===
+                    elif msf_in_selection:
+                        # Query database for metasploit plugins across all severities
+                        browse_file_list(
+                            selected_scan,
+                            None,  # No single severity dir
+                            None,  # No severity filter
+                            "Metasploit Module",
+                            args,
+                            use_sudo,
+                            skipped_total,
+                            reviewed_total,
+                            completed_total,
+                            is_msf_mode=True,
+                            workflow_mapper=workflow_mapper,
+                            has_metasploit_filter=True,
+                            config=config,
+                            session_start_time=session_start_time,
+                        )
+
+                    # === Workflow Mapped only ===
+                    elif workflow_in_selection:
+                        # Group findings by workflow name using database records
+                        workflow_groups = group_findings_by_workflow(workflow_files, workflow_mapper)
+
+                        browse_workflow_groups(
+                            selected_scan,
+                            workflow_groups,
+                            args,
+                            use_sudo,
+                            skipped_total,
+                            reviewed_total,
+                            completed_total,
+                            workflow_mapper,
+                            config=config,
+                            session_start_time=session_start_time,
+                        )
+
+                # End of severity loop - continue to scan selection loop
+                # (User pressed 'b' or 'q' from severity menu)
+
+        finally:
+            # Always save session on exit (handles early exits via q, Ctrl+C, or errors)
+            # Only save if scan was actually selected (scan_id != 0)
+            if scan_id != 0:
+                save_session(
+                    scan_id,
+                    session_start_time,
+                    reviewed_count=len(reviewed_total),
+                    completed_count=len(completed_total),
+                    skipped_count=len(skipped_total),
+                )
+
+                # Session summary with rich statistics (only if work was done)
+                if reviewed_total or completed_total or skipped_total:
+                    # Type guard: scan_dir must be defined if any work was done
+                    if scan_dir is not None:
+                        show_session_statistics(
+                            session_start_time,
+                            reviewed_total,
+                            completed_total,
+                            skipped_total,
+                            scan_dir,
+                            scan_id=scan_id,
+                        )
+
+                # Always end session (mark session_end timestamp in database)
+                delete_session(scan_id)
 
     _console_global.print() # Empty line
     ok("Now run \"cerno review\" to start reviewing findings.")
@@ -1150,10 +1216,15 @@ config_app = typer.Typer(
     help="Configuration management - view and modify settings"
 )
 
+workflow_app = typer.Typer(
+    help="Workflow management - list and view available workflows"
+)
+
 # Register sub-apps with main app
 app.add_typer(import_app, name="import")
 app.add_typer(scan_app, name="scan")
 app.add_typer(config_app, name="config")
+app.add_typer(workflow_app, name="workflow")
 
 
 # Version callback for --version flag
@@ -1689,6 +1760,66 @@ def config_set(
     except ValueError as e:
         err(f"Invalid value for {key}: {e}")
         raise typer.Exit(1)
+
+
+# ===== Workflow Commands =====
+
+@workflow_app.command(name="list", help="List all available workflows from bundled and custom YAML files")
+def workflow_list(
+    custom_workflows: Optional[Path] = typer.Option(
+        None, "--custom-workflows", "-w", help="Path to custom workflows YAML file"
+    ),
+) -> None:
+    """Display all available workflows with plugin IDs and descriptions."""
+    from cerno_pkg.workflow_mapper import WorkflowMapper
+    from rich.table import Table
+    from rich.console import Console
+
+    console = Console()
+
+    # Initialize workflow mapper (loads bundled workflows)
+    workflow_mapper = WorkflowMapper()
+
+    # Load custom workflows if provided
+    if custom_workflows:
+        if not custom_workflows.exists():
+            err(f"Custom workflows file not found: {custom_workflows}")
+            raise typer.Exit(1)
+        try:
+            count = workflow_mapper.load_additional_workflows(custom_workflows)
+            info(f"Loaded {count} custom workflow(s) from {custom_workflows}")
+        except Exception as e:
+            err(f"Failed to load custom workflows: {e}")
+            raise typer.Exit(1)
+
+    # Get all workflows
+    all_workflows = workflow_mapper.get_all_workflows()
+
+    if not all_workflows:
+        warn("No workflows found")
+        return
+
+    # Build Rich table
+    table = Table(title="[bold cyan]Available Workflows[/]", show_header=True, header_style="bold magenta")
+    table.add_column("Plugin ID(s)", style="cyan", no_wrap=True)
+    table.add_column("Workflow Name", style="yellow")
+    table.add_column("Description", style="dim")
+
+    for workflow in all_workflows:
+        plugin_ids = workflow.get("plugin_id", "")
+        workflow_name = workflow.get("workflow_name", "")
+        description = workflow.get("description", "")
+
+        # Truncate long descriptions
+        if len(description) > 80:
+            description = description[:77] + "..."
+
+        table.add_row(plugin_ids, workflow_name, description)
+
+    console.print()
+    console.print(table)
+    console.print()
+    info(f"Total workflows: {len(all_workflows)}")
 
 
 if __name__ == "__main__":

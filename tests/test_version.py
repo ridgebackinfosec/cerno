@@ -4,7 +4,6 @@ Tests version retrieval from multiple sources and edge cases.
 """
 
 import pytest
-from pathlib import Path
 from unittest.mock import patch
 
 
@@ -55,7 +54,7 @@ def test_get_version_prefers_metadata(mock_pyproject, mock_metadata):
 
     from cerno_pkg._version import get_version
     # Since __version__ is cached, we need to call get_version directly
-    version = get_version()
+    get_version()
 
     # Should use metadata version (1.2.3), not pyproject (9.9.9)
     mock_metadata.assert_called_once()
@@ -91,7 +90,7 @@ def test_get_version_falls_back_to_unknown(mock_pyproject, mock_metadata):
 
 def test_get_version_from_pyproject_real():
     """Test that _get_version_from_pyproject() can read actual pyproject.toml."""
-    from cerno_pkg._version import _get_version_from_pyproject
+    from cerno_pkg._version import _get_version_from_pyproject  # type: ignore[reportPrivateUsage]
 
     version = _get_version_from_pyproject()
 
@@ -116,7 +115,6 @@ def test_version_consistency():
 def test_banner_uses_version():
     """Test that banner.py imports and uses __version__."""
     # This is a smoke test - just verify the import doesn't fail
-    from cerno_pkg.banner import display_banner
 
     # Verify banner module has access to version
     import cerno_pkg.banner as banner_module
@@ -143,7 +141,7 @@ def test_version_in_installed_package():
 
 def test_get_version_from_metadata():
     """Test _get_version_from_metadata() helper function."""
-    from cerno_pkg._version import _get_version_from_metadata
+    from cerno_pkg._version import _get_version_from_metadata  # type: ignore[reportPrivateUsage]
 
     version = _get_version_from_metadata()
     # Should return string or None (depending on if package is installed)

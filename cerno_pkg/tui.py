@@ -19,7 +19,7 @@ from .render import print_action_menu, show_actions_help, show_reviewed_help
 from .constants import VISIBLE_GROUPS
 
 if TYPE_CHECKING:
-    from .models import Finding, Plugin
+    from .models import Finding
 
 _console_global = get_console()
 
@@ -28,7 +28,7 @@ ActionResult = Tuple[
     Optional[str],  # action_type: None, "back", "file_selected", "help", "mark_all"
     str,  # file_filter
     str,  # reviewed_filter
-    Optional[Tuple[int, set]],  # group_filter
+    Optional[Tuple[int, set, str]],  # group_filter: (index, plugin_ids, description)
     str,  # sort_mode
     int   # page_idx
 ]
@@ -170,7 +170,7 @@ def handle_finding_list_actions(
     display: List[Any],  # List of (Finding, Plugin) tuples
     file_filter: str,
     reviewed_filter: str,
-    group_filter: Optional[Tuple[int, set]],
+    group_filter: Optional[Tuple[int, set, str]],
     sort_mode: str,
     page_idx: int,
     total_pages: int,
@@ -231,16 +231,20 @@ def handle_finding_list_actions(
     if ans == "f":
         info("Filter help: Enter any text to match finding names (case-insensitive)")
         info("Examples: 'apache' matches 'Apache HTTP Server', 'ssl' matches 'SSL Certificate'")
-        file_filter = Prompt.ask("Enter substring to filter by (or press Enter for none)", default="").strip()
+        file_filter = Prompt.ask(
+            "Enter substring to filter by (e.g., 'apache', 'ssl', 'windows') or press Enter for none",
+            default=""
+        ).strip()
         page_idx = 0
         return None, file_filter, reviewed_filter, group_filter, sort_mode, page_idx
 
     if ans == "c":
         file_filter = ""
         page_idx = 0
+        ok("Filter cleared. Showing all findings.")
         return None, file_filter, reviewed_filter, group_filter, sort_mode, page_idx
 
-    if ans == "o":
+    if ans == "s":
         # Cycle through sort modes: plugin_id -> name -> hosts -> plugin_id
         if sort_mode == "plugin_id":
             sort_mode = "name"
@@ -268,7 +272,7 @@ def handle_finding_list_actions(
         return None, file_filter, reviewed_filter, group_filter, sort_mode, page_idx
 
     if ans == "r":
-        header("Reviewed findings (read-only)")
+        header("Completed Findings (Undo Available)")
         _console_global.print(f"Current filter: '{reviewed_filter or '*'}'")
         filtered_reviewed = [
             (pf, p)
@@ -290,7 +294,7 @@ def handle_finding_list_actions(
 
         print_action_menu([
             ("?", "Help"),
-            ("U", "Undo review-complete"),
+            ("U", "Undo completion"),
             ("F", "Filter"),
             ("C", "Clear filter"),
             ("B", "Back")
@@ -377,7 +381,10 @@ def handle_finding_list_actions(
         if choice == "f":
             info("Filter help: Enter any text to match filenames (case-insensitive)")
             info("Examples: 'apache' matches 'Apache_2.4', 'ssl' matches 'SSL_Certificate'")
-            reviewed_filter = Prompt.ask("Enter substring to filter by (or press Enter for none)", default="").strip()
+            reviewed_filter = Prompt.ask(
+                "Enter substring to filter by (e.g., 'apache', 'ssl', 'windows') or press Enter for none",
+                default=""
+            ).strip()
             return (
                 None,
                 file_filter,
@@ -423,7 +430,7 @@ def handle_finding_list_actions(
         # Extract plugin info from (Finding, Plugin) tuples for CVE extraction
         # Pass list of (plugin_id, plugin_name) tuples instead of file paths
         from .render import bulk_extract_cves_for_plugins
-        plugin_info_list = [(p.plugin_id, p.plugin_name) for pf, p in candidates]
+        plugin_info_list = [(p.plugin_id, p.plugin_name) for _pf, p in candidates]
         bulk_extract_cves_for_plugins(plugin_info_list)
         return None, file_filter, reviewed_filter, group_filter, sort_mode, page_idx
 
@@ -439,13 +446,16 @@ def handle_finding_list_actions(
                 page_idx,
             )
 
-        confirm_prompt = (
-            f"[red]You are about to mark {len(candidates)} items as review completed.[/red]\n"
-            "Type 'mark' to confirm, or anything else to cancel"
-        )
-        confirm = Prompt.ask(confirm_prompt).strip().lower()
+        from rich.prompt import Confirm
+        from rich import print as rprint
 
-        if confirm != "mark":
+        # Show warning message
+        rprint(f"[red]You are about to mark {len(candidates)} items as review completed.[/red]")
+
+        # Use standard Confirm.ask pattern
+        confirmed = Confirm.ask("Mark all filtered findings as completed?", default=False)
+
+        if not confirmed:
             info("Canceled.")
             return (
                 None,
@@ -494,13 +504,15 @@ def handle_finding_list_actions(
             if choice.startswith("g") and choice[1:].isdigit():
                 idx = int(choice[1:]) - 1
                 if 0 <= idx < len(groups):
-                    group_filter = (idx + 1, set(groups[idx]))
+                    # Enhanced tuple with description
+                    group_desc = "Identical host:port combinations"
+                    group_filter = (idx + 1, set(groups[idx]), group_desc)
                     ok(f"Applied group filter #{idx+1} ({len(groups[idx])} findings).")
                     page_idx = 0
 
         return None, file_filter, reviewed_filter, group_filter, sort_mode, page_idx
 
-    if ans == "i":
+    if ans == "o":
         if not candidates:
             warn("No findings match the current filter.")
             return (
@@ -527,9 +539,11 @@ def handle_finding_list_actions(
             if choice.startswith("g") and choice[1:].isdigit():
                 idx = int(choice[1:]) - 1
                 if 0 <= idx < len(groups):
-                    group_filter = (idx + 1, set(groups[idx]))
+                    # Enhanced tuple with description
+                    group_desc = "Overlapping findings"
+                    group_filter = (idx + 1, set(groups[idx]), group_desc)
                     ok(
-                        f"Applied superset group #{idx+1} "
+                        f"Applied overlapping group #{idx+1} "
                         f"({len(groups[idx])} findings)."
                     )
                     page_idx = 0

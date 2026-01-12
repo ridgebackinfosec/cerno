@@ -4,7 +4,7 @@ This module provides ANSI color codes and helper functions for colorized
 console output. Color configuration is managed via config.yaml.
 """
 
-import os
+import shutil
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -72,6 +72,32 @@ def get_no_color(config: Optional["CernoConfig"] = None) -> bool:
         config = load_config()
 
     return config.no_color or config.term_override == "dumb"
+
+
+def get_terminal_width(fallback: int = 80) -> int:
+    """Get current terminal width with fallback.
+
+    Detects the terminal width using shutil.get_terminal_size().
+    Returns the fallback value if detection fails.
+
+    Args:
+        fallback: Default width if detection fails (default: 80)
+
+    Returns:
+        Terminal width in characters (minimum fallback value)
+
+    Example:
+        >>> width = get_terminal_width()
+        >>> if width < 100:
+        ...     # Use narrow layout
+        >>> else:
+        ...     # Use wide layout
+    """
+    try:
+        width = shutil.get_terminal_size((fallback, 24)).columns
+        return max(fallback, width)
+    except Exception:
+        return fallback
 
 
 # ========== Rich Console configuration ==========

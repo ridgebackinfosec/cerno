@@ -18,7 +18,7 @@ from .tool_registry import Tool, register_tool
 
 # Avoid circular imports by using TYPE_CHECKING
 if TYPE_CHECKING:
-    from typing import Any
+    pass
 
 
 def register_all_tools() -> None:
@@ -49,7 +49,7 @@ def register_all_tools() -> None:
             id="nmap",
             name="nmap",
             description="Network mapper",
-            workflow_builder=tools._build_nmap_workflow,
+            workflow_builder=tools.build_nmap_workflow,
             command_builder=tools.build_nmap_cmd,
             requires=["nmap"],
             menu_order=1,
@@ -68,7 +68,7 @@ def register_all_tools() -> None:
             id="netexec",
             name="netexec",
             description="Multi-protocol network executor",  # Improved description
-            workflow_builder=tools._build_netexec_workflow,
+            workflow_builder=tools.build_netexec_workflow,
             command_builder=tools.build_netexec_cmd,
             requires=["nxc", "netexec"],  # Either binary is acceptable
             menu_order=2,
@@ -108,7 +108,7 @@ def register_all_tools() -> None:
             id="custom",
             name="Custom command",
             description="Advanced - use placeholders",
-            workflow_builder=tools._build_custom_workflow,
+            workflow_builder=tools.build_custom_workflow,
             command_builder=None,  # Custom commands are built in workflow
             requires=[],  # No requirements (user provides command)
             menu_order=4,

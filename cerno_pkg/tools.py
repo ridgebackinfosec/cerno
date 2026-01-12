@@ -7,38 +7,33 @@ various security tools including nmap, netexec, and metasploit.
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Callable, Optional, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .config import CernoConfig
     from .models import Plugin, Finding
 
 import pyperclip
-from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.prompt import Prompt
 from rich.text import Text
 
-from .ansi import C, fmt_action, header, info, ok, warn
+from .ansi import header, info, ok, warn
 from .constants import (
     NETEXEC_PROTOCOLS,
     NSE_PROFILES,
-    SEARCH_WINDOW_SIZE,
-    MIN_TERM_LENGTH,
 )
 from .tool_context import ToolContext, CommandResult
 
 # Optional dependencies for Metasploit search
 try:
-    import requests
-    from bs4 import BeautifulSoup, Tag
+    import requests  # type: ignore[reportUnusedImport]
+    from bs4 import BeautifulSoup, Tag  # type: ignore[reportUnusedImport]
     METASPLOIT_DEPS_AVAILABLE = True
 except ImportError:
     requests = None  # type: ignore
@@ -149,6 +144,189 @@ def choose_nse_profile(config: Optional["CernoConfig"] = None) -> tuple[list[str
                 return scripts[:], needs_udp
 
         warn("Invalid choice.")
+
+
+def configure_nmap_options(config: Optional["CernoConfig"] = None) -> Optional[tuple[list[str], bool]]:
+    """
+    Consolidated nmap configuration screen.
+
+    Shows all nmap options (NSE profile, custom scripts, UDP preference) in a single
+    interactive menu instead of sequential prompts.
+
+    Args:
+        config: Optional configuration object. If None, loads config.
+
+    Returns:
+        Tuple of (script_list, needs_udp) or None if user cancels
+    """
+    from rich.panel import Panel
+    from rich.text import Text
+
+    # Load config if not provided
+    if config is None:
+        from .config import load_config
+        config = load_config()
+
+    # Initialize state
+    selected_profile_index: Optional[int] = None
+    custom_scripts: list[str] = []
+    force_udp: bool = False
+
+    # Set default profile from config
+    if config.nmap_default_profile:
+        for index, (name, _, _, _) in enumerate(NSE_PROFILES):
+            if name.lower() == config.nmap_default_profile.lower():
+                selected_profile_index = index
+                break
+
+    while True:
+        _console.print()
+
+        # Build configuration summary panel
+        summary = Text()
+        summary.append("nmap Configuration\n\n", style="bold cyan")
+
+        # NSE Profile section
+        summary.append("NSE Profile: ", style="cyan")
+        if selected_profile_index is not None:
+            profile_name, _, scripts, _ = NSE_PROFILES[selected_profile_index]
+            summary.append(f"{profile_name}\n", style="yellow")
+            summary.append(f"  Scripts: {', '.join(scripts)}\n", style="dim")
+        else:
+            summary.append("None\n", style="dim")
+
+        # Custom scripts section
+        summary.append("\nCustom Scripts: ", style="cyan")
+        if custom_scripts:
+            summary.append(f"{', '.join(custom_scripts)}\n", style="yellow")
+        else:
+            summary.append("None\n", style="dim")
+
+        # UDP scan section
+        summary.append("\nUDP Scan: ", style="cyan")
+        auto_udp = False
+        if selected_profile_index is not None:
+            _, _, _, needs_udp = NSE_PROFILES[selected_profile_index]
+            auto_udp = needs_udp
+
+        # Check if custom scripts imply UDP
+        if custom_scripts:
+            extras_imply_udp = any(
+                script.lower().startswith("snmp") or script.lower() == "ipmi-version"
+                for script in custom_scripts
+            )
+            auto_udp = auto_udp or extras_imply_udp
+
+        if force_udp or auto_udp:
+            if auto_udp and not force_udp:
+                summary.append("Yes (auto-enabled for selected scripts)\n", style="yellow")
+            else:
+                summary.append("Yes\n", style="yellow")
+        else:
+            summary.append("No\n", style="dim")
+
+        panel = Panel(summary, border_style="cyan")
+        _console.print(panel)
+
+        # Show menu options
+        print_action_menu([
+            ("P", "Select NSE Profile"),
+            ("S", "Add/Edit Custom Scripts"),
+            ("U", f"Toggle UDP Scan ({'ON' if force_udp else 'OFF'})"),
+            ("Enter", "Continue with current configuration"),
+            ("B", "Back/Cancel")
+        ])
+
+        try:
+            answer = Prompt.ask("Choose", default="").strip().lower()
+        except KeyboardInterrupt:
+            warn("\nInterrupted — returning to file menu.")
+            return None
+
+        if answer == "" or answer in ("c", "continue"):
+            # Finalize configuration
+            final_scripts: list[str] = []
+            final_needs_udp = force_udp
+
+            # Add profile scripts
+            if selected_profile_index is not None:
+                _, _, scripts, needs_udp = NSE_PROFILES[selected_profile_index]
+                final_scripts.extend(scripts)
+                final_needs_udp = final_needs_udp or needs_udp
+
+            # Add custom scripts
+            for script in custom_scripts:
+                if script not in final_scripts:
+                    final_scripts.append(script)
+
+            # Check if custom scripts imply UDP
+            if custom_scripts:
+                extras_imply_udp = any(
+                    script.lower().startswith("snmp") or script.lower() == "ipmi-version"
+                    for script in custom_scripts
+                )
+                final_needs_udp = final_needs_udp or extras_imply_udp
+
+            if final_scripts:
+                ok(f"Configuration saved: {len(final_scripts)} script(s), UDP={'Yes' if final_needs_udp else 'No'}")
+            else:
+                ok("Configuration saved: No NSE scripts selected")
+
+            return final_scripts, final_needs_udp
+
+        elif answer in ("b", "back", "q"):
+            return None
+
+        elif answer in ("p", "profile"):
+            # NSE Profile selection sub-menu
+            header("Select NSE Profile")
+            for index, (name, description, scripts, _) in enumerate(NSE_PROFILES, 1):
+                marker = " (current)" if index - 1 == selected_profile_index else ""
+                print(f"[{index}] {name} - {description}{marker}")
+                info(f"    Scripts: {', '.join(scripts)}")
+            print_action_menu([("N", "None"), ("B", "Back")])
+
+            try:
+                profile_answer = Prompt.ask("Choose profile").strip().lower()
+            except KeyboardInterrupt:
+                continue
+
+            if profile_answer in ("b", "back"):
+                continue
+            elif profile_answer in ("n", "none"):
+                selected_profile_index = None
+                ok("NSE profile cleared")
+            elif profile_answer.isdigit():
+                profile_index = int(profile_answer) - 1
+                if 0 <= profile_index < len(NSE_PROFILES):
+                    selected_profile_index = profile_index
+                    profile_name, _, _, _ = NSE_PROFILES[profile_index]
+                    ok(f"Selected profile: {profile_name}")
+                else:
+                    warn("Invalid profile number")
+
+        elif answer in ("s", "scripts"):
+            # Custom scripts input
+            current_value = ",".join(custom_scripts) if custom_scripts else ""
+            try:
+                scripts_input = Prompt.ask(
+                    "Enter custom NSE scripts (comma-separated, or Enter to clear)",
+                    default=current_value
+                ).strip()
+            except KeyboardInterrupt:
+                continue
+
+            if scripts_input:
+                custom_scripts = [s.strip() for s in scripts_input.split(",") if s.strip()]
+                ok(f"Custom scripts updated: {len(custom_scripts)} script(s)")
+            else:
+                custom_scripts = []
+                ok("Custom scripts cleared")
+
+        elif answer in ("u", "udp"):
+            # Toggle UDP
+            force_udp = not force_udp
+            ok(f"UDP scan: {'ON' if force_udp else 'OFF'}")
 
 
 # ========== Command Builders ==========
@@ -415,23 +593,77 @@ def render_placeholders(template: str, mapping: dict[str, str]) -> str:
 
 # ========== Command Review ==========
 
-def command_review_menu(cmd_list_or_str: list[str] | str) -> str:
+def command_review_menu(
+    cmd_list_or_str: list[str] | str,
+    ctx: Optional["ToolContext"] = None,
+    tool_name: Optional[str] = None,
+    nse_scripts: Optional[list[str]] = None
+) -> str:
     """
-    Display command review menu and get user action.
-    
+    Display command review menu with pre-flight summary and get user action.
+
     Args:
         cmd_list_or_str: Command as list of strings or single string
-        
+        ctx: Optional ToolContext with target/output information
+        tool_name: Optional tool name for display
+        nse_scripts: Optional list of NSE scripts being used
+
     Returns:
         User action: 'run', 'copy', or 'cancel'
     """
+    from rich.panel import Panel
+    from rich.text import Text
+    from pathlib import Path
+
     header("Command Review")
-    
+
+    # Show pre-flight summary if context is available
+    if ctx:
+        summary = Text()
+
+        # Tool name
+        if tool_name:
+            summary.append("Tool: ", style="cyan")
+            summary.append(f"{tool_name}\n", style="yellow")
+
+        # Target information
+        target_count = 0
+        if ctx.tcp_ips and Path(ctx.tcp_ips).exists():
+            with open(ctx.tcp_ips) as f:
+                target_count = sum(1 for _ in f)
+
+        if target_count > 0:
+            summary.append("Targets: ", style="cyan")
+            summary.append(f"{target_count} host(s)\n", style="yellow")
+
+        # NSE scripts (if applicable)
+        if nse_scripts:
+            summary.append("Scripts: ", style="cyan")
+            script_list = ", ".join(nse_scripts[:3])  # Show first 3
+            if len(nse_scripts) > 3:
+                script_list += f" (+{len(nse_scripts)-3} more)"
+            summary.append(f"{script_list}\n", style="yellow")
+
+        # Output directory
+        if ctx.results_dir:
+            summary.append("Output directory: ", style="cyan")
+            summary.append(f"{ctx.results_dir}\n", style="yellow")
+
+        panel = Panel(
+            summary,
+            title="[bold cyan]Execution Summary[/]",
+            border_style="cyan"
+        )
+        _console.print(panel)
+        _console.print()
+
+    # Show command
     if isinstance(cmd_list_or_str, str):
         cmd_str = cmd_list_or_str
     else:
         cmd_str = " ".join(cmd_list_or_str)
-    
+
+    info("Command:")
     print(cmd_str)
     print()
     print_action_menu([
@@ -577,7 +809,7 @@ def show_msf_available(plugin_url: str) -> None:
 # ===================================================================
 
 
-def _build_nmap_workflow(ctx: "ToolContext") -> Optional["CommandResult"]:
+def build_nmap_workflow(ctx: "ToolContext") -> Optional["CommandResult"]:
     """
     Build nmap command through interactive prompts.
 
@@ -588,47 +820,18 @@ def _build_nmap_workflow(ctx: "ToolContext") -> Optional["CommandResult"]:
         CommandResult with command details, or None if interrupted
     """
     from .tool_context import CommandResult
-    from rich.prompt import Confirm, Prompt
-    from .ansi import warn, info, C
+    from .ansi import info, C
     from .ops import require_cmd
+    from .config import load_config
 
-    try:
-        udp_ports = Confirm.ask(
-            "\nDo you want to perform UDP scanning instead of TCP?", default=False
-        )
-    except KeyboardInterrupt:
+    config = load_config()
+
+    # Use consolidated configuration screen
+    nmap_config = configure_nmap_options(config)
+    if nmap_config is None:
         return None
 
-    try:
-        from .config import load_config
-        config = load_config()
-        nse_scripts, needs_udp = choose_nse_profile(config)
-    except KeyboardInterrupt:
-        return None
-
-    try:
-        extra = Prompt.ask(
-            "Enter additional NSE scripts (comma-separated, no spaces, or Enter to skip)",
-            default=""
-        ).strip()
-    except KeyboardInterrupt:
-        return None
-
-    if extra:
-        for script in extra.split(","):
-            script = script.strip()
-            if script and script not in nse_scripts:
-                nse_scripts.append(script)
-
-    extras_imply_udp = any(
-        script.lower().startswith("snmp") or script.lower() == "ipmi-version"
-        for script in nse_scripts
-    )
-
-    if needs_udp or extras_imply_udp:
-        if not udp_ports:
-            warn("SNMP/IPMI selected — switching to UDP scan.")
-        udp_ports = True
+    nse_scripts, udp_ports = nmap_config
 
     if nse_scripts:
         info(f"{C.BOLD}NSE scripts to run:{C.RESET} {','.join(nse_scripts)}")
@@ -646,7 +849,7 @@ def _build_nmap_workflow(ctx: "ToolContext") -> Optional["CommandResult"]:
     )
 
 
-def _build_netexec_workflow(ctx: "ToolContext") -> Optional["CommandResult"]:
+def build_netexec_workflow(ctx: "ToolContext") -> Optional["CommandResult"]:
     """
     Build netexec command through interactive prompts.
 
@@ -682,7 +885,7 @@ def _build_netexec_workflow(ctx: "ToolContext") -> Optional["CommandResult"]:
     )
 
 
-def _build_custom_workflow(ctx: "ToolContext") -> Optional["CommandResult"]:
+def build_custom_workflow(ctx: "ToolContext") -> Optional["CommandResult"]:
     """
     Build custom command from user template with placeholder substitution.
 
@@ -765,7 +968,7 @@ def run_tool_workflow(
     from .ansi import warn, ok, err, info, header, get_console
     from .constants import SAMPLE_THRESHOLD, get_results_root
     from .fs import build_results_paths, pretty_severity_label, write_work_files
-    from .ops import require_cmd, run_command_with_progress, log_tool_execution, log_artifacts_for_nmap
+    from .ops import run_command_with_progress, log_tool_execution, log_artifacts_for_nmap
     from .tool_registry import get_tool
     from .tool_context import ToolContext
 
@@ -979,7 +1182,21 @@ def run_tool_workflow(
         artifact_note = result.artifact_note
         nxc_relay_path = result.relay_path
 
-        action = command_review_menu(display_cmd)
+        # Extract NSE scripts from command if it's nmap
+        nse_scripts_list = None
+        if tool_choice == "nmap" and isinstance(display_cmd, str):
+            # Try to extract script names from command
+            import re
+            script_match = re.search(r'--script[= ]([^\s]+)', display_cmd)
+            if script_match:
+                nse_scripts_list = script_match.group(1).split(',')
+
+        action = command_review_menu(
+            display_cmd,
+            ctx=ctx,
+            tool_name=selected_tool.name if selected_tool else tool_choice,
+            nse_scripts=nse_scripts_list
+        )
 
         if action == "copy":
             cmd_str = display_cmd if isinstance(display_cmd, str) else " ".join(display_cmd)
@@ -1042,15 +1259,86 @@ def run_tool_workflow(
             info("Canceled. Returning to tool menu.")
             continue
 
-        header("Artifacts")
+        # Show post-execution summary if command was run
+        if action == "run" and 'exec_metadata' in locals():
+            from rich.panel import Panel
+            from rich.text import Text
+
+            summary = Text()
+
+            # Duration
+            if exec_metadata and hasattr(exec_metadata, 'duration_seconds'):
+                duration = exec_metadata.duration_seconds
+                minutes = int(duration // 60)
+                seconds = int(duration % 60)
+                if minutes > 0:
+                    duration_str = f"{minutes}m {seconds}s"
+                else:
+                    duration_str = f"{seconds}s"
+                summary.append("Duration: ", style="cyan")
+                summary.append(f"{duration_str}\n", style="yellow")
+
+            # Exit code
+            if exec_metadata and hasattr(exec_metadata, 'exit_code'):
+                exit_code = exec_metadata.exit_code
+                summary.append("Exit code: ", style="cyan")
+                if exit_code == 0:
+                    summary.append(f"{exit_code} (success)\n", style="green")
+                else:
+                    summary.append(f"{exit_code} (error)\n", style="red")
+
+            # Count generated files in results directory
+            file_count = 0
+            total_size = 0
+            generated_files = []
+            if results_dir and results_dir.exists():
+                for file in results_dir.rglob('*'):
+                    if file.is_file():
+                        file_count += 1
+                        total_size += file.stat().st_size
+                        # Show first 4 files as examples
+                        if len(generated_files) < 4:
+                            generated_files.append(f"  - {file.name}")
+
+            if file_count > 0:
+                size_kb = total_size / 1024
+                if size_kb < 1024:
+                    size_str = f"{size_kb:.1f} KB"
+                else:
+                    size_str = f"{size_kb/1024:.1f} MB"
+
+                summary.append("Files generated: ", style="cyan")
+                summary.append(f"{file_count} ({size_str} total)\n", style="yellow")
+
+                for file_line in generated_files:
+                    summary.append(f"{file_line}\n", style="dim")
+
+                if file_count > len(generated_files):
+                    summary.append(f"  ... and {file_count - len(generated_files)} more\n", style="dim")
+
+            # Results directory location
+            summary.append("\nResults directory: ", style="cyan")
+            summary.append(f"{results_dir}", style="yellow")
+
+            panel = Panel(
+                summary,
+                title="[bold green]Execution Complete[/]",
+                border_style="green"
+            )
+            _console.print()
+            _console.print(panel)
+            _console.print()
+
+        # Legacy artifacts section (kept for workspace info)
+        header("Workspace Files")
         info(f"Workspace:     {workdir}")
         info(f" - Hosts:      {workdir / 'tcp_ips.list'}")
         if ports_str:
             info(f" - Host:Ports: {workdir / 'tcp_host_ports.list'}")
-        info(f" - {artifact_note}")
+        if artifact_note:
+            info(f" - {artifact_note}")
         if nxc_relay_path:
             info(f" - Relay targets: {nxc_relay_path}")
-        info(f" - Results dir:{results_dir}")
 
         try:
             again = Confirm.ask("\nRun another command for this finding?", default=False)

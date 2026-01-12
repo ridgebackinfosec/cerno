@@ -8,12 +8,11 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Optional
 
-from .database import db_transaction, get_connection, query_all, query_one
+from .database import db_transaction, query_all, query_one
 from .logging_setup import log_error, log_info
 
 
@@ -728,6 +727,48 @@ class Finding:
             ports_str = ",".join(sorted(ports, key=lambda x: int(x))) if ports else ""
 
             return hosts, ports_str
+
+    def get_port_distribution(self, conn: Optional[sqlite3.Connection] = None) -> dict[str, int]:
+        """Get count of hosts per port for this finding.
+
+        Args:
+            conn: Database connection
+
+        Returns:
+            Dictionary mapping port number (as string) to host count
+            Example: {"80": 8, "443": 3, "8080": 1}
+        """
+        if self.finding_id is None:
+            log_error("Cannot get port distribution for unsaved Finding (finding_id is None)")
+            return {}
+
+        with db_transaction(conn) as c:
+            rows = query_all(
+                c,
+                """
+                SELECT
+                    fah.port_number,
+                    COUNT(DISTINCT fah.host_id) as host_count
+                FROM finding_affected_hosts fah
+                WHERE fah.finding_id = ?
+                GROUP BY fah.port_number
+                ORDER BY fah.port_number ASC
+                """,
+                (self.finding_id,)
+            )
+
+            if not rows:
+                return {}
+
+            # Build dictionary of port -> host count
+            distribution = {}
+            for row in rows:
+                port = row[0]
+                count = row[1]
+                if port is not None:
+                    distribution[str(port)] = count
+
+            return distribution
 
     def get_all_host_port_lines(self, conn: Optional[sqlite3.Connection] = None) -> list[str]:
         """Retrieve all host:port combinations as formatted lines.

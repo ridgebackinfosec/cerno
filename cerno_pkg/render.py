@@ -11,13 +11,12 @@ from pathlib import Path
 from typing import Any, List, Optional, Union, TYPE_CHECKING
 
 from rich import box
-from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.table import Table
 from rich.text import Text
 
-from .ansi import C, colorize_severity_label, fmt_action, info, warn, get_console, style_if_enabled
+from .ansi import info, warn, get_console, style_if_enabled
 from .constants import SEVERITY_COLORS
 from .fs import default_page_size, pretty_severity_label
 from .logging_setup import log_timing
@@ -209,7 +208,7 @@ def render_finding_list_table(
         sort_mode: Current sort mode ("hosts", "name", or "plugin_id")
         get_counts_for: Function to get (host_count, ports_str) for a Finding object
         row_offset: Starting row number for pagination
-        show_severity: Whether to show severity column (for MSF mode)
+        show_severity: Deprecated - severity column is now always shown
     """
 
     table = Table(
@@ -217,11 +216,10 @@ def render_finding_list_table(
     )
     table.add_column("#", justify="right", no_wrap=True, max_width=5)
     table.add_column("Plugin ID", justify="right", no_wrap=True, max_width=10)
+    table.add_column("Severity", justify="left", no_wrap=True, max_width=10)
     table.add_column("Name", overflow="fold")
     # Always show host count column
     table.add_column("Hosts", justify="right", no_wrap=True, max_width=8)
-    if show_severity:
-        table.add_column("Severity", justify="left", no_wrap=True, max_width=15)
 
     for i, (plugin_file, plugin) in enumerate(display, 1):
         row_number = row_offset + i
@@ -230,21 +228,27 @@ def render_finding_list_table(
         plugin_id_str = str(plugin.plugin_id)
         plugin_name = plugin.plugin_name or "Unknown"
 
-        row_data = [str(row_number), plugin_id_str, plugin_name]
+        # Get severity from plugin metadata
+        from .nessus_import import severity_label_from_int
+        label = severity_label_from_int(plugin.severity_int)
+
+        # Use abbreviated severity labels for compact display
+        sev_abbrev = {
+            "Critical": "Crit",
+            "High": "High",
+            "Medium": "Med",
+            "Low": "Low",
+            "Info": "Info"
+        }.get(label, label)
+
+        # Color-code the abbreviated severity using severity_cell
+        sev_colored = severity_cell(sev_abbrev)
+
+        row_data = [str(row_number), plugin_id_str, sev_colored, plugin_name]
 
         # Always retrieve and show host count from database
         host_count, _ports_str = get_counts_for(plugin_file)
         row_data.append(str(host_count))
-
-        if show_severity:
-            # Get severity from plugin metadata
-            # Schema v5+: severity_label computed from severity_int
-            from .nessus_import import severity_label_from_int
-            label = severity_label_from_int(plugin.severity_int)
-            sev_dir_format = f"{plugin.severity_int}_{label}"
-            sev_label = pretty_severity_label(sev_dir_format)
-            sev_colored = severity_cell(sev_label)
-            row_data.append(sev_colored)
 
         table.add_row(*row_data)
 
@@ -311,7 +315,7 @@ def render_compare_tables(
         "Explicit combos?", justify="center", no_wrap=True, max_width=16
     )
 
-    for i, (file_path, hosts, ports_set, combos, had_explicit) in enumerate(
+    for i, (file_path, hosts, ports_set, _combos, had_explicit) in enumerate(
         parsed, 1
     ):
         files_table.add_row(
@@ -335,11 +339,32 @@ def render_compare_tables(
         groups_table.add_column("Count", justify="right", no_wrap=True, max_width=12)
         groups_table.add_column("Findings (sample)", overflow="fold")
         for i, names in enumerate(groups_sorted, 1):
-            sample = "\n".join(names[:8]) + (
-                f"\n... (+{len(names)-8} more)" if len(names) > 8 else ""
-            )
+            sample = "\n".join(names[:8])
+            if len(names) > 8:
+                sample += f"\n\n[bold yellow]Showing 8 of {len(names)} findings - Press [D] to view all[/]"
             groups_table.add_row(str(i), str(len(names)), sample)
         _console_global.print(groups_table)
+
+        # Offer details view for large groups
+        if any(len(names) > 8 for names in groups_sorted):
+            from rich.prompt import Prompt
+            try:
+                detail_choice = Prompt.ask(
+                    "\nPress [D] for full group details, or [Enter] to continue",
+                    default=""
+                ).strip().lower()
+
+                if detail_choice == "d":
+                    # Display full group details using pager
+                    full_text = ""
+                    for i, names in enumerate(groups_sorted, 1):
+                        full_text += f"\nGroup #{i} ({len(names)} findings):\n"
+                        full_text += "\n".join(f"  - {name}" for name in names)
+                        full_text += "\n"
+
+                    menu_pager(full_text)
+            except KeyboardInterrupt:
+                pass
     else:
         info("\nAll filtered files fall into a single identical group.")
 
@@ -353,7 +378,10 @@ def render_actions_footer(
     can_next: bool,
     can_prev: bool,
 ) -> None:
-    """Render a three-row, two-column action footer with available commands.
+    """Render action footer with responsive layout based on terminal width.
+
+    Uses two-column grid for wide terminals (≥100 chars) and single-column
+    layout for narrow terminals (<100 chars) to prevent wrapping.
 
     Args:
         group_applied: Whether a group filter is currently active
@@ -362,6 +390,8 @@ def render_actions_footer(
         can_next: Whether next page is available
         can_prev: Whether previous page is available
     """
+    from .ansi import get_terminal_width
+
     # Row 1: Navigation basics + filtering controls
     left_row1 = join_actions_texts(
         [
@@ -381,7 +411,7 @@ def render_actions_footer(
         [
             key_text("F", "Filter"),
             key_text("C", "Clear filter"),
-            key_text("O", f"Sort: {sort_label}"),
+            key_text("S", f"Sort: {sort_label}"),
         ]
     )
 
@@ -390,7 +420,7 @@ def render_actions_footer(
         [
             key_text("R", "Reviewed"),
             key_text("H", "Compare"),
-            key_text("I", "Superset"),
+            key_text("O", "Overlapping"),
         ]
     )
     right_items_row2 = [
@@ -410,13 +440,27 @@ def render_actions_footer(
     )
     right_row3 = Text()  # Empty for now, reserved for future actions
 
-    grid = Table.grid(expand=True, padding=(0, 1))
-    grid.add_column(ratio=1)
-    grid.add_column(ratio=1)
-    grid.add_row(left_row1, right_row1)
-    grid.add_row(left_row2, right_row2)
-    grid.add_row(left_row3, right_row3)
-    _console_global.print(grid)
+    # Detect terminal width for responsive layout
+    term_width = get_terminal_width()
+
+    if term_width >= 100:
+        # Wide terminal: use 2-column grid layout
+        grid = Table.grid(expand=True, padding=(0, 1))
+        grid.add_column(ratio=1)
+        grid.add_column(ratio=1)
+        grid.add_row(left_row1, right_row1)
+        grid.add_row(left_row2, right_row2)
+        grid.add_row(left_row3, right_row3)
+        _console_global.print(grid)
+    else:
+        # Narrow terminal: single-column layout to prevent wrapping
+        _console_global.print(left_row1)
+        _console_global.print(right_row1)
+        _console_global.print(left_row2)
+        _console_global.print(right_row2)
+        _console_global.print(left_row3)
+        if right_row3.plain:  # Only print if not empty
+            _console_global.print(right_row3)
 
 
 def show_actions_help(
@@ -452,7 +496,7 @@ def show_actions_help(
     table.add_row(
         Text("Sorting", style="bold"),
         key_text(
-            "O",
+            "S",
             f"Sort: {'Hosts' if sort_mode=='hosts' else 'Name'} - Toggle between host count and name sorting",
         ),
     )
@@ -466,7 +510,7 @@ def show_actions_help(
     table.add_row(
         Text("Analysis", style="bold"),
         key_text("H", "Compare - Find files with identical host:port combinations"),
-        key_text("I", "Superset - Find files where one is a subset of another"),
+        key_text("O", "Overlapping - Find findings that cover all affected systems of another finding"),
         key_text("E", f"CVEs ({candidates_count}) - Extract CVEs for all filtered files"),
     )
     if group_applied:
@@ -478,15 +522,22 @@ def show_actions_help(
 
 
 def show_reviewed_help() -> None:
-    """Render help panel for reviewed files view."""
+    """Render help panel for completed findings view."""
     table = Table.grid(padding=(0, 1))
-    table.add_row(
-        Text("Filtering", style="bold"),
-        key_text("F", "Set filter"),
-        key_text("C", "Clear filter"),
+    table.add_column(style=style_if_enabled("cyan"), no_wrap=True)
+    table.add_column()
+
+    table.add_row("Purpose", "View findings marked as completed during review")
+    table.add_row("Undo", "Press [U] to restore findings to pending state")
+    table.add_row("Filter", "Press [F] to filter by plugin name")
+    table.add_row("", "")
+    table.add_row("Note", "This is a management view - select findings in main list to work with them")
+
+    panel = Panel(
+        table,
+        title="[bold cyan]Completed Findings Help[/]",
+        border_style=style_if_enabled("cyan")
     )
-    table.add_row(Text("Exit", style="bold"), key_text("B", "Back"))
-    panel = Panel(table, title="Reviewed Files — Actions", border_style=style_if_enabled("cyan"))
     _console_global.print(panel)
 
 
@@ -564,6 +615,9 @@ def severity_cell(label: str) -> Any:
 def unreviewed_cell(count: int, total: int) -> Any:
     """Format an unreviewed count cell with percentage and color.
 
+    Uses neutral cyan color for progress tracking (not risk indication).
+    Reserve red/yellow/green for severity labels only.
+
     Args:
         count: Number of unreviewed files
         total: Total number of files
@@ -575,12 +629,8 @@ def unreviewed_cell(count: int, total: int) -> Any:
     if total:
         percentage = round((count / total) * 100)
     text = Text(f"{count} ({percentage}%)")
-    if count == 0:
-        text.stylize(style_if_enabled("green"))
-    elif count <= 10:
-        text.stylize(style_if_enabled("yellow"))
-    else:
-        text.stylize(style_if_enabled("red"))
+    # Use neutral cyan color for progress metrics (not risk colors)
+    text.stylize(style_if_enabled("cyan"))
     return text
 
 
@@ -651,7 +701,7 @@ def severity_style(label: str) -> str:
 # ===================================================================
 
 
-def _file_raw_payload_text(finding: "Finding") -> str:
+def file_raw_payload_text(finding: "Finding") -> str:
     """
     Get raw file content from database (all host:port lines).
 
@@ -669,7 +719,7 @@ def _file_raw_payload_text(finding: "Finding") -> str:
     return content
 
 
-def _file_raw_paged_text(finding: "Finding", plugin: "Plugin") -> str:
+def file_raw_paged_text(finding: "Finding", plugin: "Plugin") -> str:
     """
     Prepare raw file content for paged viewing with metadata from database.
 
@@ -683,7 +733,7 @@ def _file_raw_paged_text(finding: "Finding", plugin: "Plugin") -> str:
     display_name = f"Plugin {plugin.plugin_id}: {plugin.plugin_name}"
 
     # Get content from database
-    content = _file_raw_payload_text(finding)
+    content = file_raw_payload_text(finding)
     size_bytes = len(content.encode('utf-8'))
 
     lines = [f"Showing: {display_name} ({size_bytes} bytes from database)"]
@@ -702,7 +752,7 @@ def page_text(text: str) -> None:
         _console_global.print(text, end="" if text.endswith("\n") else "\n")
 
 
-def _grouped_payload_text(finding: "Finding") -> str:
+def grouped_payload_text(finding: "Finding") -> str:
     """
     Generate grouped host:port text for copying/viewing from database.
 
@@ -749,7 +799,7 @@ def _grouped_payload_text(finding: "Finding") -> str:
     return "\n".join(out) + ("\n" if out else "")
 
 
-def _grouped_paged_text(finding: "Finding", plugin: "Plugin") -> str:
+def grouped_paged_text(finding: "Finding", plugin: "Plugin") -> str:
     """
     Prepare grouped host:port content for paged viewing from database.
 
@@ -760,12 +810,12 @@ def _grouped_paged_text(finding: "Finding", plugin: "Plugin") -> str:
     Returns:
         Formatted string with header and grouped content
     """
-    body = _grouped_payload_text(finding)
+    body = grouped_payload_text(finding)
     display_name = f"Plugin {plugin.plugin_id}: {plugin.plugin_name}"
     return f"Grouped view: {display_name}\n{body}"
 
 
-def _hosts_only_payload_text(finding: "Finding") -> str:
+def hosts_only_payload_text(finding: "Finding") -> str:
     """
     Extract only hosts (IPs or FQDNs) without port information from database.
 
@@ -780,7 +830,7 @@ def _hosts_only_payload_text(finding: "Finding") -> str:
     return "\n".join(hosts) + ("\n" if hosts else "")
 
 
-def _hosts_only_paged_text(finding: "Finding", plugin: "Plugin") -> str:
+def hosts_only_paged_text(finding: "Finding", plugin: "Plugin") -> str:
     """
     Prepare hosts-only content for paged viewing from database.
 
@@ -791,12 +841,12 @@ def _hosts_only_paged_text(finding: "Finding", plugin: "Plugin") -> str:
     Returns:
         Formatted string with header and host list
     """
-    body = _hosts_only_payload_text(finding)
+    body = hosts_only_payload_text(finding)
     display_name = f"Plugin {plugin.plugin_id}: {plugin.plugin_name}"
     return f"Hosts-only view: {display_name}\n{body}"
 
 
-def _build_plugin_output_details(
+def build_plugin_output_details(
     finding: "Finding",
     plugin: "Plugin"
 ) -> Optional[str]:
@@ -854,11 +904,12 @@ def _build_plugin_output_details(
     return "\n".join(lines)
 
 
-def _display_finding_preview(
+def display_finding_preview(
     plugin: "Plugin",
     finding: "Finding",
     sev_dir: Optional[Path],
     chosen: Path,
+    workflow_mapper: Optional[Any] = None,
 ) -> None:
     """Display finding preview panel with metadata (database-only).
 
@@ -867,22 +918,17 @@ def _display_finding_preview(
         finding: Finding database object (required)
         sev_dir: Severity directory path
         chosen: File path (for URL extraction)
+        workflow_mapper: Optional workflow mapper to check for workflow availability
     """
-    import re
 
-    # Get hosts and ports from database
-    hosts, ports_str = finding.get_hosts_and_ports()
+    # Get hosts from database
+    hosts, _ = finding.get_hosts_and_ports()
 
     # Build Rich Panel preview
     content = Text()
 
     # Check for Metasploit module from plugin metadata
     is_msf = plugin.has_metasploit
-
-    # Add centered MSF indicator below title if applicable
-    if is_msf:
-        content.append("⚡ Metasploit module available!", style=style_if_enabled("bold red"))
-        content.append("\n\n")  # Blank line after MSF indicator
 
     # Nessus Plugin ID
     content.append("Nessus Plugin ID: ", style=style_if_enabled("cyan"))
@@ -894,7 +940,6 @@ def _display_finding_preview(
     content.append(f"{sev_label}\n", style=severity_style(sev_label))
 
     # Plugin Details (URL)
-    plugin_url = None
     # Import _plugin_details_line from parsing module if needed
     # For now, we'll skip this feature until Phase 5 when we move _plugin_details_line
     # pd_line = _plugin_details_line(chosen)
@@ -908,24 +953,62 @@ def _display_finding_preview(
     #     except Exception:
     #         pass
 
-    # Unique hosts
+    # Get port distribution from database
+    port_distribution = finding.get_port_distribution()
+
+    # Unique hosts with port summary
     content.append("Unique hosts: ", style=style_if_enabled("cyan"))
-    content.append(f"{len(hosts)}\n", style=style_if_enabled("yellow"))
+    if port_distribution and len(port_distribution) > 0:
+        port_list = ", ".join(sorted(port_distribution.keys(), key=lambda x: int(x)))
+        content.append(f"{len(hosts)} across {len(port_distribution)} port(s) ({port_list})\n", style=style_if_enabled("yellow"))
+    else:
+        content.append(f"{len(hosts)}\n", style=style_if_enabled("yellow"))
 
-    # Example host
+    # Port distribution details (if multiple ports)
+    if port_distribution and len(port_distribution) > 1:
+        content.append("Distribution: ", style=style_if_enabled("cyan"))
+        dist_parts = []
+        for port in sorted(port_distribution.keys(), key=lambda x: int(x)):
+            count = port_distribution[port]
+            dist_parts.append(f"{count} host{'s' if count != 1 else ''} on port {port}")
+        content.append(", ".join(dist_parts) + "\n", style=style_if_enabled("yellow"))
+
+    # Example host (with port if available)
     if hosts:
-        content.append("Example host: ", style=style_if_enabled("cyan"))
-        content.append(f"{hosts[0]}\n", style=style_if_enabled("yellow"))
+        content.append("Example: ", style=style_if_enabled("cyan"))
+        # Show example host with first port if available
+        if port_distribution:
+            first_port = sorted(port_distribution.keys(), key=lambda x: int(x))[0]
+            content.append(f"{hosts[0]}:{first_port}\n", style=style_if_enabled("yellow"))
+        else:
+            content.append(f"{hosts[0]}\n", style=style_if_enabled("yellow"))
 
-    # Ports detected
-    if ports_str:
-        content.append("Ports detected: ", style=style_if_enabled("cyan"))
-        content.append(f"{ports_str}", style=style_if_enabled("yellow"))
+    # Create panel with plugin name as title and indicators in subtitle
+    subtitle_parts = []
 
-    # Create panel with plugin name as title
+    # Check for workflow availability
+    has_workflow = False
+    if workflow_mapper and plugin:
+        has_workflow = workflow_mapper.has_workflow(str(plugin.plugin_id))
+
+    # Add badges to subtitle
+    if is_msf:
+        # Show first Metasploit module name if available
+        if plugin.metasploit_names and len(plugin.metasploit_names) > 0:
+            msf_module = plugin.metasploit_names[0]
+            subtitle_parts.append(f"⚡ Metasploit: {msf_module}")
+        else:
+            subtitle_parts.append("⚡ Metasploit")
+    if has_workflow:
+        subtitle_parts.append("📋 Workflow")
+
+    subtitle = " | ".join(subtitle_parts) if subtitle_parts else None
+
     panel = Panel(
         content,
         title=f"[bold cyan]{plugin.plugin_name}[/]",
+        subtitle=subtitle,
+        subtitle_align="center",
         title_align="center",
         border_style=style_if_enabled("cyan")
     )
@@ -970,7 +1053,7 @@ def bulk_extract_cves_for_plugins(plugins: List[tuple[int, str]]) -> None:
                 pass
 
     # Display results
-    _display_bulk_cve_results(results)
+    display_bulk_cve_results(results)
 
 
 def bulk_extract_cves_for_findings(files: List[Path]) -> None:
@@ -1009,11 +1092,14 @@ def bulk_extract_cves_for_findings(files: List[Path]) -> None:
                 pass
 
     # Display results
-    _display_bulk_cve_results(results)
+    display_bulk_cve_results(results)
 
 
-def _display_bulk_cve_results(results: dict[str, list[str]]) -> None:
-    """Display CVE extraction results in separated or combined format.
+def display_bulk_cve_results(results: dict[str, list[str]]) -> None:
+    """Display CVE extraction results with preview and smart format selection.
+
+    Shows CVE count preview before asking for format choice.
+    Auto-selects combined format for 1-2 findings, separated for 3+.
 
     Args:
         results: Dictionary mapping plugin name/filename to list of CVEs
@@ -1023,35 +1109,58 @@ def _display_bulk_cve_results(results: dict[str, list[str]]) -> None:
 
     # Display results
     if results:
-        # Ask user for display format
+        # Count total findings and unique CVEs
+        total_findings = len(results)
+        all_cves = set()
+        for cves in results.values():
+            all_cves.update(cves)
+        total_unique_cves = len(all_cves)
+
+        # Show enhanced preview with CVE distribution
+        info(f"\nFound {total_unique_cves} unique CVE(s) across {total_findings} finding(s):")
+
+        # Show CVE count per finding (limit to first 10 findings for readability)
+        findings_to_show = list(results.items())[:10]
+        for plugin_name, cves in findings_to_show:
+            # Truncate long plugin names
+            display_name = plugin_name if len(plugin_name) <= 60 else plugin_name[:57] + "..."
+            info(f"  {display_name}: {len(cves)} CVE(s)")
+
+        if len(results) > 10:
+            remaining = len(results) - 10
+            info(f"  ... and {remaining} more finding(s)")
+
+        # Smart default: 1-2 findings → combined, 3+ → separated
+        default_format = "c" if total_findings <= 2 else "s"
+        default_label = "Combined" if default_format == "c" else "Separated"
+
+        # Ask user for display format with smart default
+        info("")  # Blank line for spacing
         print_action_menu([
             ("S", "Separated (by finding)"),
-            ("C", "Combined (all unique CVEs)")
+            ("C", "Combined (all unique CVEs)"),
+            ("", f"[Enter] for {default_label}")
         ])
         try:
             format_choice = Prompt.ask(
                 "Choose format",
-                default="s"
+                default=default_format
             ).lower()
         except KeyboardInterrupt:
             return
 
         if format_choice in ("c", "combined"):
             # Combined list: all unique CVEs across all findings
-            all_cves = set()
-            for cves in results.values():
-                all_cves.update(cves)
-
-            info(f"\nFound {len(all_cves)} unique CVE(s) across {len(results)} finding(s):\n")
+            info(f"\nAll unique CVEs ({total_unique_cves}):\n")
             for cve in sorted(all_cves):
-                info(f"{cve}")
+                info(f"  {cve}")
         else:
             # Separated by file (default)
-            info(f"\nFound CVEs for {len(results)} finding(s):\n")
+            info(f"\nCVEs by finding ({total_findings}):\n")
             for plugin_name, cves in sorted(results.items()):
                 info(f"{plugin_name}:")
                 for cve in cves:
-                    info(f"{cve}")
+                    info(f"  {cve}")
                 _console_global.print()  # Blank line between plugins
     else:
         warn("No CVEs found for any of the filtered findings.")
@@ -1062,7 +1171,7 @@ def _display_bulk_cve_results(results: dict[str, list[str]]) -> None:
         pass
 
 
-def _color_unreviewed(count: int) -> str:
+def color_unreviewed(count: int) -> str:
     """
     Colorize unreviewed file count based on severity.
 

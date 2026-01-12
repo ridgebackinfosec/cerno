@@ -9,11 +9,8 @@ from __future__ import annotations
 
 import ipaddress
 import re
-from collections import defaultdict
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
-from .logging_setup import log_timing
 
 if TYPE_CHECKING:
     from .workflow_mapper import WorkflowMapper
