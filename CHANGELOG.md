@@ -14,11 +14,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Empty state messages** - Context-aware helpful messages when no findings match filters, with actionable suggestions for resolution (render.py:render_empty_state(), cerno.py:489-503)
 - **Comparison context** - Explanatory text before comparison and overlapping analysis results explaining what groups mean and how to use them (render.py:450-464, tui.py:531-537)
 - **Progress timing feedback** - Elapsed time display for operations exceeding 0.5s threshold (render.py:show_progress())
+- **Guided tour mode** - Interactive 4-step walkthrough for first-time users covering importing scans, reviewing findings, running tools, and tracking progress (onboarding.py:show_guided_tour())
+- **Workflow guidance** - Context-aware best practices and keyboard shortcuts shown after scan selection with smart tips based on scan state (onboarding.py:show_workflow_guidance())
+- **Tool execution breadcrumbs** - Visual progress indicators during tool workflow showing current stage: Select → Configure → Review → Execute → Results (render.py:render_tool_progress_breadcrumb(), tools.py:1048,979,1160,1224,1278)
 
 ### Changed
 - **Adaptive severity labels** - Severity labels now adapt to terminal width: full labels (≥120 chars), abbreviations (80-119 chars), or single-char indicators (<80 chars) for improved scannability (render.py:273-299)
 - **Table row striping** - Enabled alternating row dimming in finding list tables to improve readability of dense data (render.py:216)
 - **Unified MSF/workflow indicators** - Finding preview panel now shows both Metasploit and Workflow availability in subtitle with full names, module counts for multiple MSF modules, and 40-char truncation for long names (render.py:1241-1267)
+- **First-time user experience** - Users with no imported scans now see guided tour before being prompted to import (cerno.py:894)
+- **Scan review flow** - Workflow guidance automatically appears after scan selection with context-aware tips based on scan state (cerno.py:1011)
 
 ## [1.2.6] - 2026-01-12
 

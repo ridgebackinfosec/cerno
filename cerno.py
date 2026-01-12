@@ -888,8 +888,13 @@ def main(args: types.SimpleNamespace) -> None:
                     return
 
                 if not all_scans:
-                    err("No scans found in database.")
-                    info("Import a scan first: cerno import <nessus_file>")
+                    # First-time user - show guided tour
+                    from cerno_pkg.onboarding import show_guided_tour
+
+                    show_guided_tour()
+                    # After tour, show import instructions
+                    info("\nTo get started, import a Nessus scan:")
+                    info("  cerno import nessus /path/to/scan.nessus\n")
                     return
 
                 # Display scan selection menu
@@ -1000,6 +1005,10 @@ def main(args: types.SimpleNamespace) -> None:
                     top_ports = 100
 
                 show_scan_summary(scan_dir, top_ports_n=top_ports, scan_id=scan_id)
+
+                # Show workflow guidance for first-time or returning users
+                from cerno_pkg.onboarding import show_workflow_guidance
+                show_workflow_guidance(scan_name=scan.scan_name, scan_id=scan_id)
 
                 # Severity loop (inner loop)
                 while True:

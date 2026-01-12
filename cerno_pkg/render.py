@@ -57,6 +57,45 @@ def show_progress(message: str, threshold_seconds: float = 0.5):
             _console_global.print(f"[dim]({elapsed:.1f}s)[/dim]")
 
 
+def render_tool_progress_breadcrumb(current_step: str) -> None:
+    """Render tool execution progress breadcrumb.
+
+    Shows current stage in tool execution workflow with visual indicators.
+
+    Args:
+        current_step: One of "select", "configure", "review", "execute", "results"
+
+    Example:
+        >>> render_tool_progress_breadcrumb("configure")
+        Tool Execution: 1. Select Tool → [2. Configure Targets] → 3. Review → 4. Execute → 5. Results
+    """
+    steps = [
+        ("select", "Select Tool"),
+        ("configure", "Configure Targets"),
+        ("review", "Review Command"),
+        ("execute", "Execute"),
+        ("results", "Results"),
+    ]
+
+    parts = []
+    current_idx = next((i for i, (sid, _) in enumerate(steps) if sid == current_step), -1)
+
+    for idx, (step_id, step_label) in enumerate(steps):
+        step_num = idx + 1
+        if step_id == current_step:
+            # Current step - bold cyan with brackets
+            parts.append(f"[bold cyan][{step_num}. {step_label}][/bold cyan]")
+        elif idx < current_idx:
+            # Completed step - regular
+            parts.append(f"{step_num}. {step_label}")
+        else:
+            # Future step - dim
+            parts.append(f"[dim]{step_num}. {step_label}[/dim]")
+
+    breadcrumb_text = " → ".join(parts)
+    _console_global.print(f"\nTool Execution: {breadcrumb_text}\n")
+
+
 def print_action_menu(actions: list[tuple[str, str]]) -> None:
     """Print action menu with Rich Text formatting.
 
