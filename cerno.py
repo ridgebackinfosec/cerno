@@ -486,6 +486,22 @@ def browse_file_list(
                     else:
                         _console_global.print(str(part))
 
+            # Handle empty states with helpful messages
+            if not display:
+                from cerno_pkg.render import render_empty_state
+                # Determine context for empty state
+                if file_filter:
+                    render_empty_state("filter_mismatch", file_filter)
+                elif all_records and len(all_records) == len(reviewed):
+                    render_empty_state("all_completed")
+                elif not all_records:
+                    render_empty_state("no_severity")
+                # Skip rendering table and footer for empty states
+                ans = Prompt.ask("Action").strip().lower()
+                if ans in ("b", "back", "q"):
+                    return
+                continue
+
             render_finding_list_table(
                 page_items, sort_mode, get_counts_for, row_offset=start,
                 show_severity=is_msf_mode

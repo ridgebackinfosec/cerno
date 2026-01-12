@@ -11,10 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Scan context header** - Added comprehensive scan metadata display at top of severity menu showing scan name, import time, and review progress statistics (render.py:render_scan_context_header())
 - **Pagination progress bar** - Visual progress bar in status line showing current position in paginated results: `[████░░░░░░] Page 1/5` (render.py:render_pagination_indicator())
 - **First page hint** - Added helpful message on first page when more results exist: "→ N more findings available (press N for next page)" (cerno.py:497-499)
+- **Empty state messages** - Context-aware helpful messages when no findings match filters, with actionable suggestions for resolution (render.py:render_empty_state(), cerno.py:489-503)
+- **Comparison context** - Explanatory text before comparison and overlapping analysis results explaining what groups mean and how to use them (render.py:450-464, tui.py:531-537)
+- **Progress timing feedback** - Elapsed time display for operations exceeding 0.5s threshold (render.py:show_progress())
 
 ### Changed
 - **Adaptive severity labels** - Severity labels now adapt to terminal width: full labels (≥120 chars), abbreviations (80-119 chars), or single-char indicators (<80 chars) for improved scannability (render.py:273-299)
 - **Table row striping** - Enabled alternating row dimming in finding list tables to improve readability of dense data (render.py:216)
+- **Unified MSF/workflow indicators** - Finding preview panel now shows both Metasploit and Workflow availability in subtitle with full names, module counts for multiple MSF modules, and 40-char truncation for long names (render.py:1241-1267)
 
 ## [1.2.6] - 2026-01-12
 
