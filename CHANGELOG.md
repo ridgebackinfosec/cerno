@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Scan context header** - Added comprehensive scan metadata display at top of severity menu showing scan name, import time, and review progress statistics (render.py:render_scan_context_header())
+- **Pagination progress bar** - Visual progress bar in status line showing current position in paginated results: `[████░░░░░░] Page 1/5` (render.py:render_pagination_indicator())
+- **First page hint** - Added helpful message on first page when more results exist: "→ N more findings available (press N for next page)" (cerno.py:497-499)
+
+### Changed
+- **Adaptive severity labels** - Severity labels now adapt to terminal width: full labels (≥120 chars), abbreviations (80-119 chars), or single-char indicators (<80 chars) for improved scannability (render.py:273-299)
+- **Table row striping** - Enabled alternating row dimming in finding list tables to improve readability of dense data (render.py:216)
+
 ## [1.2.6] - 2026-01-12
 
 ### Added

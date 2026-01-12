@@ -110,6 +110,156 @@ def menu_pager(text: str, page_size: Optional[int] = None) -> None:
         warn("Use N (next), P (prev), or B (back).")
 
 
+def render_pagination_indicator(
+    current_page: int,
+    total_pages: int,
+    total_items: int
+) -> str:
+    """Generate pagination indicator with visual progress bar.
+
+    Args:
+        current_page: Current page number (0-indexed)
+        total_pages: Total number of pages
+        total_items: Total number of items across all pages
+
+    Returns:
+        Formatted pagination string with progress bar
+
+    Examples:
+        >>> render_pagination_indicator(0, 5, 125)
+        '[████░░░░░░] Page 1/5 (125 total)'
+        >>> render_pagination_indicator(2, 5, 125)
+        '[██████░░░░] Page 3/5 (125 total)'
+    """
+    if total_pages <= 1:
+        return f"Page 1/1 ({total_items} total)"
+
+    # Calculate progress bar
+    progress = (current_page + 1) / total_pages
+    bar_width = 10
+    filled = int(progress * bar_width)
+    bar = "█" * filled + "░" * (bar_width - filled)
+
+    # Bold page numbers for emphasis
+    page_display = f"**{current_page + 1}/{total_pages}**"
+
+    return f"[{bar}] Page {page_display} ({total_items} total)"
+
+
+def render_scan_context_header(scan: Any, scan_id: int) -> None:
+    """Render compact scan context header with metadata and progress.
+
+    Args:
+        scan: Scan database object
+        scan_id: Scan ID for database queries
+
+    Displays scan overview including:
+    - Scan name and file
+    - Import timestamp
+    - Total findings count
+    - Review progress (unreviewed/reviewed/completed)
+
+    Layout adapts to terminal width (single line vs multi-line).
+    """
+    from .ansi import get_terminal_width, style_if_enabled
+    from .database import get_connection
+    from datetime import datetime
+
+    # Query database for finding counts by review state
+    with get_connection() as conn:
+        cursor = conn.execute("""
+            SELECT
+                SUM(CASE WHEN review_state = 'pending' THEN 1 ELSE 0 END) as unreviewed,
+                SUM(CASE WHEN review_state = 'reviewed' THEN 1 ELSE 0 END) as reviewed,
+                SUM(CASE WHEN review_state = 'completed' THEN 1 ELSE 0 END) as completed,
+                COUNT(*) as total
+            FROM findings
+            WHERE scan_id = ?
+        """, (scan_id,))
+        row = cursor.fetchone()
+        unreviewed_count = row[0] if row else 0
+        reviewed_count = row[1] if row else 0
+        completed_count = row[2] if row else 0
+        total_count = row[3] if row else 0
+
+    # Format timestamp as relative time if recent, otherwise date
+    if scan.imported_at:
+        try:
+            if isinstance(scan.imported_at, str):
+                imported_dt = datetime.fromisoformat(scan.imported_at.replace('Z', '+00:00'))
+            else:
+                imported_dt = scan.imported_at
+
+            now = datetime.now(imported_dt.tzinfo) if imported_dt.tzinfo else datetime.now()
+            delta = now - imported_dt
+            delta_seconds = delta.total_seconds()
+
+            if delta_seconds < 3600:  # Less than 1 hour
+                minutes = int(delta_seconds / 60)
+                time_ago = f"{minutes} min ago" if minutes != 1 else "1 min ago"
+            elif delta_seconds < 86400:  # Less than 1 day
+                hours = int(delta_seconds / 3600)
+                time_ago = f"{hours} hour{'s' if hours != 1 else ''} ago"
+            elif delta_seconds < 604800:  # Less than 1 week
+                days = int(delta_seconds / 86400)
+                time_ago = f"{days} day{'s' if days != 1 else ''} ago"
+            else:
+                time_ago = imported_dt.strftime("%Y-%m-%d")
+        except Exception:
+            time_ago = "unknown"
+    else:
+        time_ago = "unknown"
+
+    # Detect terminal width for responsive layout
+    term_width = get_terminal_width()
+
+    # Build header text
+    scan_name = scan.scan_name or "Unknown"
+    nessus_file = scan.nessus_file_path or "unknown.nessus"
+
+    if term_width >= 120:
+        # Wide terminal: single line
+        header_text = Text()
+        header_text.append("Scan: ", style=style_if_enabled("bold"))
+        header_text.append(f"{scan_name}", style=style_if_enabled("cyan"))
+        header_text.append(" | ", style=style_if_enabled("dim"))
+        header_text.append(f"File: {nessus_file}", style=None)
+        header_text.append(" | ", style=style_if_enabled("dim"))
+        header_text.append(f"Imported: {time_ago}", style=None)
+        header_text.append(" | ", style=style_if_enabled("dim"))
+        header_text.append(f"Total: {total_count} plugins", style=style_if_enabled("bold"))
+        header_text.append(" | ", style=style_if_enabled("dim"))
+        header_text.append(f"Unreviewed: {unreviewed_count}", style=style_if_enabled("cyan"))
+        header_text.append(" | ", style=style_if_enabled("dim"))
+        header_text.append(f"Reviewed: {reviewed_count}", style=style_if_enabled("yellow"))
+        header_text.append(" | ", style=style_if_enabled("dim"))
+        header_text.append(f"Completed: {completed_count}", style=style_if_enabled("green"))
+
+        _console_global.print(header_text)
+    else:
+        # Narrow/medium terminal: multi-line layout
+        line1 = Text()
+        line1.append("Scan: ", style=style_if_enabled("bold"))
+        line1.append(f"{scan_name}", style=style_if_enabled("cyan"))
+        line1.append(" | ", style=style_if_enabled("dim"))
+        line1.append(f"Imported: {time_ago}", style=None)
+
+        line2 = Text()
+        line2.append(f"Total: {total_count} plugins", style=style_if_enabled("bold"))
+        line2.append(" | ", style=style_if_enabled("dim"))
+        line2.append(f"Unreviewed: {unreviewed_count}", style=style_if_enabled("cyan"))
+        line2.append(" | ", style=style_if_enabled("dim"))
+        line2.append(f"Reviewed: {reviewed_count}", style=style_if_enabled("yellow"))
+        line2.append(" | ", style=style_if_enabled("dim"))
+        line2.append(f"Completed: {completed_count}", style=style_if_enabled("green"))
+
+        _console_global.print(line1)
+        _console_global.print(line2)
+
+    # Separator line
+    _console_global.print("─" * min(term_width, 80))
+
+
 def render_scan_table(scans: list[Path]) -> None:
     """Render a table of available scan directories.
 
@@ -212,7 +362,8 @@ def render_finding_list_table(
     """
 
     table = Table(
-        title=None, box=box.SIMPLE, show_lines=False, pad_edge=False
+        title=None, box=box.SIMPLE, show_lines=False, pad_edge=False,
+        row_styles=["", "dim"]
     )
     table.add_column("#", justify="right", no_wrap=True, max_width=5)
     table.add_column("Plugin ID", justify="right", no_wrap=True, max_width=10)
@@ -230,19 +381,36 @@ def render_finding_list_table(
 
         # Get severity from plugin metadata
         from .nessus_import import severity_label_from_int
+        from .ansi import get_terminal_width
         label = severity_label_from_int(plugin.severity_int)
 
-        # Use abbreviated severity labels for compact display
-        sev_abbrev = {
-            "Critical": "Crit",
-            "High": "High",
-            "Medium": "Med",
-            "Low": "Low",
-            "Info": "Info"
-        }.get(label, label)
+        # Adaptive severity labels based on terminal width
+        term_width = get_terminal_width()
 
-        # Color-code the abbreviated severity using severity_cell
-        sev_colored = severity_cell(sev_abbrev)
+        if term_width >= 120:
+            # Wide terminal: full labels
+            sev_display = label  # "Critical", "High", "Medium", "Low", "Info"
+        elif term_width >= 80:
+            # Medium terminal: abbreviated labels (current default)
+            sev_display = {
+                "Critical": "Crit",
+                "High": "High",
+                "Medium": "Med",
+                "Low": "Low",
+                "Info": "Info"
+            }.get(label, label)
+        else:
+            # Narrow terminal: single-character indicators
+            sev_display = {
+                "Critical": "C",
+                "High": "H",
+                "Medium": "M",
+                "Low": "L",
+                "Info": "I"
+            }.get(label, label[0] if label else "?")
+
+        # Color-code the severity label using severity_cell
+        sev_colored = severity_cell(sev_display)
 
         row_data = [str(row_number), plugin_id_str, sev_colored, plugin_name]
 

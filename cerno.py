@@ -425,7 +425,11 @@ def browse_file_list(
             }.get(sort_mode, "Name A↑Z")
 
             status_parts.append(f"Sort: {sort_label} (next: {next_sort_mode})")
-            status_parts.append(f"Page: {page_idx+1}/{total_pages}")
+
+            # Enhanced pagination indicator with progress bar
+            from cerno_pkg.render import render_pagination_indicator
+            page_indicator = render_pagination_indicator(page_idx, total_pages, len(display))
+            status_parts.append(page_indicator)
 
             # Session time indicator
             if session_start_time:
@@ -487,8 +491,12 @@ def browse_file_list(
                 show_severity=is_msf_mode
             )
 
+            # Add hint on first page if more results exist
             can_next = page_idx + 1 < total_pages
             can_prev = page_idx > 0
+            if page_idx == 0 and can_next:
+                remaining = len(display) - page_size
+                info(f"→ {remaining} more finding{'s' if remaining != 1 else ''} available (press N for next page)")
             render_actions_footer(
                 group_applied=bool(group_filter),
                 candidates_count=len(candidates),
