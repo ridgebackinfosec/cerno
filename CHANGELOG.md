@@ -7,11 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.4] - 2026-01-11
+
+### Fixed
+- Fixed session persistence bug where early exits (pressing 'q' or Ctrl+C) bypassed session saving - added try/finally block to guarantee session save on all exit paths (cerno.py:814-1191)
+- Fixed "Last Reviewed" timestamp always showing "never" after reviewing scans
+- Fixed multiple scan sessions not being saved when using 'back' to return to scan menu - added session save at top of scan selection loop
+
 ## [1.2.3] - 2026-01-11
 
 ### Fixed
-- Fixed session persistence bug where sessions were not saved if user exited without marking findings as reviewed/completed/skipped (cerno.py:1131-1158)
-- Fixed "Last Reviewed" timestamp always showing "never" even after viewing scan (session.py:_db_save_session())
+- Incomplete fix attempt for session persistence (code was unreachable - superseded by v1.2.4)
 
 ## [1.2.2] - 2026-01-11
 

@@ -810,352 +810,385 @@ def main(args: types.SimpleNamespace) -> None:
         from datetime import datetime
 
         # Outer loop for scan selection
-        while True:
-            # Get all scans from database
-            try:
-                with _console_global.status("[bold green]Loading scans from database..."):
-                    all_scans = Scan.get_all()
-            except Exception as e:
-                err(f"Failed to query scans from database: {e}")
-                return
+        # Wrapped in try/finally to ensure session is saved on ALL exit paths
+        try:
+            while True:
+                # Save previous scan's session before loading next scan menu
+                # This handles the case where user reviews multiple scans (presses 'b' to go back)
+                if scan_id != 0:
+                    save_session(
+                        scan_id,
+                        session_start_time,
+                        reviewed_count=len(reviewed_total),
+                        completed_count=len(completed_total),
+                        skipped_count=len(skipped_total),
+                    )
 
-            if not all_scans:
-                err("No scans found in database.")
-                info("Import a scan first: cerno import <nessus_file>")
-                return
+                    # Show statistics if work was done
+                    if reviewed_total or completed_total or skipped_total:
+                        if scan_dir is not None:
+                            show_session_statistics(
+                                session_start_time,
+                                reviewed_total,
+                                completed_total,
+                                skipped_total,
+                                scan_dir,
+                                scan_id=scan_id,
+                            )
 
-            # Display scan selection menu
-            header("Available Scans")
-            from rich.table import Table
-            from rich import box
-            from cerno_pkg.ansi import style_if_enabled
+                    delete_session(scan_id)
 
-            scan_table = Table(show_header=True, header_style=style_if_enabled("bold cyan"), box=box.SIMPLE)
-            scan_table.add_column("#", style=style_if_enabled("cyan"), justify="right")
-            scan_table.add_column("Scan Name", style=style_if_enabled("yellow"))
-            scan_table.add_column("Last Reviewed", style=style_if_enabled("magenta"))
+                    # Reset tracking for next scan
+                    scan_id = 0
+                    scan_dir = None
+                    reviewed_total = []
+                    completed_total = []
+                    skipped_total = []
 
-            for idx, scan in enumerate(all_scans, 1):
-                last_reviewed = "never"
-                if scan.last_reviewed_at:
-                    try:
-                        dt = datetime.fromisoformat(scan.last_reviewed_at)
-                        now = datetime.now()
-                        delta = now - dt
-                        if delta.days == 0:
-                            if delta.seconds < 3600:
-                                mins = delta.seconds // 60
-                                last_reviewed = f"{mins} min{'s' if mins != 1 else ''} ago"
-                            else:
-                                hours = delta.seconds // 3600
-                                last_reviewed = f"{hours} hour{'s' if hours != 1 else ''} ago"
-                        elif delta.days == 1:
-                            last_reviewed = "yesterday"
-                        elif delta.days < 7:
-                            last_reviewed = f"{delta.days} days ago"
-                        else:
-                            last_reviewed = dt.strftime("%Y-%m-%d")
-                    except Exception:
-                        last_reviewed = scan.last_reviewed_at[:10]  # Just date
-
-                scan_table.add_row(str(idx), scan.scan_name, last_reviewed)
-
-            _console_global.print(scan_table)
-            print_action_menu([("Q", "Quit")])
-
-            try:
-                ans = Prompt.ask("Choose scan").strip().lower()
-            except KeyboardInterrupt:
-                warn("\nInterrupted — exiting.")
-                return
-
-            if ans in ("x", "exit", "q", "quit"):
-                return
-
-            if not ans.isdigit() or not (1 <= int(ans) <= len(all_scans)):
-                warn(f"Invalid choice. Please enter 1-{len(all_scans)} or [Q]uit.")
-                continue  # Back to scan selection
-
-            selected_scan = all_scans[int(ans) - 1]
-            export_root = Path(selected_scan.export_root)
-            scan_dir = export_root / selected_scan.scan_name
-
-            # Note: scan_dir is a Path object used for display (scan_dir.name) only
-            # In database-only mode, the directory doesn't need to exist
-
-            # Type narrowing: ensure scan_id is not None
-            if selected_scan.scan_id is None:
-                warn("Invalid scan - missing scan_id")
-                continue
-
-            scan_id: int = selected_scan.scan_id
-            ok(f"Selected: {selected_scan.scan_name}")
-
-            # Check for existing session
-            previous_session = load_session(scan_id)
-            if previous_session:
-                from datetime import datetime
-                session_date = datetime.fromisoformat(previous_session.session_start)
-                header("Previous Session Found")
-                info(f"Session started: {session_date.strftime('%Y-%m-%d %H:%M:%S')}")
-                info(f"Reviewed: {previous_session.reviewed_count} findings")
-                info(f"Completed: {previous_session.completed_count} findings")
-                info(f"Skipped: {previous_session.skipped_count} findings")
+                # Get all scans from database
                 try:
-                    resume = Confirm.ask("Resume this session?", default=True)
+                    with _console_global.status("[bold green]Loading scans from database..."):
+                        all_scans = Scan.get_all()
+                except Exception as e:
+                    err(f"Failed to query scans from database: {e}")
+                    return
+
+                if not all_scans:
+                    err("No scans found in database.")
+                    info("Import a scan first: cerno import <nessus_file>")
+                    return
+
+                # Display scan selection menu
+                header("Available Scans")
+                from rich.table import Table
+                from rich import box
+                from cerno_pkg.ansi import style_if_enabled
+
+                scan_table = Table(show_header=True, header_style=style_if_enabled("bold cyan"), box=box.SIMPLE)
+                scan_table.add_column("#", style=style_if_enabled("cyan"), justify="right")
+                scan_table.add_column("Scan Name", style=style_if_enabled("yellow"))
+                scan_table.add_column("Last Reviewed", style=style_if_enabled("magenta"))
+
+                for idx, scan in enumerate(all_scans, 1):
+                    last_reviewed = "never"
+                    if scan.last_reviewed_at:
+                        try:
+                            dt = datetime.fromisoformat(scan.last_reviewed_at)
+                            now = datetime.now()
+                            delta = now - dt
+                            if delta.days == 0:
+                                if delta.seconds < 3600:
+                                    mins = delta.seconds // 60
+                                    last_reviewed = f"{mins} min{'s' if mins != 1 else ''} ago"
+                                else:
+                                    hours = delta.seconds // 3600
+                                    last_reviewed = f"{hours} hour{'s' if hours != 1 else ''} ago"
+                            elif delta.days == 1:
+                                last_reviewed = "yesterday"
+                            elif delta.days < 7:
+                                last_reviewed = f"{delta.days} days ago"
+                            else:
+                                last_reviewed = dt.strftime("%Y-%m-%d")
+                        except Exception:
+                            last_reviewed = scan.last_reviewed_at[:10]  # Just date
+
+                    scan_table.add_row(str(idx), scan.scan_name, last_reviewed)
+
+                _console_global.print(scan_table)
+                print_action_menu([("Q", "Quit")])
+
+                try:
+                    ans = Prompt.ask("Choose scan").strip().lower()
                 except KeyboardInterrupt:
                     warn("\nInterrupted — exiting.")
                     return
 
-                if resume:
-                    # Session start time is restored; file tracking continues from database
-                    session_start_time = session_date
-                    ok("Session resumed.")
-                else:
-                    # Start fresh session - end the old one
-                    delete_session(scan_id)
-                    ok("Starting fresh session.")
-            else:
-                # No previous session - start fresh
-                pass
-
-            # Overview immediately after selecting scan
-            # Use config value if set, otherwise use DEFAULT_TOP_PORTS
-            top_ports = config.top_ports_count if config.top_ports_count is not None else DEFAULT_TOP_PORTS
-
-            # Validate range
-            if top_ports <= 0:
-                warn(f"Invalid top_ports_count {top_ports} in config, using default {DEFAULT_TOP_PORTS}")
-                top_ports = DEFAULT_TOP_PORTS
-            elif top_ports > 100:
-                warn(f"top_ports_count {top_ports} is very large, capping at 100")
-                top_ports = 100
-
-            show_scan_summary(scan_dir, top_ports_n=top_ports, scan_id=scan_id)
-
-            # Severity loop (inner loop)
-            while True:
-                from cerno_pkg import breadcrumb
-                bc = breadcrumb(scan_dir.name, "Choose severity")
-                header(bc if bc else f"Scan: {scan_dir.name} — choose severity")
-
-                # Get severity directories from database (database-only mode)
-                severity_dir_names = Finding.get_severity_dirs_for_scan(scan_id)
-                if not severity_dir_names:
-                    warn("No severity directories in this scan.")
-                    break
-
-                # Create virtual Path objects for compatibility with existing render code
-                # Database returns pre-sorted (DESC), so no additional sorting needed
-                severities = [scan_dir / sev_name for sev_name in severity_dir_names]
-
-                # Metasploit Module virtual group (menu counts) - query from database
-                msf_files = Finding.get_by_scan_with_plugin(
-                    scan_id=scan_id,
-                    has_metasploit=True
-                )
-
-                has_msf = len(msf_files) > 0
-                msf_total = len(msf_files)
-                msf_reviewed = sum(
-                    1
-                    for (pf, _p) in msf_files
-                    if pf.review_state == "completed"
-                )
-                msf_unrev = msf_total - msf_reviewed
-
-                msf_summary = (
-                    (len(severities) + 1, msf_unrev, msf_reviewed, msf_total)
-                    if has_msf
-                    else None
-                )
-
-                # Workflow Mapped virtual group (menu counts) - query from database
-                workflow_plugin_ids = workflow_mapper.get_all_plugin_ids()
-                if workflow_plugin_ids:
-                    workflow_plugin_ids_int = [int(pid) for pid in workflow_plugin_ids if pid.isdigit()]
-                    workflow_files = Finding.get_by_scan_with_plugin(
-                        scan_id=scan_id,
-                        plugin_ids=workflow_plugin_ids_int
-                    )
-                else:
-                    workflow_files = []
-
-                has_workflows = len(workflow_files) > 0
-                workflow_total = len(workflow_files)
-                workflow_reviewed = sum(
-                    1
-                    for (pf, _p) in workflow_files
-                    if pf.review_state == "completed"
-                )
-                workflow_unrev = workflow_total - workflow_reviewed
-
-                # Calculate workflow menu index (after severities and MSF if present)
-                workflow_menu_idx = len(severities) + (1 if has_msf else 0) + 1
-
-                workflow_summary = (
-                    (workflow_menu_idx, workflow_unrev, workflow_reviewed, workflow_total)
-                    if has_workflows
-                    else None
-                )
-
-                render_severity_table(severities, msf_summary=msf_summary, workflow_summary=workflow_summary, scan_id=scan_id)
-
-                print_action_menu([("B", "Back")])
-                info("Tip: Multi-select is supported (e.g., 1-3 or 1,3,5)")
-
-                try:
-                    ans = Prompt.ask("Choose").strip().lower()
-                except KeyboardInterrupt:
-                    warn("\nInterrupted — returning to scan menu.")
-                    break
-
-                if ans in ("b", "back"):
-                    break
-                elif ans == "q":
+                if ans in ("x", "exit", "q", "quit"):
                     return
 
-                options_count = len(severities) + (1 if has_msf else 0) + (1 if has_workflows else 0)
+                if not ans.isdigit() or not (1 <= int(ans) <= len(all_scans)):
+                    warn(f"Invalid choice. Please enter 1-{len(all_scans)} or [Q]uit.")
+                    continue  # Back to scan selection
 
-                # Parse selection (supports ranges and comma-separated)
-                selected_indices = parse_severity_selection(ans, options_count)
+                selected_scan = all_scans[int(ans) - 1]
+                export_root = Path(selected_scan.export_root)
+                scan_dir = export_root / selected_scan.scan_name
 
-                if selected_indices is None:
-                    warn("Invalid choice. Use single numbers, ranges (1-3), or comma-separated (1,3,5).")
+                # Note: scan_dir is a Path object used for display (scan_dir.name) only
+                # In database-only mode, the directory doesn't need to exist
+
+                # Type narrowing: ensure scan_id is not None
+                if selected_scan.scan_id is None:
+                    warn("Invalid scan - missing scan_id")
                     continue
 
-                # Check if MSF is included in selection
-                msf_in_selection = has_msf and (len(severities) + 1) in selected_indices
+                scan_id: int = selected_scan.scan_id
+                ok(f"Selected: {selected_scan.scan_name}")
 
-                # Check if Workflow Mapped is included in selection
-                workflow_in_selection = has_workflows and workflow_menu_idx in selected_indices
+                # Check for existing session
+                previous_session = load_session(scan_id)
+                if previous_session:
+                    from datetime import datetime
+                    session_date = datetime.fromisoformat(previous_session.session_start)
+                    header("Previous Session Found")
+                    info(f"Session started: {session_date.strftime('%Y-%m-%d %H:%M:%S')}")
+                    info(f"Reviewed: {previous_session.reviewed_count} findings")
+                    info(f"Completed: {previous_session.completed_count} findings")
+                    info(f"Skipped: {previous_session.skipped_count} findings")
+                    try:
+                        resume = Confirm.ask("Resume this session?", default=True)
+                    except KeyboardInterrupt:
+                        warn("\nInterrupted — exiting.")
+                        return
 
-                # Filter out MSF and Workflow from severity indices
-                severity_indices = [idx for idx in selected_indices if idx <= len(severities)]
+                    if resume:
+                        # Session start time is restored; file tracking continues from database
+                        session_start_time = session_date
+                        ok("Session resumed.")
+                    else:
+                        # Start fresh session - end the old one
+                        delete_session(scan_id)
+                        ok("Starting fresh session.")
+                else:
+                    # No previous session - start fresh
+                    pass
 
-                # === Multiple severities selected (or mix of severities + MSF) ===
-                if len(severity_indices) > 1 or (len(severity_indices) >= 1 and msf_in_selection):
-                    selected_sev_dirs = [severities[idx - 1] for idx in severity_indices]
+                # Overview immediately after selecting scan
+                # Use config value if set, otherwise use DEFAULT_TOP_PORTS
+                top_ports = config.top_ports_count if config.top_ports_count is not None else DEFAULT_TOP_PORTS
 
-                    # Build combined label
-                    sev_labels = [pretty_severity_label(sev.name) for sev in selected_sev_dirs]
-                    if msf_in_selection:
-                        sev_labels.append("Metasploit Module")
+                # Validate range
+                if top_ports <= 0:
+                    warn(f"Invalid top_ports_count {top_ports} in config, using default {DEFAULT_TOP_PORTS}")
+                    top_ports = DEFAULT_TOP_PORTS
+                elif top_ports > 100:
+                    warn(f"top_ports_count {top_ports} is very large, capping at 100")
+                    top_ports = 100
 
-                    combined_label = " + ".join(sev_labels)
+                show_scan_summary(scan_dir, top_ports_n=top_ports, scan_id=scan_id)
 
-                    # For multi-severity selection, pass list of severity directories to filter
-                    severity_dir_names = [sev.name for sev in selected_sev_dirs]
-                    browse_file_list(
-                        selected_scan,
-                        selected_sev_dirs[0] if selected_sev_dirs else None,
-                        None,  # Single severity filter not used for multi-severity
-                        combined_label,
-                        args,
-                        use_sudo,
-                        skipped_total,
-                        reviewed_total,
-                        completed_total,
-                        is_msf_mode=True,  # Show severity labels for each file
-                        workflow_mapper=workflow_mapper,
-                        severity_dirs_filter=severity_dir_names,
-                        config=config,
-                        session_start_time=session_start_time,
+                # Severity loop (inner loop)
+                while True:
+                    from cerno_pkg import breadcrumb
+                    bc = breadcrumb(scan_dir.name, "Choose severity")
+                    header(bc if bc else f"Scan: {scan_dir.name} — choose severity")
+
+                    # Get severity directories from database (database-only mode)
+                    severity_dir_names = Finding.get_severity_dirs_for_scan(scan_id)
+                    if not severity_dir_names:
+                        warn("No severity directories in this scan.")
+                        break
+
+                    # Create virtual Path objects for compatibility with existing render code
+                    # Database returns pre-sorted (DESC), so no additional sorting needed
+                    severities = [scan_dir / sev_name for sev_name in severity_dir_names]
+
+                    # Metasploit Module virtual group (menu counts) - query from database
+                    msf_files = Finding.get_by_scan_with_plugin(
+                        scan_id=scan_id,
+                        has_metasploit=True
                     )
 
-                # === Single severity selected (normal or MSF only) ===
-                elif len(severity_indices) == 1:
-                    choice_idx = severity_indices[0]
-                    sev_dir = severities[choice_idx - 1]
+                    has_msf = len(msf_files) > 0
+                    msf_total = len(msf_files)
+                    msf_reviewed = sum(
+                        1
+                        for (pf, _p) in msf_files
+                        if pf.review_state == "completed"
+                    )
+                    msf_unrev = msf_total - msf_reviewed
 
-                    # Use severity directory name as filter (e.g., "3_High")
-                    severity_dir_filter = sev_dir.name
-
-                    browse_file_list(
-                        selected_scan,
-                        sev_dir,
-                        severity_dir_filter,
-                        pretty_severity_label(sev_dir.name),
-                        args,
-                        use_sudo,
-                        skipped_total,
-                        reviewed_total,
-                        completed_total,
-                        is_msf_mode=False,
-                        workflow_mapper=workflow_mapper,
-                        config=config,
-                        session_start_time=session_start_time,
+                    msf_summary = (
+                        (len(severities) + 1, msf_unrev, msf_reviewed, msf_total)
+                        if has_msf
+                        else None
                     )
 
-                # === Metasploit Module only ===
-                elif msf_in_selection:
-                    # Query database for metasploit plugins across all severities
-                    browse_file_list(
-                        selected_scan,
-                        None,  # No single severity dir
-                        None,  # No severity filter
-                        "Metasploit Module",
-                        args,
-                        use_sudo,
-                        skipped_total,
-                        reviewed_total,
-                        completed_total,
-                        is_msf_mode=True,
-                        workflow_mapper=workflow_mapper,
-                        has_metasploit_filter=True,
-                        config=config,
-                        session_start_time=session_start_time,
+                    # Workflow Mapped virtual group (menu counts) - query from database
+                    workflow_plugin_ids = workflow_mapper.get_all_plugin_ids()
+                    if workflow_plugin_ids:
+                        workflow_plugin_ids_int = [int(pid) for pid in workflow_plugin_ids if pid.isdigit()]
+                        workflow_files = Finding.get_by_scan_with_plugin(
+                            scan_id=scan_id,
+                            plugin_ids=workflow_plugin_ids_int
+                        )
+                    else:
+                        workflow_files = []
+
+                    has_workflows = len(workflow_files) > 0
+                    workflow_total = len(workflow_files)
+                    workflow_reviewed = sum(
+                        1
+                        for (pf, _p) in workflow_files
+                        if pf.review_state == "completed"
+                    )
+                    workflow_unrev = workflow_total - workflow_reviewed
+
+                    # Calculate workflow menu index (after severities and MSF if present)
+                    workflow_menu_idx = len(severities) + (1 if has_msf else 0) + 1
+
+                    workflow_summary = (
+                        (workflow_menu_idx, workflow_unrev, workflow_reviewed, workflow_total)
+                        if has_workflows
+                        else None
                     )
 
-                # === Workflow Mapped only ===
-                elif workflow_in_selection:
-                    # Group findings by workflow name using database records
-                    workflow_groups = group_findings_by_workflow(workflow_files, workflow_mapper)
+                    render_severity_table(severities, msf_summary=msf_summary, workflow_summary=workflow_summary, scan_id=scan_id)
 
-                    browse_workflow_groups(
-                        selected_scan,
-                        workflow_groups,
-                        args,
-                        use_sudo,
-                        skipped_total,
-                        reviewed_total,
-                        completed_total,
-                        workflow_mapper,
-                        config=config,
-                        session_start_time=session_start_time,
-                    )
+                    print_action_menu([("B", "Back")])
+                    info("Tip: Multi-select is supported (e.g., 1-3 or 1,3,5)")
 
-            # End of severity loop - continue to scan selection loop
-            # (User pressed 'b' or 'q' from severity menu)
+                    try:
+                        ans = Prompt.ask("Choose").strip().lower()
+                    except KeyboardInterrupt:
+                        warn("\nInterrupted — returning to scan menu.")
+                        break
 
-    # Always save session when exiting review (tracks all user activity)
-    # This updates last_reviewed_at timestamp and creates/updates session record
-    save_session(
-        scan_id,
-        session_start_time,
-        reviewed_count=len(reviewed_total),
-        completed_count=len(completed_total),
-        skipped_count=len(skipped_total),
-    )
+                    if ans in ("b", "back"):
+                        break
+                    elif ans == "q":
+                        return
 
-    # Session summary with rich statistics (only if work was done)
-    if reviewed_total or completed_total or skipped_total:
-        # Type guard: scan_dir must be defined if any work was done
-        # (scan_dir is defined right after scan selection, before any review work)
-        if scan_dir is None:
-            warn("Cannot show session statistics - scan directory not selected")
-        else:
-            show_session_statistics(
-                session_start_time,
-                reviewed_total,
-                completed_total,
-                skipped_total,
-                scan_dir,
-                scan_id=scan_id,
-            )
+                    options_count = len(severities) + (1 if has_msf else 0) + (1 if has_workflows else 0)
 
-    # Always end session (mark session_end timestamp in database)
-    delete_session(scan_id)
+                    # Parse selection (supports ranges and comma-separated)
+                    selected_indices = parse_severity_selection(ans, options_count)
+
+                    if selected_indices is None:
+                        warn("Invalid choice. Use single numbers, ranges (1-3), or comma-separated (1,3,5).")
+                        continue
+
+                    # Check if MSF is included in selection
+                    msf_in_selection = has_msf and (len(severities) + 1) in selected_indices
+
+                    # Check if Workflow Mapped is included in selection
+                    workflow_in_selection = has_workflows and workflow_menu_idx in selected_indices
+
+                    # Filter out MSF and Workflow from severity indices
+                    severity_indices = [idx for idx in selected_indices if idx <= len(severities)]
+
+                    # === Multiple severities selected (or mix of severities + MSF) ===
+                    if len(severity_indices) > 1 or (len(severity_indices) >= 1 and msf_in_selection):
+                        selected_sev_dirs = [severities[idx - 1] for idx in severity_indices]
+
+                        # Build combined label
+                        sev_labels = [pretty_severity_label(sev.name) for sev in selected_sev_dirs]
+                        if msf_in_selection:
+                            sev_labels.append("Metasploit Module")
+
+                        combined_label = " + ".join(sev_labels)
+
+                        # For multi-severity selection, pass list of severity directories to filter
+                        severity_dir_names = [sev.name for sev in selected_sev_dirs]
+                        browse_file_list(
+                            selected_scan,
+                            selected_sev_dirs[0] if selected_sev_dirs else None,
+                            None,  # Single severity filter not used for multi-severity
+                            combined_label,
+                            args,
+                            use_sudo,
+                            skipped_total,
+                            reviewed_total,
+                            completed_total,
+                            is_msf_mode=True,  # Show severity labels for each file
+                            workflow_mapper=workflow_mapper,
+                            severity_dirs_filter=severity_dir_names,
+                            config=config,
+                            session_start_time=session_start_time,
+                        )
+
+                    # === Single severity selected (normal or MSF only) ===
+                    elif len(severity_indices) == 1:
+                        choice_idx = severity_indices[0]
+                        sev_dir = severities[choice_idx - 1]
+
+                        # Use severity directory name as filter (e.g., "3_High")
+                        severity_dir_filter = sev_dir.name
+
+                        browse_file_list(
+                            selected_scan,
+                            sev_dir,
+                            severity_dir_filter,
+                            pretty_severity_label(sev_dir.name),
+                            args,
+                            use_sudo,
+                            skipped_total,
+                            reviewed_total,
+                            completed_total,
+                            is_msf_mode=False,
+                            workflow_mapper=workflow_mapper,
+                            config=config,
+                            session_start_time=session_start_time,
+                        )
+
+                    # === Metasploit Module only ===
+                    elif msf_in_selection:
+                        # Query database for metasploit plugins across all severities
+                        browse_file_list(
+                            selected_scan,
+                            None,  # No single severity dir
+                            None,  # No severity filter
+                            "Metasploit Module",
+                            args,
+                            use_sudo,
+                            skipped_total,
+                            reviewed_total,
+                            completed_total,
+                            is_msf_mode=True,
+                            workflow_mapper=workflow_mapper,
+                            has_metasploit_filter=True,
+                            config=config,
+                            session_start_time=session_start_time,
+                        )
+
+                    # === Workflow Mapped only ===
+                    elif workflow_in_selection:
+                        # Group findings by workflow name using database records
+                        workflow_groups = group_findings_by_workflow(workflow_files, workflow_mapper)
+
+                        browse_workflow_groups(
+                            selected_scan,
+                            workflow_groups,
+                            args,
+                            use_sudo,
+                            skipped_total,
+                            reviewed_total,
+                            completed_total,
+                            workflow_mapper,
+                            config=config,
+                            session_start_time=session_start_time,
+                        )
+
+                # End of severity loop - continue to scan selection loop
+                # (User pressed 'b' or 'q' from severity menu)
+
+        finally:
+            # Always save session on exit (handles early exits via q, Ctrl+C, or errors)
+            # Only save if scan was actually selected (scan_id != 0)
+            if scan_id != 0:
+                save_session(
+                    scan_id,
+                    session_start_time,
+                    reviewed_count=len(reviewed_total),
+                    completed_count=len(completed_total),
+                    skipped_count=len(skipped_total),
+                )
+
+                # Session summary with rich statistics (only if work was done)
+                if reviewed_total or completed_total or skipped_total:
+                    # Type guard: scan_dir must be defined if any work was done
+                    if scan_dir is not None:
+                        show_session_statistics(
+                            session_start_time,
+                            reviewed_total,
+                            completed_total,
+                            skipped_total,
+                            scan_dir,
+                            scan_id=scan_id,
+                        )
+
+                # Always end session (mark session_end timestamp in database)
+                delete_session(scan_id)
 
     _console_global.print() # Empty line
     ok("Now run \"cerno review\" to start reviewing findings.")
