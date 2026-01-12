@@ -1128,17 +1128,15 @@ def main(args: types.SimpleNamespace) -> None:
             # End of severity loop - continue to scan selection loop
             # (User pressed 'b' or 'q' from severity menu)
 
-    # Save session before showing summary
-    if reviewed_total or completed_total or skipped_total:
-        # Type guard: scan_id must be defined if any work was done
-        # (scan_id is defined right after scan selection, before any review work)
-        save_session(
-            scan_id,
-            session_start_time,
-            reviewed_count=len(reviewed_total),
-            completed_count=len(completed_total),
-            skipped_count=len(skipped_total),
-        )
+    # Always save session when exiting review (tracks all user activity)
+    # This updates last_reviewed_at timestamp and creates/updates session record
+    save_session(
+        scan_id,
+        session_start_time,
+        reviewed_count=len(reviewed_total),
+        completed_count=len(completed_total),
+        skipped_count=len(skipped_total),
+    )
 
     # Session summary with rich statistics (only if work was done)
     if reviewed_total or completed_total or skipped_total:
@@ -1156,8 +1154,8 @@ def main(args: types.SimpleNamespace) -> None:
                 scan_id=scan_id,
             )
 
-        # Clean up session (mark as ended in database)
-        delete_session(scan_id)
+    # Always end session (mark session_end timestamp in database)
+    delete_session(scan_id)
 
     _console_global.print() # Empty line
     ok("Now run \"cerno review\" to start reviewing findings.")

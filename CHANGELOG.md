@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Fixed session persistence bug where sessions were not saved if user exited without marking findings as reviewed/completed/skipped (cerno.py:1131-1158)
+- Fixed "Last Reviewed" timestamp always showing "never" even after viewing scan (session.py:_db_save_session())
+
 ## [1.2.2] - 2026-01-11
 
 ### Fixed

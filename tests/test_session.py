@@ -301,6 +301,86 @@ class TestSaveSession:
         assert row["files_completed"] == 0
         assert row["files_skipped"] == 0
 
+    def test_empty_session_updates_last_reviewed_at(self, temp_db):
+        """Test that saving an empty session (zero counts) still updates last_reviewed_at."""
+        from cerno_pkg.models import Scan
+
+        # Create scan
+        scan = Scan(scan_name="empty_scan", export_root="/tmp")
+        scan_id = scan.save(temp_db)
+        assert scan_id is not None
+
+        # Verify last_reviewed_at is initially None
+        cursor = temp_db.execute(
+            "SELECT last_reviewed_at FROM scans WHERE scan_id = ?",
+            (scan_id,)
+        )
+        row = cursor.fetchone()
+        assert row["last_reviewed_at"] is None
+
+        session_start = datetime(2024, 1, 15, 10, 0, 0)
+
+        # Save empty session (zero counts)
+        session_id = save_session(
+            scan_id=scan_id,
+            session_start=session_start,
+            reviewed_count=0,
+            completed_count=0,
+            skipped_count=0
+        )
+
+        assert session_id is not None
+
+        # Verify last_reviewed_at is now set
+        cursor = temp_db.execute(
+            "SELECT last_reviewed_at FROM scans WHERE scan_id = ?",
+            (scan_id,)
+        )
+        row = cursor.fetchone()
+        assert row["last_reviewed_at"] is not None
+
+    def test_empty_session_can_be_ended(self, temp_db):
+        """Test that an empty session (zero counts) can be properly ended."""
+        from cerno_pkg.models import Scan
+
+        # Create scan
+        scan = Scan(scan_name="empty_scan", export_root="/tmp")
+        scan_id = scan.save(temp_db)
+        assert scan_id is not None
+
+        session_start = datetime(2024, 1, 15, 10, 0, 0)
+
+        # Save empty session
+        session_id = save_session(
+            scan_id=scan_id,
+            session_start=session_start,
+            reviewed_count=0,
+            completed_count=0,
+            skipped_count=0
+        )
+
+        assert session_id is not None
+
+        # Verify session exists with NULL session_end
+        cursor = temp_db.execute(
+            "SELECT session_id, session_end FROM sessions WHERE session_id = ?",
+            (session_id,)
+        )
+        row = cursor.fetchone()
+        assert row["session_id"] == session_id
+        assert row["session_end"] is None
+
+        # End the session
+        delete_session(scan_id)
+
+        # Verify session_end is now set
+        cursor = temp_db.execute(
+            "SELECT session_end FROM sessions WHERE session_id = ?",
+            (session_id,)
+        )
+        row = cursor.fetchone()
+        assert row["session_end"] is not None
+
 
 class TestLoadSession:
     """Tests for load_session function."""
