@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Fixed workflow count display to show distinct workflows instead of total plugin ID entries (workflow_mapper.py:count())
+
 ## [1.2.1] - 2026-01-11
 
 ### Fixed

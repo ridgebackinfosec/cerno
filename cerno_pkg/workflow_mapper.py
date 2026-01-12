@@ -205,12 +205,12 @@ class WorkflowMapper:
 
     def count(self) -> int:
         """
-        Get count of loaded workflows.
+        Get count of distinct workflows (not individual plugin ID entries).
 
         Returns:
-            Number of workflows
+            Number of distinct workflows
         """
-        return len(self.workflows)
+        return len(self.get_all_workflows())
 
     def load_additional_workflows(self, yaml_path: Path) -> int:
         """
