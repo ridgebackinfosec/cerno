@@ -7,8 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.2] - 2026-01-11
+
 ### Fixed
 - Fixed workflow count display to show distinct workflows instead of total plugin ID entries (workflow_mapper.py:count())
+
+### Changed
+- Improved keybinding mnemonics: Sort now uses [S] instead of [O], Overlapping uses [O] instead of [I] (render.py, tui.py)
 
 ## [1.2.1] - 2026-01-11
 

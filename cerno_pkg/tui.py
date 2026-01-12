@@ -244,7 +244,7 @@ def handle_finding_list_actions(
         ok("Filter cleared. Showing all findings.")
         return None, file_filter, reviewed_filter, group_filter, sort_mode, page_idx
 
-    if ans == "o":
+    if ans == "s":
         # Cycle through sort modes: plugin_id -> name -> hosts -> plugin_id
         if sort_mode == "plugin_id":
             sort_mode = "name"
@@ -512,7 +512,7 @@ def handle_finding_list_actions(
 
         return None, file_filter, reviewed_filter, group_filter, sort_mode, page_idx
 
-    if ans == "i":
+    if ans == "o":
         if not candidates:
             warn("No findings match the current filter.")
             return (

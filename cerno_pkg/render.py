@@ -411,7 +411,7 @@ def render_actions_footer(
         [
             key_text("F", "Filter"),
             key_text("C", "Clear filter"),
-            key_text("O", f"Sort: {sort_label}"),
+            key_text("S", f"Sort: {sort_label}"),
         ]
     )
 
@@ -420,7 +420,7 @@ def render_actions_footer(
         [
             key_text("R", "Reviewed"),
             key_text("H", "Compare"),
-            key_text("I", "Overlapping"),
+            key_text("O", "Overlapping"),
         ]
     )
     right_items_row2 = [
@@ -496,7 +496,7 @@ def show_actions_help(
     table.add_row(
         Text("Sorting", style="bold"),
         key_text(
-            "O",
+            "S",
             f"Sort: {'Hosts' if sort_mode=='hosts' else 'Name'} - Toggle between host count and name sorting",
         ),
     )
@@ -510,7 +510,7 @@ def show_actions_help(
     table.add_row(
         Text("Analysis", style="bold"),
         key_text("H", "Compare - Find files with identical host:port combinations"),
-        key_text("I", "Overlapping - Find findings that cover all affected systems of another finding"),
+        key_text("O", "Overlapping - Find findings that cover all affected systems of another finding"),
         key_text("E", f"CVEs ({candidates_count}) - Extract CVEs for all filtered files"),
     )
     if group_applied:
