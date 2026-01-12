@@ -790,6 +790,16 @@ def main(args: types.SimpleNamespace) -> None:
             "some scan types (e.g., UDP) may fail."
         )
 
+    # Tool availability check (unless --no-tools enabled)
+    if not args.no_tools:
+        from cerno_pkg.render import render_tool_availability_table
+        render_tool_availability_table(include_unavailable=True)
+        _console_global.print()  # Add spacing
+
+        # If --check flag used, exit after displaying checks
+        if getattr(args, 'check', False):
+            raise Exit(0)
+
     export_root = Path(args.export_root) if args.export_root else None
     if export_root and not export_root.exists():
         err(f"Export root not found: {export_root}")
@@ -1287,6 +1297,9 @@ def review(
     quiet: bool = typer.Option(
         False, "--quiet", "-q", help="Suppress promotional banner display."
     ),
+    check: bool = typer.Option(
+        False, "--check", help="Check tool availability and exit (no review)."
+    ),
 ) -> None:
     """
     Run interactive review mode with database-driven workflow.
@@ -1317,6 +1330,7 @@ def review(
         no_tools=no_tools,
         custom_workflows=custom_workflows,
         custom_workflows_only=custom_workflows_only,
+        check=check,
     )
     try:
         main(args)

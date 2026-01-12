@@ -522,3 +522,143 @@ class TestCommandAvailability:
         # If sudo is available via which, function should return True
         if shutil.which("sudo"):
             assert result is True
+
+    def test_get_tool_version_available(self):
+        """Test getting version from an available tool."""
+        from cerno_pkg.ops import get_tool_version
+        from unittest.mock import Mock, patch
+        import subprocess
+
+        mock_result = Mock()
+        mock_result.returncode = 0
+        mock_result.stdout = "nmap version 7.92\n"
+        mock_result.stderr = ""
+
+        with patch('subprocess.run', return_value=mock_result) as mock_run:
+            with patch('shutil.which', return_value='/usr/bin/nmap'):
+                version = get_tool_version("nmap")
+
+        assert version == "7.92"
+        mock_run.assert_called_once()
+
+    def test_get_tool_version_missing(self):
+        """Test getting version from a missing tool."""
+        from cerno_pkg.ops import get_tool_version
+        from unittest.mock import patch
+
+        with patch('shutil.which', return_value=None):
+            version = get_tool_version("nonexistent_tool")
+
+        assert version is None
+
+    def test_get_tool_version_timeout(self):
+        """Test handling timeout when getting version."""
+        from cerno_pkg.ops import get_tool_version
+        from unittest.mock import patch
+        import subprocess
+
+        with patch('shutil.which', return_value='/usr/bin/slow_tool'):
+            with patch('subprocess.run', side_effect=subprocess.TimeoutExpired('cmd', 5)):
+                version = get_tool_version("slow_tool")
+
+        assert version is None
+
+    def test_get_tool_version_parsing_variations(self):
+        """Test version parsing with various output formats."""
+        from cerno_pkg.ops import get_tool_version
+        from unittest.mock import Mock, patch
+
+        test_cases = [
+            ("Nmap version 7.92", "7.92"),
+            ("version 1.2.1", "1.2.1"),
+            ("tool 2.3.4.5", "2.3.4"),  # Only captures first 3 parts
+            ("Version: 10.11", "10.11"),
+            ("v3.14", "3.14"),
+        ]
+
+        for output, expected_version in test_cases:
+            mock_result = Mock()
+            mock_result.returncode = 0
+            mock_result.stdout = output
+            mock_result.stderr = ""
+
+            with patch('subprocess.run', return_value=mock_result):
+                with patch('shutil.which', return_value='/usr/bin/tool'):
+                    version = get_tool_version("tool")
+
+            assert version == expected_version, f"Failed to parse '{output}' as '{expected_version}'"
+
+    def test_get_tool_version_candidates(self):
+        """Test version detection with multiple binary name candidates."""
+        from cerno_pkg.ops import get_tool_version
+        from unittest.mock import Mock, patch
+
+        mock_result = Mock()
+        mock_result.returncode = 0
+        mock_result.stdout = "netexec version 1.2.1\n"
+        mock_result.stderr = ""
+
+        def mock_which(cmd):
+            # nxc is available, netexec is not
+            return '/usr/bin/nxc' if cmd == 'nxc' else None
+
+        with patch('subprocess.run', return_value=mock_result) as mock_run:
+            with patch('shutil.which', side_effect=mock_which):
+                version = get_tool_version("netexec", ["nxc", "netexec"])
+
+        assert version == "1.2.1"
+        # Should have called subprocess with the first available candidate
+        mock_run.assert_called_once()
+        assert mock_run.call_args[0][0][0] == "nxc"
+
+    def test_get_tool_version_stderr_output(self):
+        """Test version parsing when version info is in stderr."""
+        from cerno_pkg.ops import get_tool_version
+        from unittest.mock import Mock, patch
+
+        mock_result = Mock()
+        mock_result.returncode = 1  # Non-zero exit
+        mock_result.stdout = ""
+        mock_result.stderr = "tool version 4.5.6\n"
+
+        with patch('subprocess.run', return_value=mock_result):
+            with patch('shutil.which', return_value='/usr/bin/tool'):
+                version = get_tool_version("tool")
+
+        assert version == "4.5.6"
+
+    def test_render_tool_availability_table_basic(self):
+        """Test rendering tool availability table (smoke test)."""
+        from cerno_pkg.render import render_tool_availability_table
+        from unittest.mock import patch, Mock
+
+        # Mock the console output to capture what would be printed
+        with patch('cerno_pkg.render._console_global') as mock_console:
+            with patch('shutil.which', return_value='/usr/bin/nmap'):
+                with patch('cerno_pkg.ops.get_tool_version', return_value="7.92"):
+                    render_tool_availability_table(include_unavailable=True)
+
+        # Verify console.print was called (table was rendered)
+        assert mock_console.print.called
+
+    def test_render_tool_availability_respects_config(self):
+        """Test that render_tool_availability_table respects configuration."""
+        from cerno_pkg.render import render_tool_availability_table
+        from unittest.mock import patch, Mock
+
+        # Mock the tool registry to return a predictable set of tools
+        mock_tool = Mock()
+        mock_tool.id = "nmap"
+        mock_tool.name = "nmap"
+        mock_tool.requires = ["nmap"]
+
+        with patch('cerno_pkg.tool_registry.get_available_tools', return_value=[mock_tool]):
+            with patch('shutil.which', return_value='/usr/bin/nmap'):
+                with patch('cerno_pkg.ops.get_tool_version', return_value="7.92"):
+                    # Should not raise exception
+                    try:
+                        # Just test that it doesn't crash
+                        # Full output testing would require capturing Rich console output
+                        render_tool_availability_table(include_unavailable=True)
+                    except Exception as e:
+                        pytest.fail(f"render_tool_availability_table() raised unexpected exception: {e}")

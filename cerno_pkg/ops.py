@@ -226,6 +226,76 @@ def resolve_cmd(candidates: list[str]) -> Optional[str]:
     return None
 
 
+def get_tool_version(tool_name: str, candidates: Optional[list[str]] = None) -> Optional[str]:
+    """Get version string for a tool by executing it with --version flag.
+
+    Tries to detect the version of an installed tool by running it with the
+    --version flag and parsing the output. Supports multiple binary name
+    candidates (e.g., "nxc" or "netexec" for the same tool).
+
+    Args:
+        tool_name: Primary tool name to check
+        candidates: Optional list of alternative binary names to try
+
+    Returns:
+        Version string (e.g., "7.92") if successful, None if tool not found
+        or version cannot be determined
+
+    Examples:
+        >>> get_tool_version("nmap")
+        "7.92"
+        >>> get_tool_version("netexec", ["nxc", "netexec"])
+        "1.2.1"
+        >>> get_tool_version("missing_tool")
+        None
+    """
+    from .logging_setup import log_debug
+
+    # Determine which binaries to try
+    binaries_to_try = candidates if candidates else [tool_name]
+
+    # Try each binary candidate
+    for binary in binaries_to_try:
+        # Check if binary exists first
+        if not shutil.which(binary):
+            continue
+
+        try:
+            # Run tool with --version flag
+            result = subprocess.run(
+                [binary, "--version"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+
+            if result.returncode != 0:
+                # Some tools output version to stderr
+                output = result.stdout + result.stderr
+            else:
+                output = result.stdout
+
+            # Parse version from output using regex patterns
+            # Pattern 1: "Nmap version 7.92" or "version 1.2.1"
+            match = re.search(r"(?:version\s+)?(\d+\.\d+(?:\.\d+)?)", output, re.IGNORECASE)
+            if match:
+                version = match.group(1)
+                log_debug(f"Detected {binary} version: {version}")
+                return version
+
+            # If no version pattern found, log and continue to next candidate
+            log_debug(f"Could not parse version from {binary} --version output")
+
+        except subprocess.TimeoutExpired:
+            log_debug(f"Timeout getting version for {binary}")
+        except Exception as exc:
+            log_debug(f"Error getting version for {binary}: {exc}")
+
+    # No version detected for any candidate
+    return None
+
+
 def log_tool_execution(
     tool_name: str,
     command_text: str,
