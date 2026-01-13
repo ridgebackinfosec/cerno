@@ -15,8 +15,10 @@ from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.table import Table
 from rich.text import Text
+from contextlib import contextmanager
+import time
 
-from .ansi import info, warn, get_console, style_if_enabled
+from .ansi import info, warn, header, get_console, style_if_enabled
 from .constants import SEVERITY_COLORS
 from .fs import default_page_size, pretty_severity_label
 from .logging_setup import log_timing
@@ -25,6 +27,34 @@ if TYPE_CHECKING:
     from .models import Finding, Plugin
 
 _console_global = get_console()
+
+
+@contextmanager
+def show_progress(message: str, threshold_seconds: float = 0.5):
+    """Context manager to show progress spinner for long-running operations.
+
+    Only displays spinner if operation takes longer than threshold.
+
+    Args:
+        message: Message to display (e.g., "Loading findings...")
+        threshold_seconds: Minimum duration before showing spinner (default: 0.5s)
+
+    Example:
+        >>> with show_progress("Loading 755 findings..."):
+        ...     findings = Finding.get_by_scan_with_plugin(scan_id)
+    """
+    start_time = time.time()
+
+    try:
+        yield  # Execute the wrapped code first
+    finally:
+        elapsed = time.time() - start_time
+        # Note: This displays after the operation, not during
+        # For true async progress, we'd need threading which adds complexity
+        # For now, this serves as timing feedback for slow operations
+        if elapsed >= threshold_seconds:
+            # Show elapsed time for operations that exceeded threshold
+            _console_global.print(f"[dim]({elapsed:.1f}s)[/dim]")
 
 
 def print_action_menu(actions: list[tuple[str, str]]) -> None:
@@ -108,6 +138,208 @@ def menu_pager(text: str, page_size: Optional[int] = None) -> None:
         if answer == "":
             return
         warn("Use N (next), P (prev), or B (back).")
+
+
+def render_empty_state(context: str, filter_text: str = "") -> None:
+    """Render helpful empty state message based on context.
+
+    Args:
+        context: Context identifier for empty state type
+            - "filter_mismatch": No findings match current filter
+            - "no_severity": No findings at this severity level
+            - "all_completed": All findings marked as completed
+            - "no_findings": No findings in scan at all
+        filter_text: Current filter string (if applicable)
+    """
+    if context == "filter_mismatch":
+        if filter_text:
+            info(f'\nNo findings match your current filter: "{filter_text}"')
+        else:
+            info("\nNo findings match the current filter.")
+        info("")
+        info("Suggestions:")
+        info("  • Press [C] to clear filter")
+        info("  • Press [F] to adjust your search term")
+        info("  • All normal menu actions are available below")
+        info("")
+
+    elif context == "no_severity":
+        info("\nNo findings at this severity level.")
+        info("")
+        info("This may mean:")
+        info("  • The scan found no issues of this severity")
+        info("  • All findings of this severity have been filtered out")
+        info("")
+        info("Press [B] to return to severity menu.")
+        info("")
+
+    elif context == "all_completed":
+        from .ansi import ok
+        ok("\n✓ All findings marked as completed!")
+        info("")
+        info("Next steps:")
+        info("  • Press [R] to view completed findings")
+        info("  • Press [U] from the reviewed list to undo completion")
+        info("  • All normal menu actions are available below")
+        info("")
+
+    elif context == "no_findings":
+        warn("\nNo findings in this scan.")
+        info("")
+        info("This could mean:")
+        info("  • The .nessus file contained no vulnerability findings")
+        info("  • Import process encountered issues")
+        info("")
+
+
+def render_pagination_indicator(
+    current_page: int,
+    total_pages: int,
+    total_items: int
+) -> str:
+    """Generate pagination indicator with visual progress bar.
+
+    Args:
+        current_page: Current page number (0-indexed)
+        total_pages: Total number of pages
+        total_items: Total number of items across all pages
+
+    Returns:
+        Formatted pagination string with progress bar
+
+    Examples:
+        >>> render_pagination_indicator(0, 5, 125)
+        '[████░░░░░░] Page 1/5 (125 total)'
+        >>> render_pagination_indicator(2, 5, 125)
+        '[██████░░░░] Page 3/5 (125 total)'
+    """
+    if total_pages <= 1:
+        return f"Page 1/1 ({total_items} total)"
+
+    # Calculate progress bar
+    progress = (current_page + 1) / total_pages
+    bar_width = 10
+    filled = int(progress * bar_width)
+    bar = "█" * filled + "░" * (bar_width - filled)
+
+    # Bold page numbers for emphasis
+    page_display = f"**{current_page + 1}/{total_pages}**"
+
+    return f"[{bar}] Page {page_display} ({total_items} total)"
+
+
+def render_scan_context_header(scan: Any, scan_id: int) -> None:
+    """Render compact scan context header with metadata and progress.
+
+    Args:
+        scan: Scan database object
+        scan_id: Scan ID for database queries
+
+    Displays scan overview including:
+    - Scan name and file
+    - Import timestamp
+    - Total findings count
+    - Review progress (unreviewed/reviewed/completed)
+
+    Layout adapts to terminal width (single line vs multi-line).
+    """
+    from .ansi import get_terminal_width, style_if_enabled
+    from .database import get_connection
+    from datetime import datetime
+
+    # Query database for finding counts by review state
+    with get_connection() as conn:
+        cursor = conn.execute("""
+            SELECT
+                SUM(CASE WHEN review_state = 'pending' THEN 1 ELSE 0 END) as unreviewed,
+                SUM(CASE WHEN review_state = 'reviewed' THEN 1 ELSE 0 END) as reviewed,
+                SUM(CASE WHEN review_state = 'completed' THEN 1 ELSE 0 END) as completed,
+                COUNT(*) as total
+            FROM findings
+            WHERE scan_id = ?
+        """, (scan_id,))
+        row = cursor.fetchone()
+        unreviewed_count = row[0] if row else 0
+        reviewed_count = row[1] if row else 0
+        completed_count = row[2] if row else 0
+        total_count = row[3] if row else 0
+
+    # Format timestamp as relative time if recent, otherwise date
+    if scan.imported_at:
+        try:
+            if isinstance(scan.imported_at, str):
+                imported_dt = datetime.fromisoformat(scan.imported_at.replace('Z', '+00:00'))
+            else:
+                imported_dt = scan.imported_at
+
+            now = datetime.now(imported_dt.tzinfo) if imported_dt.tzinfo else datetime.now()
+            delta = now - imported_dt
+            delta_seconds = delta.total_seconds()
+
+            if delta_seconds < 3600:  # Less than 1 hour
+                minutes = int(delta_seconds / 60)
+                time_ago = f"{minutes} min ago" if minutes != 1 else "1 min ago"
+            elif delta_seconds < 86400:  # Less than 1 day
+                hours = int(delta_seconds / 3600)
+                time_ago = f"{hours} hour{'s' if hours != 1 else ''} ago"
+            elif delta_seconds < 604800:  # Less than 1 week
+                days = int(delta_seconds / 86400)
+                time_ago = f"{days} day{'s' if days != 1 else ''} ago"
+            else:
+                time_ago = imported_dt.strftime("%Y-%m-%d")
+        except Exception:
+            time_ago = "unknown"
+    else:
+        time_ago = "unknown"
+
+    # Detect terminal width for responsive layout
+    term_width = get_terminal_width()
+
+    # Build header text
+    scan_name = scan.scan_name or "Unknown"
+    nessus_file = scan.nessus_file_path or "unknown.nessus"
+
+    if term_width >= 120:
+        # Wide terminal: single line
+        header_text = Text()
+        header_text.append("Scan: ", style=style_if_enabled("bold"))
+        header_text.append(f"{scan_name}", style=style_if_enabled("cyan"))
+        header_text.append(" | ", style=style_if_enabled("dim"))
+        header_text.append(f"File: {nessus_file}", style=None)
+        header_text.append(" | ", style=style_if_enabled("dim"))
+        header_text.append(f"Imported: {time_ago}", style=None)
+        header_text.append(" | ", style=style_if_enabled("dim"))
+        header_text.append(f"Total: {total_count} plugins", style=style_if_enabled("bold"))
+        header_text.append(" | ", style=style_if_enabled("dim"))
+        header_text.append(f"Unreviewed: {unreviewed_count}", style=style_if_enabled("cyan"))
+        header_text.append(" | ", style=style_if_enabled("dim"))
+        header_text.append(f"Reviewed: {reviewed_count}", style=style_if_enabled("yellow"))
+        header_text.append(" | ", style=style_if_enabled("dim"))
+        header_text.append(f"Completed: {completed_count}", style=style_if_enabled("green"))
+
+        _console_global.print(header_text)
+    else:
+        # Narrow/medium terminal: multi-line layout
+        line1 = Text()
+        line1.append("Scan: ", style=style_if_enabled("bold"))
+        line1.append(f"{scan_name}", style=style_if_enabled("cyan"))
+        line1.append(" | ", style=style_if_enabled("dim"))
+        line1.append(f"Imported: {time_ago}", style=None)
+
+        line2 = Text()
+        line2.append(f"Total: {total_count} plugins", style=style_if_enabled("bold"))
+        line2.append(" | ", style=style_if_enabled("dim"))
+        line2.append(f"Unreviewed: {unreviewed_count}", style=style_if_enabled("cyan"))
+        line2.append(" | ", style=style_if_enabled("dim"))
+        line2.append(f"Reviewed: {reviewed_count}", style=style_if_enabled("yellow"))
+        line2.append(" | ", style=style_if_enabled("dim"))
+        line2.append(f"Completed: {completed_count}", style=style_if_enabled("green"))
+
+        _console_global.print(line1)
+        _console_global.print(line2)
+
+    # Separator line
+    _console_global.print("─" * min(term_width, 80))
 
 
 def render_scan_table(scans: list[Path]) -> None:
@@ -212,7 +444,8 @@ def render_finding_list_table(
     """
 
     table = Table(
-        title=None, box=box.SIMPLE, show_lines=False, pad_edge=False
+        title=None, box=box.SIMPLE, show_lines=False, pad_edge=False,
+        row_styles=["", "dim"]
     )
     table.add_column("#", justify="right", no_wrap=True, max_width=5)
     table.add_column("Plugin ID", justify="right", no_wrap=True, max_width=10)
@@ -230,19 +463,36 @@ def render_finding_list_table(
 
         # Get severity from plugin metadata
         from .nessus_import import severity_label_from_int
+        from .ansi import get_terminal_width
         label = severity_label_from_int(plugin.severity_int)
 
-        # Use abbreviated severity labels for compact display
-        sev_abbrev = {
-            "Critical": "Crit",
-            "High": "High",
-            "Medium": "Med",
-            "Low": "Low",
-            "Info": "Info"
-        }.get(label, label)
+        # Adaptive severity labels based on terminal width
+        term_width = get_terminal_width()
 
-        # Color-code the abbreviated severity using severity_cell
-        sev_colored = severity_cell(sev_abbrev)
+        if term_width >= 120:
+            # Wide terminal: full labels
+            sev_display = label  # "Critical", "High", "Medium", "Low", "Info"
+        elif term_width >= 80:
+            # Medium terminal: abbreviated labels (current default)
+            sev_display = {
+                "Critical": "Crit",
+                "High": "High",
+                "Medium": "Med",
+                "Low": "Low",
+                "Info": "Info"
+            }.get(label, label)
+        else:
+            # Narrow terminal: single-character indicators
+            sev_display = {
+                "Critical": "C",
+                "High": "H",
+                "Medium": "M",
+                "Low": "L",
+                "Info": "I"
+            }.get(label, label[0] if label else "?")
+
+        # Color-code the severity label using severity_cell
+        sev_colored = severity_cell(sev_display)
 
         row_data = [str(row_number), plugin_id_str, sev_colored, plugin_name]
 
@@ -279,54 +529,19 @@ def render_compare_tables(
         same_combos: Whether all files have identical host:port combinations
         groups_sorted: List of filename groups with identical combinations
     """
-    summary = Table(
-        title=None, box=box.SIMPLE, show_lines=False, pad_edge=False
-    )
-    summary.add_column("Aspect", max_width=20)
-    summary.add_column("Equal Across Files", justify="center", no_wrap=True, max_width=20)
-    summary.add_column("Intersection Size", justify="right", no_wrap=True, max_width=18)
-    summary.add_column("Union Size", justify="right", no_wrap=True, max_width=12)
-    summary.add_row(
-        "Hosts",
-        "✅" if same_hosts else "❌",
-        str(len(host_intersection)),
-        str(len(host_union)),
-    )
-    summary.add_row(
-        "Ports",
-        "✅" if same_ports else "❌",
-        str(len(port_intersection)),
-        str(len(port_union)),
-    )
-    summary.add_row("Host:Port Combos", "✅" if same_combos else "❌", "-", "-")
-    _console_global.print(summary)
-
-    files_table = Table(
-        title="Filtered Files",
-        box=box.SIMPLE,
-        show_lines=False,
-        pad_edge=False
-    )
-    files_table.add_column("#", justify="right", no_wrap=True, max_width=5)
-    files_table.add_column("File", overflow="fold")
-    files_table.add_column("Hosts", justify="right", no_wrap=True, max_width=8)
-    files_table.add_column("Ports", justify="right", no_wrap=True, max_width=8)
-    files_table.add_column(
-        "Explicit combos?", justify="center", no_wrap=True, max_width=16
-    )
-
-    for i, (file_path, hosts, ports_set, _combos, had_explicit) in enumerate(
-        parsed, 1
-    ):
-        files_table.add_row(
-            str(i),
-            file_path if isinstance(file_path, str) else file_path.name,
-            str(len(hosts)),
-            str(len(ports_set)),
-            "Yes" if had_explicit else "No",
-        )
-
-    _console_global.print(files_table)
+    # Display explanatory context before results
+    num_groups = len(groups_sorted)
+    if num_groups > 1:
+        header(f"Found {num_groups} groups with identical host:port combinations")
+        info("")
+        info("What this means: Findings in the same group affect the exact same systems.")
+        info("You might want to review them together or choose one as representative.")
+        info("")
+    else:
+        header("Comparison Results - All findings in single group")
+        info("")
+        info("What this means: All filtered findings affect identical host:port combinations.")
+        info("")
 
     if len(groups_sorted) > 1:
         groups_table = Table(
@@ -1070,21 +1285,31 @@ def display_finding_preview(
     # Create panel with plugin name as title and indicators in subtitle
     subtitle_parts = []
 
-    # Check for workflow availability
-    has_workflow = False
-    if workflow_mapper and plugin:
-        has_workflow = workflow_mapper.has_workflow(str(plugin.plugin_id))
-
-    # Add badges to subtitle
+    # Add Metasploit badge (if available)
     if is_msf:
-        # Show first Metasploit module name if available
         if plugin.metasploit_names and len(plugin.metasploit_names) > 0:
-            msf_module = plugin.metasploit_names[0]
-            subtitle_parts.append(f"⚡ Metasploit: {msf_module}")
+            # Show count if multiple modules, otherwise show first module name
+            if len(plugin.metasploit_names) > 1:
+                msf_text = f"⚡ Metasploit ({len(plugin.metasploit_names)} modules)"
+            else:
+                msf_module = plugin.metasploit_names[0]
+                # Truncate long module names to 40 chars
+                if len(msf_module) > 40:
+                    msf_module = msf_module[:37] + "..."
+                msf_text = f"⚡ Metasploit: {msf_module}"
+            subtitle_parts.append(msf_text)
         else:
             subtitle_parts.append("⚡ Metasploit")
-    if has_workflow:
-        subtitle_parts.append("📋 Workflow")
+
+    # Add Workflow badge (if available)
+    if workflow_mapper and plugin:
+        workflow = workflow_mapper.get_workflow(str(plugin.plugin_id))
+        if workflow:
+            workflow_name = workflow.workflow_name
+            # Truncate long workflow names to 40 chars
+            if len(workflow_name) > 40:
+                workflow_name = workflow_name[:37] + "..."
+            subtitle_parts.append(f"Workflow Available: {workflow_name}")
 
     subtitle = " | ".join(subtitle_parts) if subtitle_parts else None
 
@@ -1118,7 +1343,6 @@ def bulk_extract_cves_for_plugins(plugins: List[tuple[int, str]]) -> None:
     """
     from .models import Plugin
     from .database import get_connection
-    from .ansi import header, info
 
     header("CVE Information for Filtered Findings")
     info(f"Displaying CVEs from {len(plugins)} finding(s)...\n")
@@ -1153,7 +1377,6 @@ def bulk_extract_cves_for_findings(files: List[Path]) -> None:
     from .models import Plugin
     from .database import get_connection
     from .parsing import extract_plugin_id_from_filename
-    from .ansi import header, info
 
     header("CVE Information for Filtered Findings")
     info(f"Displaying CVEs from {len(files)} file(s)...\n")
@@ -1189,8 +1412,6 @@ def display_bulk_cve_results(results: dict[str, list[str]]) -> None:
         results: Dictionary mapping plugin name/filename to list of CVEs
     """
     from rich.prompt import Prompt
-    from .ansi import info, warn
-
     # Display results
     if results:
         # Count total findings and unique CVEs

@@ -1040,6 +1040,7 @@ def run_tool_workflow(
     synthetic_path = Path(f"{synthetic_filename}.txt")
 
     while True:
+
         from .config import load_config
         config = load_config()
         tool_choice = choose_tool(config)
@@ -1210,6 +1211,7 @@ def run_tool_workflow(
                 _console_global.print(cmd_str)
 
         elif action == "run":
+
             try:
                 tool_used = True
 
@@ -1261,6 +1263,7 @@ def run_tool_workflow(
 
         # Show post-execution summary if command was run
         if action == "run" and 'exec_metadata' in locals():
+
             from rich.panel import Panel
             from rich.text import Text
 

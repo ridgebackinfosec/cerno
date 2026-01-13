@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.12] - 2026-01-13
+
+### Changed
+- Removing extra guidance references
+
+## [1.2.11] - 2026-01-13
+
+### Fixed
+- Resolved empty state "limbo bug" where users were stuck when no findings matched the current filter - now displays empty state message within normal menu flow with all actions available (cerno.py:browse_file_list())
+
+### Changed
+- Additional tips screen redesigned with Rich UI - cyan-bordered panel with styled keyboard shortcuts and section headers for consistent visual design (onboarding.py:show_additional_tips())
+- Empty state messages updated to clarify that all normal menu actions remain available (render.py:render_empty_state())
+
+## [1.2.10] - 2026-01-13
+
+### Changed
+- Removed broken workflow emoji
+- Removed excess comparison and overlap analysis tables
+- Workflow guidance redesigned with Rich UI components - cyan-bordered panel, styled statistics, responsive keyboard shortcut grid, and yellow-bordered tips panel for improved visual appeal (onboarding.py:show_workflow_guidance())
+- Workflow guidance now only displays on first-time scan review - skips if any session exists for the scan (onboarding.py:show_workflow_guidance())
+
+## [1.2.9] - 2026-01-13
+
+### Fixed
+- Onboarding verbiage
+
+### Changed
+- removed tool execution breadcrumbs
+
+## [1.2.8] - 2026-01-13
+
+### Fixed
+- Fixed SQL query bug in onboarding tips causing `OperationalError: no such column: severity_int` (onboarding.py:223-230)
+- Corrected query to JOIN findings with plugins table to access severity_int data
+
+## [1.2.7] - 2026-01-12
+
+### Added
+- **Scan context header** - Added comprehensive scan metadata display at top of severity menu showing scan name, import time, and review progress statistics (render.py:render_scan_context_header())
+- **Pagination progress bar** - Visual progress bar in status line showing current position in paginated results: `[████░░░░░░] Page 1/5` (render.py:render_pagination_indicator())
+- **First page hint** - Added helpful message on first page when more results exist: "→ N more findings available (press N for next page)" (cerno.py:497-499)
+- **Empty state messages** - Context-aware helpful messages when no findings match filters, with actionable suggestions for resolution (render.py:render_empty_state(), cerno.py:489-503)
+- **Comparison context** - Explanatory text before comparison and overlapping analysis results explaining what groups mean and how to use them (render.py:450-464, tui.py:531-537)
+- **Progress timing feedback** - Elapsed time display for operations exceeding 0.5s threshold (render.py:show_progress())
+- **Guided tour mode** - Interactive 4-step walkthrough for first-time users covering importing scans, reviewing findings, running tools, and tracking progress (onboarding.py:show_guided_tour())
+- **Workflow guidance** - Context-aware best practices and keyboard shortcuts shown after scan selection with smart tips based on scan state (onboarding.py:show_workflow_guidance())
+- **Tool execution breadcrumbs** - Visual progress indicators during tool workflow showing current stage: Select → Configure → Review → Execute → Results (render.py:render_tool_progress_breadcrumb(), tools.py:1048,979,1160,1224,1278)
+
+### Changed
+- **Adaptive severity labels** - Severity labels now adapt to terminal width: full labels (≥120 chars), abbreviations (80-119 chars), or single-char indicators (<80 chars) for improved scannability (render.py:273-299)
+- **Table row striping** - Enabled alternating row dimming in finding list tables to improve readability of dense data (render.py:216)
+- **Unified MSF/workflow indicators** - Finding preview panel now shows both Metasploit and Workflow availability in subtitle with full names, module counts for multiple MSF modules, and 40-char truncation for long names (render.py:1241-1267)
+- **First-time user experience** - Users with no imported scans now see guided tour before being prompted to import (cerno.py:894)
+- **Scan review flow** - Workflow guidance automatically appears after scan selection with context-aware tips based on scan state (cerno.py:1011)
+
 ## [1.2.6] - 2026-01-12
 
 ### Added

@@ -425,7 +425,11 @@ def browse_file_list(
             }.get(sort_mode, "Name A↑Z")
 
             status_parts.append(f"Sort: {sort_label} (next: {next_sort_mode})")
-            status_parts.append(f"Page: {page_idx+1}/{total_pages}")
+
+            # Enhanced pagination indicator with progress bar
+            from cerno_pkg.render import render_pagination_indicator
+            page_indicator = render_pagination_indicator(page_idx, total_pages, len(display))
+            status_parts.append(page_indicator)
 
             # Session time indicator
             if session_start_time:
@@ -482,11 +486,31 @@ def browse_file_list(
                     else:
                         _console_global.print(str(part))
 
-            render_finding_list_table(
-                page_items, sort_mode, get_counts_for, row_offset=start,
-                show_severity=is_msf_mode
-            )
+            # Render table or empty state message
+            if not display:
+                from cerno_pkg.render import render_empty_state
+                # Determine context for empty state
+                if file_filter:
+                    render_empty_state("filter_mismatch", file_filter)
+                elif all_records and len(all_records) == len(reviewed):
+                    render_empty_state("all_completed")
+                elif not all_records:
+                    render_empty_state("no_severity")
+                # Don't render table if no findings
+            else:
+                render_finding_list_table(
+                    page_items, sort_mode, get_counts_for, row_offset=start,
+                    show_severity=is_msf_mode
+                )
 
+                # Add hint on first page if more results exist
+                can_next = page_idx + 1 < total_pages
+                can_prev = page_idx > 0
+                if page_idx == 0 and can_next:
+                    remaining = len(display) - page_size
+                    info(f"→ {remaining} more finding{'s' if remaining != 1 else ''} available (press N for next page)")
+
+            # Always render footer with available actions
             can_next = page_idx + 1 < total_pages
             can_prev = page_idx > 0
             render_actions_footer(
@@ -781,7 +805,7 @@ def main(args: types.SimpleNamespace) -> None:
                 warn(f"No additional workflows loaded from {custom_workflows}")
             _console_global.print(f"Total: {workflow_mapper.count()} workflow(s) available")
         elif default_count > 0:
-            _console_global.print(f"Loaded {default_count} default workflow(s)")
+            _console_global.print(f"Loaded {default_count} default workflow(s)\n")
 
     use_sudo = root_or_sudo_available()
     if not use_sudo:
@@ -864,8 +888,13 @@ def main(args: types.SimpleNamespace) -> None:
                     return
 
                 if not all_scans:
-                    err("No scans found in database.")
-                    info("Import a scan first: cerno import <nessus_file>")
+                    # First-time user - show guided tour
+                    from cerno_pkg.onboarding import show_guided_tour
+
+                    show_guided_tour()
+                    # After tour, show import instructions
+                    info("\nTo get started, import a Nessus scan:")
+                    info("  cerno import nessus /path/to/scan.nessus\n")
                     return
 
                 # Display scan selection menu
@@ -976,6 +1005,10 @@ def main(args: types.SimpleNamespace) -> None:
                     top_ports = 100
 
                 show_scan_summary(scan_dir, top_ports_n=top_ports, scan_id=scan_id)
+
+                # Show workflow guidance for first-time or returning users
+                from cerno_pkg.onboarding import show_workflow_guidance
+                show_workflow_guidance(scan_name=scan.scan_name, scan_id=scan_id)
 
                 # Severity loop (inner loop)
                 while True:

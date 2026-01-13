@@ -528,6 +528,13 @@ def handle_finding_list_actions(
         from .analysis import analyze_inclusions
         groups = analyze_inclusions(candidates)
         if groups:
+            # Display context explanation
+            header(f"\nFound {len(groups)} overlapping groups")
+            info("")
+            info("What this means: One finding's affected systems are a superset of another.")
+            info("The larger finding might be more comprehensive to review.")
+            info("")
+
             visible = min(VISIBLE_GROUPS, len(groups))
             opts = " | ".join(f"g{i+1}" for i in range(visible))
             ellipsis = " | etc." if len(groups) > VISIBLE_GROUPS else ""

@@ -356,23 +356,6 @@ def analyze_inclusions(files: Union[list['Finding'], list[tuple['Finding', 'Plug
         ):
             maximals.append(name_a)
 
-    # Render summary table
-    summary = Table(
-        title=None, box=box.SIMPLE, show_lines=False, pad_edge=False
-    )
-    summary.add_column("#", justify="right", no_wrap=True)
-    summary.add_column("Plugin")
-    summary.add_column("Items", justify="right", no_wrap=True)
-    summary.add_column("Covers", justify="right", no_wrap=True)
-    for i, display_name in enumerate(display_names, 1):
-        summary.add_row(
-            str(i),
-            display_name,
-            str(len(item_sets[display_name])),
-            str(len(cover_map[display_name])),
-        )
-    _console_global.print(summary)
-
     # Build groups with explicit root (superset) and covered list
     groups = []
     for maximal_file in sorted(
