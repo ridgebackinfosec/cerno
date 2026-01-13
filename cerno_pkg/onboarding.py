@@ -137,12 +137,15 @@ def show_tour_step(step: int) -> None:
         info("")
         info("  [M] Mark reviewed - Fully investigated")
         info("")
-        info("Resume where you left off - Cerno saves your session!")
+        info("Resume where you left off - Cerno saves your progress!")
         info("")
 
 
 def show_workflow_guidance(scan_name: str, scan_id: int) -> None:
     """Show workflow guidance with context-aware tips.
+
+    Only displays for first-time users of a scan. Skips if any session
+    exists for the scan (indicating previous review activity).
 
     Args:
         scan_name: Name of selected scan
@@ -152,6 +155,17 @@ def show_workflow_guidance(scan_name: str, scan_id: int) -> None:
 
     # Query scan statistics
     with get_connection() as conn:
+        # Check if user has reviewed this scan before
+        cursor = conn.execute(
+            "SELECT session_id FROM sessions WHERE scan_id = ? LIMIT 1",
+            (scan_id,)
+        )
+        existing_session = cursor.fetchone()
+
+        # Skip guidance if user has seen this scan before
+        if existing_session:
+            return
+
         cursor = conn.execute(
             """
             SELECT

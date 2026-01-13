@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Workflow guidance now only displays on first-time scan review - skips if any session exists for the scan (onboarding.py:show_workflow_guidance())
+
 ## [1.2.9] - 2026-01-13
 
 ### Fixed
