@@ -543,55 +543,6 @@ def render_compare_tables(
         info("What this means: All filtered findings affect identical host:port combinations.")
         info("")
 
-    summary = Table(
-        title=None, box=box.SIMPLE, show_lines=False, pad_edge=False
-    )
-    summary.add_column("Aspect", max_width=20)
-    summary.add_column("Equal Across Files", justify="center", no_wrap=True, max_width=20)
-    summary.add_column("Intersection Size", justify="right", no_wrap=True, max_width=18)
-    summary.add_column("Union Size", justify="right", no_wrap=True, max_width=12)
-    summary.add_row(
-        "Hosts",
-        "✅" if same_hosts else "❌",
-        str(len(host_intersection)),
-        str(len(host_union)),
-    )
-    summary.add_row(
-        "Ports",
-        "✅" if same_ports else "❌",
-        str(len(port_intersection)),
-        str(len(port_union)),
-    )
-    summary.add_row("Host:Port Combos", "✅" if same_combos else "❌", "-", "-")
-    _console_global.print(summary)
-
-    files_table = Table(
-        title="Filtered Files",
-        box=box.SIMPLE,
-        show_lines=False,
-        pad_edge=False
-    )
-    files_table.add_column("#", justify="right", no_wrap=True, max_width=5)
-    files_table.add_column("File", overflow="fold")
-    files_table.add_column("Hosts", justify="right", no_wrap=True, max_width=8)
-    files_table.add_column("Ports", justify="right", no_wrap=True, max_width=8)
-    files_table.add_column(
-        "Explicit combos?", justify="center", no_wrap=True, max_width=16
-    )
-
-    for i, (file_path, hosts, ports_set, _combos, had_explicit) in enumerate(
-        parsed, 1
-    ):
-        files_table.add_row(
-            str(i),
-            file_path if isinstance(file_path, str) else file_path.name,
-            str(len(hosts)),
-            str(len(ports_set)),
-            "Yes" if had_explicit else "No",
-        )
-
-    _console_global.print(files_table)
-
     if len(groups_sorted) > 1:
         groups_table = Table(
             title="Identical Host:Port Groups",
