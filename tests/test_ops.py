@@ -527,7 +527,6 @@ class TestCommandAvailability:
         """Test getting version from an available tool."""
         from cerno_pkg.ops import get_tool_version
         from unittest.mock import Mock, patch
-        import subprocess
 
         mock_result = Mock()
         mock_result.returncode = 0
@@ -630,7 +629,7 @@ class TestCommandAvailability:
     def test_render_tool_availability_table_basic(self):
         """Test rendering tool availability table (smoke test)."""
         from cerno_pkg.render import render_tool_availability_table
-        from unittest.mock import patch, Mock
+        from unittest.mock import patch
 
         # Mock the console output to capture what would be printed
         with patch('cerno_pkg.render._console_global') as mock_console:

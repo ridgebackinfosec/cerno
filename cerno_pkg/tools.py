@@ -974,10 +974,6 @@ def run_tool_workflow(
 
     _console_global = get_console()
 
-    # Show progress breadcrumb: Configure stage
-    from .render import render_tool_progress_breadcrumb
-    render_tool_progress_breadcrumb("configure")
-
     sample_hosts = hosts
 
     if len(hosts) > SAMPLE_THRESHOLD:
@@ -1044,8 +1040,6 @@ def run_tool_workflow(
     synthetic_path = Path(f"{synthetic_filename}.txt")
 
     while True:
-        # Show progress breadcrumb: Select stage
-        render_tool_progress_breadcrumb("select")
 
         from .config import load_config
         config = load_config()
@@ -1156,9 +1150,6 @@ def run_tool_workflow(
 
             continue
 
-        # Show progress breadcrumb: Review stage
-        render_tool_progress_breadcrumb("review")
-
         # Build unified context for all other tools
         ctx = ToolContext(
             tcp_ips=tcp_ips,
@@ -1220,8 +1211,6 @@ def run_tool_workflow(
                 _console_global.print(cmd_str)
 
         elif action == "run":
-            # Show progress breadcrumb: Execute stage
-            render_tool_progress_breadcrumb("execute")
 
             try:
                 tool_used = True
@@ -1274,8 +1263,6 @@ def run_tool_workflow(
 
         # Show post-execution summary if command was run
         if action == "run" and 'exec_metadata' in locals():
-            # Show progress breadcrumb: Results stage
-            render_tool_progress_breadcrumb("results")
 
             from rich.panel import Panel
             from rich.text import Text

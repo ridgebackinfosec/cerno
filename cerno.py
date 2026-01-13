@@ -805,7 +805,7 @@ def main(args: types.SimpleNamespace) -> None:
                 warn(f"No additional workflows loaded from {custom_workflows}")
             _console_global.print(f"Total: {workflow_mapper.count()} workflow(s) available")
         elif default_count > 0:
-            _console_global.print(f"Loaded {default_count} default workflow(s)")
+            _console_global.print(f"Loaded {default_count} default workflow(s)\n")
 
     use_sudo = root_or_sudo_available()
     if not use_sudo:

@@ -113,8 +113,6 @@ def show_tour_step(step: int) -> None:
         info("")
         info("Navigate with keyboard:")
         info("  [1-4] Select severity level")
-        info("  [M] View Metasploit-exploitable findings")
-        info("  [W] View findings with workflows")
         info("")
 
     elif step == 3:
@@ -125,7 +123,7 @@ def show_tour_step(step: int) -> None:
         info("  [T] Run tools (nmap, NetExec, Metasploit)")
         info("  [V] View affected hosts/ports")
         info("  [E] See CVE details")
-        info("  [W] View workflow steps")
+        info("  [W] View workflow steps [if available]")
         info("")
         info("Tools run against the exact hosts/ports affected by the finding.")
         info("Results are saved to ~/.cerno/artifacts/")
@@ -137,9 +135,7 @@ def show_tour_step(step: int) -> None:
         info("")
         info("Mark findings to track what you've reviewed:")
         info("")
-        info("  [M] Mark reviewed - You've looked at it")
-        info("  [X] Mark completed - Fully investigated/remediated")
-        info("  [S] Skip - Not relevant to your environment")
+        info("  [M] Mark reviewed - Fully investigated")
         info("")
         info("Resume where you left off - Cerno saves your session!")
         info("")
@@ -247,7 +243,7 @@ def _show_context_aware_tips(scan_id: int, total: int, unreviewed: int, complete
         msf_count = cursor.fetchone()[0]
 
     if msf_count > 0:
-        info(f"⚡ Tip: {msf_count} finding(s) have Metasploit modules - press [M] to see exploitable vulns!")
+        info(f"⚡ Tip: {msf_count} finding(s) have Metasploit modules!")
 
     # Progress encouragement
     if completed > 0 and total > 0:
@@ -270,7 +266,7 @@ def show_additional_tips() -> None:
     info("")
     info("Finding Analysis:")
     info("  • [H] Compare findings - see which have identical hosts")
-    info("  • [O] Overlapping analysis - find subset relationships")
+    info("  • [O] Overlapping analysis - find subset relationships across findings")
     info("  • [V] View hosts in grouped format for easier review")
     info("")
     info("Tool Execution:")
@@ -279,9 +275,8 @@ def show_additional_tips() -> None:
     info("  • Press [T] to see tool menu with nmap, NetExec, Metasploit")
     info("")
     info("Progress Tracking:")
-    info("  • [M] Mark reviewed - quick triage, still in pending state")
-    info("  • [X] Mark completed - fully investigated/remediated")
-    info("  • [R] View completed findings - you can undo with [U]")
+    info("  • [M] Mark reviewed - fully investigated")
+    info("  • [R] View reviewed findings - you can undo with [U]")
     info("  • Sessions auto-save - resume where you left off!")
     info("")
 
