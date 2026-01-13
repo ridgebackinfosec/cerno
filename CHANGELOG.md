@@ -7,8 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.11] - 2026-01-13
+
+### Fixed
+- Resolved empty state "limbo bug" where users were stuck when no findings matched the current filter - now displays empty state message within normal menu flow with all actions available (cerno.py:browse_file_list())
+
 ### Changed
 - Additional tips screen redesigned with Rich UI - cyan-bordered panel with styled keyboard shortcuts and section headers for consistent visual design (onboarding.py:show_additional_tips())
+- Empty state messages updated to clarify that all normal menu actions remain available (render.py:render_empty_state())
 
 ## [1.2.10] - 2026-01-13
 

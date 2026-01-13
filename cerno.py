@@ -486,7 +486,7 @@ def browse_file_list(
                     else:
                         _console_global.print(str(part))
 
-            # Handle empty states with helpful messages
+            # Render table or empty state message
             if not display:
                 from cerno_pkg.render import render_empty_state
                 # Determine context for empty state
@@ -496,23 +496,23 @@ def browse_file_list(
                     render_empty_state("all_completed")
                 elif not all_records:
                     render_empty_state("no_severity")
-                # Skip rendering table and footer for empty states
-                ans = Prompt.ask("Action").strip().lower()
-                if ans in ("b", "back", "q"):
-                    return
-                continue
+                # Don't render table if no findings
+            else:
+                render_finding_list_table(
+                    page_items, sort_mode, get_counts_for, row_offset=start,
+                    show_severity=is_msf_mode
+                )
 
-            render_finding_list_table(
-                page_items, sort_mode, get_counts_for, row_offset=start,
-                show_severity=is_msf_mode
-            )
+                # Add hint on first page if more results exist
+                can_next = page_idx + 1 < total_pages
+                can_prev = page_idx > 0
+                if page_idx == 0 and can_next:
+                    remaining = len(display) - page_size
+                    info(f"→ {remaining} more finding{'s' if remaining != 1 else ''} available (press N for next page)")
 
-            # Add hint on first page if more results exist
+            # Always render footer with available actions
             can_next = page_idx + 1 < total_pages
             can_prev = page_idx > 0
-            if page_idx == 0 and can_next:
-                remaining = len(display) - page_size
-                info(f"→ {remaining} more finding{'s' if remaining != 1 else ''} available (press N for next page)")
             render_actions_footer(
                 group_applied=bool(group_filter),
                 candidates_count=len(candidates),

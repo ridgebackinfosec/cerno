@@ -158,9 +158,9 @@ def render_empty_state(context: str, filter_text: str = "") -> None:
             info("\nNo findings match the current filter.")
         info("")
         info("Suggestions:")
-        info("  • Press [C] to clear filter and see all findings")
+        info("  • Press [C] to clear filter")
         info("  • Press [F] to adjust your search term")
-        info("  • Try broader terms like 'http' or 'ssl'")
+        info("  • All normal menu actions are available below")
         info("")
 
     elif context == "no_severity":
@@ -180,7 +180,7 @@ def render_empty_state(context: str, filter_text: str = "") -> None:
         info("Next steps:")
         info("  • Press [R] to view completed findings")
         info("  • Press [U] from the reviewed list to undo completion")
-        info("  • Press [B] to return to severity menu")
+        info("  • All normal menu actions are available below")
         info("")
 
     elif context == "no_findings":
