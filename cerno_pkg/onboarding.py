@@ -12,10 +12,9 @@ from typing import TYPE_CHECKING
 
 from rich.panel import Panel
 from rich.prompt import Prompt
-from rich.table import Table
 from rich.text import Text
 
-from .ansi import get_console, get_terminal_width, header, info, ok, style_if_enabled
+from .ansi import get_console, header, info, ok, style_if_enabled
 
 if TYPE_CHECKING:
     pass
@@ -189,9 +188,6 @@ def show_workflow_guidance(scan_name: str, scan_id: int) -> None:
     if total == 0 or unreviewed == 0:
         return
 
-    # Import key_text helper for keyboard shortcuts
-    from .render import key_text
-
     # Build main content as Text object
     content = Text()
 
@@ -228,37 +224,6 @@ def show_workflow_guidance(scan_name: str, scan_id: int) -> None:
     content.append("[R]", style="cyan")
     content.append(" to see reviewed findings (undo available)\n\n")
 
-    # Create keyboard shortcuts grid (responsive)
-    term_width = get_terminal_width()
-    shortcuts_grid = Table.grid(padding=(0, 2))
-
-    if term_width >= 100:
-        # 2-column layout for wide terminals
-        shortcuts_grid.add_column()
-        shortcuts_grid.add_column()
-
-        shortcuts_grid.add_row(
-            key_text("F", "Filter by plugin name"),
-            key_text("C", "Clear filter")
-        )
-        shortcuts_grid.add_row(
-            key_text("H", "Compare host:port sets"),
-            key_text("O", "Find overlapping findings")
-        )
-        shortcuts_grid.add_row(
-            key_text("?", "Help"),
-            key_text("Q", "Quit")
-        )
-    else:
-        # Single-column for narrow terminals
-        shortcuts_grid.add_column()
-        shortcuts_grid.add_row(key_text("F", "Filter by plugin name"))
-        shortcuts_grid.add_row(key_text("C", "Clear filter"))
-        shortcuts_grid.add_row(key_text("H", "Compare host:port sets"))
-        shortcuts_grid.add_row(key_text("O", "Find overlapping findings"))
-        shortcuts_grid.add_row(key_text("?", "Help"))
-        shortcuts_grid.add_row(key_text("Q", "Quit"))
-
     # Combine content and shortcuts
     combined = Text()
     combined.append_text(content)
@@ -275,7 +240,6 @@ def show_workflow_guidance(scan_name: str, scan_id: int) -> None:
         expand=False
     )
     console.print(panel)
-    console.print(shortcuts_grid)
 
     # Context-aware tips
     tips_panel = _show_context_aware_tips(scan_id, total, unreviewed, completed)
