@@ -222,8 +222,9 @@ def _show_context_aware_tips(scan_id: int, total: int, unreviewed: int, complete
     with get_connection() as conn:
         cursor = conn.execute(
             """
-            SELECT COUNT(*) FROM findings
-            WHERE scan_id = ? AND severity_int = 4
+            SELECT COUNT(*) FROM findings f
+            JOIN plugins p ON f.plugin_id = p.plugin_id
+            WHERE f.scan_id = ? AND p.severity_int = 4
         """,
             (scan_id,),
         )

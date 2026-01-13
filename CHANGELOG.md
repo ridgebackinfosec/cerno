@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.8] - 2026-01-13
+
+### Fixed
+- Fixed SQL query bug in onboarding tips causing `OperationalError: no such column: severity_int` (onboarding.py:223-230)
+- Corrected query to JOIN findings with plugins table to access severity_int data
+
 ## [1.2.7] - 2026-01-12
 
 ### Added
