@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Removed broken workflow emoji
 - Removed excess comparison and overlap analysis tables
 - Workflow guidance redesigned with Rich UI components - cyan-bordered panel, styled statistics, responsive keyboard shortcut grid, and yellow-bordered tips panel for improved visual appeal (onboarding.py:show_workflow_guidance())
 - Workflow guidance now only displays on first-time scan review - skips if any session exists for the scan (onboarding.py:show_workflow_guidance())

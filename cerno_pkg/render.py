@@ -1309,7 +1309,7 @@ def display_finding_preview(
             # Truncate long workflow names to 40 chars
             if len(workflow_name) > 40:
                 workflow_name = workflow_name[:37] + "..."
-            subtitle_parts.append(f"📋 Workflow: {workflow_name}")
+            subtitle_parts.append(f"Workflow Available: {workflow_name}")
 
     subtitle = " | ".join(subtitle_parts) if subtitle_parts else None
 
