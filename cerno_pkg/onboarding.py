@@ -10,9 +10,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from rich.panel import Panel
 from rich.prompt import Prompt
+from rich.table import Table
+from rich.text import Text
 
-from .ansi import header, info, ok
+from .ansi import get_console, get_terminal_width, header, info, ok, style_if_enabled
 
 if TYPE_CHECKING:
     pass
@@ -182,51 +185,134 @@ def show_workflow_guidance(scan_name: str, scan_id: int) -> None:
 
     total, unreviewed, reviewed, completed = stats[0], stats[1], stats[2], stats[3]
 
-    # Skip guidance if scan has no findings or all are completed
+    # Skip guidance if scan has no findings or all are reviewed
     if total == 0 or unreviewed == 0:
         return
 
+    # Import key_text helper for keyboard shortcuts
+    from .render import key_text
+
+    # Build main content as Text object
+    content = Text()
+
+    # Scan info section with styled labels
+    content.append("Scan: ", style="bold")
+    content.append(f"{scan_name}\n\n")
+
+    # Statistics with colored labels
+    content.append("Findings: ", style="bold cyan")
+    content.append(f"{total} plugins  ")
+    content.append("│  ", style="dim")
+    content.append("Unreviewed: ", style="bold yellow")
+    content.append(f"{unreviewed}  ")
+    content.append("│  ", style="dim")
+    content.append("Reviewed: ", style="bold green")
+    content.append(f"{reviewed}\n\n")
+
+    # Recommended workflow with icons and inline styled keys
+    content.append("Recommended Workflow:\n", style="bold")
+    content.append("  1️⃣  Start with Critical/High severity findings\n")
+    content.append("  2️⃣  Open findings to see affected hosts ")
+    content.append("[V]", style="cyan")
+    content.append(" for grouped view\n")
+    content.append("  3️⃣  Run verification tools ")
+    content.append("[T]", style="cyan")
+    content.append(" for nmap/NetExec/Metasploit\n")
+    content.append("  4️⃣  Mark findings as reviewed ")
+    content.append("[M]", style="cyan")
+    content.append("\n")
+    content.append("  5️⃣  Use ")
+    content.append("[H]", style="cyan")
+    content.append(" to find duplicate findings across plugins\n")
+    content.append("  6️⃣  Check ")
+    content.append("[R]", style="cyan")
+    content.append(" to see reviewed findings (undo available)\n\n")
+
+    # Keyboard shortcuts section with responsive grid
+    content.append("Quick Reference:\n", style="bold")
+
+    # Create keyboard shortcuts grid (responsive)
+    term_width = get_terminal_width()
+    shortcuts_grid = Table.grid(padding=(0, 2))
+
+    if term_width >= 100:
+        # 2-column layout for wide terminals
+        shortcuts_grid.add_column()
+        shortcuts_grid.add_column()
+
+        shortcuts_grid.add_row(
+            key_text("F", "Filter by plugin name"),
+            key_text("C", "Clear filter")
+        )
+        shortcuts_grid.add_row(
+            key_text("H", "Compare host:port sets"),
+            key_text("O", "Find overlapping findings")
+        )
+        shortcuts_grid.add_row(
+            key_text("?", "Help"),
+            key_text("Q", "Quit")
+        )
+    else:
+        # Single-column for narrow terminals
+        shortcuts_grid.add_column()
+        shortcuts_grid.add_row(key_text("F", "Filter by plugin name"))
+        shortcuts_grid.add_row(key_text("C", "Clear filter"))
+        shortcuts_grid.add_row(key_text("H", "Compare host:port sets"))
+        shortcuts_grid.add_row(key_text("O", "Find overlapping findings"))
+        shortcuts_grid.add_row(key_text("?", "Help"))
+        shortcuts_grid.add_row(key_text("Q", "Quit"))
+
+    # Combine content and shortcuts
+    combined = Text()
+    combined.append_text(content)
+    combined.append_text(Text.from_markup("\n"))
+
+    # Wrap in Panel
+    console = get_console()
     print()  # Blank line for spacing
-    header("Getting Started with This Scan")
-    info("─" * 60)
-    info(f"Scan: {scan_name}")
-    info(
-        f"Total: {total} plugins | Unreviewed: {unreviewed} | Reviewed: {reviewed} | Completed: {completed}"
+    panel = Panel(
+        combined,
+        title="[bold cyan]Getting Started with This Scan[/]",
+        border_style=style_if_enabled("cyan"),
+        padding=(1, 2),
+        expand=False
     )
-    info("")
-    info("Recommended workflow:")
-    info("  1️⃣  Start with Critical/High severity findings")
-    info("  2️⃣  Open findings to see affected hosts ([V] for grouped view)")
-    info("  3️⃣  Run verification tools ([T] for nmap/NetExec/Metasploit)")
-    info("  4️⃣  Mark findings as reviewed ([M]) or completed ([X])")
-    info("  5️⃣  Use [H] to find duplicate findings across plugins")
-    info("  6️⃣  Check [R] to see completed findings (undo available)")
-    info("")
-    info("Keyboard shortcuts:")
-    info("  [F] Filter by plugin name  |  [C] Clear filter")
-    info("  [H] Compare host:port sets |  [O] Find overlapping findings")
-    info("  [?] Help                   |  [Q] Quit")
-    info("")
+    console.print(panel)
+    console.print(shortcuts_grid)
 
     # Context-aware tips
-    _show_context_aware_tips(scan_id, total, unreviewed, completed)
+    tips_panel = _show_context_aware_tips(scan_id, total, unreviewed, completed)
+    if tips_panel:
+        console.print(tips_panel)
 
-    choice = Prompt.ask("[Enter] Start reviewing | [?] More tips", default="").strip().lower()
+    # Styled prompt with key formatting
+    prompt_text = Text()
+    prompt_text.append("[Enter] ", style=style_if_enabled("cyan"))
+    prompt_text.append("Start reviewing  ")
+    prompt_text.append("[?] ", style=style_if_enabled("cyan"))
+    prompt_text.append("More tips")
+
+    choice = Prompt.ask(prompt_text, default="").strip().lower()
 
     if choice == "?":
         show_additional_tips()
 
 
-def _show_context_aware_tips(scan_id: int, total: int, unreviewed: int, completed: int) -> None:
-    """Show context-aware tips based on scan state.
+def _show_context_aware_tips(scan_id: int, total: int, unreviewed: int, completed: int) -> Panel | None:
+    """Build context-aware tips panel based on scan state.
 
     Args:
         scan_id: Database scan ID
         total: Total finding count
         unreviewed: Unreviewed finding count
         completed: Completed finding count
+
+    Returns:
+        Panel with tips, or None if no tips to show
     """
     from .database import get_connection
+
+    tips = []  # Collect tips as Text objects
 
     # Check for Critical findings
     with get_connection() as conn:
@@ -241,7 +327,10 @@ def _show_context_aware_tips(scan_id: int, total: int, unreviewed: int, complete
         critical_count = cursor.fetchone()[0]
 
     if critical_count > 0:
-        info(f"💡 Tip: This scan has {critical_count} Critical finding(s) - prioritize these first!")
+        tip = Text()
+        tip.append("💡 ", style="yellow")
+        tip.append(f"This scan has {critical_count} Critical finding(s) - prioritize these first!")
+        tips.append(tip)
 
     # Check for Metasploit modules
     with get_connection() as conn:
@@ -257,13 +346,31 @@ def _show_context_aware_tips(scan_id: int, total: int, unreviewed: int, complete
         msf_count = cursor.fetchone()[0]
 
     if msf_count > 0:
-        info(f"⚡ Tip: {msf_count} finding(s) have Metasploit modules!")
+        tip = Text()
+        tip.append("⚡ ", style="cyan")
+        tip.append(f"{msf_count} finding(s) have Metasploit modules!")
+        tips.append(tip)
 
     # Progress encouragement
     if completed > 0 and total > 0:
         progress_pct = int((completed / total) * 100)
         if progress_pct >= 50:
-            info(f"✅ Progress: You've completed {completed}/{total} findings ({progress_pct}%) - keep going!")
+            tip = Text()
+            tip.append("✅ ", style="green")
+            tip.append(f"Progress: You've reviewed {completed}/{total} findings ({progress_pct}%) - keep going!")
+            tips.append(tip)
+
+    # Return panel if tips exist
+    if tips:
+        content = Text("\n").join(tips)
+        return Panel(
+            content,
+            title="[bold yellow]Tips[/]",
+            border_style=style_if_enabled("yellow"),
+            padding=(1, 2),
+            expand=False
+        )
+    return None
 
 
 def show_additional_tips() -> None:
