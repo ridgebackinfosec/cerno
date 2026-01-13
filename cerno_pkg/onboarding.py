@@ -228,9 +228,6 @@ def show_workflow_guidance(scan_name: str, scan_id: int) -> None:
     content.append("[R]", style="cyan")
     content.append(" to see reviewed findings (undo available)\n\n")
 
-    # Keyboard shortcuts section with responsive grid
-    content.append("Quick Reference:\n", style="bold")
-
     # Create keyboard shortcuts grid (responsive)
     term_width = get_terminal_width()
     shortcuts_grid = Table.grid(padding=(0, 2))
@@ -328,7 +325,6 @@ def _show_context_aware_tips(scan_id: int, total: int, unreviewed: int, complete
 
     if critical_count > 0:
         tip = Text()
-        tip.append("💡 ", style="yellow")
         tip.append(f"This scan has {critical_count} Critical finding(s) - prioritize these first!")
         tips.append(tip)
 
@@ -374,31 +370,79 @@ def _show_context_aware_tips(scan_id: int, total: int, unreviewed: int, complete
 
 
 def show_additional_tips() -> None:
-    """Show additional tips and keyboard shortcuts."""
-    print()
-    header("Additional Tips & Tricks")
-    info("─" * 60)
-    info("")
-    info("Filtering & Navigation:")
-    info("  • Use [F] to filter findings by plugin name")
-    info("  • Press [C] to clear active filters")
-    info("  • Use [N]/[P] for next/previous page in long lists")
-    info("  • Press [B] or [Q] to go back/quit at any time")
-    info("")
-    info("Finding Analysis:")
-    info("  • [H] Compare findings - see which have identical hosts")
-    info("  • [O] Overlapping analysis - find subset relationships across findings")
-    info("  • [V] View hosts in grouped format for easier review")
-    info("")
-    info("Tool Execution:")
-    info("  • Tool results are saved to ~/.cerno/artifacts/")
-    info("  • You can run multiple tools on the same finding")
-    info("  • Press [T] to see tool menu with nmap, NetExec, Metasploit")
-    info("")
-    info("Progress Tracking:")
-    info("  • [M] Mark reviewed - fully investigated")
-    info("  • [R] View reviewed findings - you can undo with [U]")
-    info("  • Sessions auto-save - resume where you left off!")
-    info("")
+    """Show additional tips and keyboard shortcuts with Rich UI."""
+    console = get_console()
+    print()  # Blank line for spacing
 
-    Prompt.ask("[Enter] Continue", default="")
+    # Build content as Text object
+    content = Text()
+
+    # Filtering & Navigation section
+    content.append("Filtering & Navigation:\n", style="bold cyan")
+    content.append("  • Use ")
+    content.append("[F]", style="cyan")
+    content.append(" to filter findings by plugin name\n")
+    content.append("  • Press ")
+    content.append("[C]", style="cyan")
+    content.append(" to clear active filters\n")
+    content.append("  • Use ")
+    content.append("[N]", style="cyan")
+    content.append("/")
+    content.append("[P]", style="cyan")
+    content.append(" for next/previous page in long lists\n")
+    content.append("  • Press ")
+    content.append("[B]", style="cyan")
+    content.append(" or ")
+    content.append("[Q]", style="cyan")
+    content.append(" to go back/quit at any time\n\n")
+
+    # Finding Analysis section
+    content.append("Finding Analysis:\n", style="bold cyan")
+    content.append("  • ")
+    content.append("[H]", style="cyan")
+    content.append(" Compare findings - see which have identical hosts\n")
+    content.append("  • ")
+    content.append("[O]", style="cyan")
+    content.append(" Overlapping analysis - find subset relationships\n")
+    content.append("  • ")
+    content.append("[V]", style="cyan")
+    content.append(" View hosts in grouped format for easier review\n\n")
+
+    # Tool Execution section
+    content.append("Tool Execution:\n", style="bold cyan")
+    content.append("  • Tool results are saved to ", style="")
+    content.append("~/.cerno/artifacts/", style="yellow")
+    content.append("\n")
+    content.append("  • You can run multiple tools on the same finding\n")
+    content.append("  • Press ")
+    content.append("[T]", style="cyan")
+    content.append(" to see tool menu with nmap, NetExec, Metasploit\n\n")
+
+    # Progress Tracking section
+    content.append("Progress Tracking:\n", style="bold cyan")
+    content.append("  • ")
+    content.append("[M]", style="cyan")
+    content.append(" Mark reviewed - fully investigated\n")
+    content.append("  • ")
+    content.append("[R]", style="cyan")
+    content.append(" View reviewed findings - you can undo with ")
+    content.append("[U]", style="cyan")
+    content.append("\n")
+    content.append("  • Sessions auto-save - resume where you left off!")
+
+    # Wrap in Panel
+    panel = Panel(
+        content,
+        title="[bold cyan]Additional Tips & Tricks[/]",
+        border_style=style_if_enabled("cyan"),
+        padding=(1, 2),
+        expand=False
+    )
+    console.print(panel)
+
+    # Styled prompt
+    prompt_text = Text()
+    prompt_text.append("[Enter] ", style=style_if_enabled("cyan"))
+    prompt_text.append("Continue")
+
+    Prompt.ask(prompt_text, default="")

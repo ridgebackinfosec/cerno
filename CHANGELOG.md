@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Additional tips screen redesigned with Rich UI - cyan-bordered panel with styled keyboard shortcuts and section headers for consistent visual design (onboarding.py:show_additional_tips())
+
 ## [1.2.10] - 2026-01-13
 
 ### Changed
