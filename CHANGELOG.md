@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.13] - 2026-01-14
+
+### Added
+- Comprehensive custom workflows documentation in docs/CUSTOM_WORKFLOWS.md covering YAML schema reference, multi-plugin workflows, placeholder system (7 placeholders), configuration integration, merge behavior, best practices, complete examples, and troubleshooting
+- README.md updated with link to custom workflows guide for users seeking detailed documentation beyond the quick start example
+
 ## [1.2.12] - 2026-01-13
 
 ### Changed
