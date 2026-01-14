@@ -259,6 +259,13 @@ workflows:
 
 **Custom command placeholders:** `{TCP_IPS}`, `{UDP_IPS}`, `{TCP_HOST_PORTS}`, `{PORTS}`, `{WORKDIR}`, `{RESULTS_DIR}`, `{OABASE}`
 
+**For comprehensive documentation**, see [Custom Workflows Guide](docs/CUSTOM_WORKFLOWS.md) covering:
+- Complete YAML schema reference
+- Multi-plugin workflows
+- Placeholder system details
+- Configuration integration
+- Best practices and troubleshooting
+
 <p align="center">
   <img src="docs/images/workflow-display.png" alt="Custom workflow verification steps" width="70%">
   <br>
