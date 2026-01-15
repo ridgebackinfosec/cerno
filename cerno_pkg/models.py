@@ -546,6 +546,7 @@ class Finding:
         cls,
         scan_id: int,
         severity_dir: str,
+        plugin_ids: Optional[list[int]] = None,
         conn: Optional[sqlite3.Connection] = None
     ) -> tuple[int, int, int]:
         """Count files in a severity directory by review state.
@@ -553,6 +554,7 @@ class Finding:
         Args:
             scan_id: Scan ID to count files for
             severity_dir: Severity directory (e.g., "3_High")
+            plugin_ids: Optional list of plugin IDs to filter by (for host filtering)
             conn: Database connection
 
         Returns:
@@ -567,23 +569,33 @@ class Finding:
                 # Invalid format, return zeros
                 return (0, 0, 0)
 
-            # Count total files in this severity (JOIN with plugins to filter by severity_int)
+            # Build base query and params
+            base_query = """SELECT COUNT(*) FROM findings pf
+                   JOIN plugins p ON pf.plugin_id = p.plugin_id
+                   WHERE pf.scan_id = ? AND p.severity_int = ?"""
+            base_params: list[Any] = [scan_id, severity_int]
+
+            # Add plugin_ids filter if provided
+            plugin_filter = ""
+            plugin_params: list[Any] = []
+            if plugin_ids is not None and len(plugin_ids) > 0:
+                placeholders = ",".join("?" * len(plugin_ids))
+                plugin_filter = f" AND pf.plugin_id IN ({placeholders})"
+                plugin_params = list(plugin_ids)
+
+            # Count total files in this severity
             total_row = query_one(
                 c,
-                """SELECT COUNT(*) FROM findings pf
-                   JOIN plugins p ON pf.plugin_id = p.plugin_id
-                   WHERE pf.scan_id = ? AND p.severity_int = ?""",
-                (scan_id, severity_int)
+                base_query + plugin_filter,
+                tuple(base_params + plugin_params)
             )
             total_count = total_row[0] if total_row else 0
 
             # Count reviewed files (review_state = 'completed')
             reviewed_row = query_one(
                 c,
-                """SELECT COUNT(*) FROM findings pf
-                   JOIN plugins p ON pf.plugin_id = p.plugin_id
-                   WHERE pf.scan_id = ? AND p.severity_int = ? AND pf.review_state = 'completed'""",
-                (scan_id, severity_int)
+                base_query + " AND pf.review_state = 'completed'" + plugin_filter,
+                tuple(base_params + plugin_params)
             )
             reviewed_count = reviewed_row[0] if reviewed_row else 0
 
@@ -631,7 +643,9 @@ class Finding:
     def get_severity_dirs_for_scan(
         cls,
         scan_id: int,
-        conn: Optional[sqlite3.Connection] = None
+        conn: Optional[sqlite3.Connection] = None,
+        *,
+        plugin_ids: Optional[list[int]] = None
     ) -> list[str]:
         """Get distinct severity directories for a scan, sorted by severity level.
 
@@ -641,22 +655,28 @@ class Finding:
         Args:
             scan_id: Scan ID to query
             conn: Database connection
+            plugin_ids: Optional list of plugin IDs to filter by (for host filtering)
 
         Returns:
             List of severity directory names sorted by severity (highest first)
         """
         with db_transaction(conn) as c:
-            rows = query_all(
-                c,
-                """
+            query = """
                 SELECT DISTINCT p.severity_int, p.severity_label
                 FROM findings pf
                 JOIN v_plugins_with_severity p ON pf.plugin_id = p.plugin_id
                 WHERE pf.scan_id = ?
-                ORDER BY p.severity_int DESC
-                """,
-                (scan_id,)
-            )
+            """
+            params: list[Any] = [scan_id]
+
+            if plugin_ids is not None and len(plugin_ids) > 0:
+                placeholders = ",".join("?" * len(plugin_ids))
+                query += f" AND pf.plugin_id IN ({placeholders})"
+                params.extend(plugin_ids)
+
+            query += " ORDER BY p.severity_int DESC"
+
+            rows = query_all(c, query, tuple(params))
             # Construct severity_dir format: "4_Critical", "3_High", etc.
             result = []
             for row in rows:
@@ -1411,6 +1431,49 @@ class Host:
                 ORDER BY finding_count DESC
             """)
             return [dict(row) for row in rows]
+
+    @classmethod
+    def get_plugin_ids_for_scan(
+        cls,
+        host_address: str,
+        scan_id: int,
+        partial_match: bool = False,
+        conn: Optional[sqlite3.Connection] = None
+    ) -> list[int]:
+        """Get plugin IDs for findings affecting a specific host in a scan.
+
+        Args:
+            host_address: IP address or hostname to search
+            scan_id: Scan ID to filter by
+            partial_match: If True, use LIKE for substring matching
+            conn: Database connection (optional)
+
+        Returns:
+            List of distinct plugin_id values for findings affecting this host
+        """
+        with db_transaction(conn) as c:
+            if partial_match:
+                query = """
+                    SELECT DISTINCT f.plugin_id
+                    FROM finding_affected_hosts fah
+                    JOIN findings f ON fah.finding_id = f.finding_id
+                    JOIN hosts h ON fah.host_id = h.host_id
+                    WHERE f.scan_id = ? AND h.host_address LIKE ?
+                    ORDER BY f.plugin_id ASC
+                """
+                rows = query_all(c, query, (scan_id, f"%{host_address}%"))
+            else:
+                query = """
+                    SELECT DISTINCT f.plugin_id
+                    FROM finding_affected_hosts fah
+                    JOIN findings f ON fah.finding_id = f.finding_id
+                    JOIN hosts h ON fah.host_id = h.host_id
+                    WHERE f.scan_id = ? AND h.host_address = ?
+                    ORDER BY f.plugin_id ASC
+                """
+                rows = query_all(c, query, (scan_id, host_address))
+
+            return [row["plugin_id"] for row in rows]
 
 
 # ========== Model: Port ==========

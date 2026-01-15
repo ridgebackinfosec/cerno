@@ -363,6 +363,7 @@ def render_severity_table(
     msf_summary: Optional[tuple[int, int, int, int]] = None,
     workflow_summary: Optional[tuple[int, int, int, int]] = None,
     scan_id: Optional[int] = None,
+    plugin_ids: Optional[list[int]] = None,
 ) -> None:
     """Render a table of severity levels with review progress percentages.
 
@@ -375,6 +376,7 @@ def render_severity_table(
         workflow_summary: Optional tuple of (index, unreviewed, reviewed, total)
             for Workflow Mapped row
         scan_id: Scan ID for database queries (required)
+        plugin_ids: Optional list of plugin IDs to filter counts by (for host filtering)
     """
     table = Table(
         title=None, box=box.SIMPLE, show_lines=False, pad_edge=False
@@ -393,7 +395,9 @@ def render_severity_table(
         return
 
     for i, severity_dir in enumerate(severities, 1):
-        unreviewed, reviewed, total = count_severity_findings(severity_dir, scan_id=scan_id)
+        unreviewed, reviewed, total = count_severity_findings(
+            severity_dir, scan_id=scan_id, plugin_ids=plugin_ids
+        )
         label = pretty_severity_label(severity_dir.name)
         table.add_row(
             str(i),
@@ -444,12 +448,11 @@ def render_finding_list_table(
     """
 
     table = Table(
-        title=None, box=box.SIMPLE, show_lines=False, pad_edge=False,
-        row_styles=["", "dim"]
+        title=None, box=box.SIMPLE, show_lines=False, pad_edge=False
     )
     table.add_column("#", justify="right", no_wrap=True, max_width=5)
-    table.add_column("Plugin ID", justify="right", no_wrap=True, max_width=10)
     table.add_column("Severity", justify="left", no_wrap=True, max_width=10)
+    table.add_column("Plugin ID", justify="right", no_wrap=True, max_width=10)
     table.add_column("Name", overflow="fold")
     # Always show host count column
     table.add_column("Hosts", justify="right", no_wrap=True, max_width=8)
@@ -494,7 +497,7 @@ def render_finding_list_table(
         # Color-code the severity label using severity_cell
         sev_colored = severity_cell(sev_display)
 
-        row_data = [str(row_number), plugin_id_str, sev_colored, plugin_name]
+        row_data = [str(row_number), sev_colored, plugin_id_str, plugin_name]
 
         # Always retrieve and show host count from database
         host_count, _ports_str = get_counts_for(plugin_file)
@@ -617,10 +620,11 @@ def render_actions_footer(
     )
     # Determine sort label for display
     sort_label = {
+        "severity": "Severity",
         "plugin_id": "Plugin ID",
         "hosts": "Hosts",
         "name": "Name"
-    }.get(sort_mode, "Name")
+    }.get(sort_mode, "Severity")
 
     right_row1 = join_actions_texts(
         [
@@ -878,7 +882,8 @@ def join_actions_texts(items: list[Text]) -> Text:
 
 def count_severity_findings(
     directory: Path,
-    scan_id: int
+    scan_id: int,
+    plugin_ids: Optional[list[int]] = None
 ) -> tuple[int, int, int]:
     """Count unreviewed, reviewed, and total files in a severity directory.
 
@@ -887,13 +892,14 @@ def count_severity_findings(
     Args:
         directory: Severity directory path
         scan_id: Scan ID for database queries (required)
+        plugin_ids: Optional list of plugin IDs to filter by (for host filtering)
 
     Returns:
         Tuple of (unreviewed_count, reviewed_count, total_count)
     """
     from .models import Finding
     severity_dir_name = directory.name
-    return Finding.count_by_scan_severity(scan_id, severity_dir_name)
+    return Finding.count_by_scan_severity(scan_id, severity_dir_name, plugin_ids=plugin_ids)
 
 
 def severity_cell(label: str) -> Any:

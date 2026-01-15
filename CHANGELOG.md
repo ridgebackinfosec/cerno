@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.18] - 2026-01-15
+
+### Fixed
+- remove row striping from finding list table
+
+## [1.2.17] - 2026-01-15
+
+### Changed
+- Reordered file list table columns: Severity now appears before Plugin ID for better visual hierarchy
+- Added Severity to sorting rotation: `[S]` now cycles through Severity → Plugin ID → Name → Hosts
+- Smart default sorting: mixed severity views (All, MSF, multi-select) default to Severity sort (Critical at top), single severity views default to Plugin ID sort
+
+## [1.2.16] - 2026-01-15
+
+### Added
+- Host search action `[H]` in severity menu to filter all findings by affected host
+  - Enter an IP address or hostname (partial matching supported)
+  - Shows filtered severity counts for the specified host
+  - Filter carries through to findings selection menu
+  - Use `[C]` to clear the host filter and restore full scan view
+
 ## [1.2.15] - 2026-01-15
 
 ### Fixed

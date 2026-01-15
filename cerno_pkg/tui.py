@@ -245,19 +245,22 @@ def handle_finding_list_actions(
         return None, file_filter, reviewed_filter, group_filter, sort_mode, page_idx
 
     if ans == "s":
-        # Cycle through sort modes: plugin_id -> name -> hosts -> plugin_id
-        if sort_mode == "plugin_id":
+        # Cycle through sort modes: severity -> plugin_id -> name -> hosts -> severity
+        if sort_mode == "severity":
+            sort_mode = "plugin_id"
+        elif sort_mode == "plugin_id":
             sort_mode = "name"
         elif sort_mode == "name":
             sort_mode = "hosts"
         else:  # hosts
-            sort_mode = "plugin_id"
+            sort_mode = "severity"
 
         sort_label = {
+            "severity": "Severity ↓",
             "plugin_id": "Plugin ID ↑",
             "hosts": "Host count ↓",
             "name": "Name A↑Z"
-        }.get(sort_mode, "Plugin ID ↑")
+        }.get(sort_mode, "Severity ↓")
         ok(f"Sorting by {sort_label}")
 
         # No need to pre-load host counts - they're already in the database!

@@ -275,7 +275,8 @@ def browse_file_list(
     file_filter = ""
     reviewed_filter = ""
     group_filter: Optional[Tuple[int, set, str]] = None
-    sort_mode = "plugin_id"  # Default sort by plugin ID
+    # Default sort: severity for mixed views (Critical at top), plugin_id for single severity
+    sort_mode = "plugin_id" if severity_dir_filter is not None else "severity"
 
     # Use config value if set, otherwise calculate based on terminal
     page_size = config.default_page_size if config.default_page_size is not None else default_page_size()
@@ -339,7 +340,13 @@ def browse_file_list(
         ]
 
         # Apply sorting
-        if sort_mode == "hosts":
+        if sort_mode == "severity":
+            # Sort by severity descending (Critical first), then by plugin name
+            display = sorted(
+                candidates,
+                key=lambda record: (-record[1].severity_int, natural_key(record[1].plugin_name)),
+            )
+        elif sort_mode == "hosts":
             display = sorted(
                 candidates,
                 key=lambda record: (-get_counts_for(record[0])[0], natural_key(record[1].plugin_name)),
@@ -412,17 +419,19 @@ def browse_file_list(
                 status_parts.append(group_text)
 
             sort_label = {
+                "severity": "Severity ↓",
                 "plugin_id": "Plugin ID ↑",
                 "hosts": "Host count ↓",
                 "name": "Name A↑Z"
-            }.get(sort_mode, "Plugin ID ↑")
+            }.get(sort_mode, "Severity ↓")
 
             # Show next sort mode indicator
             next_sort_mode = {
+                "severity": "Plugin ID ↑",
                 "plugin_id": "Name A↑Z",
                 "name": "Host count ↓",
-                "hosts": "Plugin ID ↑"
-            }.get(sort_mode, "Name A↑Z")
+                "hosts": "Severity ↓"
+            }.get(sort_mode, "Plugin ID ↑")
 
             status_parts.append(f"Sort: {sort_label} (next: {next_sort_mode})")
 
@@ -1010,6 +1019,10 @@ def main(args: types.SimpleNamespace) -> None:
                 from cerno_pkg.onboarding import show_workflow_guidance
                 show_workflow_guidance(scan_name=scan.scan_name, scan_id=scan_id)
 
+                # Host filter state (persists across severity loop iterations)
+                host_filter: Optional[str] = None  # Active host filter (IP/hostname)
+                host_filter_plugin_ids: Optional[list[int]] = None  # Cached plugin IDs for filter
+
                 # Severity loop (inner loop)
                 while True:
                     from cerno_pkg import breadcrumb
@@ -1017,7 +1030,10 @@ def main(args: types.SimpleNamespace) -> None:
                     header(bc if bc else f"Scan: {scan_dir.name} — choose severity")
 
                     # Get severity directories from database (database-only mode)
-                    severity_dir_names = Finding.get_severity_dirs_for_scan(scan_id)
+                    # Apply host filter if active
+                    severity_dir_names = Finding.get_severity_dirs_for_scan(
+                        scan_id, plugin_ids=host_filter_plugin_ids
+                    )
                     if not severity_dir_names:
                         warn("No severity directories in this scan.")
                         break
@@ -1027,9 +1043,11 @@ def main(args: types.SimpleNamespace) -> None:
                     severities = [scan_dir / sev_name for sev_name in severity_dir_names]
 
                     # Metasploit Module virtual group (menu counts) - query from database
+                    # Apply host filter if active
                     msf_files = Finding.get_by_scan_with_plugin(
                         scan_id=scan_id,
-                        has_metasploit=True
+                        has_metasploit=True,
+                        plugin_ids=host_filter_plugin_ids
                     )
 
                     has_msf = len(msf_files) > 0
@@ -1048,13 +1066,23 @@ def main(args: types.SimpleNamespace) -> None:
                     )
 
                     # Workflow Mapped virtual group (menu counts) - query from database
+                    # Apply host filter if active (intersect workflow plugins with host filter)
                     workflow_plugin_ids = workflow_mapper.get_all_plugin_ids()
                     if workflow_plugin_ids:
                         workflow_plugin_ids_int = [int(pid) for pid in workflow_plugin_ids if pid.isdigit()]
-                        workflow_files = Finding.get_by_scan_with_plugin(
-                            scan_id=scan_id,
-                            plugin_ids=workflow_plugin_ids_int
-                        )
+                        # If host filter is active, intersect with host filter plugin IDs
+                        if host_filter_plugin_ids is not None:
+                            workflow_plugin_ids_int = [
+                                pid for pid in workflow_plugin_ids_int
+                                if pid in host_filter_plugin_ids
+                            ]
+                        if workflow_plugin_ids_int:
+                            workflow_files = Finding.get_by_scan_with_plugin(
+                                scan_id=scan_id,
+                                plugin_ids=workflow_plugin_ids_int
+                            )
+                        else:
+                            workflow_files = []
                     else:
                         workflow_files = []
 
@@ -1076,9 +1104,23 @@ def main(args: types.SimpleNamespace) -> None:
                         else None
                     )
 
-                    render_severity_table(severities, msf_summary=msf_summary, workflow_summary=workflow_summary, scan_id=scan_id)
+                    render_severity_table(
+                        severities,
+                        msf_summary=msf_summary,
+                        workflow_summary=workflow_summary,
+                        scan_id=scan_id,
+                        plugin_ids=host_filter_plugin_ids
+                    )
 
-                    print_action_menu([("B", "Back")])
+                    # Show host filter status if active
+                    if host_filter:
+                        info(f"Filtering by host: {host_filter}")
+
+                    # Show action menu with appropriate options
+                    if host_filter:
+                        print_action_menu([("H", "Host search"), ("C", "Clear filter"), ("B", "Back")])
+                    else:
+                        print_action_menu([("H", "Host search"), ("B", "Back")])
                     info("Tip: Multi-select is supported (e.g., 1-3 or 1,3,5)")
 
                     try:
@@ -1091,6 +1133,42 @@ def main(args: types.SimpleNamespace) -> None:
                         break
                     elif ans == "q":
                         return
+                    elif ans in ("h", "host"):
+                        # Host search flow
+                        from cerno_pkg.models import Host
+
+                        host_input = Prompt.ask("Enter IP address or hostname").strip()
+                        if not host_input:
+                            warn("No host entered.")
+                            continue
+
+                        # Strip brackets from IPv6 if present (e.g., [::1] -> ::1)
+                        if host_input.startswith("[") and host_input.endswith("]"):
+                            host_input = host_input[1:-1]
+
+                        # Query plugin IDs for this host in current scan
+                        plugin_ids = Host.get_plugin_ids_for_scan(
+                            host_address=host_input,
+                            scan_id=scan_id,
+                            partial_match=True
+                        )
+
+                        if not plugin_ids:
+                            warn(f"No findings found for host: {host_input}")
+                            continue
+
+                        # Set filter state
+                        host_filter = host_input
+                        host_filter_plugin_ids = plugin_ids
+                        ok(f"Found {len(plugin_ids)} finding(s) for host '{host_input}'")
+                        continue
+
+                    elif ans in ("c", "clear") and host_filter:
+                        # Clear host filter
+                        host_filter = None
+                        host_filter_plugin_ids = None
+                        ok("Host filter cleared.")
+                        continue
 
                     options_count = len(severities) + (1 if has_msf else 0) + (1 if has_workflows else 0)
 
@@ -1123,11 +1201,15 @@ def main(args: types.SimpleNamespace) -> None:
 
                         # For multi-severity selection, pass list of severity directories to filter
                         severity_dir_names = [sev.name for sev in selected_sev_dirs]
+                        # Build label with host filter if active
+                        label = combined_label
+                        if host_filter:
+                            label = f"{combined_label} (Host: {host_filter})"
                         browse_file_list(
                             selected_scan,
                             selected_sev_dirs[0] if selected_sev_dirs else None,
                             None,  # Single severity filter not used for multi-severity
-                            combined_label,
+                            label,
                             args,
                             use_sudo,
                             skipped_total,
@@ -1136,6 +1218,7 @@ def main(args: types.SimpleNamespace) -> None:
                             is_msf_mode=True,  # Show severity labels for each file
                             workflow_mapper=workflow_mapper,
                             severity_dirs_filter=severity_dir_names,
+                            plugin_ids_filter=host_filter_plugin_ids,
                             config=config,
                             session_start_time=session_start_time,
                         )
@@ -1148,11 +1231,16 @@ def main(args: types.SimpleNamespace) -> None:
                         # Use severity directory name as filter (e.g., "3_High")
                         severity_dir_filter = sev_dir.name
 
+                        # Build label with host filter if active
+                        label = pretty_severity_label(sev_dir.name)
+                        if host_filter:
+                            label = f"{label} (Host: {host_filter})"
+
                         browse_file_list(
                             selected_scan,
                             sev_dir,
                             severity_dir_filter,
-                            pretty_severity_label(sev_dir.name),
+                            label,
                             args,
                             use_sudo,
                             skipped_total,
@@ -1160,18 +1248,24 @@ def main(args: types.SimpleNamespace) -> None:
                             completed_total,
                             is_msf_mode=False,
                             workflow_mapper=workflow_mapper,
+                            plugin_ids_filter=host_filter_plugin_ids,
                             config=config,
                             session_start_time=session_start_time,
                         )
 
                     # === Metasploit Module only ===
                     elif msf_in_selection:
+                        # Build label with host filter if active
+                        label = "Metasploit Module"
+                        if host_filter:
+                            label = f"{label} (Host: {host_filter})"
+
                         # Query database for metasploit plugins across all severities
                         browse_file_list(
                             selected_scan,
                             None,  # No single severity dir
                             None,  # No severity filter
-                            "Metasploit Module",
+                            label,
                             args,
                             use_sudo,
                             skipped_total,
@@ -1180,6 +1274,7 @@ def main(args: types.SimpleNamespace) -> None:
                             is_msf_mode=True,
                             workflow_mapper=workflow_mapper,
                             has_metasploit_filter=True,
+                            plugin_ids_filter=host_filter_plugin_ids,
                             config=config,
                             session_start_time=session_start_time,
                         )
@@ -1187,6 +1282,7 @@ def main(args: types.SimpleNamespace) -> None:
                     # === Workflow Mapped only ===
                     elif workflow_in_selection:
                         # Group findings by workflow name using database records
+                        # Note: workflow_files is already filtered by host_filter_plugin_ids
                         workflow_groups = group_findings_by_workflow(workflow_files, workflow_mapper)
 
                         browse_workflow_groups(
