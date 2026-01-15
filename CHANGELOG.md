@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.15] - 2026-01-15
+
+### Fixed
+- correct action menu separator display in finding view
+- add NXC config options to config show display
+
+### Added
+- docs: add NetExec database integration to README
+
 ## [1.2.14] - 2026-01-15
 
 ### Added

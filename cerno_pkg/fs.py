@@ -333,32 +333,24 @@ def handle_finding_view(
     # Loop to allow multiple actions on the same file
     while True:
         # Build action menu with all available options
-        from rich.text import Text
-        from cerno_pkg.ansi import style_if_enabled
-        action_text = Text()
-        action_text.append("[I] ", style=style_if_enabled("cyan"))
-        action_text.append("Finding Info / ", style=None)
-        action_text.append("[D] ", style=style_if_enabled("cyan"))
-        action_text.append("Finding Details", style=None)
-        action_text.append("[V] ", style=style_if_enabled("cyan"))
-        action_text.append("View host(s) (grouped) / ", style=None)
-        action_text.append("[E] ", style=style_if_enabled("cyan"))
-        action_text.append("CVE info / ", style=None)
+        from cerno_pkg.render import key_text, join_actions_texts
+
+        action_items = [
+            key_text("I", "Finding Info"),
+            key_text("D", "Finding Details"),
+            key_text("V", "View host(s) (grouped)"),
+            key_text("E", "CVE info"),
+        ]
         if has_workflow:
-            action_text.append(" / ", style=None)
-            action_text.append("[W] ", style=style_if_enabled("cyan"))
-            action_text.append("Workflow", style=None)
+            action_items.append(key_text("W", "Workflow"))
         if has_nxc_data:
-            action_text.append(" / ", style=None)
-            action_text.append("[N] ", style=style_if_enabled("cyan"))
-            action_text.append("NetExec Data", style=None)
-        action_text.append(" / ", style=None)
-        action_text.append("[T] ", style=style_if_enabled("cyan"))
-        action_text.append("Run tool / ", style=None)
-        action_text.append("[M] ", style=style_if_enabled("cyan"))
-        action_text.append("Mark reviewed / ", style=None)
-        action_text.append("[B] ", style=style_if_enabled("cyan"))
-        action_text.append("Back", style=None)
+            action_items.append(key_text("N", "NetExec Data"))
+        action_items.extend([
+            key_text("T", "Run tool"),
+            key_text("M", "Mark reviewed"),
+            key_text("B", "Back"),
+        ])
+        action_text = join_actions_texts(action_items)
 
         _console.print("[cyan]>>[/cyan] ", end="")
         _console.print(action_text)
