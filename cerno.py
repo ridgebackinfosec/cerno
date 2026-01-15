@@ -275,7 +275,8 @@ def browse_file_list(
     file_filter = ""
     reviewed_filter = ""
     group_filter: Optional[Tuple[int, set, str]] = None
-    sort_mode = "plugin_id"  # Default sort by plugin ID
+    # Default sort: severity for mixed views (Critical at top), plugin_id for single severity
+    sort_mode = "plugin_id" if severity_dir_filter is not None else "severity"
 
     # Use config value if set, otherwise calculate based on terminal
     page_size = config.default_page_size if config.default_page_size is not None else default_page_size()
@@ -339,7 +340,13 @@ def browse_file_list(
         ]
 
         # Apply sorting
-        if sort_mode == "hosts":
+        if sort_mode == "severity":
+            # Sort by severity descending (Critical first), then by plugin name
+            display = sorted(
+                candidates,
+                key=lambda record: (-record[1].severity_int, natural_key(record[1].plugin_name)),
+            )
+        elif sort_mode == "hosts":
             display = sorted(
                 candidates,
                 key=lambda record: (-get_counts_for(record[0])[0], natural_key(record[1].plugin_name)),
@@ -412,17 +419,19 @@ def browse_file_list(
                 status_parts.append(group_text)
 
             sort_label = {
+                "severity": "Severity ↓",
                 "plugin_id": "Plugin ID ↑",
                 "hosts": "Host count ↓",
                 "name": "Name A↑Z"
-            }.get(sort_mode, "Plugin ID ↑")
+            }.get(sort_mode, "Severity ↓")
 
             # Show next sort mode indicator
             next_sort_mode = {
+                "severity": "Plugin ID ↑",
                 "plugin_id": "Name A↑Z",
                 "name": "Host count ↓",
-                "hosts": "Plugin ID ↑"
-            }.get(sort_mode, "Name A↑Z")
+                "hosts": "Severity ↓"
+            }.get(sort_mode, "Plugin ID ↑")
 
             status_parts.append(f"Sort: {sort_label} (next: {next_sort_mode})")
 

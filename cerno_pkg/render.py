@@ -452,8 +452,8 @@ def render_finding_list_table(
         row_styles=["", "dim"]
     )
     table.add_column("#", justify="right", no_wrap=True, max_width=5)
-    table.add_column("Plugin ID", justify="right", no_wrap=True, max_width=10)
     table.add_column("Severity", justify="left", no_wrap=True, max_width=10)
+    table.add_column("Plugin ID", justify="right", no_wrap=True, max_width=10)
     table.add_column("Name", overflow="fold")
     # Always show host count column
     table.add_column("Hosts", justify="right", no_wrap=True, max_width=8)
@@ -498,7 +498,7 @@ def render_finding_list_table(
         # Color-code the severity label using severity_cell
         sev_colored = severity_cell(sev_display)
 
-        row_data = [str(row_number), plugin_id_str, sev_colored, plugin_name]
+        row_data = [str(row_number), sev_colored, plugin_id_str, plugin_name]
 
         # Always retrieve and show host count from database
         host_count, _ports_str = get_counts_for(plugin_file)
@@ -621,10 +621,11 @@ def render_actions_footer(
     )
     # Determine sort label for display
     sort_label = {
+        "severity": "Severity",
         "plugin_id": "Plugin ID",
         "hosts": "Hosts",
         "name": "Name"
-    }.get(sort_mode, "Name")
+    }.get(sort_mode, "Severity")
 
     right_row1 = join_actions_texts(
         [

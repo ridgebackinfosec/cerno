@@ -18,6 +18,7 @@ class ViewFormat(str, Enum):
 
 class SortMode(str, Enum):
     """Sort mode for file lists."""
+    SEVERITY = "severity"
     PLUGIN_ID = "plugin_id"
     NAME = "name"
     HOSTS = "hosts"
