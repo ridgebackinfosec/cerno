@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.14] - 2026-01-15
+
+### Added
+- **[BETA]** NetExec database integration for enriching finding displays with credential, access, and security configuration data (nxc_db.py)
+  - Automatic detection of NetExec workspace at `~/.nxc/workspaces/default/` with configurable override via `nxc_workspace_path` config option
+  - Summary panel shows credentials, shares, and security flags (SMB signing, Zerologon, PetitPotam) across affected hosts
+  - Per-host breakdown available via `[N]` action in finding view menu
+  - Supports SMB, SSH, LDAP, MSSQL, RDP, WinRM, FTP, NFS, VNC, and WMI protocol databases
+- New configuration options: `nxc_workspace_path` and `nxc_enrichment_enabled` in config.yaml
+
 ## [1.2.13] - 2026-01-14
 
 ### Added

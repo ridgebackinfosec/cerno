@@ -309,9 +309,10 @@ def handle_finding_view(
         grouped_paged_text, grouped_payload_text,
         hosts_only_paged_text, hosts_only_payload_text,
         build_plugin_output_details, display_finding_preview,
-        print_action_menu, menu_pager
+        print_action_menu, menu_pager, display_nxc_per_host_detail
     )
     from .tools import copy_to_clipboard, run_tool_workflow
+    from .nxc_db import get_nxc_manager
 
     # Alias for consistency with original code
     _console = _console_global
@@ -320,6 +321,14 @@ def handle_finding_view(
     has_workflow = False
     if workflow_mapper and plugin:
         has_workflow = workflow_mapper.has_workflow(str(plugin.plugin_id))
+
+    # Check if NetExec data is available for these hosts
+    has_nxc_data = False
+    if hosts:
+        nxc_mgr = get_nxc_manager()
+        if nxc_mgr:
+            summary = nxc_mgr.get_hosts_enrichment(hosts)
+            has_nxc_data = summary.hosts_with_data > 0
 
     # Loop to allow multiple actions on the same file
     while True:
@@ -339,6 +348,10 @@ def handle_finding_view(
             action_text.append(" / ", style=None)
             action_text.append("[W] ", style=style_if_enabled("cyan"))
             action_text.append("Workflow", style=None)
+        if has_nxc_data:
+            action_text.append(" / ", style=None)
+            action_text.append("[N] ", style=style_if_enabled("cyan"))
+            action_text.append("NetExec", style=None)
         action_text.append(" / ", style=None)
         action_text.append("[T] ", style=style_if_enabled("cyan"))
         action_text.append("Run tool / ", style=None)
@@ -385,8 +398,16 @@ def handle_finding_view(
             # After tool completes, loop back to show menu again
             continue
 
+        # Handle NetExec context option
+        if action_choice in ("n", "netexec", "nxc"):
+            if has_nxc_data and hosts:
+                display_nxc_per_host_detail(hosts)
+            else:
+                warn("No NetExec data available for these hosts.")
+            continue
+
         # Enter/skip keys treated as back navigation
-        if action_choice in ("", "n", "none", "skip"):
+        if action_choice in ("", "none", "skip"):
             return "back"
 
         # Handle workflow option

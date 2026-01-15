@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cerno"
-version = "1.2.13"
+version = "1.2.14"
 description = "Modern CLI for Nessus findings review and security tool orchestration"
 readme = "README.md"
 requires-python = ">=3.11"

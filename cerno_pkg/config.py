@@ -59,6 +59,15 @@ class CernoConfig:
     term_override: Optional[str] = None
     """Override TERM detection (e.g., 'dumb' to disable colors)."""
 
+    # NetExec integration
+    nxc_workspace_path: Optional[str] = None
+    """Path to NetExec workspace directory (default: ~/.nxc/workspaces/default/).
+    Can be set to a different workspace (e.g., ~/.nxc/workspaces/client_a/).
+    Set to empty string to disable NetExec integration."""
+
+    nxc_enrichment_enabled: bool = True
+    """Enable NetExec enrichment in finding displays (default: True)."""
+
 
 def get_config_path() -> Path:
     """Get the path to the user's config file.
@@ -107,6 +116,8 @@ def load_config() -> CernoConfig:
             debug_logging=data.get("debug_logging", False),
             no_color=data.get("no_color", False),
             term_override=data.get("term_override"),
+            nxc_workspace_path=data.get("nxc_workspace_path"),
+            nxc_enrichment_enabled=data.get("nxc_enrichment_enabled", True),
         )
 
         # Note: Don't log here since logger isn't initialized yet
@@ -147,6 +158,8 @@ def save_config(config: CernoConfig) -> bool:
                 "debug_logging": config.debug_logging,
                 "no_color": config.no_color,
                 "term_override": config.term_override,
+                "nxc_workspace_path": config.nxc_workspace_path,
+                "nxc_enrichment_enabled": config.nxc_enrichment_enabled,
             }.items()
             if v is not None
         }
@@ -182,6 +195,8 @@ def create_example_config() -> bool:
         debug_logging=False,
         no_color=False,
         term_override=None,
+        nxc_workspace_path=None,  # Uses ~/.nxc/workspaces/default/ by default
+        nxc_enrichment_enabled=True,
     )
 
     return save_config(default_config)
