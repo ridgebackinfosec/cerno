@@ -1729,6 +1729,12 @@ def config_show() -> None:
     rows.append(("term_override", config.term_override or "(not set)",
                 config.term_override == defaults.term_override, "Force terminal type"))
 
+    # NetExec integration
+    rows.append(("nxc_workspace_path", config.nxc_workspace_path or "~/.nxc/workspaces/default/",
+                config.nxc_workspace_path == defaults.nxc_workspace_path, "NetExec workspace directory"))
+    rows.append(("nxc_enrichment_enabled", config.nxc_enrichment_enabled,
+                config.nxc_enrichment_enabled == defaults.nxc_enrichment_enabled, "Show NetExec context in findings"))
+
     # Sort rows alphabetically by setting name (first element of tuple)
     rows.sort(key=lambda row: row[0])
 

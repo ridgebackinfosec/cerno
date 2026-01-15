@@ -1325,6 +1325,216 @@ def display_finding_preview(
     _console_global.print()  # Blank line before panel
     _console_global.print(panel)
 
+    # NetExec enrichment panel (if available)
+    nxc_panel = render_nxc_enrichment_summary(hosts)
+    if nxc_panel:
+        _console_global.print(nxc_panel)
+
+
+# ===================================================================
+# NetExec Enrichment Display Functions
+# ===================================================================
+
+
+def render_nxc_enrichment_summary(hosts: List[str]) -> Optional[Panel]:
+    """Render NetExec enrichment summary panel for finding hosts.
+
+    Displays aggregated credential, share, and security flag information
+    across all affected hosts. Shows summary counts with option to view
+    per-host details via [N] action.
+
+    Args:
+        hosts: List of host IP addresses from the finding
+
+    Returns:
+        Rich Panel with enrichment summary, or None if NXC unavailable or no data
+    """
+    from .nxc_db import get_nxc_manager
+
+    nxc_mgr = get_nxc_manager()
+    if not nxc_mgr:
+        return None
+
+    summary = nxc_mgr.get_hosts_enrichment(hosts)
+    if summary.hosts_with_data == 0:
+        return None
+
+    content = Text()
+
+    # Header line: protocols and host coverage
+    content.append("Protocols: ", style=style_if_enabled("cyan"))
+    content.append(", ".join(summary.protocols_seen).upper(), style=style_if_enabled("yellow"))
+    content.append(" | ", style=style_if_enabled("dim"))
+    content.append(f"{summary.hosts_with_data}/{summary.total_hosts_queried} hosts have NXC data\n",
+                   style=style_if_enabled("dim"))
+
+    # Credentials section
+    if summary.unique_credentials:
+        content.append("\nCredentials ", style=style_if_enabled("cyan"))
+        content.append(f"({len(summary.unique_credentials)} unique):\n", style=style_if_enabled("dim"))
+
+        for cred, host_count in summary.unique_credentials[:5]:  # Limit to top 5
+            # Format: [SMB] DOMAIN\user (type) - admin on N hosts
+            content.append("  ")
+            content.append(f"[{cred.protocol.upper()}] ", style=style_if_enabled("magenta"))
+            if cred.domain:
+                content.append(f"{cred.domain}\\", style=style_if_enabled("dim"))
+            content.append(cred.username, style=style_if_enabled("yellow"))
+            content.append(f" ({cred.credential_type})", style=style_if_enabled("dim"))
+            if cred.has_admin:
+                content.append(" - admin", style=style_if_enabled("green"))
+            content.append(f" on {host_count} host{'s' if host_count != 1 else ''}\n",
+                           style=style_if_enabled("dim"))
+
+        if len(summary.unique_credentials) > 5:
+            content.append(f"  ... and {len(summary.unique_credentials) - 5} more\n",
+                           style=style_if_enabled("dim"))
+
+    # Shares section (compact format)
+    if summary.shares_summary:
+        content.append("\nShares: ", style=style_if_enabled("cyan"))
+        share_parts = []
+        for name, (read_count, write_count) in sorted(summary.shares_summary.items()):
+            access_str = ""
+            if read_count > 0 and write_count > 0:
+                access_str = f"R:{read_count} W:{write_count}"
+            elif read_count > 0:
+                access_str = f"R:{read_count}"
+            elif write_count > 0:
+                access_str = f"W:{write_count}"
+            share_parts.append(f"{name} ({access_str})")
+        content.append(", ".join(share_parts[:5]), style=style_if_enabled("yellow"))
+        if len(summary.shares_summary) > 5:
+            content.append(f" +{len(summary.shares_summary) - 5} more", style=style_if_enabled("dim"))
+        content.append("\n")
+
+    # Security flags section (compact format)
+    if summary.security_flag_counts:
+        content.append("\nFlags: ", style=style_if_enabled("cyan"))
+        flag_parts = []
+        flag_labels = {
+            "signing_disabled": "SMB signing disabled",
+            "smbv1_enabled": "SMBv1",
+            "zerologon": "Zerologon",
+            "petitpotam": "PetitPotam",
+        }
+        for flag_key, count in summary.security_flag_counts.items():
+            label = flag_labels.get(flag_key, flag_key)
+            flag_parts.append(f"{label} ({count})")
+        content.append(", ".join(flag_parts), style=style_if_enabled("red"))
+        content.append("\n")
+
+    # Hint for detailed view
+    content.append("\nPress ", style=style_if_enabled("dim"))
+    content.append("[N]", style=style_if_enabled("cyan bold"))
+    content.append(" for per-host breakdown", style=style_if_enabled("dim"))
+
+    return Panel(
+        content,
+        title="[bold cyan]NetExec Context[/]",
+        title_align="center",
+        border_style=style_if_enabled("dim cyan"),
+    )
+
+
+def render_nxc_per_host_detail(hosts: List[str]) -> str:
+    """Render detailed per-host NetExec data for pager display.
+
+    Shows full credential, share, and security flag information
+    for each host individually.
+
+    Args:
+        hosts: List of host IP addresses from the finding
+
+    Returns:
+        Formatted text string for menu_pager(), or empty string if no data
+    """
+    from .nxc_db import get_nxc_manager
+
+    nxc_mgr = get_nxc_manager()
+    if not nxc_mgr:
+        return ""
+
+    summary = nxc_mgr.get_hosts_enrichment(hosts)
+    if summary.hosts_with_data == 0:
+        return ""
+
+    lines = []
+    lines.append("=" * 60)
+    lines.append("NetExec Context: Per-Host Breakdown")
+    lines.append("=" * 60)
+    lines.append("")
+
+    for host_ip in hosts:
+        data = summary.per_host_data.get(host_ip)
+        if data:
+            # Host header with hostname if available
+            if data.hostname:
+                lines.append(f"{host_ip} ({data.hostname}):")
+            else:
+                lines.append(f"{host_ip}:")
+
+            # Credentials
+            if data.credentials:
+                for cred in data.credentials:
+                    cred_str = f"  [{cred.protocol.upper()}] "
+                    if cred.domain:
+                        cred_str += f"{cred.domain}\\"
+                    cred_str += f"{cred.username} ({cred.credential_type})"
+                    if cred.has_admin:
+                        cred_str += " - ADMIN"
+                    lines.append(cred_str)
+
+            # Shares
+            if data.shares:
+                share_strs = []
+                for share in data.shares:
+                    access = ""
+                    if share.read_access and share.write_access:
+                        access = "RW"
+                    elif share.read_access:
+                        access = "R"
+                    elif share.write_access:
+                        access = "W"
+                    share_strs.append(f"{share.name} ({access})")
+                lines.append(f"  Shares: {', '.join(share_strs)}")
+
+            # Security flags
+            if data.security_flags:
+                flags = []
+                if not data.security_flags.signing_required:
+                    flags.append("Signing disabled")
+                if data.security_flags.smbv1_enabled:
+                    flags.append("SMBv1")
+                if data.security_flags.zerologon_vulnerable:
+                    flags.append("Zerologon")
+                if data.security_flags.petitpotam_vulnerable:
+                    flags.append("PetitPotam")
+                if flags:
+                    lines.append(f"  Flags: {', '.join(flags)}")
+
+            lines.append("")
+        else:
+            lines.append(f"{host_ip}:")
+            lines.append("  No NetExec data")
+            lines.append("")
+
+    return "\n".join(lines)
+
+
+def display_nxc_per_host_detail(hosts: List[str]) -> None:
+    """Display per-host NetExec breakdown in paged view.
+
+    Args:
+        hosts: List of host IP addresses from the finding
+    """
+    text = render_nxc_per_host_detail(hosts)
+    if not text:
+        info("No NetExec data available for these hosts.")
+        return
+
+    menu_pager(text)
+
 
 # ===================================================================
 # CVE Display Functions (moved from cerno.py)
