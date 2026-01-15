@@ -351,7 +351,7 @@ def handle_finding_view(
         if has_nxc_data:
             action_text.append(" / ", style=None)
             action_text.append("[N] ", style=style_if_enabled("cyan"))
-            action_text.append("NetExec", style=None)
+            action_text.append("NetExec Data", style=None)
         action_text.append(" / ", style=None)
         action_text.append("[T] ", style=style_if_enabled("cyan"))
         action_text.append("Run tool / ", style=None)
