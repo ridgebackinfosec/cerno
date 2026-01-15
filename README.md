@@ -7,6 +7,7 @@ A **TUI tool** for reviewing Nessus scan findings and orchestrating security too
 - 💾 SQLite-backed persistence (cross-scan tracking, session resume)
 - ⚡ One-command tool launches (nmap NSE scripts, NetExec, custom workflows)
 - 📊 CVE extraction, Metasploit module search, host comparison
+- 🔗 NetExec database integration (correlate credentials with findings)
 
 ---
 
@@ -173,6 +174,29 @@ Extract CVEs, search Metasploit modules, and compare findings across hosts.
   <br>
   <em>Analyze superset relationships to find which findings cover others</em>
 </p>
+
+---
+
+### 🔗 NetExec Database Integration (Beta)
+
+Automatically enrich finding displays with data from your NetExec databases—see which credentials work on affected hosts, share access, and security misconfigurations.
+
+**Features:**
+- **Credential correlation** - Shows which NetExec-discovered credentials have access to affected hosts
+- **Share access** - Displays SMB share read/write permissions across hosts
+- **Security flags** - Highlights SMB signing disabled, Zerologon, PetitPotam vulnerabilities
+- **Per-host breakdown** - Press `[N]` in finding view for detailed per-host NetExec context
+
+**Configuration:**
+```bash
+# NetExec workspace auto-detected at ~/.nxc/workspaces/default/
+cerno config set nxc_workspace_path ~/.nxc/workspaces/client_a  # Custom workspace
+cerno config set nxc_enrichment_enabled false                    # Disable feature
+```
+
+**Supported protocols:** SMB, SSH, LDAP, MSSQL, RDP, WinRM, FTP, NFS, VNC, WMI
+
+> **Note:** This feature is in beta. NetExec databases are read in read-only mode; Cerno never modifies them.
 
 ---
 
