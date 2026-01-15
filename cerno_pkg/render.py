@@ -448,8 +448,7 @@ def render_finding_list_table(
     """
 
     table = Table(
-        title=None, box=box.SIMPLE, show_lines=False, pad_edge=False,
-        row_styles=["", "dim"]
+        title=None, box=box.SIMPLE, show_lines=False, pad_edge=False
     )
     table.add_column("#", justify="right", no_wrap=True, max_width=5)
     table.add_column("Severity", justify="left", no_wrap=True, max_width=10)
