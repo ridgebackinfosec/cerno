@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.16] - 2026-01-15
+
+### Added
+- Host search action `[H]` in severity menu to filter all findings by affected host
+  - Enter an IP address or hostname (partial matching supported)
+  - Shows filtered severity counts for the specified host
+  - Filter carries through to findings selection menu
+  - Use `[C]` to clear the host filter and restore full scan view
+
 ## [1.2.15] - 2026-01-15
 
 ### Fixed
