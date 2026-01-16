@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Fixed action menu not updating dynamically during finding review after running tools
+  - NetExec `[N]` action now appears immediately after running NetExec via `[T]`
+  - Previously required backing out and re-entering the finding to see new actions
+
 ## [1.2.18] - 2026-01-15
 
 ### Fixed
