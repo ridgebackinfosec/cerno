@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Shares displayed in table with color-coded access levels (RW=green, R=cyan, W=yellow)
   - Security flags (signing disabled, SMBv1, Zerologon, PetitPotam) highlighted in red with warning icon
   - Added new `rich_pager()` function for paginating Rich renderables
+  - Multiple hosts now fit per page; pagination groups hosts to fill available space without splitting any host's panel across pages
 
 ### Fixed
 - Fixed action menu not updating dynamically during finding review after running tools

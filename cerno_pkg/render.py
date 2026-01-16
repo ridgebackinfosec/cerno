@@ -141,6 +141,28 @@ def menu_pager(text: str, page_size: Optional[int] = None) -> None:
         warn("Use N (next), P (prev), or B (back).")
 
 
+def _get_renderable_height(console: Any, renderable: RenderableType) -> int:
+    """Calculate the actual rendered height (line count) of a Rich renderable.
+
+    Args:
+        console: Rich Console instance
+        renderable: Any Rich renderable object (Panel, Table, Text, etc.)
+
+    Returns:
+        Number of lines the renderable will occupy when printed
+    """
+    try:
+        # Render to segments and count newlines
+        segments = list(console.render(renderable))
+        height = 1  # Start with 1 for the first line
+        for segment in segments:
+            if segment.text:
+                height += segment.text.count('\n')
+        return max(height, 1)
+    except Exception:
+        return 6  # Fallback estimate for error cases
+
+
 def rich_pager(
     renderables: Sequence[RenderableType],
     page_size: Optional[int] = None,
@@ -175,17 +197,8 @@ def rich_pager(
     available_height = page_items - title_height - footer_height
 
     for renderable in renderables:
-        # Measure the renderable's height
-        try:
-            measurement = console.measure(renderable)
-            # For panels, estimate height based on content + borders
-            # This is approximate - Rich doesn't expose exact line counts easily
-            height = getattr(measurement, "maximum", 6)
-            # Fallback estimate based on typical panel sizes
-            if height < 3:
-                height = 6  # Minimum estimate for a panel
-        except Exception:
-            height = 6  # Default estimate
+        # Calculate actual rendered height
+        height = _get_renderable_height(console, renderable)
 
         # If adding this renderable would exceed page height, start new page
         if current_height + height > available_height and current_page:
