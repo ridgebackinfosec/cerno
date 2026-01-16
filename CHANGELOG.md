@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.19] - 2026-01-16
+
 ### Changed
 - Enhanced NetExec per-host breakdown display (`[N]` action) with Rich formatting
   - Replaced plain text output with styled Rich panels, tables, and color-coded elements
