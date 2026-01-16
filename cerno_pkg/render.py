@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
-from typing import Any, List, Optional, Union, TYPE_CHECKING
+from typing import Any, List, Optional, Sequence, Tuple, Union, TYPE_CHECKING
 
 from rich import box
+from rich.console import RenderableType, Group
 from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.table import Table
@@ -121,6 +122,133 @@ def menu_pager(text: str, page_size: Optional[int] = None) -> None:
         except KeyboardInterrupt:
             warn("\nInterrupted — returning.")
             return
+        if answer in ("b", "back", "q", "x"):
+            return
+        if answer in ("n", "next"):
+            if page_index + 1 < total_pages:
+                page_index += 1
+            else:
+                warn("Already at last page.")
+            continue
+        if answer in ("p", "prev", "previous"):
+            if page_index > 0:
+                page_index -= 1
+            else:
+                warn("Already at first page.")
+            continue
+        if answer == "":
+            return
+        warn("Use N (next), P (prev), or B (back).")
+
+
+def rich_pager(
+    renderables: Sequence[RenderableType],
+    page_size: Optional[int] = None,
+    title: Optional[str] = None,
+) -> None:
+    """Interactive pager for Rich renderables with keyboard navigation.
+
+    Paginates Rich objects (Panels, Tables, etc.) by grouping them to fit
+    within the page height. Uses [N] Next / [P] Prev / [B] Back navigation,
+    mirroring the text pager UX.
+
+    Args:
+        renderables: List of Rich renderable objects to paginate
+        page_size: Number of lines per page (default: auto from terminal)
+        title: Optional title to display at the top of each page
+    """
+    if not renderables:
+        return
+
+    page_items = page_size or default_page_size()
+    console = _console_global
+
+    # Estimate heights of each renderable and group them into pages
+    # We use a simple heuristic: measure each renderable's height
+    pages: List[List[RenderableType]] = []
+    current_page: List[RenderableType] = []
+    current_height = 0
+
+    # Reserve lines for title (3 lines) and footer (2 lines)
+    title_height = 3 if title else 0
+    footer_height = 2
+    available_height = page_items - title_height - footer_height
+
+    for renderable in renderables:
+        # Measure the renderable's height
+        try:
+            measurement = console.measure(renderable)
+            # For panels, estimate height based on content + borders
+            # This is approximate - Rich doesn't expose exact line counts easily
+            height = getattr(measurement, "maximum", 6)
+            # Fallback estimate based on typical panel sizes
+            if height < 3:
+                height = 6  # Minimum estimate for a panel
+        except Exception:
+            height = 6  # Default estimate
+
+        # If adding this renderable would exceed page height, start new page
+        if current_height + height > available_height and current_page:
+            pages.append(current_page)
+            current_page = []
+            current_height = 0
+
+        current_page.append(renderable)
+        current_height += height + 1  # +1 for spacing between panels
+
+    # Don't forget the last page
+    if current_page:
+        pages.append(current_page)
+
+    total_pages = len(pages)
+
+    # Single page - display without navigation
+    if total_pages == 1:
+        if title:
+            console.print()
+            console.print(
+                Panel(
+                    Text(title, style=style_if_enabled("bold cyan")),
+                    box=box.ROUNDED,
+                    border_style=style_if_enabled("cyan"),
+                )
+            )
+        for renderable in pages[0]:
+            console.print(renderable)
+        return
+
+    # Multi-page navigation
+    page_index = 0
+    while True:
+        # Display title
+        if title:
+            console.print()
+            console.print(
+                Panel(
+                    Text(title, style=style_if_enabled("bold cyan")),
+                    box=box.ROUNDED,
+                    border_style=style_if_enabled("cyan"),
+                )
+            )
+
+        # Display current page's renderables
+        for renderable in pages[page_index]:
+            console.print(renderable)
+
+        # Page indicator and navigation
+        console.print()
+        console.print(
+            f"[dim]Page {page_index + 1}/{total_pages}[/dim]",
+            justify="center",
+        )
+        print_action_menu([("N", "Next page"), ("P", "Prev page"), ("B", "Back")])
+
+        try:
+            answer = Prompt.ask("Action", default="").strip().lower()
+        except KeyboardInterrupt:
+            warn("\nInterrupted — returning.")
+            return
+
         if answer in ("b", "back", "q", "x"):
             return
         if answer in ("n", "next"):
@@ -1443,103 +1571,268 @@ def render_nxc_enrichment_summary(hosts: List[str]) -> Optional[Panel]:
     )
 
 
-def render_nxc_per_host_detail(hosts: List[str]) -> str:
-    """Render detailed per-host NetExec data for pager display.
+def render_nxc_host_panel(host_ip: str, host_data: Any, has_data: bool = True) -> Panel:
+    """Render a single host's NetExec data as a Rich Panel.
 
-    Shows full credential, share, and security flag information
-    for each host individually.
+    Args:
+        host_ip: IP address of the host
+        host_data: NxcHostData object containing credentials, shares, and flags
+        has_data: Whether the host has any NetExec data
+
+    Returns:
+        Rich Panel containing the host's NetExec information
+    """
+    content = Text()
+
+    if not has_data or host_data is None:
+        content.append("  No NetExec data available", style=style_if_enabled("dim italic"))
+    else:
+        sections_added = False
+
+        # Credentials section
+        if host_data.credentials:
+            sections_added = True
+            content.append("Credentials\n", style=style_if_enabled("cyan"))
+
+            # Build credentials table
+            cred_table = Table(
+                box=box.SIMPLE,
+                show_header=True,
+                header_style=style_if_enabled("dim"),
+                padding=(0, 1),
+                expand=False,
+            )
+            cred_table.add_column("Protocol", style=style_if_enabled("magenta"))
+            cred_table.add_column("Identity", style=style_if_enabled("yellow"))
+            cred_table.add_column("Type", style=style_if_enabled("dim"))
+            cred_table.add_column("Admin", justify="center")
+
+            for cred in host_data.credentials:
+                # Build identity string
+                identity = ""
+                if cred.domain:
+                    identity = f"[dim]{cred.domain}\\[/dim]"
+                identity += cred.username
+
+                # Admin indicator
+                admin_indicator = Text("✓", style="bold green") if cred.has_admin else Text("")
+
+                cred_table.add_row(
+                    cred.protocol.upper(),
+                    Text.from_markup(identity) if cred.domain else Text(cred.username),
+                    cred.credential_type[:8],  # Truncate long types
+                    admin_indicator,
+                )
+
+            # We can't nest a Table directly in Text, so we use Group
+            content.append("\n")
+
+        # Shares section
+        if host_data.shares:
+            if sections_added:
+                content.append("\n")
+            sections_added = True
+            content.append("Shares\n", style=style_if_enabled("cyan"))
+
+            share_table = Table(
+                box=box.SIMPLE,
+                show_header=True,
+                header_style=style_if_enabled("dim"),
+                padding=(0, 1),
+                expand=False,
+            )
+            share_table.add_column("Name", style=style_if_enabled("yellow"))
+            share_table.add_column("Access", justify="center")
+
+            for share in host_data.shares:
+                if share.read_access and share.write_access:
+                    access_text = Text("RW", style="bold green")
+                elif share.read_access:
+                    access_text = Text("R", style="cyan")
+                elif share.write_access:
+                    access_text = Text("W", style="yellow")
+                else:
+                    access_text = Text("-", style="dim")
+
+                share_table.add_row(share.name, access_text)
+
+            content.append("\n")
+
+        # Security flags section
+        if host_data.security_flags:
+            flags = []
+            if not host_data.security_flags.signing_required:
+                flags.append("Signing disabled")
+            if host_data.security_flags.smbv1_enabled:
+                flags.append("SMBv1 enabled")
+            if host_data.security_flags.zerologon_vulnerable:
+                flags.append("Zerologon vulnerable")
+            if host_data.security_flags.petitpotam_vulnerable:
+                flags.append("PetitPotam vulnerable")
+
+            if flags:
+                if sections_added:
+                    content.append("\n")
+                content.append("⚠ Security Flags\n", style=style_if_enabled("bold red"))
+                for flag in flags:
+                    content.append(f"  • {flag}\n", style=style_if_enabled("red"))
+
+        # If no data sections were added but we have a data object
+        if not sections_added and not host_data.credentials and not host_data.shares:
+            if host_data.security_flags is None or (
+                host_data.security_flags.signing_required
+                and not host_data.security_flags.smbv1_enabled
+                and not host_data.security_flags.zerologon_vulnerable
+                and not host_data.security_flags.petitpotam_vulnerable
+            ):
+                content.append("  No credentials, shares, or security issues found",
+                               style=style_if_enabled("dim italic"))
+
+    # Build title with hostname if available
+    if has_data and host_data and host_data.hostname:
+        title = f"[bold cyan]{host_ip}[/] [dim]({host_data.hostname})[/]"
+    else:
+        title = f"[bold cyan]{host_ip}[/]"
+
+    # For panels with tables, we need to use Group to combine content
+    if has_data and host_data and (host_data.credentials or host_data.shares):
+        # Build a list of renderables
+        renderables: List[RenderableType] = []
+
+        if host_data.credentials:
+            renderables.append(Text("Credentials", style=style_if_enabled("cyan")))
+            cred_table = Table(
+                box=box.SIMPLE,
+                show_header=True,
+                header_style=style_if_enabled("dim"),
+                padding=(0, 1),
+                expand=False,
+            )
+            cred_table.add_column("Protocol", style=style_if_enabled("magenta"))
+            cred_table.add_column("Identity")
+            cred_table.add_column("Type", style=style_if_enabled("dim"))
+            cred_table.add_column("Admin", justify="center")
+
+            for cred in host_data.credentials:
+                identity_text = Text()
+                if cred.domain:
+                    identity_text.append(f"{cred.domain}\\", style=style_if_enabled("dim"))
+                identity_text.append(cred.username, style=style_if_enabled("yellow"))
+
+                admin_indicator = Text("✓", style="bold green") if cred.has_admin else Text("")
+
+                cred_table.add_row(
+                    cred.protocol.upper(),
+                    identity_text,
+                    cred.credential_type[:8],
+                    admin_indicator,
+                )
+            renderables.append(cred_table)
+
+        if host_data.shares:
+            if host_data.credentials:
+                renderables.append(Text())  # Spacer
+            renderables.append(Text("Shares", style=style_if_enabled("cyan")))
+            share_table = Table(
+                box=box.SIMPLE,
+                show_header=True,
+                header_style=style_if_enabled("dim"),
+                padding=(0, 1),
+                expand=False,
+            )
+            share_table.add_column("Name", style=style_if_enabled("yellow"))
+            share_table.add_column("Access", justify="center")
+
+            for share in host_data.shares:
+                if share.read_access and share.write_access:
+                    access_text = Text("RW", style="bold green")
+                elif share.read_access:
+                    access_text = Text("R", style="cyan")
+                elif share.write_access:
+                    access_text = Text("W", style="yellow")
+                else:
+                    access_text = Text("-", style="dim")
+                share_table.add_row(share.name, access_text)
+            renderables.append(share_table)
+
+        # Add security flags if present
+        if host_data.security_flags:
+            flags = []
+            if not host_data.security_flags.signing_required:
+                flags.append("Signing disabled")
+            if host_data.security_flags.smbv1_enabled:
+                flags.append("SMBv1 enabled")
+            if host_data.security_flags.zerologon_vulnerable:
+                flags.append("Zerologon vulnerable")
+            if host_data.security_flags.petitpotam_vulnerable:
+                flags.append("PetitPotam vulnerable")
+
+            if flags:
+                if host_data.credentials or host_data.shares:
+                    renderables.append(Text())  # Spacer
+                flags_text = Text()
+                flags_text.append("⚠ Security Flags\n", style=style_if_enabled("bold red"))
+                for flag in flags:
+                    flags_text.append(f"  • {flag}\n", style=style_if_enabled("red"))
+                renderables.append(flags_text)
+
+        panel_content = Group(*renderables)
+    else:
+        # Simple text content for hosts without tables
+        panel_content = content
+
+    return Panel(
+        panel_content,
+        title=title,
+        title_align="left",
+        border_style=style_if_enabled("dim cyan"),
+        box=box.ROUNDED,
+        padding=(0, 1),
+    )
+
+
+def render_nxc_per_host_panels(hosts: List[str]) -> Tuple[List[Panel], Optional[str]]:
+    """Render per-host NetExec data as list of Rich Panels.
 
     Args:
         hosts: List of host IP addresses from the finding
 
     Returns:
-        Formatted text string for menu_pager(), or empty string if no data
+        Tuple of (list of panels, title string) or (empty list, None) if no data
     """
     from .nxc_db import get_nxc_manager
 
     nxc_mgr = get_nxc_manager()
     if not nxc_mgr:
-        return ""
+        return [], None
 
     summary = nxc_mgr.get_hosts_enrichment(hosts)
     if summary.hosts_with_data == 0:
-        return ""
+        return [], None
 
-    lines = []
-    lines.append("=" * 60)
-    lines.append("NetExec Context: Per-Host Breakdown")
-    lines.append("=" * 60)
-    lines.append("")
+    panels: List[Panel] = []
 
     for host_ip in hosts:
         data = summary.per_host_data.get(host_ip)
-        if data:
-            # Host header with hostname if available
-            if data.hostname:
-                lines.append(f"{host_ip} ({data.hostname}):")
-            else:
-                lines.append(f"{host_ip}:")
+        panel = render_nxc_host_panel(host_ip, data, has_data=(data is not None))
+        panels.append(panel)
 
-            # Credentials
-            if data.credentials:
-                for cred in data.credentials:
-                    cred_str = f"  [{cred.protocol.upper()}] "
-                    if cred.domain:
-                        cred_str += f"{cred.domain}\\"
-                    cred_str += f"{cred.username} ({cred.credential_type})"
-                    if cred.has_admin:
-                        cred_str += " - ADMIN"
-                    lines.append(cred_str)
-
-            # Shares
-            if data.shares:
-                share_strs = []
-                for share in data.shares:
-                    access = ""
-                    if share.read_access and share.write_access:
-                        access = "RW"
-                    elif share.read_access:
-                        access = "R"
-                    elif share.write_access:
-                        access = "W"
-                    share_strs.append(f"{share.name} ({access})")
-                lines.append(f"  Shares: {', '.join(share_strs)}")
-
-            # Security flags
-            if data.security_flags:
-                flags = []
-                if not data.security_flags.signing_required:
-                    flags.append("Signing disabled")
-                if data.security_flags.smbv1_enabled:
-                    flags.append("SMBv1")
-                if data.security_flags.zerologon_vulnerable:
-                    flags.append("Zerologon")
-                if data.security_flags.petitpotam_vulnerable:
-                    flags.append("PetitPotam")
-                if flags:
-                    lines.append(f"  Flags: {', '.join(flags)}")
-
-            lines.append("")
-        else:
-            lines.append(f"{host_ip}:")
-            lines.append("  No NetExec data")
-            lines.append("")
-
-    return "\n".join(lines)
+    title = "NetExec Context: Per-Host Breakdown"
+    return panels, title
 
 
 def display_nxc_per_host_detail(hosts: List[str]) -> None:
-    """Display per-host NetExec breakdown in paged view.
+    """Display per-host NetExec breakdown in paged view with Rich formatting.
 
     Args:
         hosts: List of host IP addresses from the finding
     """
-    text = render_nxc_per_host_detail(hosts)
-    if not text:
+    panels, title = render_nxc_per_host_panels(hosts)
+    if not panels:
         info("No NetExec data available for these hosts.")
         return
 
-    menu_pager(text)
+    rich_pager(panels, title=title)
 
 
 # ===================================================================
