@@ -501,8 +501,8 @@ def render_scan_table(scans: list[Path]) -> None:
 
 def render_severity_table(
     severities: list[Path],
-    msf_summary: Optional[tuple[int, int, int, int]] = None,
-    workflow_summary: Optional[tuple[int, int, int, int]] = None,
+    msf_summary: Optional[tuple[int, int, int]] = None,
+    workflow_summary: Optional[tuple[int, int, int]] = None,
     scan_id: Optional[int] = None,
     plugin_ids: Optional[list[int]] = None,
 ) -> None:
@@ -510,12 +510,15 @@ def render_severity_table(
 
     Database-only mode: scan_id is required for database queries.
 
+    Special filters (Metasploit, Workflow) are shown in a separate section
+    below severity levels, with letter indices (M, W) instead of numbers.
+
     Args:
         severities: List of severity directory paths
-        msf_summary: Optional tuple of (index, unreviewed, reviewed, total)
-            for Metasploit modules row
-        workflow_summary: Optional tuple of (index, unreviewed, reviewed, total)
-            for Workflow Mapped row
+        msf_summary: Optional tuple of (unreviewed, reviewed, total)
+            for Metasploit modules row. Only shown if provided.
+        workflow_summary: Optional tuple of (unreviewed, reviewed, total)
+            for Workflow Mapped row. Only shown if provided.
         scan_id: Scan ID for database queries (required)
         plugin_ids: Optional list of plugin IDs to filter counts by (for host filtering)
     """
@@ -548,10 +551,15 @@ def render_severity_table(
             total_cell(total),
         )
 
+    # Add section separator and special filters header if any special filters exist
+    if msf_summary or workflow_summary:
+        table.add_section()
+        table.add_row("", "[dim]Special Filters[/dim]", "", "", "")
+
     if msf_summary:
-        index, unreviewed, reviewed, total = msf_summary
+        unreviewed, reviewed, total = msf_summary
         table.add_row(
-            str(index),
+            "[bold cyan]M[/bold cyan]",
             severity_cell("Metasploit Module"),
             unreviewed_cell(unreviewed, total),
             reviewed_cell(reviewed, total),
@@ -559,9 +567,9 @@ def render_severity_table(
         )
 
     if workflow_summary:
-        index, unreviewed, reviewed, total = workflow_summary
+        unreviewed, reviewed, total = workflow_summary
         table.add_row(
-            str(index),
+            "[bold cyan]W[/bold cyan]",
             severity_cell("Workflow Mapped"),
             unreviewed_cell(unreviewed, total),
             reviewed_cell(reviewed, total),

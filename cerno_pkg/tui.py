@@ -9,10 +9,22 @@ This module handles interactive navigation, menus, and action handling:
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, List, Optional, Tuple, Dict, Callable, TYPE_CHECKING
 
 from rich.prompt import Prompt
+
+
+@dataclass
+class SeveritySelection:
+    """Parsed severity selection result.
+
+    Separates numeric severity indices (1-5) from special filter flags (M, W).
+    """
+    severity_indices: List[int]  # 1-based indices for severities (1-5)
+    msf_selected: bool  # True if 'M' was in selection
+    workflow_selected: bool  # True if 'W' was in selection
 
 from .ansi import warn, info, ok, header, get_console, colorize_severity_label
 from .render import print_action_menu, show_actions_help, show_reviewed_help
@@ -41,33 +53,46 @@ ActionResult = Tuple[
 
 def parse_severity_selection(
     selection: str, max_index: int
-) -> Optional[List[int]]:
+) -> Optional[SeveritySelection]:
     """
-    Parse user selection into list of severity indices.
+    Parse user selection into severity indices and special filter flags.
 
     Supports:
-        - Single number: "1" -> [1]
-        - Range: "1-3" -> [1, 2, 3]
-        - Comma-separated: "1,3,5" -> [1, 3, 5]
-        - Mixed: "1-3,5,7-9" -> [1, 2, 3, 5, 7, 8, 9]
+        - Single number: "1" -> severities [1]
+        - Range: "1-3" -> severities [1, 2, 3]
+        - Comma-separated: "1,3,5" -> severities [1, 3, 5]
+        - Mixed: "1-3,5" -> severities [1, 2, 3, 5]
+        - Special filters: "M" -> Metasploit, "W" -> Workflow
+        - Combined: "1-3,M" -> severities [1, 2, 3] + Metasploit
+        - Combined: "M,W" -> both special filters, no severities
 
     Args:
         selection: User input string
-        max_index: Maximum valid index (inclusive)
+        max_index: Maximum valid severity index (usually 5 for severity levels)
 
     Returns:
-        List of valid 1-based indices, or None if invalid
+        SeveritySelection with indices and flags, or None if invalid
     """
-    indices = set()
+    indices: set[int] = set()
+    msf_selected = False
+    workflow_selected = False
 
     # Split by comma first
-    parts = [p.strip() for p in selection.split(",")]
+    parts = [p.strip().upper() for p in selection.split(",")]
 
     for part in parts:
         if not part:
             continue
 
-        # Check if it's a range
+        # Check for special filter letters
+        if part == "M":
+            msf_selected = True
+            continue
+        if part == "W":
+            workflow_selected = True
+            continue
+
+        # Check if it's a range (e.g., "1-3")
         if "-" in part:
             range_parts = part.split("-", 1)
             if len(range_parts) != 2:
@@ -95,10 +120,15 @@ def parse_severity_selection(
 
             indices.add(num)
 
-    if not indices:
+    # Must have at least one selection
+    if not indices and not msf_selected and not workflow_selected:
         return None
 
-    return sorted(list(indices))
+    return SeveritySelection(
+        severity_indices=sorted(list(indices)),
+        msf_selected=msf_selected,
+        workflow_selected=workflow_selected,
+    )
 
 
 def choose_from_list(

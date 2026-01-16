@@ -46,7 +46,7 @@ __all__ = [
     "custom_command_help", "render_placeholders", "command_review_menu",
     "copy_to_clipboard", "choose_nse_profile", "run_tool_workflow",
     # TUI module
-    "parse_severity_selection", "choose_from_list", "handle_finding_list_actions",
+    "parse_severity_selection", "SeveritySelection", "choose_from_list", "handle_finding_list_actions",
     # Analysis module
     "compare_filtered", "analyze_inclusions", "natural_key", "count_reviewed_in_scan",
     # Tool registry module
@@ -127,6 +127,7 @@ from .tools import (
 )
 from .tui import (
     parse_severity_selection,
+    SeveritySelection,
     choose_from_list,
     handle_finding_list_actions,
 )

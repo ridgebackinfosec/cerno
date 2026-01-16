@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Improved severity selection table UX with visual separation between severity levels and special filters
+  - Added horizontal separator line between severity levels (1-5) and special filters section
+  - Metasploit Module and Workflow Mapped rows now use letter indices (`M`, `W`) instead of numbers
+  - Special Filters section only appears when data exists (hidden when no Metasploit modules or workflow mappings)
+  - Dynamic tip message reflects available options (e.g., "Use numbers (1-5), M, W, or combine")
+  - Selection now accepts `M`, `W` letters alongside numbers (e.g., `1-3,M` or `M,W`)
+
 ## [1.2.19] - 2026-01-16
 
 ### Changed

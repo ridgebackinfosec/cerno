@@ -53,6 +53,7 @@ from cerno_pkg import (
     natural_key,
     # tui
     parse_severity_selection,
+    SeveritySelection,
     handle_finding_list_actions,
     # banner
     display_banner,
@@ -1060,7 +1061,7 @@ def main(args: types.SimpleNamespace) -> None:
                     msf_unrev = msf_total - msf_reviewed
 
                     msf_summary = (
-                        (len(severities) + 1, msf_unrev, msf_reviewed, msf_total)
+                        (msf_unrev, msf_reviewed, msf_total)
                         if has_msf
                         else None
                     )
@@ -1095,11 +1096,8 @@ def main(args: types.SimpleNamespace) -> None:
                     )
                     workflow_unrev = workflow_total - workflow_reviewed
 
-                    # Calculate workflow menu index (after severities and MSF if present)
-                    workflow_menu_idx = len(severities) + (1 if has_msf else 0) + 1
-
                     workflow_summary = (
-                        (workflow_menu_idx, workflow_unrev, workflow_reviewed, workflow_total)
+                        (workflow_unrev, workflow_reviewed, workflow_total)
                         if has_workflows
                         else None
                     )
@@ -1121,7 +1119,16 @@ def main(args: types.SimpleNamespace) -> None:
                         print_action_menu([("H", "Host search"), ("C", "Clear filter"), ("B", "Back")])
                     else:
                         print_action_menu([("H", "Host search"), ("B", "Back")])
-                    info("Tip: Multi-select is supported (e.g., 1-3 or 1,3,5)")
+
+                    # Dynamic tip message based on available special filters
+                    if has_msf and has_workflows:
+                        info("Tip: Use numbers (1-5), M, W, or combine (e.g., 1-3,M)")
+                    elif has_msf:
+                        info("Tip: Use numbers (1-5), M, or combine (e.g., 1-3,M)")
+                    elif has_workflows:
+                        info("Tip: Use numbers (1-5), W, or combine (e.g., 1-3,W)")
+                    else:
+                        info("Tip: Multi-select is supported (e.g., 1-3 or 1,3,5)")
 
                     try:
                         ans = Prompt.ask("Choose").strip().lower()
@@ -1170,23 +1177,25 @@ def main(args: types.SimpleNamespace) -> None:
                         ok("Host filter cleared.")
                         continue
 
-                    options_count = len(severities) + (1 if has_msf else 0) + (1 if has_workflows else 0)
+                    # Parse selection (supports ranges, comma-separated, and M/W letters)
+                    selection = parse_severity_selection(ans, len(severities))
 
-                    # Parse selection (supports ranges and comma-separated)
-                    selected_indices = parse_severity_selection(ans, options_count)
-
-                    if selected_indices is None:
-                        warn("Invalid choice. Use single numbers, ranges (1-3), or comma-separated (1,3,5).")
+                    if selection is None:
+                        warn("Invalid choice. Use numbers (1-5), M, W, or combine (e.g., 1-3,M).")
                         continue
 
-                    # Check if MSF is included in selection
-                    msf_in_selection = has_msf and (len(severities) + 1) in selected_indices
+                    # Validate special filter selections against availability
+                    if selection.msf_selected and not has_msf:
+                        warn("No Metasploit modules available for this scan.")
+                        continue
+                    if selection.workflow_selected and not has_workflows:
+                        warn("No workflow-mapped findings available for this scan.")
+                        continue
 
-                    # Check if Workflow Mapped is included in selection
-                    workflow_in_selection = has_workflows and workflow_menu_idx in selected_indices
-
-                    # Filter out MSF and Workflow from severity indices
-                    severity_indices = [idx for idx in selected_indices if idx <= len(severities)]
+                    # Map new selection fields to existing variable names for minimal downstream changes
+                    severity_indices = selection.severity_indices
+                    msf_in_selection = selection.msf_selected
+                    workflow_in_selection = selection.workflow_selected
 
                     # === Multiple severities selected (or mix of severities + MSF) ===
                     if len(severity_indices) > 1 or (len(severity_indices) >= 1 and msf_in_selection):
