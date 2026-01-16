@@ -53,7 +53,6 @@ from cerno_pkg import (
     natural_key,
     # tui
     parse_severity_selection,
-    SeveritySelection,
     handle_finding_list_actions,
     # banner
     display_banner,
