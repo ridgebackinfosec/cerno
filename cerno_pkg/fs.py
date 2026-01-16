@@ -312,7 +312,7 @@ def handle_finding_view(
         print_action_menu, menu_pager, display_nxc_per_host_detail
     )
     from .tools import copy_to_clipboard, run_tool_workflow
-    from .nxc_db import get_nxc_manager
+    from .nxc_db import get_nxc_manager, reset_nxc_manager
 
     # Alias for consistency with original code
     _console = _console_global
@@ -322,16 +322,16 @@ def handle_finding_view(
     if workflow_mapper and plugin:
         has_workflow = workflow_mapper.has_workflow(str(plugin.plugin_id))
 
-    # Check if NetExec data is available for these hosts
-    has_nxc_data = False
-    if hosts:
-        nxc_mgr = get_nxc_manager()
-        if nxc_mgr:
-            summary = nxc_mgr.get_hosts_enrichment(hosts)
-            has_nxc_data = summary.hosts_with_data > 0
-
     # Loop to allow multiple actions on the same file
     while True:
+        # Check if NetExec data is available for these hosts (refreshed each iteration)
+        has_nxc_data = False
+        if hosts:
+            nxc_mgr = get_nxc_manager()
+            if nxc_mgr:
+                summary = nxc_mgr.get_hosts_enrichment(hosts)
+                has_nxc_data = summary.hosts_with_data > 0
+
         # Build action menu with all available options
         from cerno_pkg.render import key_text, join_actions_texts
 
@@ -387,6 +387,8 @@ def handle_finding_view(
 
             # Run tool workflow with database objects
             run_tool_workflow(plugin, finding, scan_dir, sev_dir, hosts, ports_str or "", args, use_sudo)
+            # Reset NXC manager to pick up any new data from tool execution
+            reset_nxc_manager()
             # After tool completes, loop back to show menu again
             continue
 

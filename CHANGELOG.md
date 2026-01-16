@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Enhanced NetExec per-host breakdown display (`[N]` action) with Rich formatting
+  - Replaced plain text output with styled Rich panels, tables, and color-coded elements
+  - Each host now displays in its own bordered panel with hostname in title
+  - Credentials shown in organized table with Protocol, Identity, Type, and Admin columns
+  - Admin access highlighted with green checkmark (✓)
+  - Shares displayed in table with color-coded access levels (RW=green, R=cyan, W=yellow)
+  - Security flags (signing disabled, SMBv1, Zerologon, PetitPotam) highlighted in red with warning icon
+  - Added new `rich_pager()` function for paginating Rich renderables
+  - Multiple hosts now fit per page; pagination groups hosts to fill available space without splitting any host's panel across pages
+
+### Fixed
+- Fixed action menu not updating dynamically during finding review after running tools
+  - NetExec `[N]` action now appears immediately after running NetExec via `[T]`
+  - Previously required backing out and re-entering the finding to see new actions
+
 ## [1.2.18] - 2026-01-15
 
 ### Fixed
