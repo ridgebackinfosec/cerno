@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed host metadata capture for FQDN-targeted scans (previously lost resolved IP)
 - `reverse_dns` column now properly populated from Nessus data (was always NULL before)
 
+### Documentation
+- Updated `docs/DATABASE.md` with new hosts table schema and query examples
+- Updated `schema.sql` with new hosts table structure and v_host_findings view
+- Updated CLAUDE.md anti-pattern examples to use new column names
+
 ## [1.2.20] - 2026-01-19
 
 ### Changed

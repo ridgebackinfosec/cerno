@@ -241,22 +241,29 @@ Plugin metadata - one row per Nessus plugin ID.
 
 ### hosts
 
-Normalized host data - one row per unique host address across ALL scans.
+Normalized host data - one row per unique (ip_address, scan_target) combination across ALL scans.
+
+Supports both IP-targeted (internal) and FQDN-targeted (external) scans:
+- **IP-targeted scan**: ip_address and scan_target are the same (e.g., `192.168.1.1`)
+- **FQDN-targeted scan**: ip_address is the resolved IP, scan_target is the FQDN (e.g., `93.184.216.34` / `example.com`)
 
 | Column | Type | Description |
 |---|---|---|
 | `host_id` | INTEGER | Primary key |
-| `host_address` | TEXT | Unique host address (IP or hostname) |
-| `host_type` | TEXT | 'ipv4', 'ipv6', or 'hostname' |
-| `reverse_dns` | TEXT | Reverse DNS lookup result (future) |
+| `ip_address` | TEXT | Resolved IP address (from Nessus host-ip tag) |
+| `scan_target` | TEXT | What was scanned (IP or FQDN from ReportHost@name) |
+| `scan_target_type` | TEXT | 'ipv4', 'ipv6', or 'fqdn' |
+| `netbios_name` | TEXT | NetBIOS/computer name (from Nessus netbios-name tag) |
+| `fqdn` | TEXT | FQDN from Nessus discovery (from host-fqdn tag) |
+| `reverse_dns` | TEXT | Reverse DNS result (from host-rdns tag) |
 | `first_seen` | TIMESTAMP | First appearance across all scans |
 | `last_seen` | TIMESTAMP | Most recent appearance |
 
-**Purpose**: Enables cross-scan host tracking.
+**Purpose**: Enables cross-scan host tracking with proper handling of FQDN-targeted external scans and load-balanced hosts.
 
 **Constraints**:
-- `UNIQUE(host_address)`
-- `CHECK(host_type IN ('ipv4', 'ipv6', 'hostname'))`
+- `UNIQUE(ip_address, scan_target)` - Composite key allows same IP via different targets
+- `CHECK(scan_target_type IN ('ipv4', 'ipv6', 'fqdn'))`
 
 **Relationships**: Referenced by `finding_affected_hosts.host_id`
 
@@ -495,7 +502,8 @@ ORDER BY severity_int DESC, cvss3_score DESC;
 Cross-scan host analysis view.
 
 **Columns**:
-- `host_id`, `host_address`, `host_type`, `first_seen`, `last_seen`
+- `host_id`, `ip_address`, `scan_target`, `scan_target_type`
+- `netbios_name`, `fqdn`, `first_seen`, `last_seen`
 - `scan_count` - Number of scans this host appeared in
 - `finding_count` - Total findings across all scans
 - `port_count` - Unique ports across all findings
@@ -504,7 +512,7 @@ Cross-scan host analysis view.
 **Usage**:
 ```sql
 -- Find hosts that appeared in multiple scans
-SELECT host_address, scan_count, finding_count
+SELECT ip_address, scan_target, scan_count, finding_count
 FROM v_host_findings
 WHERE scan_count > 1
 ORDER BY scan_count DESC;
@@ -572,7 +580,8 @@ Enabled by the normalized hosts table:
 
 ```sql
 SELECT
-    h.host_address,
+    h.ip_address,
+    h.scan_target,
     s.scan_name,
     s.created_at as scan_date,
     p.plugin_name,
@@ -584,7 +593,7 @@ JOIN findings f ON fah.finding_id = f.finding_id
 JOIN plugins p ON f.plugin_id = p.plugin_id
 JOIN severity_levels sl ON p.severity_int = sl.severity_int
 JOIN scans s ON f.scan_id = s.scan_id
-WHERE h.host_address = '192.168.1.10'
+WHERE h.ip_address = '192.168.1.10'
 ORDER BY s.created_at DESC, sl.severity_order DESC;
 ```
 
@@ -596,8 +605,10 @@ Using the `v_host_findings` view:
 
 ```sql
 SELECT
-    host_address,
-    host_type,
+    ip_address,
+    scan_target,
+    scan_target_type,
+    netbios_name,
     scan_count,
     finding_count,
     port_count,
@@ -638,7 +649,7 @@ SELECT
     p.cvss3_score,
     p.metasploit_names,
     COUNT(DISTINCT f.scan_id) as scan_count,
-    COUNT(DISTINCT h.host_address) as unique_hosts
+    COUNT(DISTINCT h.ip_address) as unique_hosts
 FROM plugins p
 JOIN severity_levels sl ON p.severity_int = sl.severity_int
 JOIN findings f ON f.plugin_id = p.plugin_id
@@ -697,7 +708,9 @@ The normalized schema enables powerful cross-scan queries:
 ```sql
 -- When did each host first and last appear?
 SELECT
-    h.host_address,
+    h.ip_address,
+    h.scan_target,
+    h.netbios_name,
     h.first_seen,
     h.last_seen,
     julianday(h.last_seen) - julianday(h.first_seen) as days_tracked,
@@ -714,7 +727,8 @@ ORDER BY days_tracked DESC;
 
 ```sql
 SELECT
-    h.host_address,
+    h.ip_address,
+    h.scan_target,
     s1_findings.plugin_count as scan1_plugins,
     s2_findings.plugin_count as scan2_plugins,
     CASE
@@ -751,8 +765,10 @@ ORDER BY ABS(COALESCE(s1_findings.plugin_count, 0) - COALESCE(s2_findings.plugin
 ```sql
 -- Hosts that appear in latest scan but not in previous scans
 SELECT
-    h.host_address,
-    h.host_type,
+    h.ip_address,
+    h.scan_target,
+    h.scan_target_type,
+    h.netbios_name,
     COUNT(DISTINCT f.plugin_id) as finding_count,
     MAX(p.severity_int) as max_severity
 FROM hosts h
@@ -766,7 +782,7 @@ WHERE f.scan_id = (SELECT scan_id FROM scans ORDER BY created_at DESC LIMIT 1)
       JOIN findings f2 ON fah2.finding_id = f2.finding_id
       WHERE f2.scan_id != (SELECT scan_id FROM scans ORDER BY created_at DESC LIMIT 1)
   )
-GROUP BY h.host_id, h.host_address, h.host_type
+GROUP BY h.host_id, h.ip_address, h.scan_target, h.scan_target_type, h.netbios_name
 ORDER BY max_severity DESC, finding_count DESC;
 ```
 

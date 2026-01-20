@@ -69,7 +69,7 @@ This includes:
 ### Anti-Patterns to Avoid
 ❌ **Never** store counts/sums in tables when you can compute them with SQL
 ❌ **Never** duplicate reference data (severity labels, service names) across records
-❌ **Never** use boolean flags for data that can be computed (e.g., `is_ipv4` from `host_address`)
+❌ **Never** use boolean flags for data that can be computed (e.g., `is_ipv4` from `ip_address`)
 ❌ **Never** use freeform text fields for categorical data (use lookup tables with FKs)
 ❌ **Never** skip foreign key constraints "for performance" (they're fast and prevent bugs)
 ❌ **Never** cache data without a clear performance justification (measure first)
