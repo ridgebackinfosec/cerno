@@ -707,17 +707,17 @@ class Finding:
                 c,
                 """
                 SELECT
-                    h.host_address,
+                    h.ip_address,
                     fah.port_number,
-                    h.host_type
+                    h.scan_target_type
                 FROM finding_affected_hosts fah
                 JOIN hosts h ON fah.host_id = h.host_id
                 WHERE fah.finding_id = ?
                 ORDER BY
-                    CASE WHEN h.host_type = 'ipv4' THEN 0
-                         WHEN h.host_type = 'ipv6' THEN 1
+                    CASE WHEN h.scan_target_type = 'ipv4' THEN 0
+                         WHEN h.scan_target_type = 'ipv6' THEN 1
                          ELSE 2 END,
-                    h.host_address ASC
+                    h.ip_address ASC
                 """,
                 (self.finding_id,)
             )
@@ -813,17 +813,17 @@ class Finding:
                 c,
                 """
                 SELECT
-                    h.host_address,
+                    h.ip_address,
                     fah.port_number,
-                    h.host_type
+                    h.scan_target_type
                 FROM finding_affected_hosts fah
                 JOIN hosts h ON fah.host_id = h.host_id
                 WHERE fah.finding_id = ?
                 ORDER BY
-                    CASE WHEN h.host_type = 'ipv4' THEN 0
-                         WHEN h.host_type = 'ipv6' THEN 1
+                    CASE WHEN h.scan_target_type = 'ipv4' THEN 0
+                         WHEN h.scan_target_type = 'ipv6' THEN 1
                          ELSE 2 END,
-                    h.host_address ASC,
+                    h.ip_address ASC,
                     fah.port_number ASC
                 """,
                 (self.finding_id,)
@@ -882,17 +882,17 @@ class Finding:
                 c,
                 """
                 SELECT
-                    h.host_address,
+                    h.ip_address,
                     fah.port_number,
                     fah.plugin_output
                 FROM finding_affected_hosts fah
                 JOIN hosts h ON fah.host_id = h.host_id
                 WHERE fah.finding_id = ?
                 ORDER BY
-                    CASE WHEN h.host_type = 'ipv4' THEN 0
-                         WHEN h.host_type = 'ipv6' THEN 1
+                    CASE WHEN h.scan_target_type = 'ipv4' THEN 0
+                         WHEN h.scan_target_type = 'ipv6' THEN 1
                          ELSE 2 END,
-                    h.host_address ASC,
+                    h.ip_address ASC,
                     fah.port_number ASC
                 """,
                 (self.finding_id,)
@@ -1308,11 +1308,20 @@ class AuditLog:
 
 @dataclass
 class Host:
-    """Represents a unique host across all scans."""
+    """Represents a unique host across all scans.
+
+    Supports both IP-targeted and FQDN-targeted scans:
+    - ip_address: Always the resolved IP (from host-ip tag in Nessus)
+    - scan_target: What was scanned (IP or FQDN from ReportHost@name)
+    - Composite unique: same IP via same target = same host
+    """
 
     host_id: Optional[int] = None
-    host_address: str = ""
-    host_type: str = "hostname"  # 'ipv4', 'ipv6', 'hostname'
+    ip_address: str = ""
+    scan_target: str = ""
+    scan_target_type: str = "ipv4"  # 'ipv4', 'ipv6', 'fqdn'
+    netbios_name: Optional[str] = None
+    fqdn: Optional[str] = None
     reverse_dns: Optional[str] = None
     first_seen: Optional[str] = None
     last_seen: Optional[str] = None
@@ -1329,8 +1338,11 @@ class Host:
         """
         return cls(
             host_id=row["host_id"],
-            host_address=row["host_address"],
-            host_type=row["host_type"],
+            ip_address=row["ip_address"],
+            scan_target=row["scan_target"],
+            scan_target_type=row["scan_target_type"],
+            netbios_name=row["netbios_name"] if "netbios_name" in row.keys() else None,
+            fqdn=row["fqdn"] if "fqdn" in row.keys() else None,
             reverse_dns=row["reverse_dns"] if "reverse_dns" in row.keys() else None,
             first_seen=row["first_seen"] if "first_seen" in row.keys() else None,
             last_seen=row["last_seen"] if "last_seen" in row.keys() else None
@@ -1339,56 +1351,74 @@ class Host:
     @classmethod
     def get_or_create(
         cls,
-        host_address: str,
-        host_type: str,
+        ip_address: str,
+        scan_target: str,
+        scan_target_type: str,
+        netbios_name: Optional[str] = None,
+        fqdn: Optional[str] = None,
+        reverse_dns: Optional[str] = None,
         conn: Optional[sqlite3.Connection] = None
     ) -> int:
         """Get existing host_id or create new host.
 
-        Updates last_seen timestamp on existing hosts.
+        Uses composite key (ip_address, scan_target) for lookup.
+        Updates last_seen timestamp and metadata on existing hosts.
 
         Args:
-            host_address: IP address or hostname
-            host_type: One of 'ipv4', 'ipv6', 'hostname'
+            ip_address: Resolved IP address (from host-ip tag)
+            scan_target: What was scanned (IP or FQDN from ReportHost@name)
+            scan_target_type: One of 'ipv4', 'ipv6', 'fqdn'
+            netbios_name: Optional NetBIOS name from Nessus
+            fqdn: Optional FQDN from Nessus
+            reverse_dns: Optional reverse DNS from Nessus
             conn: Database connection (optional)
 
         Returns:
             host_id of existing or newly created host
         """
         with db_transaction(conn) as c:
-            # Try to get existing
+            # Try to get existing by composite key
             row = query_one(
                 c,
-                "SELECT host_id FROM hosts WHERE host_address = ?",
-                (host_address,)
+                "SELECT host_id FROM hosts WHERE ip_address = ? AND scan_target = ?",
+                (ip_address, scan_target)
             )
 
             if row:
-                # Update last_seen
+                # Update last_seen and any new metadata
                 c.execute(
-                    "UPDATE hosts SET last_seen = CURRENT_TIMESTAMP WHERE host_id = ?",
-                    (row["host_id"],)
+                    """UPDATE hosts SET
+                        last_seen = CURRENT_TIMESTAMP,
+                        netbios_name = COALESCE(?, netbios_name),
+                        fqdn = COALESCE(?, fqdn),
+                        reverse_dns = COALESCE(?, reverse_dns)
+                    WHERE host_id = ?""",
+                    (netbios_name, fqdn, reverse_dns, row["host_id"])
                 )
                 return row["host_id"]
 
             # Create new
             cursor = c.execute(
-                "INSERT INTO hosts (host_address, host_type) VALUES (?, ?)",
-                (host_address, host_type)
+                """INSERT INTO hosts
+                    (ip_address, scan_target, scan_target_type, netbios_name, fqdn, reverse_dns)
+                VALUES (?, ?, ?, ?, ?, ?)""",
+                (ip_address, scan_target, scan_target_type, netbios_name, fqdn, reverse_dns)
             )
             # lastrowid should always be set after INSERT, but satisfy type checker
             return cursor.lastrowid if cursor.lastrowid is not None else 0
 
     @classmethod
-    def get_by_address(
+    def get_by_ip_and_target(
         cls,
-        host_address: str,
+        ip_address: str,
+        scan_target: str,
         conn: Optional[sqlite3.Connection] = None
     ) -> Optional["Host"]:
-        """Get host by address.
+        """Get host by composite key (ip_address, scan_target).
 
         Args:
-            host_address: IP address or hostname
+            ip_address: Resolved IP address
+            scan_target: Scan target (IP or FQDN)
             conn: Database connection (optional)
 
         Returns:
@@ -1397,10 +1427,60 @@ class Host:
         with db_transaction(conn) as c:
             row = query_one(
                 c,
-                "SELECT * FROM hosts WHERE host_address = ?",
-                (host_address,)
+                "SELECT * FROM hosts WHERE ip_address = ? AND scan_target = ?",
+                (ip_address, scan_target)
             )
             return cls.from_row(row) if row else None
+
+    @classmethod
+    def get_by_ip(
+        cls,
+        ip_address: str,
+        conn: Optional[sqlite3.Connection] = None
+    ) -> list["Host"]:
+        """Get all hosts with a given IP address.
+
+        May return multiple hosts if same IP was scanned via different targets.
+
+        Args:
+            ip_address: IP address to search
+            conn: Database connection (optional)
+
+        Returns:
+            List of Host instances
+        """
+        with db_transaction(conn) as c:
+            rows = query_all(
+                c,
+                "SELECT * FROM hosts WHERE ip_address = ?",
+                (ip_address,)
+            )
+            return [cls.from_row(row) for row in rows]
+
+    @classmethod
+    def get_by_scan_target(
+        cls,
+        scan_target: str,
+        conn: Optional[sqlite3.Connection] = None
+    ) -> list["Host"]:
+        """Get all hosts with a given scan target.
+
+        May return multiple hosts if same FQDN resolved to different IPs.
+
+        Args:
+            scan_target: Scan target (IP or FQDN)
+            conn: Database connection (optional)
+
+        Returns:
+            List of Host instances
+        """
+        with db_transaction(conn) as c:
+            rows = query_all(
+                c,
+                "SELECT * FROM hosts WHERE scan_target = ?",
+                (scan_target,)
+            )
+            return [cls.from_row(row) for row in rows]
 
     @classmethod
     def get_all_with_stats(
@@ -1416,8 +1496,11 @@ class Host:
             rows = query_all(c, """
                 SELECT
                     h.host_id,
-                    h.host_address,
-                    h.host_type,
+                    h.ip_address,
+                    h.scan_target,
+                    h.scan_target_type,
+                    h.netbios_name,
+                    h.fqdn,
                     h.first_seen,
                     h.last_seen,
                     COUNT(DISTINCT fah.finding_id) as finding_count,
@@ -1435,7 +1518,7 @@ class Host:
     @classmethod
     def get_plugin_ids_for_scan(
         cls,
-        host_address: str,
+        ip_address: str,
         scan_id: int,
         partial_match: bool = False,
         conn: Optional[sqlite3.Connection] = None
@@ -1443,7 +1526,7 @@ class Host:
         """Get plugin IDs for findings affecting a specific host in a scan.
 
         Args:
-            host_address: IP address or hostname to search
+            ip_address: IP address to search
             scan_id: Scan ID to filter by
             partial_match: If True, use LIKE for substring matching
             conn: Database connection (optional)
@@ -1458,20 +1541,20 @@ class Host:
                     FROM finding_affected_hosts fah
                     JOIN findings f ON fah.finding_id = f.finding_id
                     JOIN hosts h ON fah.host_id = h.host_id
-                    WHERE f.scan_id = ? AND h.host_address LIKE ?
+                    WHERE f.scan_id = ? AND h.ip_address LIKE ?
                     ORDER BY f.plugin_id ASC
                 """
-                rows = query_all(c, query, (scan_id, f"%{host_address}%"))
+                rows = query_all(c, query, (scan_id, f"%{ip_address}%"))
             else:
                 query = """
                     SELECT DISTINCT f.plugin_id
                     FROM finding_affected_hosts fah
                     JOIN findings f ON fah.finding_id = f.finding_id
                     JOIN hosts h ON fah.host_id = h.host_id
-                    WHERE f.scan_id = ? AND h.host_address = ?
+                    WHERE f.scan_id = ? AND h.ip_address = ?
                     ORDER BY f.plugin_id ASC
                 """
-                rows = query_all(c, query, (scan_id, host_address))
+                rows = query_all(c, query, (scan_id, ip_address))
 
             return [row["plugin_id"] for row in rows]
 

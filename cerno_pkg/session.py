@@ -290,7 +290,7 @@ def show_scan_summary(
             rows = query_all(
                 conn,
                 """
-                SELECT DISTINCT h.host_address, fah.port_number, h.host_type, fah.finding_id
+                SELECT DISTINCT h.ip_address, fah.port_number, h.scan_target_type, fah.finding_id
                 FROM finding_affected_hosts fah
                 JOIN findings f ON fah.finding_id = f.finding_id
                 JOIN hosts h ON fah.host_id = h.host_id
@@ -317,11 +317,11 @@ def show_scan_summary(
 
         # Process query results
         for row in rows:
-            host = row["host_address"]
+            host = row["ip_address"]
             port = row["port_number"]
-            host_type = row["host_type"]
-            is_ipv4 = (host_type == 'ipv4')
-            is_ipv6 = (host_type == 'ipv6')
+            scan_target_type = row["scan_target_type"]
+            is_ipv4 = (scan_target_type == 'ipv4')
+            is_ipv6 = (scan_target_type == 'ipv6')
 
             unique_hosts.add(host)
 

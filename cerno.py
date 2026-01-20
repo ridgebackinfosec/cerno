@@ -1154,7 +1154,7 @@ def main(args: types.SimpleNamespace) -> None:
 
                         # Query plugin IDs for this host in current scan
                         plugin_ids = Host.get_plugin_ids_for_scan(
-                            host_address=host_input,
+                            ip_address=host_input,
                             scan_id=scan_id,
                             partial_match=True
                         )

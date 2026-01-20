@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **BREAKING**: Hosts table schema redesigned for FQDN-targeted external scans
+  - New columns: `ip_address` (resolved IP), `scan_target` (what was scanned), `scan_target_type`, `netbios_name`, `fqdn`, `reverse_dns`
+  - Composite unique constraint: `(ip_address, scan_target)` - enables load-balanced scenarios
+  - Nessus import now parses `<HostProperties>` tags (host-ip, netbios-name, host-fqdn, host-rdns)
+  - **Requires database deletion and re-import of scans** (`rm ~/.cerno/cerno.db`)
+- Host queries now use `ip_address` instead of `host_address` throughout codebase
+
+### Fixed
+- Fixed host metadata capture for FQDN-targeted scans (previously lost resolved IP)
+- `reverse_dns` column now properly populated from Nessus data (was always NULL before)
+
 ## [1.2.20] - 2026-01-19
 
 ### Changed

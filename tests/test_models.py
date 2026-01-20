@@ -427,7 +427,7 @@ class TestFindingModel:
         from cerno_pkg.models import Host, Port
 
         # Insert 192.168.1.1:80
-        host_id_1 = Host.get_or_create("192.168.1.1", "ipv4", conn=temp_db)
+        host_id_1 = Host.get_or_create("192.168.1.1", "192.168.1.1", "ipv4", conn=temp_db)
         port_id_80 = Port.get_or_create(80, conn=temp_db)
         temp_db.execute(
             "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, plugin_output) VALUES (?, ?, ?, ?)",
@@ -442,14 +442,14 @@ class TestFindingModel:
         )
 
         # Insert 192.168.1.2:80
-        host_id_2 = Host.get_or_create("192.168.1.2", "ipv4", conn=temp_db)
+        host_id_2 = Host.get_or_create("192.168.1.2", "192.168.1.2", "ipv4", conn=temp_db)
         temp_db.execute(
             "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, plugin_output) VALUES (?, ?, ?, ?)",
             (finding_id, host_id_2, port_id_80, None)
         )
 
-        # Insert example.com:443
-        host_id_3 = Host.get_or_create("example.com", "hostname", conn=temp_db)
+        # Insert example.com:443 (FQDN-targeted scan - use example.com as both IP and target for test)
+        host_id_3 = Host.get_or_create("93.184.216.34", "example.com", "fqdn", conn=temp_db)
         temp_db.execute(
             "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, plugin_output) VALUES (?, ?, ?, ?)",
             (finding_id, host_id_3, port_id_443, None)
@@ -460,15 +460,18 @@ class TestFindingModel:
         hosts, ports_str = pf.get_hosts_and_ports(temp_db)
 
         # Verify hosts (should be unique, IPs first)
+        # Note: With new schema, hosts contains ip_address values (resolved IPs)
+        # example.com was created with ip_address=93.184.216.34
         assert len(hosts) == 3
         assert "192.168.1.1" in hosts
         assert "192.168.1.2" in hosts
-        assert "example.com" in hosts
+        assert "93.184.216.34" in hosts  # Resolved IP for example.com
 
-        # IPs should come before hostnames
-        ip_indices = [i for i, h in enumerate(hosts) if h.startswith("192.")]
-        hostname_indices = [i for i, h in enumerate(hosts) if h == "example.com"]
-        assert all(ip_idx < hostname_idx for ip_idx in ip_indices for hostname_idx in hostname_indices)
+        # All are now IP addresses, so ordering is by IP type then address
+        # IPv4s come first, ordered by address
+        assert hosts[0] == "192.168.1.1"
+        assert hosts[1] == "192.168.1.2"
+        assert hosts[2] == "93.184.216.34"
 
         # Verify ports (sorted numerically)
         assert ports_str == "80,443"
@@ -494,7 +497,7 @@ class TestFindingModel:
         from cerno_pkg.models import Host, Port
 
         # Insert 2001:db8::1:80 (IPv6)
-        host_id_ipv6 = Host.get_or_create("2001:db8::1", "ipv6", conn=temp_db)
+        host_id_ipv6 = Host.get_or_create("2001:db8::1", "2001:db8::1", "ipv6", conn=temp_db)
         port_id_80 = Port.get_or_create(80, conn=temp_db)
         temp_db.execute(
             "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, plugin_output) VALUES (?, ?, ?, ?)",
@@ -502,7 +505,7 @@ class TestFindingModel:
         )
 
         # Insert 192.168.1.1:80 (IPv4)
-        host_id_ipv4 = Host.get_or_create("192.168.1.1", "ipv4", conn=temp_db)
+        host_id_ipv4 = Host.get_or_create("192.168.1.1", "192.168.1.1", "ipv4", conn=temp_db)
         temp_db.execute(
             "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, plugin_output) VALUES (?, ?, ?, ?)",
             (finding_id, host_id_ipv4, port_id_80, None)
@@ -561,7 +564,7 @@ class TestFindingModel:
         from cerno_pkg.models import Host, Port
 
         # Insert 192.168.1.1:80
-        host_id_1 = Host.get_or_create("192.168.1.1", "ipv4", conn=temp_db)
+        host_id_1 = Host.get_or_create("192.168.1.1", "192.168.1.1", "ipv4", conn=temp_db)
         port_id_80 = Port.get_or_create(80, conn=temp_db)
         temp_db.execute(
             "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, plugin_output) VALUES (?, ?, ?, ?)",
@@ -575,8 +578,8 @@ class TestFindingModel:
             (finding_id, host_id_1, port_id_443, None)
         )
 
-        # Insert example.com:80
-        host_id_2 = Host.get_or_create("example.com", "hostname", conn=temp_db)
+        # Insert example.com:80 (FQDN-targeted scan)
+        host_id_2 = Host.get_or_create("93.184.216.34", "example.com", "fqdn", conn=temp_db)
         temp_db.execute(
             "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, plugin_output) VALUES (?, ?, ?, ?)",
             (finding_id, host_id_2, port_id_80, None)
@@ -587,15 +590,15 @@ class TestFindingModel:
         lines = pf.get_all_host_port_lines(temp_db)
 
         # Verify format and sorting
+        # Note: With new schema, lines contain ip_address:port (resolved IPs)
+        # example.com was created with ip_address=93.184.216.34
         assert len(lines) == 3
         assert "192.168.1.1:80" in lines
         assert "192.168.1.1:443" in lines
-        assert "example.com:80" in lines
+        assert "93.184.216.34:80" in lines  # Resolved IP for example.com
 
-        # IPs should come before hostnames
-        ip_line_indices = [i for i, line in enumerate(lines) if line.startswith("192.")]
-        hostname_line_indices = [i for i, line in enumerate(lines) if line.startswith("example.")]
-        assert all(ip_idx < hostname_idx for ip_idx in ip_line_indices for hostname_idx in hostname_line_indices)
+        # All are now IPs, verify ordering by IP address
+        assert lines == ["192.168.1.1:80", "192.168.1.1:443", "93.184.216.34:80"]
 
     def test_get_all_host_port_lines_ipv6_bracketed(self, temp_db):
         """Test get_all_host_port_lines adds brackets to IPv6 addresses."""
@@ -618,7 +621,7 @@ class TestFindingModel:
         from cerno_pkg.models import Host, Port
 
         # Insert 2001:db8::1:80 (IPv6)
-        host_id = Host.get_or_create("2001:db8::1", "ipv6", conn=temp_db)
+        host_id = Host.get_or_create("2001:db8::1", "2001:db8::1", "ipv6", conn=temp_db)
         port_id = Port.get_or_create(80, conn=temp_db)
         temp_db.execute(
             "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, plugin_output) VALUES (?, ?, ?, ?)",
@@ -654,7 +657,7 @@ class TestFindingModel:
         from cerno_pkg.models import Host
 
         # Insert 192.168.1.1 with no port
-        host_id = Host.get_or_create("192.168.1.1", "ipv4", conn=temp_db)
+        host_id = Host.get_or_create("192.168.1.1", "192.168.1.1", "ipv4", conn=temp_db)
         temp_db.execute(
             "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, plugin_output) VALUES (?, ?, ?, ?)",
             (finding_id, host_id, None, None)
