@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.20] - 2026-01-19
+
 ### Changed
 - Improved severity selection table UX with visual separation between severity levels and special filters
   - Added horizontal separator line between severity levels (1-5) and special filters section
