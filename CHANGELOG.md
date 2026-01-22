@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.21] - 2026-01-22
+
 ### Added
 - **Cross-scan comparison**: New `cerno scan compare <scan1> <scan2>` command to compare findings between two scans
   - Identifies new, resolved, and persistent vulnerabilities by comparing plugin presence
