@@ -105,6 +105,7 @@ CREATE TABLE IF NOT EXISTS findings (
 CREATE INDEX IF NOT EXISTS idx_findings_scan ON findings(scan_id);
 CREATE INDEX IF NOT EXISTS idx_findings_plugin ON findings(plugin_id);
 CREATE INDEX IF NOT EXISTS idx_findings_review_state ON findings(review_state);
+CREATE INDEX IF NOT EXISTS idx_findings_scan_plugin ON findings(scan_id, plugin_id);
 
 CREATE TABLE IF NOT EXISTS finding_affected_hosts (
     fah_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -347,6 +348,55 @@ SELECT
     a.metadata
 FROM artifacts a
 LEFT JOIN artifact_types at ON a.artifact_type_id = at.artifact_type_id;
+
+-- Scan plugin summary (for cross-scan comparison)
+-- Shows all plugins present in each scan with host/port counts
+CREATE VIEW IF NOT EXISTS v_scan_plugin_summary AS
+SELECT
+    f.scan_id,
+    s.scan_name,
+    s.created_at as scan_date,
+    f.plugin_id,
+    p.plugin_name,
+    p.severity_int,
+    sl.severity_label,
+    p.has_metasploit,
+    p.cvss3_score,
+    COUNT(DISTINCT fah.host_id) as affected_hosts,
+    COUNT(DISTINCT fah.port_number) as affected_ports
+FROM findings f
+JOIN scans s ON f.scan_id = s.scan_id
+JOIN plugins p ON f.plugin_id = p.plugin_id
+JOIN severity_levels sl ON p.severity_int = sl.severity_int
+LEFT JOIN finding_affected_hosts fah ON f.finding_id = fah.finding_id
+GROUP BY f.scan_id, s.scan_name, s.created_at, f.plugin_id, p.plugin_name,
+         p.severity_int, sl.severity_label, p.has_metasploit, p.cvss3_score;
+
+-- Host scan findings (for host vulnerability history)
+-- Shows per-host statistics broken down by scan
+CREATE VIEW IF NOT EXISTS v_host_scan_findings AS
+SELECT
+    h.host_id,
+    h.ip_address,
+    h.scan_target,
+    h.scan_target_type,
+    f.scan_id,
+    s.scan_name,
+    s.created_at as scan_date,
+    COUNT(DISTINCT f.plugin_id) as finding_count,
+    MAX(p.severity_int) as max_severity,
+    SUM(CASE WHEN p.severity_int = 4 THEN 1 ELSE 0 END) as critical_count,
+    SUM(CASE WHEN p.severity_int = 3 THEN 1 ELSE 0 END) as high_count,
+    SUM(CASE WHEN p.severity_int = 2 THEN 1 ELSE 0 END) as medium_count,
+    SUM(CASE WHEN p.severity_int = 1 THEN 1 ELSE 0 END) as low_count,
+    SUM(CASE WHEN p.severity_int = 0 THEN 1 ELSE 0 END) as info_count
+FROM hosts h
+JOIN finding_affected_hosts fah ON h.host_id = fah.host_id
+JOIN findings f ON fah.finding_id = f.finding_id
+JOIN scans s ON f.scan_id = s.scan_id
+JOIN plugins p ON f.plugin_id = p.plugin_id
+GROUP BY h.host_id, h.ip_address, h.scan_target, h.scan_target_type,
+         f.scan_id, s.scan_name, s.created_at;
 """
 
 # Combined schema for backward compatibility (if needed)

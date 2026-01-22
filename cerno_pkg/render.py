@@ -26,6 +26,7 @@ from .logging_setup import log_timing
 
 if TYPE_CHECKING:
     from .models import Finding, Plugin
+    from .cross_scan import ScanComparisonResult, HostVulnerabilityHistory
 
 _console_global = get_console()
 
@@ -2023,3 +2024,248 @@ def color_unreviewed(count: int) -> str:
     if count <= 10:
         return f"{C.YELLOW}{count}{C.RESET}"
     return f"{C.RED}{count}{C.RESET}"
+
+
+# ===================================================================
+# Cross-Scan Comparison Rendering
+# ===================================================================
+
+def _severity_label_for_int(severity_int: int) -> str:
+    """Get severity label for severity integer."""
+    labels = {0: "Info", 1: "Low", 2: "Medium", 3: "High", 4: "Critical"}
+    return labels.get(severity_int, "Unknown")
+
+
+def _severity_color_for_int(severity_int: int) -> str:
+    """Get Rich color style for severity integer."""
+    colors = {0: "dim", 1: "cyan", 2: "yellow", 3: "bright_red", 4: "red bold"}
+    return colors.get(severity_int, "white")
+
+
+def _format_severity_breakdown(by_severity: dict[int, int]) -> str:
+    """Format severity breakdown as a compact string.
+
+    Args:
+        by_severity: Dict mapping severity_int to count
+
+    Returns:
+        Formatted string like "Critical: 2, High: 5, Medium: 3"
+    """
+    parts = []
+    # Order from highest to lowest severity
+    for sev in [4, 3, 2, 1, 0]:
+        count = by_severity.get(sev, 0)
+        if count > 0:
+            label = _severity_label_for_int(sev)
+            parts.append(f"{label}: {count}")
+    return ", ".join(parts) if parts else "None"
+
+
+def render_scan_comparison(result: "ScanComparisonResult") -> None:
+    """Render scan comparison results with summary panel and detail tables.
+
+    Args:
+        result: ScanComparisonResult from compare_scans()
+    """
+    # Format dates for display
+    def format_date(dt_str: str) -> str:
+        try:
+            from datetime import datetime
+            dt = datetime.fromisoformat(dt_str)
+            return dt.strftime("%Y-%m-%d")
+        except Exception:
+            return dt_str[:10] if len(dt_str) >= 10 else dt_str
+
+    scan1_date = format_date(result.scan1_date)
+    scan2_date = format_date(result.scan2_date)
+
+    # Build summary panel content
+    summary_lines = []
+
+    # Finding changes section
+    summary_lines.append("[bold]Finding Changes[/bold]")
+    summary_lines.append(f"  [green]New findings:[/green]        {result.total_new:>4}   ({_format_severity_breakdown(result.new_by_severity)})")
+    summary_lines.append(f"  [red]Resolved findings:[/red]   {result.total_resolved:>4}   ({_format_severity_breakdown(result.resolved_by_severity)})")
+    summary_lines.append(f"  [yellow]Persistent findings:[/yellow] {result.total_persistent:>4}   ({_format_severity_breakdown(result.persistent_by_severity)})")
+
+    summary_lines.append("")
+
+    # Host changes section
+    summary_lines.append("[bold]Host Changes[/bold]")
+    new_host_ips = ", ".join(h["ip_address"] for h in result.new_hosts[:5])
+    if len(result.new_hosts) > 5:
+        new_host_ips += f", ... (+{len(result.new_hosts) - 5} more)"
+    removed_host_ips = ", ".join(h["ip_address"] for h in result.removed_hosts[:5])
+    if len(result.removed_hosts) > 5:
+        removed_host_ips += f", ... (+{len(result.removed_hosts) - 5} more)"
+
+    summary_lines.append(f"  [green]New hosts:[/green]      {len(result.new_hosts):>4}   ({new_host_ips})" if result.new_hosts else f"  [green]New hosts:[/green]      {len(result.new_hosts):>4}")
+    summary_lines.append(f"  [red]Removed hosts:[/red]  {len(result.removed_hosts):>4}   ({removed_host_ips})" if result.removed_hosts else f"  [red]Removed hosts:[/red]  {len(result.removed_hosts):>4}")
+    summary_lines.append(f"  [yellow]Persistent:[/yellow]     {len(result.persistent_hosts):>4}")
+
+    summary_text = "\n".join(summary_lines)
+    summary_panel = Panel(
+        summary_text,
+        title=f"[bold]Scan Comparison: {result.scan1_name} ({scan1_date}) → {result.scan2_name} ({scan2_date})[/bold]",
+        border_style=style_if_enabled("cyan"),
+        padding=(1, 2),
+    )
+    _console_global.print(summary_panel)
+    _console_global.print()
+
+    # New findings table
+    if result.new_findings:
+        _render_findings_change_table(
+            result.new_findings,
+            f"New Findings ({result.total_new})",
+            "green"
+        )
+        _console_global.print()
+
+    # Resolved findings table
+    if result.resolved_findings:
+        _render_findings_change_table(
+            result.resolved_findings,
+            f"Resolved Findings ({result.total_resolved})",
+            "red"
+        )
+        _console_global.print()
+
+    # Tips
+    if result.total_new > 0 or result.total_resolved > 0:
+        info("Tip: Use --severity 3 to filter to High and Critical only")
+
+
+def _render_findings_change_table(
+    findings: list[dict],
+    title: str,
+    title_color: str
+) -> None:
+    """Render a table of changed findings.
+
+    Args:
+        findings: List of finding dicts with plugin info
+        title: Table title
+        title_color: Color for the title
+    """
+    table = Table(
+        title=f"[{title_color}]{title}[/{title_color}]",
+        show_header=True,
+        header_style=style_if_enabled("bold"),
+        box=box.ROUNDED,
+    )
+    table.add_column("Severity", style=style_if_enabled("white"), width=10)
+    table.add_column("Plugin Name", style=style_if_enabled("white"))
+    table.add_column("Plugin ID", justify="right", style=style_if_enabled("dim"))
+    table.add_column("Hosts", justify="right", style=style_if_enabled("cyan"))
+
+    for finding in findings:
+        sev_int = finding.get("severity_int", 0)
+        sev_label = finding.get("severity_label", _severity_label_for_int(sev_int))
+        sev_color = _severity_color_for_int(sev_int)
+
+        table.add_row(
+            f"[{sev_color}]{sev_label}[/{sev_color}]",
+            finding.get("plugin_name", "Unknown"),
+            str(finding.get("plugin_id", "")),
+            str(finding.get("affected_hosts", 0)),
+        )
+
+    _console_global.print(table)
+
+
+def render_host_history(history: "HostVulnerabilityHistory") -> None:
+    """Render vulnerability history for a single host.
+
+    Shows a timeline of scans with severity breakdown and trend indicators.
+
+    Args:
+        history: HostVulnerabilityHistory from get_host_vulnerability_history()
+    """
+    # Format dates for display
+    def format_date(dt_str: str) -> str:
+        try:
+            from datetime import datetime
+            dt = datetime.fromisoformat(dt_str)
+            return dt.strftime("%Y-%m-%d")
+        except Exception:
+            return dt_str[:10] if len(dt_str) >= 10 else dt_str
+
+    # Header panel
+    header_lines = [
+        f"[bold]IP Address:[/bold] {history.ip_address}",
+        f"[bold]Scan Target:[/bold] {history.scan_target}",
+        f"[bold]First Seen:[/bold] {format_date(history.first_seen)}",
+        f"[bold]Last Seen:[/bold] {format_date(history.last_seen)}",
+        f"[bold]Total Scans:[/bold] {history.scan_count}",
+    ]
+    header_panel = Panel(
+        "\n".join(header_lines),
+        title="[bold]Host Vulnerability History[/bold]",
+        border_style=style_if_enabled("cyan"),
+        padding=(0, 2),
+    )
+    _console_global.print(header_panel)
+    _console_global.print()
+
+    if not history.scans:
+        warn("No scan history available for this host")
+        return
+
+    # Timeline table
+    table = Table(
+        title="Scan Timeline",
+        show_header=True,
+        header_style=style_if_enabled("bold"),
+        box=box.ROUNDED,
+    )
+    table.add_column("Scan Name", style=style_if_enabled("yellow"))
+    table.add_column("Date", style=style_if_enabled("dim"))
+    table.add_column("Total", justify="right")
+    table.add_column("Critical", justify="right", style=style_if_enabled("red bold"))
+    table.add_column("High", justify="right", style=style_if_enabled("bright_red"))
+    table.add_column("Medium", justify="right", style=style_if_enabled("yellow"))
+    table.add_column("Low", justify="right", style=style_if_enabled("cyan"))
+    table.add_column("Info", justify="right", style=style_if_enabled("dim"))
+    table.add_column("Trend", justify="center")
+
+    prev_finding_count = None
+    for scan in history.scans:
+        # Calculate trend indicator
+        trend = ""
+        if prev_finding_count is not None:
+            diff = scan.finding_count - prev_finding_count
+            if diff > 0:
+                trend = f"[red]+{diff}[/red]"
+            elif diff < 0:
+                trend = f"[green]{diff}[/green]"
+            else:
+                trend = "[dim]=[/dim]"
+        prev_finding_count = scan.finding_count
+
+        table.add_row(
+            scan.scan_name,
+            format_date(scan.scan_date),
+            str(scan.finding_count),
+            str(scan.critical_count) if scan.critical_count else "-",
+            str(scan.high_count) if scan.high_count else "-",
+            str(scan.medium_count) if scan.medium_count else "-",
+            str(scan.low_count) if scan.low_count else "-",
+            str(scan.info_count) if scan.info_count else "-",
+            trend,
+        )
+
+    _console_global.print(table)
+
+    # Summary
+    _console_global.print()
+    if history.scan_count >= 2:
+        first = history.scans[0]
+        last = history.scans[-1]
+        total_change = last.finding_count - first.finding_count
+        if total_change > 0:
+            info(f"Overall trend: [red]+{total_change} findings[/red] since first scan")
+        elif total_change < 0:
+            info(f"Overall trend: [green]{total_change} findings[/green] since first scan")
+        else:
+            info("Overall trend: [yellow]No change[/yellow] in finding count")

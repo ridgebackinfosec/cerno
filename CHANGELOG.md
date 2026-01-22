@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Cross-scan comparison**: New `cerno scan compare <scan1> <scan2>` command to compare findings between two scans
+  - Identifies new, resolved, and persistent vulnerabilities by comparing plugin presence
+  - Tracks host changes: new hosts, removed hosts, persistent hosts
+  - Summary panel with severity breakdown for each category
+  - Optional `--severity` filter to focus on high/critical findings
+- **Host vulnerability history**: New `cerno scan history <host_ip>` command to view vulnerability timeline for a specific host
+  - Shows timeline of all scans where the host appeared
+  - Displays severity breakdown per scan with trend indicators
+  - Tracks finding count changes over time
+- New SQL views for efficient cross-scan queries:
+  - `v_scan_plugin_summary`: Plugin presence per scan with affected host/port counts
+  - `v_host_scan_findings`: Per-host statistics broken down by scan
+- New `cerno_pkg/cross_scan.py` module with data structures and analysis functions
+- Composite index on `findings(scan_id, plugin_id)` for faster comparison queries
+
 ### Changed
 - **BREAKING**: Hosts table schema redesigned for FQDN-targeted external scans
   - New columns: `ip_address` (resolved IP), `scan_target` (what was scanned), `scan_target_type`, `netbios_name`, `fqdn`, `reverse_dns`

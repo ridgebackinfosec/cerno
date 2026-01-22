@@ -1746,6 +1746,91 @@ def delete_scan(
         raise typer.Exit(1)
 
 
+@scan_app.command(name="compare", help="Compare findings between two scans to identify new, resolved, and persistent vulnerabilities")
+def compare_scans_cmd(
+    scan1: str = typer.Argument(..., help="First scan name (baseline)"),
+    scan2: str = typer.Argument(..., help="Second scan name (comparison)"),
+    severity: int = typer.Option(0, "--severity", "-s", help="Minimum severity level (0=Info, 1=Low, 2=Medium, 3=High, 4=Critical)"),
+) -> None:
+    """Compare findings between two scans.
+
+    Shows which vulnerabilities are new, resolved, or persistent between
+    the baseline scan (scan1) and the comparison scan (scan2).
+
+    Also shows host changes: new hosts, removed hosts, and persistent hosts.
+
+    Examples:
+        cerno scan compare "Q1-2024" "Q2-2024"
+        cerno scan compare "Baseline" "Current" --severity 3
+    """
+    from cerno_pkg.cross_scan import compare_scans, get_scan_by_name
+    from cerno_pkg.render import render_scan_comparison
+
+    # Validate severity
+    if severity < 0 or severity > 4:
+        err(f"Invalid severity level: {severity}. Must be 0-4.")
+        raise typer.Exit(1)
+
+    # Look up scans by name
+    scan1_data = get_scan_by_name(scan1)
+    if not scan1_data:
+        err(f"Scan not found: {scan1}")
+        info("Use 'cerno scan list' to see available scans")
+        raise typer.Exit(1)
+
+    scan2_data = get_scan_by_name(scan2)
+    if not scan2_data:
+        err(f"Scan not found: {scan2}")
+        info("Use 'cerno scan list' to see available scans")
+        raise typer.Exit(1)
+
+    # Check if comparing same scan
+    if scan1_data["scan_id"] == scan2_data["scan_id"]:
+        warn("Comparing a scan with itself - all findings will be persistent")
+
+    # Perform comparison
+    result = compare_scans(
+        scan_id_1=scan1_data["scan_id"],
+        scan_id_2=scan2_data["scan_id"],
+        min_severity=severity,
+    )
+
+    if not result:
+        err("Failed to compare scans")
+        raise typer.Exit(1)
+
+    # Render results
+    render_scan_comparison(result)
+
+
+@scan_app.command(name="history", help="Show vulnerability history for a specific host across all scans")
+def host_history_cmd(
+    host_ip: str = typer.Argument(..., help="Host IP address to query"),
+) -> None:
+    """Show vulnerability history for a specific host.
+
+    Displays a timeline of all scans where this host appeared,
+    showing how its vulnerability profile has changed over time.
+
+    Examples:
+        cerno scan history 192.168.1.10
+        cerno scan history 10.0.0.5
+    """
+    from cerno_pkg.cross_scan import get_host_vulnerability_history
+    from cerno_pkg.render import render_host_history
+
+    # Get host history
+    history = get_host_vulnerability_history(host_ip)
+
+    if not history:
+        err(f"No history found for host: {host_ip}")
+        info("This host may not exist in any imported scans")
+        raise typer.Exit(1)
+
+    # Render history
+    render_host_history(history)
+
+
 # === Config Sub-App Commands ===
 # Grouped under 'cerno config'
 
