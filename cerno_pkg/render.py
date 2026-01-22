@@ -2154,22 +2154,23 @@ def _render_findings_change_table(
         header_style=style_if_enabled("bold"),
         box=box.ROUNDED,
     )
-    table.add_column("Severity", style=style_if_enabled("white"), width=10)
-    table.add_column("Plugin Name", style=style_if_enabled("white"))
-    table.add_column("Plugin ID", justify="right", style=style_if_enabled("dim"))
-    table.add_column("Hosts", justify="right", style=style_if_enabled("cyan"))
+    table.add_column("Severity", width=10)
+    table.add_column("Plugin Name", no_wrap=False)
+    table.add_column("Plugin ID", justify="right")
+    table.add_column("Hosts", justify="right")
 
     for finding in findings:
         sev_int = finding.get("severity_int", 0)
         sev_label = finding.get("severity_label", _severity_label_for_int(sev_int))
         sev_color = _severity_color_for_int(sev_int)
 
-        table.add_row(
-            f"[{sev_color}]{sev_label}[/{sev_color}]",
-            finding.get("plugin_name", "Unknown"),
-            str(finding.get("plugin_id", "")),
-            str(finding.get("affected_hosts", 0)),
-        )
+        # Use Text objects to prevent markup bleeding between columns
+        severity_text = Text(sev_label, style=sev_color)
+        plugin_text = Text(finding.get("plugin_name", "Unknown"))
+        plugin_id_text = Text(str(finding.get("plugin_id", "")), style="dim")
+        hosts_text = Text(str(finding.get("affected_hosts", 0)), style="cyan")
+
+        table.add_row(severity_text, plugin_text, plugin_id_text, hosts_text)
 
     _console_global.print(table)
 
