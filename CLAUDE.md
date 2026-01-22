@@ -241,6 +241,8 @@ cerno import nessus scan.nessus   # Import Nessus scan
 cerno review                      # Start interactive review
 cerno scan list                   # List all scans
 cerno scan delete <scan_name>     # Delete scan from database
+cerno scan compare <s1> <s2>      # Compare findings between two scans
+cerno scan history <host_ip>      # Show vulnerability timeline for a host
 ```
 
 ### Testing

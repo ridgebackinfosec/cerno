@@ -36,6 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Fixed host metadata capture for FQDN-targeted scans (previously lost resolved IP)
 - `reverse_dns` column now properly populated from Nessus data (was always NULL before)
+- Fixed `v_host_scan_findings` view severity counts - was counting junction table rows instead of distinct plugins per severity
+- Fixed color bleeding in scan comparison tables by using `Text` objects instead of markup strings
 
 ### Documentation
 - Updated `docs/DATABASE.md` with new hosts table schema and query examples

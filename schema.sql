@@ -420,6 +420,56 @@ SELECT
 FROM artifacts a
 LEFT JOIN artifact_types at ON a.artifact_type_id = at.artifact_type_id;
 
+-- Scan plugin summary (for cross-scan comparison)
+-- Shows all plugins present in each scan with affected host/port counts
+CREATE VIEW IF NOT EXISTS v_scan_plugin_summary AS
+SELECT
+    f.scan_id,
+    s.scan_name,
+    s.created_at as scan_date,
+    f.plugin_id,
+    p.plugin_name,
+    p.severity_int,
+    sl.severity_label,
+    p.has_metasploit,
+    p.cvss3_score,
+    COUNT(DISTINCT fah.host_id) as affected_hosts,
+    COUNT(DISTINCT fah.port_number) as affected_ports
+FROM findings f
+JOIN scans s ON f.scan_id = s.scan_id
+JOIN plugins p ON f.plugin_id = p.plugin_id
+JOIN severity_levels sl ON p.severity_int = sl.severity_int
+LEFT JOIN finding_affected_hosts fah ON f.finding_id = fah.finding_id
+GROUP BY f.scan_id, s.scan_name, s.created_at, f.plugin_id, p.plugin_name,
+         p.severity_int, sl.severity_label, p.has_metasploit, p.cvss3_score;
+
+-- Host scan findings (for host vulnerability history)
+-- Shows per-host statistics broken down by scan
+-- Uses COUNT(DISTINCT) to count unique plugins per severity (not rows in junction table)
+CREATE VIEW IF NOT EXISTS v_host_scan_findings AS
+SELECT
+    h.host_id,
+    h.ip_address,
+    h.scan_target,
+    h.scan_target_type,
+    f.scan_id,
+    s.scan_name,
+    s.created_at as scan_date,
+    COUNT(DISTINCT f.plugin_id) as finding_count,
+    MAX(p.severity_int) as max_severity,
+    COUNT(DISTINCT CASE WHEN p.severity_int = 4 THEN f.plugin_id END) as critical_count,
+    COUNT(DISTINCT CASE WHEN p.severity_int = 3 THEN f.plugin_id END) as high_count,
+    COUNT(DISTINCT CASE WHEN p.severity_int = 2 THEN f.plugin_id END) as medium_count,
+    COUNT(DISTINCT CASE WHEN p.severity_int = 1 THEN f.plugin_id END) as low_count,
+    COUNT(DISTINCT CASE WHEN p.severity_int = 0 THEN f.plugin_id END) as info_count
+FROM hosts h
+JOIN finding_affected_hosts fah ON h.host_id = fah.host_id
+JOIN findings f ON fah.finding_id = f.finding_id
+JOIN scans s ON f.scan_id = s.scan_id
+JOIN plugins p ON f.plugin_id = p.plugin_id
+GROUP BY h.host_id, h.ip_address, h.scan_target, h.scan_target_type,
+         f.scan_id, s.scan_name, s.created_at;
+
 -- ============================================================================
 -- PRAGMA SETTINGS (applied at connection time by database.py)
 -- ============================================================================

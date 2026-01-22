@@ -71,6 +71,8 @@ Cerno uses a **fully normalized database schema** following relational best prac
    - `v_plugins_with_severity` - Plugins with severity labels
    - `v_host_findings` - Cross-scan host analysis
    - `v_artifacts_with_types` - Artifacts with type names
+   - `v_scan_plugin_summary` - Plugin presence per scan with host counts (cross-scan comparison)
+   - `v_host_scan_findings` - Per-host vulnerability statistics by scan (host history)
 
 4. **Foreign Key Constraints Throughout**
    - All relationships enforced at database level
@@ -89,7 +91,7 @@ Cerno uses a **fully normalized database schema** following relational best prac
 
 ## Schema Overview
 
-The database consists of **13 tables** and **5 views**:
+The database consists of **13 tables** and **7 views**:
 
 ### Foundation Tables (Normalized Reference Data)
 
@@ -120,6 +122,8 @@ The database consists of **13 tables** and **5 views**:
 - **v_plugins_with_severity** - Plugins with severity labels (replaces column)
 - **v_host_findings** - Cross-scan host analysis
 - **v_artifacts_with_types** - Artifacts with type information (replaces column)
+- **v_scan_plugin_summary** - Plugin presence per scan with host counts (cross-scan comparison)
+- **v_host_scan_findings** - Per-host vulnerability statistics by scan (host history)
 
 ---
 
@@ -540,6 +544,70 @@ ORDER BY total_mb DESC;
 
 ---
 
+### v_scan_plugin_summary
+
+Plugin presence per scan with affected host counts - used by `cerno scan compare` command.
+
+**Columns**:
+- `scan_id` - Foreign key to scans
+- `plugin_id`, `plugin_name`, `severity_int`, `severity_label`
+- `has_metasploit` - Metasploit module availability
+- `cvss3_score` - CVSS v3 base score
+- `affected_hosts` - COUNT(DISTINCT host_id) for this plugin in this scan
+
+**Usage**:
+```sql
+-- Get all Critical plugins in a scan with host counts
+SELECT plugin_id, plugin_name, affected_hosts
+FROM v_scan_plugin_summary
+WHERE scan_id = 1 AND severity_int = 4
+ORDER BY affected_hosts DESC;
+
+-- Compare plugin presence between two scans
+SELECT
+    COALESCE(s1.plugin_id, s2.plugin_id) as plugin_id,
+    COALESCE(s1.plugin_name, s2.plugin_name) as plugin_name,
+    s1.affected_hosts as scan1_hosts,
+    s2.affected_hosts as scan2_hosts
+FROM v_scan_plugin_summary s1
+FULL OUTER JOIN v_scan_plugin_summary s2
+    ON s1.plugin_id = s2.plugin_id
+WHERE s1.scan_id = 1 AND s2.scan_id = 2;
+```
+
+---
+
+### v_host_scan_findings
+
+Per-host vulnerability statistics broken down by scan - used by `cerno scan history` command.
+
+**Columns**:
+- `host_id`, `ip_address`, `scan_target`, `scan_target_type`
+- `scan_id`, `scan_name`, `scan_date`
+- `finding_count` - COUNT(DISTINCT plugin_id) for this host in this scan
+- `max_severity` - Highest severity finding
+- `critical_count`, `high_count`, `medium_count`, `low_count`, `info_count` - Counts by severity
+
+**Usage**:
+```sql
+-- Get vulnerability history for a specific host
+SELECT scan_name, scan_date, finding_count, max_severity,
+       critical_count, high_count, medium_count, low_count, info_count
+FROM v_host_scan_findings
+WHERE ip_address = '192.168.1.10'
+ORDER BY scan_date ASC;
+
+-- Find hosts with improving vulnerability trends
+SELECT ip_address, scan_target,
+       GROUP_CONCAT(finding_count, ' -> ') as trend
+FROM v_host_scan_findings
+GROUP BY host_id
+HAVING COUNT(*) > 1
+ORDER BY ip_address;
+```
+
+---
+
 ## Query Examples
 
 ### Get Plugin File with Host/Port Counts
@@ -917,6 +985,6 @@ Planned database features:
 
 ---
 
-**Last Updated**: 2026-01-11 (v1.2.4)
+**Last Updated**: 2026-01-22 (v1.2.21)
 **Maintained By**: Ridgeback InfoSec, LLC
 **Schema Version**: 1
