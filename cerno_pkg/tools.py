@@ -30,16 +30,6 @@ from .constants import (
 )
 from .tool_context import ToolContext, CommandResult
 
-# Optional dependencies for Metasploit search
-try:
-    import requests  # type: ignore[reportUnusedImport]
-    from bs4 import BeautifulSoup, Tag  # type: ignore[reportUnusedImport]
-    METASPLOIT_DEPS_AVAILABLE = True
-except ImportError:
-    requests = None  # type: ignore
-    BeautifulSoup = None  # type: ignore
-    Tag = None  # type: ignore
-    METASPLOIT_DEPS_AVAILABLE = False
 
 from .ansi import get_console
 _console = get_console()

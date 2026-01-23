@@ -178,7 +178,7 @@ def browse_workflow_groups(
         try:
             ans = Prompt.ask("Choose workflow").strip().lower()
         except KeyboardInterrupt:
-            warn("\nInterrupted â€” returning to severity menu.")
+            warn("\nInterrupted — returning to severity menu.")
             return
 
         if ans in ("b", "back", "q"):
@@ -532,7 +532,7 @@ def browse_file_list(
 
             ans = Prompt.ask("Choose a file number, or action").strip().lower()
         except KeyboardInterrupt:
-            warn("\nInterrupted â€” returning to severity menu.")
+            warn("\nInterrupted — returning to severity menu.")
             break
 
         # Handle actions
@@ -574,7 +574,7 @@ def browse_file_list(
                 confirm_msg = f"Mark all {len(candidates)} findings as review complete?"
                 confirmed = Confirm.ask(confirm_msg, default=False)
             except KeyboardInterrupt:
-                warn("\nInterrupted â€” cancelling bulk operation.")
+                warn("\nInterrupted — cancelling bulk operation.")
                 continue
 
             if not confirmed:
@@ -894,6 +894,7 @@ def main(args: types.SimpleNamespace) -> None:
                         all_scans = Scan.get_all()
                 except Exception as e:
                     err(f"Failed to query scans from database: {e}")
+                    info("If the database is corrupted, try: rm ~/.cerno/cerno.db && cerno import nessus <file>")
                     return
 
                 if not all_scans:
@@ -1853,6 +1854,7 @@ def config_reset() -> None:
         info("Edit this file to customize your preferences")
     else:
         err("Failed to reset config file")
+        info(f"Check permissions on {config_path.parent}")
         raise typer.Exit(1)
 
 
@@ -1998,6 +2000,7 @@ def config_set(
             info(f"Config saved to {get_config_path()}")
         else:
             err("Failed to save config")
+            info("Try: cerno config reset")
             raise typer.Exit(1)
     except ValueError as e:
         err(f"Invalid value for {key}: {e}")

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Fixed character encoding corruption in error messages (mojibake `â€"` replaced with proper em-dash `—`)
+- Fixed `LOGURU_AVAILABLE` redefinition warning in logging_setup.py
+- Added proper type annotation guard for `os.geteuid()` on Windows (ops.py)
+
+### Changed
+- Removed dead code: unused Metasploit web scraping imports (`requests`, `BeautifulSoup`) from tools.py
+- Added `types-PyYAML` to dev dependencies for better type checking
+- Improved error messages with recovery suggestions for database and config failures
+- Added Troubleshooting, Contributing, and Windows compatibility sections to README.md
+
 ## [1.2.21] - 2026-01-22
 
 ### Added
