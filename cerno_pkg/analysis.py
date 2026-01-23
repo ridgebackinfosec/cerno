@@ -91,18 +91,18 @@ def compare_filtered(files: Union[list['Finding'], list[tuple['Finding', 'Plugin
                 """
                 SELECT
                         fah.finding_id,
-                        h.host_address,
+                        h.ip_address,
                         fah.port_number,
-                        h.host_type
+                        h.scan_target_type
                     FROM finding_affected_hosts fah
                     JOIN hosts h ON fah.host_id = h.host_id
                     WHERE fah.finding_id IN ({})
                     ORDER BY
                         fah.finding_id,
-                        CASE WHEN h.host_type = 'ipv4' THEN 0
-                             WHEN h.host_type = 'ipv6' THEN 1
+                        CASE WHEN h.scan_target_type = 'ipv4' THEN 0
+                             WHEN h.scan_target_type = 'ipv6' THEN 1
                              ELSE 2 END,
-                        h.host_address ASC
+                        h.ip_address ASC
                 """.format(','.join('?' * len(finding_ids))),
                 tuple(finding_ids)
             )
@@ -123,7 +123,7 @@ def compare_filtered(files: Union[list['Finding'], list[tuple['Finding', 'Plugin
             had_explicit = False
 
             for row in file_rows:
-                host = row['host_address']
+                host = row['ip_address']
                 port = row['port_number']
 
                 if host not in hosts:
@@ -275,18 +275,18 @@ def analyze_inclusions(files: Union[list['Finding'], list[tuple['Finding', 'Plug
                 """
                 SELECT
                         fah.finding_id,
-                        h.host_address,
+                        h.ip_address,
                         fah.port_number,
-                        h.host_type
+                        h.scan_target_type
                     FROM finding_affected_hosts fah
                     JOIN hosts h ON fah.host_id = h.host_id
                     WHERE fah.finding_id IN ({})
                     ORDER BY
                         fah.finding_id,
-                        CASE WHEN h.host_type = 'ipv4' THEN 0
-                             WHEN h.host_type = 'ipv6' THEN 1
+                        CASE WHEN h.scan_target_type = 'ipv4' THEN 0
+                             WHEN h.scan_target_type = 'ipv6' THEN 1
                              ELSE 2 END,
-                        h.host_address ASC
+                        h.ip_address ASC
                     """.format(','.join('?' * len(finding_ids))),
                 tuple(finding_ids)
             )
@@ -307,7 +307,7 @@ def analyze_inclusions(files: Union[list['Finding'], list[tuple['Finding', 'Plug
             had_explicit = False
 
             for row in file_rows:
-                host = row['host_address']
+                host = row['ip_address']
                 port = row['port_number']
 
                 if host not in hosts:

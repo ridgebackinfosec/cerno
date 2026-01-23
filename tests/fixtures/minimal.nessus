@@ -4,6 +4,7 @@
     <ReportHost name="192.168.1.1">
       <HostProperties>
         <tag name="host-ip">192.168.1.1</tag>
+        <tag name="netbios-name">TESTHOST1</tag>
       </HostProperties>
       <ReportItem port="80" svc_name="www" protocol="tcp" severity="2" pluginID="12345" pluginName="Test Medium Plugin">
         <description>Test vulnerability description for medium severity.</description>
@@ -28,6 +29,7 @@
     <ReportHost name="192.168.1.2">
       <HostProperties>
         <tag name="host-ip">192.168.1.2</tag>
+        <tag name="netbios-name">TESTHOST2</tag>
       </HostProperties>
       <ReportItem port="22" svc_name="ssh" protocol="tcp" severity="3" pluginID="54321" pluginName="SSH Server Version">
         <description>SSH server version information.</description>
@@ -52,7 +54,8 @@
     </ReportHost>
     <ReportHost name="test.local">
       <HostProperties>
-        <tag name="host-ip">test.local</tag>
+        <tag name="host-ip">10.0.0.100</tag>
+        <tag name="host-fqdn">test.local</tag>
       </HostProperties>
       <ReportItem port="443" svc_name="https" protocol="tcp" severity="0" pluginID="10107" pluginName="HTTP Server Type and Version">
         <description>HTTP server banner information.</description>

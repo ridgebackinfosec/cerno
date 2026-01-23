@@ -91,18 +91,29 @@ CREATE INDEX IF NOT EXISTS idx_audit_changed_at ON audit_log(changed_at);
 -- ============================================================================
 
 -- Hosts table (normalized host data across scans)
+-- Supports both IP-targeted and FQDN-targeted scans:
+--   - ip_address: Always the resolved IP (from host-ip tag)
+--   - scan_target: What was scanned (IP or FQDN from ReportHost@name)
+--   - Composite unique: same IP via same target = same host
 -- Enables cross-scan queries: "show all findings for host X across all scans"
 CREATE TABLE IF NOT EXISTS hosts (
     host_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    host_address TEXT NOT NULL UNIQUE,
-    host_type TEXT CHECK(host_type IN ('ipv4', 'ipv6', 'hostname')) NOT NULL,
+    ip_address TEXT NOT NULL,
+    scan_target TEXT NOT NULL,
+    scan_target_type TEXT CHECK(scan_target_type IN ('ipv4', 'ipv6', 'fqdn')) NOT NULL,
+    netbios_name TEXT,
+    fqdn TEXT,
     reverse_dns TEXT,
     first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(ip_address, scan_target)
 );
 
-CREATE INDEX IF NOT EXISTS idx_hosts_address ON hosts(host_address);
-CREATE INDEX IF NOT EXISTS idx_hosts_type ON hosts(host_type);
+CREATE INDEX IF NOT EXISTS idx_hosts_ip ON hosts(ip_address);
+CREATE INDEX IF NOT EXISTS idx_hosts_target ON hosts(scan_target);
+CREATE INDEX IF NOT EXISTS idx_hosts_target_type ON hosts(scan_target_type);
+CREATE INDEX IF NOT EXISTS idx_hosts_netbios ON hosts(netbios_name);
+CREATE INDEX IF NOT EXISTS idx_hosts_fqdn ON hosts(fqdn);
 
 -- Ports table (port metadata)
 CREATE TABLE IF NOT EXISTS ports (
@@ -374,8 +385,11 @@ JOIN severity_levels sl ON p.severity_int = sl.severity_int;
 CREATE VIEW IF NOT EXISTS v_host_findings AS
 SELECT
     h.host_id,
-    h.host_address,
-    h.host_type,
+    h.ip_address,
+    h.scan_target,
+    h.scan_target_type,
+    h.netbios_name,
+    h.fqdn,
     h.first_seen,
     h.last_seen,
     COUNT(DISTINCT f.scan_id) as scan_count,
@@ -386,7 +400,8 @@ FROM hosts h
 LEFT JOIN finding_affected_hosts fah ON h.host_id = fah.host_id
 LEFT JOIN findings f ON fah.finding_id = f.finding_id
 LEFT JOIN plugins p ON f.plugin_id = p.plugin_id
-GROUP BY h.host_id, h.host_address, h.host_type, h.first_seen, h.last_seen;
+GROUP BY h.host_id, h.ip_address, h.scan_target, h.scan_target_type,
+         h.netbios_name, h.fqdn, h.first_seen, h.last_seen;
 
 -- Artifacts with type information (replaces artifact_type column)
 CREATE VIEW IF NOT EXISTS v_artifacts_with_types AS
@@ -405,6 +420,56 @@ SELECT
 FROM artifacts a
 LEFT JOIN artifact_types at ON a.artifact_type_id = at.artifact_type_id;
 
+-- Scan plugin summary (for cross-scan comparison)
+-- Shows all plugins present in each scan with affected host/port counts
+CREATE VIEW IF NOT EXISTS v_scan_plugin_summary AS
+SELECT
+    f.scan_id,
+    s.scan_name,
+    s.created_at as scan_date,
+    f.plugin_id,
+    p.plugin_name,
+    p.severity_int,
+    sl.severity_label,
+    p.has_metasploit,
+    p.cvss3_score,
+    COUNT(DISTINCT fah.host_id) as affected_hosts,
+    COUNT(DISTINCT fah.port_number) as affected_ports
+FROM findings f
+JOIN scans s ON f.scan_id = s.scan_id
+JOIN plugins p ON f.plugin_id = p.plugin_id
+JOIN severity_levels sl ON p.severity_int = sl.severity_int
+LEFT JOIN finding_affected_hosts fah ON f.finding_id = fah.finding_id
+GROUP BY f.scan_id, s.scan_name, s.created_at, f.plugin_id, p.plugin_name,
+         p.severity_int, sl.severity_label, p.has_metasploit, p.cvss3_score;
+
+-- Host scan findings (for host vulnerability history)
+-- Shows per-host statistics broken down by scan
+-- Uses COUNT(DISTINCT) to count unique plugins per severity (not rows in junction table)
+CREATE VIEW IF NOT EXISTS v_host_scan_findings AS
+SELECT
+    h.host_id,
+    h.ip_address,
+    h.scan_target,
+    h.scan_target_type,
+    f.scan_id,
+    s.scan_name,
+    s.created_at as scan_date,
+    COUNT(DISTINCT f.plugin_id) as finding_count,
+    MAX(p.severity_int) as max_severity,
+    COUNT(DISTINCT CASE WHEN p.severity_int = 4 THEN f.plugin_id END) as critical_count,
+    COUNT(DISTINCT CASE WHEN p.severity_int = 3 THEN f.plugin_id END) as high_count,
+    COUNT(DISTINCT CASE WHEN p.severity_int = 2 THEN f.plugin_id END) as medium_count,
+    COUNT(DISTINCT CASE WHEN p.severity_int = 1 THEN f.plugin_id END) as low_count,
+    COUNT(DISTINCT CASE WHEN p.severity_int = 0 THEN f.plugin_id END) as info_count
+FROM hosts h
+JOIN finding_affected_hosts fah ON h.host_id = fah.host_id
+JOIN findings f ON fah.finding_id = f.finding_id
+JOIN scans s ON f.scan_id = s.scan_id
+JOIN plugins p ON f.plugin_id = p.plugin_id
+GROUP BY h.host_id, h.ip_address, h.scan_target, h.scan_target_type,
+         f.scan_id, s.scan_name, s.created_at;
+
 -- ============================================================================
 -- PRAGMA SETTINGS (applied at connection time by database.py)
 -- ============================================================================
@@ -420,7 +485,8 @@ LEFT JOIN artifact_types at ON a.artifact_type_id = at.artifact_type_id;
 
 -- Example 1: Get all findings for a specific host across all scans
 -- SELECT
---     h.host_address,
+--     h.ip_address,
+--     h.scan_target,
 --     s.scan_name,
 --     p.plugin_name,
 --     sl.severity_label,
@@ -431,7 +497,7 @@ LEFT JOIN artifact_types at ON a.artifact_type_id = at.artifact_type_id;
 -- JOIN plugins p ON f.plugin_id = p.plugin_id
 -- JOIN severity_levels sl ON p.severity_int = sl.severity_int
 -- JOIN scans s ON f.scan_id = s.scan_id
--- WHERE h.host_address = '192.168.1.10'
+-- WHERE h.ip_address = '192.168.1.10'
 -- ORDER BY s.created_at DESC, sl.severity_order DESC;
 
 -- Example 2: Get finding with host/port counts using view
@@ -442,7 +508,8 @@ LEFT JOIN artifact_types at ON a.artifact_type_id = at.artifact_type_id;
 
 -- Example 4: Get all hosts that appeared in multiple scans
 -- SELECT
---     host_address,
+--     ip_address,
+--     scan_target,
 --     scan_count,
 --     finding_count,
 --     first_seen,

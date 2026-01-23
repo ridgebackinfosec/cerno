@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.21] - 2026-01-22
+
+### Added
+- **Cross-scan comparison**: New `cerno scan compare <scan1> <scan2>` command to compare findings between two scans
+  - Identifies new, resolved, and persistent vulnerabilities by comparing plugin presence
+  - Tracks host changes: new hosts, removed hosts, persistent hosts
+  - Summary panel with severity breakdown for each category
+  - Optional `--severity` filter to focus on high/critical findings
+- **Host vulnerability history**: New `cerno scan history <host_ip>` command to view vulnerability timeline for a specific host
+  - Shows timeline of all scans where the host appeared
+  - Displays severity breakdown per scan with trend indicators
+  - Tracks finding count changes over time
+- New SQL views for efficient cross-scan queries:
+  - `v_scan_plugin_summary`: Plugin presence per scan with affected host/port counts
+  - `v_host_scan_findings`: Per-host statistics broken down by scan
+- New `cerno_pkg/cross_scan.py` module with data structures and analysis functions
+- Composite index on `findings(scan_id, plugin_id)` for faster comparison queries
+
+### Changed
+- **BREAKING**: Hosts table schema redesigned for FQDN-targeted external scans
+  - New columns: `ip_address` (resolved IP), `scan_target` (what was scanned), `scan_target_type`, `netbios_name`, `fqdn`, `reverse_dns`
+  - Composite unique constraint: `(ip_address, scan_target)` - enables load-balanced scenarios
+  - Nessus import now parses `<HostProperties>` tags (host-ip, netbios-name, host-fqdn, host-rdns)
+  - **Requires database deletion and re-import of scans** (`rm ~/.cerno/cerno.db`)
+- Host queries now use `ip_address` instead of `host_address` throughout codebase
+
+### Fixed
+- Fixed host metadata capture for FQDN-targeted scans (previously lost resolved IP)
+- `reverse_dns` column now properly populated from Nessus data (was always NULL before)
+- Fixed `v_host_scan_findings` view severity counts - was counting junction table rows instead of distinct plugins per severity
+- Fixed color bleeding in scan comparison tables by using `Text` objects instead of markup strings
+
+### Documentation
+- Updated `docs/DATABASE.md` with new hosts table schema and query examples
+- Updated `schema.sql` with new hosts table structure and v_host_findings view
+- Updated CLAUDE.md anti-pattern examples to use new column names
+
 ## [1.2.20] - 2026-01-19
 
 ### Changed

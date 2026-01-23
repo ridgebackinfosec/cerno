@@ -47,6 +47,27 @@ class ExportResult:
     severities: Dict[int, int]
 
 
+@dataclass
+class HostMetadata:
+    """Metadata about a host extracted from Nessus HostProperties.
+
+    Captures the full host context from Nessus scans, supporting both
+    IP-targeted (internal) and FQDN-targeted (external) scans.
+
+    Attributes:
+        host_ip: Resolved IP address (from host-ip tag, always present)
+        scan_target: What was scanned (ReportHost@name - IP or FQDN)
+        netbios_name: NetBIOS/computer name (from netbios-name tag)
+        fqdn: FQDN from Nessus discovery (from host-fqdn tag)
+        reverse_dns: Reverse DNS result (from host-rdns tag)
+    """
+    host_ip: str
+    scan_target: str
+    netbios_name: Optional[str] = None
+    fqdn: Optional[str] = None
+    reverse_dns: Optional[str] = None
+
+
 def is_ip(entry: str) -> bool:
     """Check if a host entry is an IP address.
 
@@ -211,7 +232,7 @@ def truthy(text: Optional[str]) -> bool:
 def _build_index_stream(
     filename: Path,
     include_ports: bool = True
-) -> Tuple[Dict[str, dict], Dict[str, Set[Tuple[str, str]]]]:
+) -> Tuple[Dict[str, dict], Dict[str, Set[Tuple[str, str]]], Dict[str, HostMetadata]]:
     """Parse .nessus XML file and build plugin index with streaming.
 
     Memory-efficient single-pass parsing using iterparse with element clearing.
@@ -224,6 +245,7 @@ def _build_index_stream(
         Tuple of:
           - plugins dict: plugin_id -> {name, severity_int, msf}
           - plugin_hosts dict: plugin_id -> set of host entries
+          - host_metadata dict: scan_target -> HostMetadata
 
     Raises:
         ET.ParseError: If XML parsing fails
@@ -231,7 +253,10 @@ def _build_index_stream(
     """
     plugins: Dict[str, dict] = {}
     plugin_hosts: Dict[str, Set[tuple[str, str]]] = defaultdict(set)
+    host_metadata: Dict[str, HostMetadata] = {}
     current_host = ""
+    current_host_properties: Dict[str, Optional[str]] = {}
+    in_host_properties = False
 
     try:
         for event, elem in ET.iterparse(filename, events=("start", "end")):
@@ -240,6 +265,21 @@ def _build_index_stream(
             # Track current host being processed
             if event == "start" and tag == "ReportHost":
                 current_host = elem.attrib.get("name", "")
+                current_host_properties = {}
+
+            # Track when we're inside HostProperties
+            elif event == "start" and tag == "HostProperties":
+                in_host_properties = True
+
+            elif event == "end" and tag == "HostProperties":
+                in_host_properties = False
+
+            # Capture HostProperties tags (tag elements inside HostProperties)
+            elif event == "end" and tag == "tag" and in_host_properties:
+                tag_name = elem.attrib.get("name", "")
+                tag_value = elem.text.strip() if elem.text else None
+                if tag_name and current_host:
+                    current_host_properties[tag_name] = tag_value
 
             # Process each plugin finding
             elif event == "end" and tag == "ReportItem":
@@ -326,12 +366,30 @@ def _build_index_stream(
 
                 elem.clear()  # Free memory immediately
 
-            # Clean up after processing host
+            # Clean up after processing host - build HostMetadata
             elif event == "end" and tag == "ReportHost":
+                if current_host:
+                    # Build HostMetadata from collected properties
+                    # host-ip is the resolved IP; scan_target is ReportHost@name
+                    host_ip = current_host_properties.get("host-ip")
+
+                    # If no host-ip tag, fall back to scan_target (IP-targeted scans)
+                    if not host_ip:
+                        host_ip = current_host
+
+                    host_metadata[current_host] = HostMetadata(
+                        host_ip=host_ip,
+                        scan_target=current_host,
+                        netbios_name=current_host_properties.get("netbios-name"),
+                        fqdn=current_host_properties.get("host-fqdn"),
+                        reverse_dns=current_host_properties.get("host-rdns")
+                    )
+
                 elem.clear()
                 current_host = ""
+                current_host_properties = {}
 
-        return plugins, plugin_hosts
+        return plugins, plugin_hosts, host_metadata
 
     except ET.ParseError as e:
         log_error(f"Failed to parse {filename} as XML: {e}")
@@ -380,7 +438,7 @@ def import_nessus_file(
     log_info(f"Importing Nessus scan from {nessus_file}")
 
     # Parse .nessus file
-    plugins, plugin_hosts = _build_index_stream(nessus_file, include_ports)
+    plugins, plugin_hosts, host_metadata = _build_index_stream(nessus_file, include_ports)
 
     if not plugins:
         log_info("No plugins with findings found in .nessus file")
@@ -431,7 +489,8 @@ def import_nessus_file(
             scan_name=scan_name,
             base_scan_dir=base_scan_dir,
             plugins=plugins,
-            plugin_hosts=plugin_hosts
+            plugin_hosts=plugin_hosts,
+            host_metadata=host_metadata
         )
 
     return ExportResult(
@@ -449,7 +508,8 @@ def _write_to_database(
     scan_name: str,
     base_scan_dir: Path,
     plugins: Dict[str, dict],
-    plugin_hosts: Dict[str, Set[Tuple[str, str]]]
+    plugin_hosts: Dict[str, Set[Tuple[str, str]]],
+    host_metadata: Dict[str, HostMetadata]
 ) -> None:
     """Write scan, plugin, and host data to database.
 
@@ -459,6 +519,7 @@ def _write_to_database(
         base_scan_dir: Base directory where plugin files are exported
         plugins: Plugin metadata dictionary
         plugin_hosts: Plugin hosts dictionary (plugin_id -> set of host:port entries)
+        host_metadata: Host metadata dictionary (scan_target -> HostMetadata)
     """
     try:
         from .database import db_transaction, compute_file_hash
@@ -499,8 +560,9 @@ def _write_to_database(
                 return
 
             # ========== Step 1: Collect unique hosts and ports from ALL plugins ==========
-            unique_hosts = {}  # host_address -> host_type
-            unique_ports = set()
+            # Use (ip_address, scan_target) as composite key for hosts
+            unique_hosts: Dict[Tuple[str, str], HostMetadata] = {}  # (ip, target) -> metadata
+            unique_ports: Set[int] = set()
 
             for plugin_id_str, meta in plugins.items():
                 hosts_data = plugin_hosts.get(plugin_id_str, set())
@@ -509,32 +571,66 @@ def _write_to_database(
                     # Parse host:port (existing logic)
                     host_entry, plugin_output = host_entry_data
 
-                    # Parse host:port
+                    # Parse host:port - host_entry contains scan_target (possibly with port)
                     if ":" in host_entry:
-                        host, port_str = host_entry.rsplit(":", 1)
+                        scan_target, port_str = host_entry.rsplit(":", 1)
                         try:
                             port = int(port_str)
                         except ValueError:
-                            host = host_entry
+                            scan_target = host_entry
                             port = None
                     else:
-                        host = host_entry
+                        scan_target = host_entry
                         port = None
 
-                    # Detect type once per unique host
-                    if host and host not in unique_hosts:
-                        host_type = detect_host_type(host)
-                        unique_hosts[host] = host_type
+                    # Get host metadata for this scan_target
+                    meta_entry = host_metadata.get(scan_target)
+                    if meta_entry:
+                        ip_address = meta_entry.host_ip
+                    else:
+                        # Fallback: scan_target is the IP itself
+                        ip_address = scan_target
+
+                    # Add to unique hosts using composite key
+                    composite_key = (ip_address, scan_target)
+                    if composite_key not in unique_hosts:
+                        if meta_entry:
+                            unique_hosts[composite_key] = meta_entry
+                        else:
+                            # Create metadata from scan_target (IP-targeted scan)
+                            unique_hosts[composite_key] = HostMetadata(
+                                host_ip=ip_address,
+                                scan_target=scan_target
+                            )
 
                     if port:
                         unique_ports.add(port)
 
-            # ========== Step 2: Bulk insert hosts ==========
+            # ========== Step 2: Bulk insert hosts with new schema ==========
             if unique_hosts:
                 log_info(f"Inserting {len(unique_hosts)} unique hosts...")
+                host_records = []
+                for (ip_addr, scan_tgt), meta_entry in unique_hosts.items():
+                    # Determine scan_target_type
+                    scan_target_type = detect_host_type(scan_tgt)
+                    # Convert 'hostname' to 'fqdn' for the new schema
+                    if scan_target_type == 'hostname':
+                        scan_target_type = 'fqdn'
+
+                    host_records.append((
+                        ip_addr,
+                        scan_tgt,
+                        scan_target_type,
+                        meta_entry.netbios_name,
+                        meta_entry.fqdn,
+                        meta_entry.reverse_dns
+                    ))
+
                 conn.executemany(
-                    "INSERT OR IGNORE INTO hosts (host_address, host_type) VALUES (?, ?)",
-                    [(addr, htype) for addr, htype in unique_hosts.items()]
+                    """INSERT OR IGNORE INTO hosts
+                       (ip_address, scan_target, scan_target_type, netbios_name, fqdn, reverse_dns)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    host_records
                 )
 
             # ========== Step 3: Bulk insert ports ==========
@@ -545,15 +641,15 @@ def _write_to_database(
                     [(p,) for p in unique_ports]
                 )
 
-            # ========== Step 4: Build host_id lookup map ==========
-            host_id_map = {}
+            # ========== Step 4: Build host_id lookup map using composite key ==========
+            host_id_map: Dict[Tuple[str, str], int] = {}
             if unique_hosts:
-                placeholders = ",".join("?" * len(unique_hosts))
+                # Query all hosts we just inserted
                 cursor = conn.execute(
-                    f"SELECT host_id, host_address FROM hosts WHERE host_address IN ({placeholders})",
-                    list(unique_hosts.keys())
+                    "SELECT host_id, ip_address, scan_target FROM hosts"
                 )
-                host_id_map = {row[1]: row[0] for row in cursor.fetchall()}
+                for row in cursor.fetchall():
+                    host_id_map[(row[1], row[2])] = row[0]
 
             # ========== Step 5: Insert plugins and plugin files ==========
             total_plugins = len(plugins)
@@ -613,20 +709,28 @@ def _write_to_database(
                     # Parse (same as before)
                     host_entry, plugin_output = host_entry_data
 
-                    # Parse host:port
+                    # Parse host:port - host_entry contains scan_target (possibly with port)
                     if ":" in host_entry:
-                        host, port_str = host_entry.rsplit(":", 1)
+                        scan_target, port_str = host_entry.rsplit(":", 1)
                         try:
                             port = int(port_str)
                         except ValueError:
-                            host = host_entry
+                            scan_target = host_entry
                             port = None
                     else:
-                        host = host_entry
+                        scan_target = host_entry
                         port = None
 
-                    # Get host_id from map
-                    host_id = host_id_map.get(host)
+                    # Get ip_address from host_metadata
+                    meta_entry = host_metadata.get(scan_target)
+                    if meta_entry:
+                        ip_address = meta_entry.host_ip
+                    else:
+                        ip_address = scan_target
+
+                    # Get host_id from map using composite key
+                    composite_key = (ip_address, scan_target)
+                    host_id = host_id_map.get(composite_key)
                     if host_id:
                         junction_records.append((finding_id, host_id, port, plugin_output))
 
