@@ -889,14 +889,14 @@ def build_custom_workflow(ctx: "ToolContext") -> Optional["CommandResult"]:
     from rich.prompt import Prompt
     from .ansi import warn
 
-    mapping = {
-        "{TCP_IPS}": ctx.tcp_ips,
-        "{UDP_IPS}": ctx.udp_ips,
-        "{TCP_HOST_PORTS}": ctx.tcp_sockets,
+    mapping: dict[str, str] = {
+        "{TCP_IPS}": str(ctx.tcp_ips),
+        "{UDP_IPS}": str(ctx.udp_ips),
+        "{TCP_HOST_PORTS}": str(ctx.tcp_sockets),
         "{PORTS}": ctx.ports_str or "",
-        "{WORKDIR}": ctx.workdir,
-        "{RESULTS_DIR}": ctx.results_dir,
-        "{OABASE}": ctx.oabase,
+        "{WORKDIR}": str(ctx.workdir),
+        "{RESULTS_DIR}": str(ctx.results_dir),
+        "{OABASE}": str(ctx.oabase),
     }
     custom_command_help(mapping)
 
@@ -1283,7 +1283,7 @@ def run_tool_workflow(
             # Count generated files in results directory
             file_count = 0
             total_size = 0
-            generated_files = []
+            generated_files: list[str] = []
             if results_dir and results_dir.exists():
                 for file in results_dir.rglob('*'):
                     if file.is_file():

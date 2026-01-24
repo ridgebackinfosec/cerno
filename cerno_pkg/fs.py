@@ -477,10 +477,6 @@ def handle_finding_view(
         text = grouped_paged_text(finding, plugin)
         payload = grouped_payload_text(finding)
 
-        if text is None or payload is None:
-            warn("Failed to generate content.")
-            continue
-
         # Display content immediately
         menu_pager(text)
 

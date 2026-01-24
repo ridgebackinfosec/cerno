@@ -226,7 +226,7 @@ def truthy(text: Optional[str]) -> bool:
     Returns:
         True if text is "true", "yes", or "1" (case-insensitive)
     """
-    return bool(text) and text.strip().lower() in ("true", "yes", "1")
+    return text is not None and text.strip().lower() in ("true", "yes", "1")
 
 
 def _build_index_stream(
@@ -299,26 +299,26 @@ def _build_index_stream(
 
                 # Extract CVE tags from XML
                 cve_elements = elem.findall("cve")
-                cves = []
+                cve_list: list[str] = []
                 for cve_elem in cve_elements:
                     if cve_elem.text:
                         cve_text = cve_elem.text.strip().upper()
                         # Validate CVE format: CVE-YYYY-NNNNN
                         if re.match(r'^CVE-\d{4}-\d{4,}$', cve_text):
-                            cves.append(cve_text)
+                            cve_list.append(cve_text)
                 # Sort and deduplicate CVEs
-                cves = sorted(set(cves)) if cves else None
+                cves: list[str] | None = sorted(set(cve_list)) if cve_list else None
 
                 # Extract Metasploit module names from XML
                 msf_name_elements = elem.findall("metasploit_name")
-                msf_names = []
+                msf_name_list: list[str] = []
                 for msf_elem in msf_name_elements:
                     if msf_elem.text:
                         name = msf_elem.text.strip()
                         if name:
-                            msf_names.append(name)
+                            msf_name_list.append(name)
                 # Sort and deduplicate module names
-                msf_names = sorted(set(msf_names)) if msf_names else None
+                msf_names: list[str] | None = sorted(set(msf_name_list)) if msf_name_list else None
 
                 # Extract plugin_output from XML
                 plugin_output_elem = elem.find("plugin_output")
@@ -457,12 +457,12 @@ def import_nessus_file(
     base_scan_dir = output_dir / scan_name
 
     # Sort plugins: severity descending, then plugin ID ascending
-    def sort_key(item: Tuple[str, dict]) -> Tuple[int, float]:
+    def sort_key(item: Tuple[str, dict]) -> Tuple[int, int]:
         pid, meta = item
         try:
             pid_int = int(pid)
         except ValueError:
-            pid_int = float("inf")
+            pid_int = 999999999  # Large value for non-numeric plugin IDs
         return (-meta["severity_int"], pid_int)
 
     # Track statistics

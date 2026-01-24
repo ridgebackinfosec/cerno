@@ -13,7 +13,7 @@ import hashlib
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Generator, Optional
+from typing import Any, Generator, Optional, cast
 
 from .logging_setup import log_error, log_info
 
@@ -560,7 +560,7 @@ def query_one(
         Single row or None if no results
     """
     cursor = conn.execute(query, params)
-    return cursor.fetchone()
+    return cast(Optional[sqlite3.Row], cursor.fetchone())
 
 
 def query_all(

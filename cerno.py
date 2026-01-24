@@ -395,7 +395,7 @@ def browse_file_list(
             # Build status line components
             from rich.text import Text
 
-            status_parts = []
+            status_parts: list[str | Text] = []
 
             # Unreviewed count
             status_parts.append(f"Unreviewed findings ({len(unreviewed)})")
@@ -971,7 +971,7 @@ def main(args: types.SimpleNamespace) -> None:
                     warn("Invalid scan - missing scan_id")
                     continue
 
-                scan_id: int = selected_scan.scan_id
+                scan_id = selected_scan.scan_id
                 ok(f"Selected: {selected_scan.scan_name}")
 
                 # Check for existing session
@@ -1882,7 +1882,7 @@ def config_show() -> None:
     defaults = CernoConfig()
 
     # Collect all rows for sorting
-    rows = []
+    rows: list[tuple[str, str | int | bool | None, bool, str]] = []
 
     # Paths
     rows.append(("results_root", config.results_root or str(get_results_root()),
@@ -1986,6 +1986,7 @@ def config_set(
 
     # Type conversion based on key
     try:
+        typed_value: int | bool | str
         if key in ["default_page_size", "top_ports_count"]:
             typed_value = int(value)
         elif key in ["no_color", "debug_logging"]:

@@ -1222,7 +1222,7 @@ def grouped_payload_text(finding: "Finding") -> str:
 
     # Group ports by host
     from collections import defaultdict
-    host_ports = defaultdict(list)
+    host_ports: defaultdict[str, list[str | None]] = defaultdict(list)
 
     for line in lines:
         if ":" in line:
@@ -1798,7 +1798,7 @@ def render_nxc_host_panel(host_ip: str, host_data: Any, has_data: bool = True) -
                     flags_text.append(f"  • {flag}\n", style=style_if_enabled("red"))
                 renderables.append(flags_text)
 
-        panel_content = Group(*renderables)
+        panel_content: Group | Text = Group(*renderables)
     else:
         # Simple text content for hosts without tables
         panel_content = content

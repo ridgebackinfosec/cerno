@@ -12,6 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed `LOGURU_AVAILABLE` redefinition warning in logging_setup.py
 - Added proper type annotation guard for `os.geteuid()` on Windows (ops.py)
 - Fixed keyboard shortcut consistency: `[n]` → `[N]` in Metasploit command prompt (tools.py)
+- Fixed all 28 mypy type errors across 11 files for clean static type checking
+  - Added proper type annotations and casts for database row access
+  - Fixed union type handling in nessus_import.py for CVE/MSF lists
+  - Added explicit type annotations for complex data structures
+  - Removed unreachable code paths detected by type checker
 
 ### Changed
 - Removed dead code: unused Metasploit web scraping imports (`requests`, `BeautifulSoup`) from tools.py

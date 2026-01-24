@@ -185,6 +185,7 @@ def _db_save_session(
                 (scan_id,)
             )
 
+            session_id: int | None
             if row:
                 # Session exists - statistics will be computed via v_session_stats view
                 # Aggregate statistics are computed by SQL views, not cached in columns
