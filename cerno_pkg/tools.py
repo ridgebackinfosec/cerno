@@ -1097,7 +1097,7 @@ def run_tool_workflow(
 
                     try:
                         answer = Prompt.ask(
-                            "\nRun which command? (number or [n] None)",
+                            "\nRun which command? (number or [N] None)",
                             default="n"
                         )
 

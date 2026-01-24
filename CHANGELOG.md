@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed character encoding corruption in error messages (mojibake `â€"` replaced with proper em-dash `—`)
 - Fixed `LOGURU_AVAILABLE` redefinition warning in logging_setup.py
 - Added proper type annotation guard for `os.geteuid()` on Windows (ops.py)
+- Fixed keyboard shortcut consistency: `[n]` → `[N]` in Metasploit command prompt (tools.py)
 
 ### Changed
 - Removed dead code: unused Metasploit web scraping imports (`requests`, `BeautifulSoup`) from tools.py
