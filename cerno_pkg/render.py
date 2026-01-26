@@ -22,7 +22,7 @@ import time
 from .ansi import info, warn, header, get_console, style_if_enabled
 from .constants import SEVERITY_COLORS
 from .fs import default_page_size, pretty_severity_label
-from .logging_setup import log_timing
+from .logging_setup import log_timing, log_debug
 
 if TYPE_CHECKING:
     from .models import Finding, Plugin
@@ -1879,6 +1879,7 @@ def bulk_extract_cves_for_plugins(plugins: List[tuple[int, str]]) -> None:
     info(f"Displaying CVEs from {len(plugins)} finding(s)...\n")
 
     results = {}  # plugin_name -> list of CVEs
+    failed_count = 0
 
     # Query database (instant, no progress bar needed)
     with get_connection() as conn:
@@ -1887,9 +1888,13 @@ def bulk_extract_cves_for_plugins(plugins: List[tuple[int, str]]) -> None:
                 plugin = Plugin.get_by_id(plugin_id, conn=conn)
                 if plugin and plugin.cves:
                     results[plugin_name] = plugin.cves
-            except Exception:
-                # Silently skip failed queries
-                pass
+            except Exception as e:
+                failed_count += 1
+                log_debug(f"CVE extraction failed for plugin {plugin_id}: {e}")
+
+    # Report failures if any
+    if failed_count > 0:
+        warn(f"CVE extraction failed for {failed_count} plugin(s). Check logs for details.")
 
     # Display results
     display_bulk_cve_results(results)
@@ -1913,6 +1918,7 @@ def bulk_extract_cves_for_findings(files: List[Path]) -> None:
     info(f"Displaying CVEs from {len(files)} file(s)...\n")
 
     results = {}  # plugin_name -> list of CVEs
+    failed_count = 0
 
     # Query database (instant, no progress bar needed)
     with get_connection() as conn:
@@ -1925,9 +1931,13 @@ def bulk_extract_cves_for_findings(files: List[Path]) -> None:
                 plugin = Plugin.get_by_id(int(plugin_id), conn=conn)
                 if plugin and plugin.cves:
                     results[file_path.name] = plugin.cves
-            except Exception:
-                # Silently skip failed queries
-                pass
+            except Exception as e:
+                failed_count += 1
+                log_debug(f"CVE extraction failed for file {file_path.name}: {e}")
+
+    # Report failures if any
+    if failed_count > 0:
+        warn(f"CVE extraction failed for {failed_count} finding(s). Check logs for details.")
 
     # Display results
     display_bulk_cve_results(results)

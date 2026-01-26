@@ -1716,7 +1716,7 @@ def delete_scan(
     scan = Scan.get_by_name(scan_name)
     if not scan:
         err(f"Scan not found: {scan_name}")
-        info("Use 'cerno list' to see available scans")
+        info("Use 'cerno scan list' to see available scans")
         raise typer.Exit(1)
 
     # Confirm deletion

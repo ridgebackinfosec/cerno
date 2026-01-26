@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Fixed union type handling in nessus_import.py for CVE/MSF lists
   - Added explicit type annotations for complex data structures
   - Removed unreachable code paths detected by type checker
+- Fixed incorrect command suggestion in scan delete error (`'cerno list'` → `'cerno scan list'`)
+- Fixed hardcoded `[red]` Rich markup in mark-all warning to respect `no_color` config setting (tui.py)
+- Fixed silent CVE extraction failures - now reports failure count and logs details (render.py)
 
 ### Changed
 - Removed dead code: unused Metasploit web scraping imports (`requests`, `BeautifulSoup`) from tools.py
