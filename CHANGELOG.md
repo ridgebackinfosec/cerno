@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.22] - 2026-01-28
+
 ### Added
 - Added module info prompt after Metasploit search completes - users can now paste a module path and run/copy `msfconsole info` command without leaving the TUI (tools.py)
 
