@@ -1097,6 +1097,58 @@ def join_actions_texts(items: list[Text]) -> Text:
     return output
 
 
+def render_responsive_action_menu(
+    rows: list[list[tuple[str, str]]],
+    *,
+    wide_threshold: int = 100,
+) -> None:
+    """Render action menu with responsive layout based on terminal width.
+
+    Uses two-column grid for wide terminals (>=threshold) and single-column
+    layout for narrow terminals (<threshold) to prevent wrapping.
+
+    Args:
+        rows: List of rows, where each row is a list of (key, description) tuples.
+              For 2-column layout, provide up to 2 items per row.
+        wide_threshold: Terminal width threshold for wide layout (default: 100)
+
+    Example:
+        render_responsive_action_menu([
+            [("P", "Select NSE Profile"), ("S", "Add/Edit Scripts")],
+            [("U", "Toggle UDP"), ("Enter", "Continue")],
+            [("B", "Back/Cancel")],
+        ])
+    """
+    from .ansi import get_terminal_width
+
+    term_width = get_terminal_width()
+    _console_global.print("[cyan]>>[/cyan]")
+
+    if term_width >= wide_threshold:
+        # Wide terminal: 2-column grid layout
+        grid = Table.grid(expand=True, padding=(0, 1))
+        grid.add_column(ratio=1)
+        grid.add_column(ratio=1)
+        for row in rows:
+            if len(row) == 0:
+                continue
+            elif len(row) == 1:
+                grid.add_row(key_text(row[0][0], row[0][1]), Text())
+            else:
+                grid.add_row(
+                    key_text(row[0][0], row[0][1]),
+                    key_text(row[1][0], row[1][1])
+                )
+        _console_global.print(grid)
+    else:
+        # Narrow terminal: single-column layout
+        for row in rows:
+            if len(row) == 0:
+                continue
+            row_text = join_actions_texts([key_text(k, d) for k, d in row])
+            _console_global.print(row_text)
+
+
 def count_severity_findings(
     directory: Path,
     scan_id: int,

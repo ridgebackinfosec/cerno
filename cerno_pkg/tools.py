@@ -21,7 +21,6 @@ if TYPE_CHECKING:
 
 import pyperclip
 from rich.prompt import Prompt
-from rich.text import Text
 
 from .ansi import header, info, ok, warn
 from .constants import (
@@ -32,26 +31,8 @@ from .tool_context import ToolContext, CommandResult
 
 
 from .ansi import get_console
+from .render import print_action_menu, render_responsive_action_menu
 _console = get_console()
-
-
-def print_action_menu(actions: list[tuple[str, str]]) -> None:
-    """Print action menu with Rich Text formatting.
-
-    Args:
-        actions: List of (key, description) tuples.
-                Examples: [("V", "View file"), ("B", "Back")]
-    """
-    from .ansi import style_if_enabled
-    action_text = Text()
-    for i, (key, desc) in enumerate(actions):
-        if i > 0:
-            action_text.append(" / ", style=None)
-        action_text.append(f"[{key}] ", style=style_if_enabled("cyan"))
-        action_text.append(desc, style=None)
-
-    _console.print("[cyan]>>[/cyan] ", end="")
-    _console.print(action_text)
 
 
 # Constants
@@ -218,13 +199,11 @@ def configure_nmap_options(config: Optional["CernoConfig"] = None) -> Optional[t
         panel = Panel(summary, border_style="cyan")
         _console.print(panel)
 
-        # Show menu options
-        print_action_menu([
-            ("P", "Select NSE Profile"),
-            ("S", "Add/Edit Custom Scripts"),
-            ("U", f"Toggle UDP Scan ({'ON' if force_udp else 'OFF'})"),
-            ("Enter", "Continue with current configuration"),
-            ("B", "Back/Cancel")
+        # Show menu options with responsive layout
+        render_responsive_action_menu([
+            [("P", "Select NSE Profile"), ("S", "Add/Edit Custom Scripts")],
+            [("U", f"Toggle UDP ({'ON' if force_udp else 'OFF'})"), ("Enter", "Continue")],
+            [("B", "Back/Cancel")],
         ])
 
         try:
@@ -656,10 +635,9 @@ def command_review_menu(
     info("Command:")
     print(cmd_str)
     print()
-    print_action_menu([
-        ("1", "Run now"),
-        ("2", "Copy command to clipboard (don't run)"),
-        ("B", "Back")
+    render_responsive_action_menu([
+        [("1", "Run now"), ("2", "Copy to clipboard")],
+        [("B", "Back")],
     ])
 
     while True:

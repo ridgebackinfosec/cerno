@@ -23,10 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Removed dead code: unused Metasploit web scraping imports (`requests`, `BeautifulSoup`) from tools.py
+- Removed duplicate `print_action_menu()` function from tools.py (now imports from render.py)
 - Added `types-PyYAML` to dev dependencies for better type checking
 - Improved error messages with recovery suggestions for database and config failures
 - Added Troubleshooting, Contributing, and Windows compatibility sections to README.md
 - Improved finding review action menu with responsive layout that adapts to terminal width (render.py, fs.py)
+- Improved tool action menus (nmap configuration, command review) with responsive layout (tools.py, render.py)
 
 ## [1.2.21] - 2026-01-22
 
