@@ -832,6 +832,73 @@ def render_actions_footer(
             _console_global.print(right_row3)
 
 
+def render_finding_actions_footer(
+    *,
+    has_workflow: bool = False,
+    has_nxc_data: bool = False,
+) -> None:
+    """Render action footer for finding review with responsive layout.
+
+    Uses two-column grid for wide terminals (>=100 chars) and single-column
+    layout for narrow terminals (<100 chars) to prevent wrapping.
+
+    Maintains the >> prefix style for consistency with finding review UI.
+
+    Args:
+        has_workflow: Whether workflow action is available for this plugin
+        has_nxc_data: Whether NetExec data is available for these hosts
+    """
+    from .ansi import get_terminal_width
+
+    # Row 1: Information actions (always present)
+    left_row1 = join_actions_texts([
+        key_text("I", "Finding Info"),
+        key_text("D", "Finding Details"),
+    ])
+    right_row1 = join_actions_texts([
+        key_text("V", "View host(s)"),
+        key_text("E", "CVE info"),
+    ])
+
+    # Row 2: External tools (conditional + run tool)
+    left_items_row2 = []
+    if has_workflow:
+        left_items_row2.append(key_text("W", "Workflow"))
+    if has_nxc_data:
+        left_items_row2.append(key_text("N", "NetExec Data"))
+    left_row2 = join_actions_texts(left_items_row2) if left_items_row2 else Text()
+    right_row2 = join_actions_texts([key_text("T", "Run tool")])
+
+    # Row 3: Control actions (always present)
+    left_row3 = join_actions_texts([key_text("M", "Mark reviewed")])
+    right_row3 = join_actions_texts([key_text("B", "Back")])
+
+    term_width = get_terminal_width()
+    _console_global.print("[cyan]>>[/cyan]")
+
+    if term_width >= 100:
+        # Wide terminal: use 2-column grid layout
+        grid = Table.grid(expand=True, padding=(0, 1))
+        grid.add_column(ratio=1)
+        grid.add_column(ratio=1)
+        grid.add_row(left_row1, right_row1)
+        if left_row2.plain:  # Only add row if there are conditional items
+            grid.add_row(left_row2, right_row2)
+        else:
+            grid.add_row(right_row2, Text())  # Run tool alone
+        grid.add_row(left_row3, right_row3)
+        _console_global.print(grid)
+    else:
+        # Narrow terminal: single-column layout to prevent wrapping
+        _console_global.print(left_row1)
+        _console_global.print(right_row1)
+        if left_row2.plain:
+            _console_global.print(left_row2)
+        _console_global.print(right_row2)
+        _console_global.print(left_row3)
+        _console_global.print(right_row3)
+
+
 def render_tool_availability_table(include_unavailable: bool = True) -> None:
     """Render a table showing availability and version info for all registered tools.
 

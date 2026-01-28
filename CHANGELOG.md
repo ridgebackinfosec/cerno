@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `types-PyYAML` to dev dependencies for better type checking
 - Improved error messages with recovery suggestions for database and config failures
 - Added Troubleshooting, Contributing, and Windows compatibility sections to README.md
+- Improved finding review action menu with responsive layout that adapts to terminal width (render.py, fs.py)
 
 ## [1.2.21] - 2026-01-22
 
