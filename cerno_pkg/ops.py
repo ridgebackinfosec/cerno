@@ -190,7 +190,7 @@ def root_or_sudo_available() -> bool:
         True if running as root (on Unix) or sudo command is available
     """
     try:
-        if os.name != "nt" and os.geteuid() == 0:
+        if os.name != "nt" and os.geteuid() == 0:  # type: ignore[attr-defined]
             return True
     except AttributeError:
         pass

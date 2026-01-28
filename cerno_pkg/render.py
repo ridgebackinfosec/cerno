@@ -22,7 +22,7 @@ import time
 from .ansi import info, warn, header, get_console, style_if_enabled
 from .constants import SEVERITY_COLORS
 from .fs import default_page_size, pretty_severity_label
-from .logging_setup import log_timing
+from .logging_setup import log_timing, log_debug
 
 if TYPE_CHECKING:
     from .models import Finding, Plugin
@@ -832,6 +832,73 @@ def render_actions_footer(
             _console_global.print(right_row3)
 
 
+def render_finding_actions_footer(
+    *,
+    has_workflow: bool = False,
+    has_nxc_data: bool = False,
+) -> None:
+    """Render action footer for finding review with responsive layout.
+
+    Uses two-column grid for wide terminals (>=100 chars) and single-column
+    layout for narrow terminals (<100 chars) to prevent wrapping.
+
+    Maintains the >> prefix style for consistency with finding review UI.
+
+    Args:
+        has_workflow: Whether workflow action is available for this plugin
+        has_nxc_data: Whether NetExec data is available for these hosts
+    """
+    from .ansi import get_terminal_width
+
+    # Row 1: Information actions (always present)
+    left_row1 = join_actions_texts([
+        key_text("I", "Finding Info"),
+        key_text("D", "Finding Details"),
+    ])
+    right_row1 = join_actions_texts([
+        key_text("V", "View host(s)"),
+        key_text("E", "CVE info"),
+    ])
+
+    # Row 2: External tools (conditional + run tool)
+    left_items_row2 = []
+    if has_workflow:
+        left_items_row2.append(key_text("W", "Workflow"))
+    if has_nxc_data:
+        left_items_row2.append(key_text("N", "NetExec Data"))
+    left_row2 = join_actions_texts(left_items_row2) if left_items_row2 else Text()
+    right_row2 = join_actions_texts([key_text("T", "Run tool")])
+
+    # Row 3: Control actions (always present)
+    left_row3 = join_actions_texts([key_text("M", "Mark reviewed")])
+    right_row3 = join_actions_texts([key_text("B", "Back")])
+
+    term_width = get_terminal_width()
+    _console_global.print("[cyan]>>[/cyan]")
+
+    if term_width >= 100:
+        # Wide terminal: use 2-column grid layout
+        grid = Table.grid(expand=True, padding=(0, 1))
+        grid.add_column(ratio=1)
+        grid.add_column(ratio=1)
+        grid.add_row(left_row1, right_row1)
+        if left_row2.plain:  # Only add row if there are conditional items
+            grid.add_row(left_row2, right_row2)
+        else:
+            grid.add_row(right_row2, Text())  # Run tool alone
+        grid.add_row(left_row3, right_row3)
+        _console_global.print(grid)
+    else:
+        # Narrow terminal: single-column layout to prevent wrapping
+        _console_global.print(left_row1)
+        _console_global.print(right_row1)
+        if left_row2.plain:
+            _console_global.print(left_row2)
+        _console_global.print(right_row2)
+        _console_global.print(left_row3)
+        _console_global.print(right_row3)
+
+
 def render_tool_availability_table(include_unavailable: bool = True) -> None:
     """Render a table showing availability and version info for all registered tools.
 
@@ -1030,6 +1097,58 @@ def join_actions_texts(items: list[Text]) -> Text:
     return output
 
 
+def render_responsive_action_menu(
+    rows: list[list[tuple[str, str]]],
+    *,
+    wide_threshold: int = 100,
+) -> None:
+    """Render action menu with responsive layout based on terminal width.
+
+    Uses two-column grid for wide terminals (>=threshold) and single-column
+    layout for narrow terminals (<threshold) to prevent wrapping.
+
+    Args:
+        rows: List of rows, where each row is a list of (key, description) tuples.
+              For 2-column layout, provide up to 2 items per row.
+        wide_threshold: Terminal width threshold for wide layout (default: 100)
+
+    Example:
+        render_responsive_action_menu([
+            [("P", "Select NSE Profile"), ("S", "Add/Edit Scripts")],
+            [("U", "Toggle UDP"), ("Enter", "Continue")],
+            [("B", "Back/Cancel")],
+        ])
+    """
+    from .ansi import get_terminal_width
+
+    term_width = get_terminal_width()
+    _console_global.print("[cyan]>>[/cyan]")
+
+    if term_width >= wide_threshold:
+        # Wide terminal: 2-column grid layout
+        grid = Table.grid(expand=True, padding=(0, 1))
+        grid.add_column(ratio=1)
+        grid.add_column(ratio=1)
+        for row in rows:
+            if len(row) == 0:
+                continue
+            elif len(row) == 1:
+                grid.add_row(key_text(row[0][0], row[0][1]), Text())
+            else:
+                grid.add_row(
+                    key_text(row[0][0], row[0][1]),
+                    key_text(row[1][0], row[1][1])
+                )
+        _console_global.print(grid)
+    else:
+        # Narrow terminal: single-column layout
+        for row in rows:
+            if len(row) == 0:
+                continue
+            row_text = join_actions_texts([key_text(k, d) for k, d in row])
+            _console_global.print(row_text)
+
+
 def count_severity_findings(
     directory: Path,
     scan_id: int,
@@ -1222,7 +1341,7 @@ def grouped_payload_text(finding: "Finding") -> str:
 
     # Group ports by host
     from collections import defaultdict
-    host_ports = defaultdict(list)
+    host_ports: defaultdict[str, list[str | None]] = defaultdict(list)
 
     for line in lines:
         if ":" in line:
@@ -1798,7 +1917,7 @@ def render_nxc_host_panel(host_ip: str, host_data: Any, has_data: bool = True) -
                     flags_text.append(f"  • {flag}\n", style=style_if_enabled("red"))
                 renderables.append(flags_text)
 
-        panel_content = Group(*renderables)
+        panel_content: Group | Text = Group(*renderables)
     else:
         # Simple text content for hosts without tables
         panel_content = content
@@ -1879,6 +1998,7 @@ def bulk_extract_cves_for_plugins(plugins: List[tuple[int, str]]) -> None:
     info(f"Displaying CVEs from {len(plugins)} finding(s)...\n")
 
     results = {}  # plugin_name -> list of CVEs
+    failed_count = 0
 
     # Query database (instant, no progress bar needed)
     with get_connection() as conn:
@@ -1887,9 +2007,13 @@ def bulk_extract_cves_for_plugins(plugins: List[tuple[int, str]]) -> None:
                 plugin = Plugin.get_by_id(plugin_id, conn=conn)
                 if plugin and plugin.cves:
                     results[plugin_name] = plugin.cves
-            except Exception:
-                # Silently skip failed queries
-                pass
+            except Exception as e:
+                failed_count += 1
+                log_debug(f"CVE extraction failed for plugin {plugin_id}: {e}")
+
+    # Report failures if any
+    if failed_count > 0:
+        warn(f"CVE extraction failed for {failed_count} plugin(s). Check logs for details.")
 
     # Display results
     display_bulk_cve_results(results)
@@ -1913,6 +2037,7 @@ def bulk_extract_cves_for_findings(files: List[Path]) -> None:
     info(f"Displaying CVEs from {len(files)} file(s)...\n")
 
     results = {}  # plugin_name -> list of CVEs
+    failed_count = 0
 
     # Query database (instant, no progress bar needed)
     with get_connection() as conn:
@@ -1925,9 +2050,13 @@ def bulk_extract_cves_for_findings(files: List[Path]) -> None:
                 plugin = Plugin.get_by_id(int(plugin_id), conn=conn)
                 if plugin and plugin.cves:
                     results[file_path.name] = plugin.cves
-            except Exception:
-                # Silently skip failed queries
-                pass
+            except Exception as e:
+                failed_count += 1
+                log_debug(f"CVE extraction failed for file {file_path.name}: {e}")
+
+    # Report failures if any
+    if failed_count > 0:
+        warn(f"CVE extraction failed for {failed_count} finding(s). Check logs for details.")
 
     # Display results
     display_bulk_cve_results(results)

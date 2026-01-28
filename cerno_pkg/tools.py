@@ -21,7 +21,6 @@ if TYPE_CHECKING:
 
 import pyperclip
 from rich.prompt import Prompt
-from rich.text import Text
 
 from .ansi import header, info, ok, warn
 from .constants import (
@@ -30,38 +29,10 @@ from .constants import (
 )
 from .tool_context import ToolContext, CommandResult
 
-# Optional dependencies for Metasploit search
-try:
-    import requests  # type: ignore[reportUnusedImport]
-    from bs4 import BeautifulSoup, Tag  # type: ignore[reportUnusedImport]
-    METASPLOIT_DEPS_AVAILABLE = True
-except ImportError:
-    requests = None  # type: ignore
-    BeautifulSoup = None  # type: ignore
-    Tag = None  # type: ignore
-    METASPLOIT_DEPS_AVAILABLE = False
 
 from .ansi import get_console
+from .render import print_action_menu, render_responsive_action_menu
 _console = get_console()
-
-
-def print_action_menu(actions: list[tuple[str, str]]) -> None:
-    """Print action menu with Rich Text formatting.
-
-    Args:
-        actions: List of (key, description) tuples.
-                Examples: [("V", "View file"), ("B", "Back")]
-    """
-    from .ansi import style_if_enabled
-    action_text = Text()
-    for i, (key, desc) in enumerate(actions):
-        if i > 0:
-            action_text.append(" / ", style=None)
-        action_text.append(f"[{key}] ", style=style_if_enabled("cyan"))
-        action_text.append(desc, style=None)
-
-    _console.print("[cyan]>>[/cyan] ", end="")
-    _console.print(action_text)
 
 
 # Constants
@@ -228,13 +199,11 @@ def configure_nmap_options(config: Optional["CernoConfig"] = None) -> Optional[t
         panel = Panel(summary, border_style="cyan")
         _console.print(panel)
 
-        # Show menu options
-        print_action_menu([
-            ("P", "Select NSE Profile"),
-            ("S", "Add/Edit Custom Scripts"),
-            ("U", f"Toggle UDP Scan ({'ON' if force_udp else 'OFF'})"),
-            ("Enter", "Continue with current configuration"),
-            ("B", "Back/Cancel")
+        # Show menu options with responsive layout
+        render_responsive_action_menu([
+            [("P", "Select NSE Profile"), ("S", "Add/Edit Custom Scripts")],
+            [("U", f"Toggle UDP ({'ON' if force_udp else 'OFF'})"), ("Enter", "Continue")],
+            [("B", "Back/Cancel")],
         ])
 
         try:
@@ -666,10 +635,9 @@ def command_review_menu(
     info("Command:")
     print(cmd_str)
     print()
-    print_action_menu([
-        ("1", "Run now"),
-        ("2", "Copy command to clipboard (don't run)"),
-        ("B", "Back")
+    render_responsive_action_menu([
+        [("1", "Run now"), ("2", "Copy to clipboard")],
+        [("B", "Back")],
     ])
 
     while True:
@@ -899,14 +867,14 @@ def build_custom_workflow(ctx: "ToolContext") -> Optional["CommandResult"]:
     from rich.prompt import Prompt
     from .ansi import warn
 
-    mapping = {
-        "{TCP_IPS}": ctx.tcp_ips,
-        "{UDP_IPS}": ctx.udp_ips,
-        "{TCP_HOST_PORTS}": ctx.tcp_sockets,
+    mapping: dict[str, str] = {
+        "{TCP_IPS}": str(ctx.tcp_ips),
+        "{UDP_IPS}": str(ctx.udp_ips),
+        "{TCP_HOST_PORTS}": str(ctx.tcp_sockets),
         "{PORTS}": ctx.ports_str or "",
-        "{WORKDIR}": ctx.workdir,
-        "{RESULTS_DIR}": ctx.results_dir,
-        "{OABASE}": ctx.oabase,
+        "{WORKDIR}": str(ctx.workdir),
+        "{RESULTS_DIR}": str(ctx.results_dir),
+        "{OABASE}": str(ctx.oabase),
     }
     custom_command_help(mapping)
 
@@ -1107,7 +1075,7 @@ def run_tool_workflow(
 
                     try:
                         answer = Prompt.ask(
-                            "\nRun which command? (number or [n] None)",
+                            "\nRun which command? (number or [N] None)",
                             default="n"
                         )
 
@@ -1128,6 +1096,41 @@ def run_tool_workflow(
                                                 executable=shell_exec
                                             )
                                             ok("\nCommand completed.")
+
+                                            # Offer module info after search completes
+                                            _console_global.print()
+                                            module_path = Prompt.ask(
+                                                "[cyan]>>[/cyan] Get info on a module? (paste path or Enter to skip)",
+                                                default=""
+                                            ).strip()
+
+                                            if module_path:
+                                                info_cmd = f"msfconsole -q -x 'info {module_path}; exit'"
+                                                _console_global.print(f"\n[cyan]>>[/cyan] Info command:")
+                                                _console_global.print(f"  {info_cmd}")
+
+                                                action = Prompt.ask(
+                                                    "\n[R]un, [C]opy to clipboard, or Enter to skip",
+                                                    default=""
+                                                ).strip().lower()
+
+                                                if action in ("r", "run"):
+                                                    info(f"\nExecuting: {info_cmd}\n")
+                                                    if Confirm.ask("Confirm?", default=False):
+                                                        run_command_with_progress(
+                                                            info_cmd,
+                                                            shell=True,
+                                                            executable=shell_exec
+                                                        )
+                                                        ok("\nInfo command completed.")
+                                                    else:
+                                                        info("Execution skipped.")
+                                                elif action in ("c", "copy"):
+                                                    success, msg = copy_to_clipboard(info_cmd)
+                                                    if success:
+                                                        ok("Copied to clipboard.")
+                                                    else:
+                                                        warn(msg)
                                         else:
                                             warn("No shell found (bash/sh).")
                                     else:
@@ -1293,7 +1296,7 @@ def run_tool_workflow(
             # Count generated files in results directory
             file_count = 0
             total_size = 0
-            generated_files = []
+            generated_files: list[str] = []
             if results_dir and results_dir.exists():
                 for file in results_dir.rglob('*'):
                     if file.is_file():

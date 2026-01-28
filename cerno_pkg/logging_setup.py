@@ -23,15 +23,13 @@ if TYPE_CHECKING:
 # Initialize to prevent "possibly unbound" errors
 _log: Any = None
 _logging: Any = None
+LOGURU_AVAILABLE: bool = False
 
 try:
     from loguru import logger as _log
-
-    LOGURU_AVAILABLE: bool = True
+    LOGURU_AVAILABLE = True
 except Exception:
     import logging as _logging
-
-    LOGURU_AVAILABLE: bool = False
 
 
 # ========== Helper functions ==========

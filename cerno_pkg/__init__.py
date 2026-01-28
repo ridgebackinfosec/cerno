@@ -29,7 +29,8 @@ __all__ = [
     "extract_plugin_id_from_filename", "group_findings_by_workflow",
     # Render module
     "render_scan_table", "render_severity_table", "render_finding_list_table",
-    "render_compare_tables", "render_actions_footer", "show_actions_help",
+    "render_compare_tables", "render_actions_footer", "render_finding_actions_footer",
+    "render_responsive_action_menu", "show_actions_help",
     "render_tool_availability_table",
     "show_reviewed_help", "menu_pager", "severity_cell", "severity_style",
     "print_action_menu", "file_raw_payload_text", "file_raw_paged_text",
@@ -100,8 +101,8 @@ from .parsing import (
 )
 from .render import (
     render_scan_table, render_severity_table, render_finding_list_table,
-    render_compare_tables, render_actions_footer, show_actions_help,
-    render_tool_availability_table,
+    render_compare_tables, render_actions_footer, render_finding_actions_footer,
+    render_responsive_action_menu, show_actions_help, render_tool_availability_table,
     show_reviewed_help, menu_pager, severity_cell, severity_style,
     print_action_menu,
     file_raw_payload_text, file_raw_paged_text,

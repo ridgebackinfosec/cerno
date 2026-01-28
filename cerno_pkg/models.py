@@ -10,7 +10,7 @@ import json
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 from .database import db_transaction, query_all, query_one
 from .logging_setup import log_error, log_info
@@ -1395,7 +1395,7 @@ class Host:
                     WHERE host_id = ?""",
                     (netbios_name, fqdn, reverse_dns, row["host_id"])
                 )
-                return row["host_id"]
+                return cast(int, row["host_id"])
 
             # Create new
             cursor = c.execute(

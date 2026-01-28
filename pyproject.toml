@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cerno"
-version = "1.2.21"
+version = "1.2.22"
 description = "Modern CLI for Nessus findings review and security tool orchestration"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -47,6 +47,7 @@ dev = [
     "black>=23.0",
     "mypy>=1.0",
     "pyright>=1.1.389",  # Type checking (complementary to mypy)
+    "types-PyYAML>=6.0",  # Type stubs for pyyaml
 ]
 
 [project.urls]

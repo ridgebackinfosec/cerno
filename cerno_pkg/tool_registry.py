@@ -50,7 +50,7 @@ class Tool:
         """Validate required fields."""
         if not self.id or not self.name:
             raise ValueError("Tool must have id and name")
-        if not self.workflow_builder:
+        if self.workflow_builder is None:
             raise ValueError(f"Tool '{self.id}' must have workflow_builder")
 
 

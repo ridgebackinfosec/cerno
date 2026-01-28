@@ -44,7 +44,8 @@ def _get_version_from_pyproject() -> Optional[str]:
 
         with open(pyproject_path, "rb") as f:
             data = tomllib.load(f)
-            return data.get("project", {}).get("version")
+            version = data.get("project", {}).get("version")
+            return str(version) if version is not None else None
     except Exception:
         # tomllib not available, file not found, or parsing error
         return None

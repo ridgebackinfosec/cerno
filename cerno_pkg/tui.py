@@ -480,10 +480,9 @@ def handle_finding_list_actions(
             )
 
         from rich.prompt import Confirm
-        from rich import print as rprint
 
         # Show warning message
-        rprint(f"[red]You are about to mark {len(candidates)} items as review completed.[/red]")
+        warn(f"You are about to mark {len(candidates)} items as review completed.")
 
         # Use standard Confirm.ask pattern
         confirmed = Confirm.ask("Mark all filtered findings as completed?", default=False)

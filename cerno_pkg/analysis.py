@@ -207,7 +207,7 @@ def compare_filtered(files: Union[list['Finding'], list[tuple['Finding', 'Plugin
         )
 
     render_compare_tables(
-        parsed,
+        parsed,  # type: ignore[arg-type]
         host_intersection,
         host_union,
         port_intersection,
@@ -335,7 +335,7 @@ def analyze_inclusions(files: Union[list['Finding'], list[tuple['Finding', 'Plug
     display_names = [display_name for display_name, _, _, _, _ in parsed]
 
     # Build coverage map: for each plugin, which others does it fully include?
-    cover_map = {display_name: set() for display_name in display_names}
+    cover_map: dict[str, set[str]] = {display_name: set() for display_name in display_names}
     for i, name_a in enumerate(display_names):
         items_a = item_sets[name_a]
         for j, name_b in enumerate(display_names):

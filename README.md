@@ -58,6 +58,8 @@ In penetration testing and vulnerability management, clarity through careful exa
 
 ## Installation
 
+**Requirements:** Python 3.11+ on Linux, macOS, or Windows.
+
 **Recommended (pipx):**
 ```bash
 pipx install git+https://github.com/ridgebackinfosec/cerno.git
@@ -304,6 +306,41 @@ workflows:
 - [Adding custom tools](docs/ADDING_TOOLS_QUICKSTART.md)
 - [Tool system guide](docs/TOOL_SYSTEM_GUIDE.md)
 - [Error handling](docs/ERROR_HANDLING.md)
+
+---
+
+## Troubleshooting
+
+**Database issues:**
+```bash
+# Reset database (re-import required)
+rm ~/.cerno/cerno.db
+cerno import nessus scan.nessus
+```
+
+**Config file issues:**
+```bash
+# Reset config to defaults (creates backup)
+cerno config reset
+```
+
+**Import failures:**
+- Ensure the `.nessus` file is valid XML (not corrupted or truncated)
+- Check file permissions and path
+- Try importing with `--verbose` for detailed output
+
+**Tool execution issues:**
+- Verify tools (nmap, netexec) are installed and on PATH
+- Check `~/.cerno/cerno.log` for detailed error messages
+
+---
+
+## Contributing
+
+Found a bug or have a feature request? Please open an issue at:
+[github.com/ridgebackinfosec/cerno/issues](https://github.com/ridgebackinfosec/cerno/issues)
+
+Pull requests are welcome. For major changes, please open an issue first to discuss.
 
 ---
 

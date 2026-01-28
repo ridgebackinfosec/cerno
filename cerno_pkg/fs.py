@@ -309,7 +309,8 @@ def handle_finding_view(
         grouped_paged_text, grouped_payload_text,
         hosts_only_paged_text, hosts_only_payload_text,
         build_plugin_output_details, display_finding_preview,
-        print_action_menu, menu_pager, display_nxc_per_host_detail
+        print_action_menu, menu_pager, display_nxc_per_host_detail,
+        render_finding_actions_footer,
     )
     from .tools import copy_to_clipboard, run_tool_workflow
     from .nxc_db import get_nxc_manager, reset_nxc_manager
@@ -332,28 +333,11 @@ def handle_finding_view(
                 summary = nxc_mgr.get_hosts_enrichment(hosts)
                 has_nxc_data = summary.hosts_with_data > 0
 
-        # Build action menu with all available options
-        from cerno_pkg.render import key_text, join_actions_texts
-
-        action_items = [
-            key_text("I", "Finding Info"),
-            key_text("D", "Finding Details"),
-            key_text("V", "View host(s) (grouped)"),
-            key_text("E", "CVE info"),
-        ]
-        if has_workflow:
-            action_items.append(key_text("W", "Workflow"))
-        if has_nxc_data:
-            action_items.append(key_text("N", "NetExec Data"))
-        action_items.extend([
-            key_text("T", "Run tool"),
-            key_text("M", "Mark reviewed"),
-            key_text("B", "Back"),
-        ])
-        action_text = join_actions_texts(action_items)
-
-        _console.print("[cyan]>>[/cyan] ", end="")
-        _console.print(action_text)
+        # Render responsive action menu
+        render_finding_actions_footer(
+            has_workflow=has_workflow,
+            has_nxc_data=has_nxc_data,
+        )
         try:
             action_choice = Prompt.ask("Choose action").strip().lower()
         except KeyboardInterrupt:
@@ -476,10 +460,6 @@ def handle_finding_view(
         # Default to grouped format (no prompt) for instant viewing
         text = grouped_paged_text(finding, plugin)
         payload = grouped_payload_text(finding)
-
-        if text is None or payload is None:
-            warn("Failed to generate content.")
-            continue
 
         # Display content immediately
         menu_pager(text)

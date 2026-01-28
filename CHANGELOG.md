@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.22] - 2026-01-28
+
+### Added
+- Added module info prompt after Metasploit search completes - users can now paste a module path and run/copy `msfconsole info` command without leaving the TUI (tools.py)
+
+### Fixed
+- Fixed character encoding corruption in error messages (mojibake `â€"` replaced with proper em-dash `—`)
+- Fixed `LOGURU_AVAILABLE` redefinition warning in logging_setup.py
+- Added proper type annotation guard for `os.geteuid()` on Windows (ops.py)
+- Fixed keyboard shortcut consistency: `[n]` → `[N]` in Metasploit command prompt (tools.py)
+- Fixed all 28 mypy type errors across 11 files for clean static type checking
+  - Added proper type annotations and casts for database row access
+  - Fixed union type handling in nessus_import.py for CVE/MSF lists
+  - Added explicit type annotations for complex data structures
+  - Removed unreachable code paths detected by type checker
+- Fixed incorrect command suggestion in scan delete error (`'cerno list'` → `'cerno scan list'`)
+- Fixed hardcoded `[red]` Rich markup in mark-all warning to respect `no_color` config setting (tui.py)
+- Fixed silent CVE extraction failures - now reports failure count and logs details (render.py)
+
+### Changed
+- Removed dead code: unused Metasploit web scraping imports (`requests`, `BeautifulSoup`) from tools.py
+- Removed duplicate `print_action_menu()` function from tools.py (now imports from render.py)
+- Added `types-PyYAML` to dev dependencies for better type checking
+- Improved error messages with recovery suggestions for database and config failures
+- Added Troubleshooting, Contributing, and Windows compatibility sections to README.md
+- Improved finding review action menu with responsive layout that adapts to terminal width (render.py, fs.py)
+- Improved tool action menus (nmap configuration, command review) with responsive layout (tools.py, render.py)
+
 ## [1.2.21] - 2026-01-22
 
 ### Added

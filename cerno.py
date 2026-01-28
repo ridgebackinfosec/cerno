@@ -178,7 +178,7 @@ def browse_workflow_groups(
         try:
             ans = Prompt.ask("Choose workflow").strip().lower()
         except KeyboardInterrupt:
-            warn("\nInterrupted â€” returning to severity menu.")
+            warn("\nInterrupted — returning to severity menu.")
             return
 
         if ans in ("b", "back", "q"):
@@ -395,7 +395,7 @@ def browse_file_list(
             # Build status line components
             from rich.text import Text
 
-            status_parts = []
+            status_parts: list[str | Text] = []
 
             # Unreviewed count
             status_parts.append(f"Unreviewed findings ({len(unreviewed)})")
@@ -532,7 +532,7 @@ def browse_file_list(
 
             ans = Prompt.ask("Choose a file number, or action").strip().lower()
         except KeyboardInterrupt:
-            warn("\nInterrupted â€” returning to severity menu.")
+            warn("\nInterrupted — returning to severity menu.")
             break
 
         # Handle actions
@@ -574,7 +574,7 @@ def browse_file_list(
                 confirm_msg = f"Mark all {len(candidates)} findings as review complete?"
                 confirmed = Confirm.ask(confirm_msg, default=False)
             except KeyboardInterrupt:
-                warn("\nInterrupted â€” cancelling bulk operation.")
+                warn("\nInterrupted — cancelling bulk operation.")
                 continue
 
             if not confirmed:
@@ -894,6 +894,7 @@ def main(args: types.SimpleNamespace) -> None:
                         all_scans = Scan.get_all()
                 except Exception as e:
                     err(f"Failed to query scans from database: {e}")
+                    info("If the database is corrupted, try: rm ~/.cerno/cerno.db && cerno import nessus <file>")
                     return
 
                 if not all_scans:
@@ -970,7 +971,7 @@ def main(args: types.SimpleNamespace) -> None:
                     warn("Invalid scan - missing scan_id")
                     continue
 
-                scan_id: int = selected_scan.scan_id
+                scan_id = selected_scan.scan_id
                 ok(f"Selected: {selected_scan.scan_name}")
 
                 # Check for existing session
@@ -1715,7 +1716,7 @@ def delete_scan(
     scan = Scan.get_by_name(scan_name)
     if not scan:
         err(f"Scan not found: {scan_name}")
-        info("Use 'cerno list' to see available scans")
+        info("Use 'cerno scan list' to see available scans")
         raise typer.Exit(1)
 
     # Confirm deletion
@@ -1853,6 +1854,7 @@ def config_reset() -> None:
         info("Edit this file to customize your preferences")
     else:
         err("Failed to reset config file")
+        info(f"Check permissions on {config_path.parent}")
         raise typer.Exit(1)
 
 
@@ -1880,7 +1882,7 @@ def config_show() -> None:
     defaults = CernoConfig()
 
     # Collect all rows for sorting
-    rows = []
+    rows: list[tuple[str, str | int | bool | None, bool, str]] = []
 
     # Paths
     rows.append(("results_root", config.results_root or str(get_results_root()),
@@ -1984,6 +1986,7 @@ def config_set(
 
     # Type conversion based on key
     try:
+        typed_value: int | bool | str
         if key in ["default_page_size", "top_ports_count"]:
             typed_value = int(value)
         elif key in ["no_color", "debug_logging"]:
@@ -1998,6 +2001,7 @@ def config_set(
             info(f"Config saved to {get_config_path()}")
         else:
             err("Failed to save config")
+            info("Try: cerno config reset")
             raise typer.Exit(1)
     except ValueError as e:
         err(f"Invalid value for {key}: {e}")
