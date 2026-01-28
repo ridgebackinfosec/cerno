@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Added module info prompt after Metasploit search completes - users can now paste a module path and run/copy `msfconsole info` command without leaving the TUI (tools.py)
+
 ### Fixed
 - Fixed character encoding corruption in error messages (mojibake `â€"` replaced with proper em-dash `—`)
 - Fixed `LOGURU_AVAILABLE` redefinition warning in logging_setup.py

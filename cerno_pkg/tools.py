@@ -1096,6 +1096,41 @@ def run_tool_workflow(
                                                 executable=shell_exec
                                             )
                                             ok("\nCommand completed.")
+
+                                            # Offer module info after search completes
+                                            _console_global.print()
+                                            module_path = Prompt.ask(
+                                                "[cyan]>>[/cyan] Get info on a module? (paste path or Enter to skip)",
+                                                default=""
+                                            ).strip()
+
+                                            if module_path:
+                                                info_cmd = f"msfconsole -q -x 'info {module_path}; exit'"
+                                                _console_global.print(f"\n[cyan]>>[/cyan] Info command:")
+                                                _console_global.print(f"  {info_cmd}")
+
+                                                action = Prompt.ask(
+                                                    "\n[R]un, [C]opy to clipboard, or Enter to skip",
+                                                    default=""
+                                                ).strip().lower()
+
+                                                if action in ("r", "run"):
+                                                    info(f"\nExecuting: {info_cmd}\n")
+                                                    if Confirm.ask("Confirm?", default=False):
+                                                        run_command_with_progress(
+                                                            info_cmd,
+                                                            shell=True,
+                                                            executable=shell_exec
+                                                        )
+                                                        ok("\nInfo command completed.")
+                                                    else:
+                                                        info("Execution skipped.")
+                                                elif action in ("c", "copy"):
+                                                    success, msg = copy_to_clipboard(info_cmd)
+                                                    if success:
+                                                        ok("Copied to clipboard.")
+                                                    else:
+                                                        warn(msg)
                                         else:
                                             warn("No shell found (bash/sh).")
                                     else:
