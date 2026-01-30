@@ -9,6 +9,10 @@ A **TUI tool** for reviewing Nessus scan findings and orchestrating security too
 - 📊 CVE extraction, Metasploit module search, host comparison
 - 🔗 NetExec database integration (correlate credentials with findings)
 
+**📺 Watch the demo:**
+
+[![BHIS Webcast - Cerno Tool Overview](https://img.youtube.com/vi/aGmRenQ28Ro/maxresdefault.jpg)](https://www.youtube.com/watch?v=aGmRenQ28Ro)
+
 ---
 
 ## Quick Start
