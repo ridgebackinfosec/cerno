@@ -11,7 +11,9 @@ A **TUI tool** for reviewing Nessus scan findings and orchestrating security too
 
 **📺 Watch the demo:**
 
-[![BHIS Webcast - Cerno Tool Overview](https://img.youtube.com/vi/aGmRenQ28Ro/maxresdefault.jpg)](https://www.youtube.com/watch?v=aGmRenQ28Ro)
+<a href="https://www.youtube.com/watch?v=aGmRenQ28Ro">
+  <img src="https://img.youtube.com/vi/aGmRenQ28Ro/maxresdefault.jpg" alt="BHIS Webcast - Cerno Tool Overview" width="50%">
+</a>
 
 ---
 
