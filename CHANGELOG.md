@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.23] - 2026-01-28
+
+### Changed
+- Host display and tool target files now use original scan target (FQDN or IP) instead of resolved IP address, fixing tool failures on external network scans where Nessus target was an FQDN (`models.py: get_hosts_and_ports(), get_all_host_port_lines(), get_plugin_outputs_by_host()`)
+
 ## [1.2.22] - 2026-01-28
 
 ### Added

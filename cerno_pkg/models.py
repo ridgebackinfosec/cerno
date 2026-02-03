@@ -707,7 +707,7 @@ class Finding:
                 c,
                 """
                 SELECT
-                    h.ip_address,
+                    h.scan_target,
                     fah.port_number,
                     h.scan_target_type
                 FROM finding_affected_hosts fah
@@ -717,7 +717,7 @@ class Finding:
                     CASE WHEN h.scan_target_type = 'ipv4' THEN 0
                          WHEN h.scan_target_type = 'ipv6' THEN 1
                          ELSE 2 END,
-                    h.ip_address ASC
+                    h.scan_target ASC
                 """,
                 (self.finding_id,)
             )
@@ -813,7 +813,7 @@ class Finding:
                 c,
                 """
                 SELECT
-                    h.ip_address,
+                    h.scan_target,
                     fah.port_number,
                     h.scan_target_type
                 FROM finding_affected_hosts fah
@@ -823,7 +823,7 @@ class Finding:
                     CASE WHEN h.scan_target_type = 'ipv4' THEN 0
                          WHEN h.scan_target_type = 'ipv6' THEN 1
                          ELSE 2 END,
-                    h.ip_address ASC,
+                    h.scan_target ASC,
                     fah.port_number ASC
                 """,
                 (self.finding_id,)
@@ -882,7 +882,7 @@ class Finding:
                 c,
                 """
                 SELECT
-                    h.ip_address,
+                    h.scan_target,
                     fah.port_number,
                     fah.plugin_output
                 FROM finding_affected_hosts fah
@@ -892,7 +892,7 @@ class Finding:
                     CASE WHEN h.scan_target_type = 'ipv4' THEN 0
                          WHEN h.scan_target_type = 'ipv6' THEN 1
                          ELSE 2 END,
-                    h.ip_address ASC,
+                    h.scan_target ASC,
                     fah.port_number ASC
                 """,
                 (self.finding_id,)
