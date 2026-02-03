@@ -460,18 +460,17 @@ class TestFindingModel:
         hosts, ports_str = pf.get_hosts_and_ports(temp_db)
 
         # Verify hosts (should be unique, IPs first)
-        # Note: With new schema, hosts contains ip_address values (resolved IPs)
-        # example.com was created with ip_address=93.184.216.34
+        # Note: hosts contains scan_target values (original scan targets)
+        # example.com was created with scan_target=example.com
         assert len(hosts) == 3
         assert "192.168.1.1" in hosts
         assert "192.168.1.2" in hosts
-        assert "93.184.216.34" in hosts  # Resolved IP for example.com
+        assert "example.com" in hosts  # Original scan target (FQDN)
 
-        # All are now IP addresses, so ordering is by IP type then address
-        # IPv4s come first, ordered by address
+        # IPv4s come first (ordered by scan_target), then FQDNs
         assert hosts[0] == "192.168.1.1"
         assert hosts[1] == "192.168.1.2"
-        assert hosts[2] == "93.184.216.34"
+        assert hosts[2] == "example.com"
 
         # Verify ports (sorted numerically)
         assert ports_str == "80,443"
@@ -590,15 +589,15 @@ class TestFindingModel:
         lines = pf.get_all_host_port_lines(temp_db)
 
         # Verify format and sorting
-        # Note: With new schema, lines contain ip_address:port (resolved IPs)
-        # example.com was created with ip_address=93.184.216.34
+        # Note: lines contain scan_target:port (original scan targets)
+        # example.com was created with scan_target=example.com
         assert len(lines) == 3
         assert "192.168.1.1:80" in lines
         assert "192.168.1.1:443" in lines
-        assert "93.184.216.34:80" in lines  # Resolved IP for example.com
+        assert "example.com:80" in lines  # Original scan target (FQDN)
 
-        # All are now IPs, verify ordering by IP address
-        assert lines == ["192.168.1.1:80", "192.168.1.1:443", "93.184.216.34:80"]
+        # IPv4s first (ordered by scan_target), then FQDNs
+        assert lines == ["192.168.1.1:80", "192.168.1.1:443", "example.com:80"]
 
     def test_get_all_host_port_lines_ipv6_bracketed(self, temp_db):
         """Test get_all_host_port_lines adds brackets to IPv6 addresses."""
