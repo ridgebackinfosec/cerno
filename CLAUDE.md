@@ -423,6 +423,9 @@ cerno_pkg/
   - Note: `host_count`, `port_count` computed via `v_finding_stats` view
 - `finding_affected_hosts`: Host:port combinations (finding_id, host_id FK, port_number FK, plugin_output)
   - Uses foreign keys to normalized `hosts` and `ports` tables
+- `host_services`: Per-scan service discovery (scan_id, host_id, port_number, protocol, svc_name)
+  - Populated from Nessus ReportItem `svc_name`/`protocol` attributes during import
+  - Uses foreign keys to `scans`, `hosts`, and `ports` tables
 - `sessions`: Review session tracking (start time, end time)
   - Note: Statistics computed via `v_session_stats` view
 - `tool_executions`: Command history (tool_name, command_text, exit_code, duration, sudo usage)
@@ -436,6 +439,7 @@ cerno_pkg/
 - `v_plugins_with_severity`: Plugins with severity labels
 - `v_host_findings`: Cross-scan host analysis
 - `v_artifacts_with_types`: Artifacts with type names
+- `v_http_services`: HTTP/HTTPS services per scan (identifies web services by svc_name heuristics)
 
 **Schema changes**: Update `database.py:SCHEMA_SQL_TABLES` and `SCHEMA_SQL_VIEWS`. Test with fresh database before release.
 
