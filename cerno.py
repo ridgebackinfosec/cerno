@@ -1506,7 +1506,7 @@ def _show_nuclei_suggestion(scan_name: str) -> None:
 
         # Display suggestion
         info(fmt_action("3. nuclei (vulnerability scanner | https://github.com/projectdiscovery/nuclei):"))
-        info(f"   Found {len(urls)} HTTP/HTTPS URL(s) — written to {urls_file}")
+        info(f"   Found {len(urls)} HTTP/HTTPS services available — the URL(s) have been written to {urls_file}")
         nuclei_cmd = f"nuclei -list {urls_file} -o ~/nuclei_results.txt"
         info(f"   {nuclei_cmd}\n")
 
