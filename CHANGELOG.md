@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Service mapping during Nessus import: `svc_name` and `protocol` from ReportItem elements are now captured in a new `host_services` table, enabling per-host, per-port service identification (`database.py`, `nessus_import.py`)
+- New `v_http_services` SQL view for querying HTTP/HTTPS services discovered per scan
+- Post-import service discovery summary showing total services, unique hosts, and HTTP/HTTPS count
+- Nuclei tool suggestion after import: automatically generates `http_urls.txt` from discovered web services and suggests a `nuclei -list` command alongside EyeWitness/gowitness (`cerno.py`)
+- Query helpers `get_http_urls_for_scan()` and `get_service_summary_for_scan()` in `models.py`
+
 ## [1.2.23] - 2026-01-28
 
 ### Changed

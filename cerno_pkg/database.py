@@ -248,6 +248,27 @@ CREATE TABLE IF NOT EXISTS ports (
     service_name TEXT,
     description TEXT
 );
+
+-- Host services table (per-scan service discovery from Nessus)
+-- Maps (host_id, port_number, protocol) to the svc_name discovered by Nessus
+-- Same port may have different services on different hosts, so this is
+-- normalized per-host rather than stored in the global ports table
+CREATE TABLE IF NOT EXISTS host_services (
+    host_service_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scan_id INTEGER NOT NULL,
+    host_id INTEGER NOT NULL,
+    port_number INTEGER NOT NULL,
+    protocol TEXT NOT NULL DEFAULT 'tcp',
+    svc_name TEXT NOT NULL,
+    FOREIGN KEY (scan_id) REFERENCES scans(scan_id) ON DELETE CASCADE,
+    FOREIGN KEY (host_id) REFERENCES hosts(host_id),
+    FOREIGN KEY (port_number) REFERENCES ports(port_number),
+    UNIQUE(scan_id, host_id, port_number, protocol)
+);
+
+CREATE INDEX IF NOT EXISTS idx_host_services_scan ON host_services(scan_id);
+CREATE INDEX IF NOT EXISTS idx_host_services_host ON host_services(host_id);
+CREATE INDEX IF NOT EXISTS idx_host_services_svc ON host_services(svc_name);
 """
 
 SCHEMA_SQL_VIEWS = """
@@ -398,6 +419,29 @@ JOIN scans s ON f.scan_id = s.scan_id
 JOIN plugins p ON f.plugin_id = p.plugin_id
 GROUP BY h.host_id, h.ip_address, h.scan_target, h.scan_target_type,
          f.scan_id, s.scan_name, s.created_at;
+
+-- HTTP/HTTPS services view (for URL generation and tool suggestions)
+-- Identifies web services using svc_name heuristics matching Nessus conventions
+CREATE VIEW IF NOT EXISTS v_http_services AS
+SELECT
+    hs.host_service_id,
+    hs.scan_id,
+    h.host_id,
+    h.scan_target,
+    hs.port_number,
+    hs.protocol,
+    hs.svc_name,
+    CASE
+        WHEN hs.svc_name IN ('https?', 'https') THEN 'https'
+        WHEN hs.port_number IN (443, 8443) THEN 'https'
+        WHEN hs.svc_name IN ('www', 'http?', 'http') THEN 'http'
+        WHEN hs.port_number IN (80, 8080) THEN 'http'
+        ELSE NULL
+    END as http_scheme
+FROM host_services hs
+JOIN hosts h ON hs.host_id = h.host_id
+WHERE hs.svc_name IN ('www', 'http?', 'https?', 'http', 'https')
+   OR hs.port_number IN (80, 443, 8080, 8443);
 """
 
 # Combined schema for backward compatibility (if needed)

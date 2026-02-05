@@ -1476,19 +1476,78 @@ def review(
         warn("\nInterrupted — goodbye.")
 
 
-def show_nessus_tool_suggestions(nessus_file: Path) -> None:
+def _show_service_summary(scan_id: int) -> None:
+    """Display service discovery summary after import.
+
+    Args:
+        scan_id: Scan ID to query
+    """
+    try:
+        from cerno_pkg.models import get_service_summary_for_scan
+
+        total_services, unique_hosts, http_count = get_service_summary_for_scan(scan_id)
+
+        if total_services > 0:
+            parts = [f"{total_services} services across {unique_hosts} hosts"]
+            if http_count > 0:
+                parts.append(f"{http_count} HTTP/HTTPS")
+            info(f"Service Discovery: {' | '.join(parts)}")
+    except Exception:
+        pass  # Non-fatal — don't break import flow
+
+
+def _show_nuclei_suggestion(scan_name: str) -> None:
+    """Generate nuclei command suggestion from discovered HTTP services.
+
+    Queries host_services table for HTTP/HTTPS services, writes URLs to a file,
+    and displays a nuclei command suggestion.
+
+    Args:
+        scan_name: Name of the scan to query
+    """
+    try:
+        from cerno_pkg.models import Scan, get_http_urls_for_scan
+        from cerno_pkg.constants import SCANS_ROOT
+
+        scan = Scan.get_by_name(scan_name)
+        if not scan or scan.scan_id is None:
+            return
+
+        urls = get_http_urls_for_scan(scan.scan_id)
+
+        if not urls:
+            return  # No HTTP services discovered — skip silently
+
+        # Write URLs to file
+        urls_dir = SCANS_ROOT / scan_name
+        urls_dir.mkdir(parents=True, exist_ok=True)
+        urls_file = urls_dir / "http_urls.txt"
+        urls_file.write_text("\n".join(urls) + "\n")
+
+        # Display suggestion
+        info(fmt_action("3. nuclei (vulnerability scanner | https://github.com/projectdiscovery/nuclei):"))
+        info(f"   Found {len(urls)} HTTP/HTTPS URL(s) — written to {urls_file}")
+        nuclei_cmd = f"nuclei -list {urls_file} -o ~/nuclei_results.txt"
+        info(f"   {nuclei_cmd}\n")
+
+    except Exception:
+        pass  # Non-fatal — don't break import flow
+
+
+def show_nessus_tool_suggestions(nessus_file: Path, scan_name: str) -> None:
     """
     Display suggested tool commands after import export completes.
 
     Args:
         nessus_file: Path to the original .nessus file
+        scan_name: Name of the imported scan (for DB queries)
     """
     header("Suggested Tool Commands")
     info("\nYour .nessus file can ALSO be used as the input for these tools:\n")
 
     # eyewitness command
     info(fmt_action("1. eyewitness (screenshot and report tool | https://github.com/RedSiege/EyeWitness):"))
-    eyewitness_cmd = f"eyewitness -x {nessus_file} -d ~/eyewitness_report --results 500 --user-agent \"Mozilla/5.0 (X11; Linux x86_64; rv:102.0) Gecko/20100101 Firefox/102.0\" --timeout 30"
+    eyewitness_cmd = f"python ~/EyeWitness/Python/EyeWitness.py  -x {nessus_file} -d ~/eyewitness_report --results 500 --user-agent \"Mozilla/5.0 (X11; Linux x86_64; rv:102.0) Gecko/20100101 Firefox/102.0\" --timeout 30"
     info(f"   {eyewitness_cmd}\n")
 
     # gowitness command
@@ -1496,10 +1555,8 @@ def show_nessus_tool_suggestions(nessus_file: Path) -> None:
     gowitness_cmd = f"gowitness scan nessus -f {nessus_file} --chrome-user-agent \"Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/115.0\" --write-db -t 20"
     info(f"   {gowitness_cmd}\n")
 
-    # msfconsole db_import command
-    # info(fmt_action("3. msfconsole (Metasploit import):"))
-    # msfconsole_cmd = f"msfconsole -q -x \"db_import {nessus_file} ; hosts; services; vulns; exit\""
-    # info(f"   {msfconsole_cmd}\n")
+    # nuclei command (from database service data)
+    _show_nuclei_suggestion(scan_name)
 
     info("Tip: Copy these commands to run them in your terminal.\n")
 
@@ -1621,14 +1678,20 @@ def import_scan(
                     sev_table.add_row(severity_cell(sev_label), str(count))
 
             _console_global.print(sev_table)
-        
+
+        # Display service discovery summary
+        from cerno_pkg.models import Scan as _Scan
+        _scan = _Scan.get_by_name(scan_name)
+        if _scan and _scan.scan_id is not None:
+            _show_service_summary(_scan.scan_id)
+
     except Exception as e:
         err(f"Export failed: {e}")
         raise typer.Exit(1)
 
     # Show suggested tool commands
     _console_global.print()  # Blank line for spacing
-    show_nessus_tool_suggestions(nessus)
+    show_nessus_tool_suggestions(nessus, scan_name)
 
 
 # === Scan Sub-App Commands ===
