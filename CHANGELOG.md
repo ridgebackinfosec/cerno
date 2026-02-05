@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.24] - 2026-02-05
+
 ### Added
 - Service mapping during Nessus import: `svc_name` and `protocol` from ReportItem elements are now captured in a new `host_services` table, enabling per-host, per-port service identification (`database.py`, `nessus_import.py`)
 - New `v_http_services` SQL view for querying HTTP/HTTPS services discovered per scan
