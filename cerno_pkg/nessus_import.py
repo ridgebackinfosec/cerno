@@ -232,7 +232,7 @@ def truthy(text: Optional[str]) -> bool:
 def _build_index_stream(
     filename: Path,
     include_ports: bool = True
-) -> Tuple[Dict[str, dict], Dict[str, Set[Tuple[str, str]]], Dict[str, HostMetadata]]:
+) -> Tuple[Dict[str, dict], Dict[str, Set[Tuple[str, str]]], Dict[str, HostMetadata], Set[Tuple[str, str, str, str]]]:
     """Parse .nessus XML file and build plugin index with streaming.
 
     Memory-efficient single-pass parsing using iterparse with element clearing.
@@ -246,6 +246,7 @@ def _build_index_stream(
           - plugins dict: plugin_id -> {name, severity_int, msf}
           - plugin_hosts dict: plugin_id -> set of host entries
           - host_metadata dict: scan_target -> HostMetadata
+          - service_entries set: (scan_target, port, protocol, svc_name) tuples
 
     Raises:
         ET.ParseError: If XML parsing fails
@@ -254,6 +255,7 @@ def _build_index_stream(
     plugins: Dict[str, dict] = {}
     plugin_hosts: Dict[str, Set[tuple[str, str]]] = defaultdict(set)
     host_metadata: Dict[str, HostMetadata] = {}
+    service_entries: Set[Tuple[str, str, str, str]] = set()
     current_host = ""
     current_host_properties: Dict[str, Optional[str]] = {}
     in_host_properties = False
@@ -364,6 +366,12 @@ def _build_index_stream(
                 entry = current_host if (not include_ports or port == "0") else f"{current_host}:{port}"
                 plugin_hosts[pid].add((entry, plugin_output or ""))
 
+                # Collect service mapping for host_services table
+                svc_name = elem.attrib.get("svc_name", "")
+                protocol_attr = elem.attrib.get("protocol", "tcp")
+                if port != "0" and svc_name and svc_name != "general" and current_host:
+                    service_entries.add((current_host, port, protocol_attr, svc_name))
+
                 elem.clear()  # Free memory immediately
 
             # Clean up after processing host - build HostMetadata
@@ -389,7 +397,7 @@ def _build_index_stream(
                 current_host = ""
                 current_host_properties = {}
 
-        return plugins, plugin_hosts, host_metadata
+        return plugins, plugin_hosts, host_metadata, service_entries
 
     except ET.ParseError as e:
         log_error(f"Failed to parse {filename} as XML: {e}")
@@ -438,7 +446,7 @@ def import_nessus_file(
     log_info(f"Importing Nessus scan from {nessus_file}")
 
     # Parse .nessus file
-    plugins, plugin_hosts, host_metadata = _build_index_stream(nessus_file, include_ports)
+    plugins, plugin_hosts, host_metadata, service_entries = _build_index_stream(nessus_file, include_ports)
 
     if not plugins:
         log_info("No plugins with findings found in .nessus file")
@@ -490,7 +498,8 @@ def import_nessus_file(
             base_scan_dir=base_scan_dir,
             plugins=plugins,
             plugin_hosts=plugin_hosts,
-            host_metadata=host_metadata
+            host_metadata=host_metadata,
+            service_entries=service_entries
         )
 
     return ExportResult(
@@ -509,7 +518,8 @@ def _write_to_database(
     base_scan_dir: Path,
     plugins: Dict[str, dict],
     plugin_hosts: Dict[str, Set[Tuple[str, str]]],
-    host_metadata: Dict[str, HostMetadata]
+    host_metadata: Dict[str, HostMetadata],
+    service_entries: Set[Tuple[str, str, str, str]] = frozenset(),  # type: ignore[assignment]
 ) -> None:
     """Write scan, plugin, and host data to database.
 
@@ -520,6 +530,7 @@ def _write_to_database(
         plugins: Plugin metadata dictionary
         plugin_hosts: Plugin hosts dictionary (plugin_id -> set of host:port entries)
         host_metadata: Host metadata dictionary (scan_target -> HostMetadata)
+        service_entries: Set of (scan_target, port, protocol, svc_name) tuples
     """
     try:
         from .database import db_transaction, compute_file_hash
@@ -650,6 +661,39 @@ def _write_to_database(
                 )
                 for row in cursor.fetchall():
                     host_id_map[(row[1], row[2])] = row[0]
+
+            # ========== Step 4.5: Bulk insert host_services ==========
+            if service_entries:
+                log_info(f"Inserting {len(service_entries)} service mappings...")
+                service_records = []
+                for scan_target_entry, port_str, protocol_val, svc_name_val in service_entries:
+                    # Resolve scan_target to host_id using metadata
+                    meta_entry = host_metadata.get(scan_target_entry)
+                    if meta_entry:
+                        ip_address = meta_entry.host_ip
+                    else:
+                        ip_address = scan_target_entry
+
+                    composite_key = (ip_address, scan_target_entry)
+                    host_id = host_id_map.get(composite_key)
+
+                    try:
+                        port_int = int(port_str)
+                    except ValueError:
+                        continue
+
+                    if host_id and port_int:
+                        service_records.append((
+                            scan_id, host_id, port_int, protocol_val, svc_name_val
+                        ))
+
+                if service_records:
+                    conn.executemany(
+                        """INSERT OR IGNORE INTO host_services
+                           (scan_id, host_id, port_number, protocol, svc_name)
+                           VALUES (?, ?, ?, ?, ?)""",
+                        service_records
+                    )
 
             # ========== Step 5: Insert plugins and plugin files ==========
             total_plugins = len(plugins)

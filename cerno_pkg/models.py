@@ -1624,3 +1624,44 @@ class Port:
                 (port_number, service_name)
             )
             return port_number
+
+
+# ========== Query Helpers: Host Services ==========
+
+
+def get_http_urls_for_scan(
+    scan_id: int,
+    conn: Optional[sqlite3.Connection] = None
+) -> list[str]:
+    """Query HTTP/HTTPS URLs discovered in a scan.
+
+    Uses the v_http_services view to identify web services and
+    construct URLs from host:port data.
+
+    Args:
+        scan_id: Scan ID to query
+        conn: Database connection
+
+    Returns:
+        Sorted list of URL strings (e.g., ["http://192.168.1.1:80", "https://10.0.0.5:443"])
+    """
+    with db_transaction(conn) as c:
+        rows = query_all(
+            c,
+            """
+            SELECT DISTINCT scan_target, port_number, http_scheme
+            FROM v_http_services
+            WHERE scan_id = ? AND http_scheme IS NOT NULL
+            ORDER BY scan_target, port_number
+            """,
+            (scan_id,)
+        )
+
+        urls = []
+        for row in rows:
+            host = row["scan_target"]
+            port = row["port_number"]
+            scheme = row["http_scheme"]
+            urls.append(f"{scheme}://{host}:{port}")
+
+        return urls
