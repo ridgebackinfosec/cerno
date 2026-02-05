@@ -1523,7 +1523,7 @@ def show_nessus_tool_suggestions(nessus_file: Path, scan_name: str) -> None:
         scan_name: Name of the imported scan (for DB queries)
     """
     header("Suggested Tool Commands")
-    info("\nYour .nessus file can ALSO be used as the input for these tools:\n")
+    info("\nTry running these other tools too:\n")
 
     # eyewitness command
     info(fmt_action("1. eyewitness (screenshot and report tool | https://github.com/RedSiege/EyeWitness):"))
