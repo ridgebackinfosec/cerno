@@ -1476,26 +1476,6 @@ def review(
         warn("\nInterrupted — goodbye.")
 
 
-def _show_service_summary(scan_id: int) -> None:
-    """Display service discovery summary after import.
-
-    Args:
-        scan_id: Scan ID to query
-    """
-    try:
-        from cerno_pkg.models import get_service_summary_for_scan
-
-        total_services, unique_hosts, http_count = get_service_summary_for_scan(scan_id)
-
-        if total_services > 0:
-            parts = [f"{total_services} services across {unique_hosts} hosts"]
-            if http_count > 0:
-                parts.append(f"{http_count} HTTP/HTTPS")
-            info(f"Service Discovery: {' | '.join(parts)}")
-    except Exception:
-        pass  # Non-fatal — don't break import flow
-
-
 def _show_nuclei_suggestion(scan_name: str) -> None:
     """Generate nuclei command suggestion from discovered HTTP services.
 
@@ -1678,12 +1658,6 @@ def import_scan(
                     sev_table.add_row(severity_cell(sev_label), str(count))
 
             _console_global.print(sev_table)
-
-        # Display service discovery summary
-        from cerno_pkg.models import Scan as _Scan
-        _scan = _Scan.get_by_name(scan_name)
-        if _scan and _scan.scan_id is not None:
-            _show_service_summary(_scan.scan_id)
 
     except Exception as e:
         err(f"Export failed: {e}")
