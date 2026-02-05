@@ -1547,7 +1547,7 @@ def show_nessus_tool_suggestions(nessus_file: Path, scan_name: str) -> None:
 
     # eyewitness command
     info(fmt_action("1. eyewitness (screenshot and report tool | https://github.com/RedSiege/EyeWitness):"))
-    eyewitness_cmd = f"python ~/EyeWitness/Python/EyeWitness.py  -x {nessus_file} -d ~/eyewitness_report --results 500 --user-agent \"Mozilla/5.0 (X11; Linux x86_64; rv:102.0) Gecko/20100101 Firefox/102.0\" --timeout 30"
+    eyewitness_cmd = f"python ~/EyeWitness/Python/EyeWitness.py -x {nessus_file} -d ~/eyewitness_report --results 500 --user-agent \"Mozilla/5.0 (X11; Linux x86_64; rv:102.0) Gecko/20100101 Firefox/102.0\" --timeout 30"
     info(f"   {eyewitness_cmd}\n")
 
     # gowitness command
