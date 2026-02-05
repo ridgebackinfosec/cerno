@@ -1507,7 +1507,7 @@ def _show_nuclei_suggestion(scan_name: str) -> None:
         # Display suggestion
         info(fmt_action("3. nuclei (vulnerability scanner | https://github.com/projectdiscovery/nuclei):"))
         info(f"   Found {len(urls)} HTTP/HTTPS services available — the URL(s) have been written to {urls_file}")
-        nuclei_cmd = f"nuclei -l {urls_file} -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0' -ts -o ~/nuclei_results.txt"
+        nuclei_cmd = f"nuclei -l {urls_file} -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0' -ts -mhe 500 -c 32 -stats -si 300 -o ~/nuclei_results.txt -je ~/nuclei_results.json -elog ~/nuclei_errors.txt -me ~/"
         info(f"   {nuclei_cmd}\n")
 
     except Exception:
