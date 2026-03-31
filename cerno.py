@@ -199,7 +199,7 @@ def browse_workflow_groups(
 
         # Browse findings for this workflow using database query filtered by plugin IDs
         browse_file_list(
-            scan,
+            [scan],
             None,  # No specific severity dir (workflow may span multiple severities)
             None,  # No severity filter
             f"Workflow: {workflow_name}",
@@ -230,7 +230,7 @@ def browse_workflow_groups(
 
 
 def browse_file_list(
-    scan: Any,  # Scan object
+    scans: list[Any],  # List of Scan objects (single-scan: [scan])
     sev_dir: Optional[Path],
     severity_dir_filter: Optional[str],
     severity_label: str,
@@ -251,7 +251,7 @@ def browse_file_list(
     Browse and interact with file list (unified for severity and MSF modes).
 
     Args:
-        scan: Scan database object
+        scans: List of Scan database objects (single-scan: pass [scan])
         sev_dir: Severity directory for file operations (optional, derived if needed)
         severity_dir_filter: Severity directory filter for database query (e.g., "3_High")
         severity_label: Display label for the severity
@@ -289,8 +289,12 @@ def browse_file_list(
     page_idx = 0
     first_iteration = True  # Track first iteration for startup hint
 
-    # Derive scan_dir from scan object
-    scan_dir = Path(scan.export_root) / scan.scan_name
+    # Derive scan variables from scans list
+    primary_scan = scans[0]
+    scan_id = primary_scan.scan_id
+    is_multi_scan = len(scans) > 1
+    scan_ids = [s.scan_id for s in scans]
+    scan_dir = Path(primary_scan.export_root) / primary_scan.scan_name
 
     def get_counts_for(finding: "Finding") -> Tuple[int, str]:
         """Get host/port counts from database via v_finding_stats view.
@@ -313,15 +317,36 @@ def browse_file_list(
                 return (row["host_count"] or 0, "")
             return (0, "")
 
+    # Initialize multi-scan tracking variables (updated each loop iteration)
+    all_instances: dict[int, list["Finding"]] = {}
+    scan_labels: Optional[dict[int, str]] = None
+
     while True:
         # Query database for findings with plugin info
-        all_records = Finding.get_by_scan_with_plugin(
-            scan_id=scan.scan_id,
-            severity_dir=severity_dir_filter,
-            severity_dirs=severity_dirs_filter,
-            has_metasploit=has_metasploit_filter,
-            plugin_ids=plugin_ids_filter,
-        )
+        if is_multi_scan:
+            all_records, all_instances = Finding.get_by_scan_ids_merged(
+                scan_ids=scan_ids,
+                severity_dir=severity_dir_filter,
+                severity_dirs=severity_dirs_filter,
+                has_metasploit=has_metasploit_filter,
+                plugin_ids=plugin_ids_filter,
+            )
+            # Build scan label strings: "All N" or "M of N"
+            total_scans = len(scans)
+            scan_labels = {
+                pid: f"All {total_scans}" if len(findings) == total_scans else f"{len(findings)} of {total_scans}"
+                for pid, findings in all_instances.items()
+            }
+        else:
+            all_records = Finding.get_by_scan_with_plugin(
+                scan_id=scan_id,
+                severity_dir=severity_dir_filter,
+                severity_dirs=severity_dirs_filter,
+                has_metasploit=has_metasploit_filter,
+                plugin_ids=plugin_ids_filter,
+            )
+            all_instances = {}
+            scan_labels = None
 
         # Separate reviewed and unreviewed based on review_state from database
         reviewed = [
@@ -509,7 +534,7 @@ def browse_file_list(
             else:
                 render_finding_list_table(
                     page_items, sort_mode, get_counts_for, row_offset=start,
-                    show_severity=is_msf_mode
+                    show_severity=is_msf_mode, scan_labels=scan_labels
                 )
 
                 # Add hint on first page if more results exist
@@ -598,6 +623,11 @@ def browse_file_list(
                         marked += 1
                         display_name = f"Plugin {plugin.plugin_id}: {plugin.plugin_name}"
                         completed_total.append(display_name)
+                        # Broadcast to other scan instances in multi-scan mode
+                        if is_multi_scan:
+                            for other_f in all_instances.get(plugin.plugin_id, []):
+                                if other_f.finding_id != finding.finding_id:
+                                    other_f.update_review_state("completed")
                     progress.advance(task)
             ok(f"Summary: {marked} marked, {len(candidates)-marked} skipped.")
             continue
@@ -640,6 +670,22 @@ def browse_file_list(
                 show_severity=is_msf_mode,
                 workflow_mapper=workflow_mapper,
             )
+
+            # In multi-scan mode, broadcast review state changes to all other instances
+            if is_multi_scan and all_instances:
+                from cerno_pkg.database import query_one, get_connection
+                with get_connection() as conn:
+                    state_row = query_one(
+                        conn,
+                        "SELECT review_state FROM findings WHERE finding_id = ?",
+                        (finding.finding_id,)
+                    )
+                if state_row:
+                    new_state = state_row["review_state"]
+                    for other_f in all_instances.get(finding.plugin_id, []):
+                        if other_f.finding_id != finding.finding_id:
+                            other_f.update_review_state(new_state)
+
         elif action_type is None:
             continue
 
@@ -947,7 +993,7 @@ def main(args: types.SimpleNamespace) -> None:
                 print_action_menu([("Q", "Quit")])
 
                 try:
-                    ans = Prompt.ask("Choose scan").strip().lower()
+                    ans = Prompt.ask("Choose scan(s) (e.g. 1  or  1-3  or  1,3,5)").strip()
                 except KeyboardInterrupt:
                     warn("\nInterrupted — exiting.")
                     return
@@ -955,11 +1001,14 @@ def main(args: types.SimpleNamespace) -> None:
                 if ans in ("x", "exit", "q", "quit"):
                     return
 
-                if not ans.isdigit() or not (1 <= int(ans) <= len(all_scans)):
-                    warn(f"Invalid choice. Please enter 1-{len(all_scans)} or [Q]uit.")
-                    continue  # Back to scan selection
+                from cerno_pkg.tui import parse_scan_selection
+                indices = parse_scan_selection(ans, len(all_scans))
+                if indices is None:
+                    warn(f"Invalid choice. Enter 1-{len(all_scans)}, a range like 1-3, or [Q]uit.")
+                    continue
 
-                selected_scan = all_scans[int(ans) - 1]
+                selected_scans = [all_scans[i - 1] for i in indices]
+                selected_scan = selected_scans[0]  # Primary scan for backward compat
                 export_root = Path(selected_scan.export_root)
                 scan_dir = export_root / selected_scan.scan_name
 
@@ -972,7 +1021,11 @@ def main(args: types.SimpleNamespace) -> None:
                     continue
 
                 scan_id = selected_scan.scan_id
-                ok(f"Selected: {selected_scan.scan_name}")
+                if len(selected_scans) > 1:
+                    names = ", ".join(s.scan_name for s in selected_scans)
+                    ok(f"Selected: {names}")
+                else:
+                    ok(f"Selected: {selected_scan.scan_name}")
 
                 # Check for existing session
                 previous_session = load_session(scan_id)
@@ -1215,7 +1268,7 @@ def main(args: types.SimpleNamespace) -> None:
                         if host_filter:
                             label = f"{combined_label} (Host: {host_filter})"
                         browse_file_list(
-                            selected_scan,
+                            selected_scans,
                             selected_sev_dirs[0] if selected_sev_dirs else None,
                             None,  # Single severity filter not used for multi-severity
                             label,
@@ -1246,7 +1299,7 @@ def main(args: types.SimpleNamespace) -> None:
                             label = f"{label} (Host: {host_filter})"
 
                         browse_file_list(
-                            selected_scan,
+                            selected_scans,
                             sev_dir,
                             severity_dir_filter,
                             label,
@@ -1271,7 +1324,7 @@ def main(args: types.SimpleNamespace) -> None:
 
                         # Query database for metasploit plugins across all severities
                         browse_file_list(
-                            selected_scan,
+                            selected_scans,
                             None,  # No single severity dir
                             None,  # No severity filter
                             label,
@@ -1314,12 +1367,14 @@ def main(args: types.SimpleNamespace) -> None:
             # Always save session on exit (handles early exits via q, Ctrl+C, or errors)
             # Only save if scan was actually selected (scan_id != 0)
             if scan_id != 0:
+                additional_ids = [s.scan_id for s in selected_scans[1:]] if len(selected_scans) > 1 else None
                 save_session(
                     scan_id,
                     session_start_time,
                     reviewed_count=len(reviewed_total),
                     completed_count=len(completed_total),
                     skipped_count=len(skipped_total),
+                    additional_scan_ids=additional_ids,
                 )
 
                 # Session summary with rich statistics (only if work was done)

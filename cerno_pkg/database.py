@@ -133,6 +133,16 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 CREATE INDEX IF NOT EXISTS idx_sessions_scan ON sessions(scan_id);
 
+CREATE TABLE IF NOT EXISTS session_scans (
+    session_id INTEGER NOT NULL,
+    scan_id    INTEGER NOT NULL,
+    PRIMARY KEY (session_id, scan_id),
+    FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE,
+    FOREIGN KEY (scan_id)    REFERENCES scans(scan_id)    ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_scans_scan_id ON session_scans(scan_id);
+
 CREATE TABLE IF NOT EXISTS tool_executions (
     execution_id INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id INTEGER,

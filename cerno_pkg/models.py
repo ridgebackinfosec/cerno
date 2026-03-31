@@ -542,6 +542,144 @@ class Finding:
             return results
 
     @classmethod
+    def get_by_scan_ids_merged(
+        cls,
+        scan_ids: list[int],
+        severity_dir: Optional[str] = None,
+        severity_dirs: Optional[list[str]] = None,
+        has_metasploit: Optional[bool] = None,
+        plugin_ids: Optional[list[int]] = None,
+        conn: Optional[sqlite3.Connection] = None,
+    ) -> tuple[list[tuple["Finding", "Plugin"]], dict[int, list["Finding"]]]:
+        """Retrieve findings across multiple scans, merged and deduplicated by plugin_id.
+
+        Queries findings for all provided scan IDs and groups results by plugin_id.
+        One representative Finding (from the scan with the lowest scan_id) is selected
+        per plugin_id for display purposes, while all Finding instances across scans
+        are returned for full cross-scan visibility.
+
+        Args:
+            scan_ids: List of scan IDs to query across.
+            severity_dir: Optional single severity directory filter (e.g., "3_High").
+            severity_dirs: Optional list of severity directories to filter by
+                (e.g., ["1_Critical", "2_High"]).
+            has_metasploit: Optional filter for plugins with Metasploit modules.
+            plugin_ids: Optional list of specific plugin IDs to include.
+            conn: Database connection.
+
+        Returns:
+            A tuple of:
+            - display_list: list of (Finding, Plugin) tuples — one representative
+              Finding per plugin_id (from the scan with the lowest scan_id).
+            - all_instances: dict mapping plugin_id → list of all Finding objects
+              across all selected scans, ordered by scan_id ascending.
+
+        Examples:
+            display_list, all_instances = Finding.get_by_scan_ids_merged(
+                scan_ids=[1, 2, 3],
+                severity_dirs=["4_Critical", "3_High"],
+            )
+            for finding, plugin in display_list:
+                other_scans = all_instances[plugin.plugin_id]
+        """
+        if not scan_ids:
+            return [], {}
+
+        with db_transaction(conn) as c:
+            placeholders = ",".join("?" * len(scan_ids))
+            query = f"""
+                SELECT
+                    f.finding_id, f.scan_id, f.plugin_id,
+                    f.review_state, f.reviewed_at, f.reviewed_by, f.review_notes,
+                    p.plugin_id as p_plugin_id, p.plugin_name, p.severity_int, p.severity_label,
+                    p.has_metasploit, p.cvss3_score, p.cvss2_score, p.cves,
+                    p.plugin_url, p.metadata_fetched_at
+                FROM findings f
+                INNER JOIN v_plugins_with_severity p ON f.plugin_id = p.plugin_id
+                WHERE f.scan_id IN ({placeholders})
+            """
+            params: list[Any] = list(scan_ids)
+
+            # Add optional filters
+            if severity_dir is not None:
+                try:
+                    severity_int = int(severity_dir.split('_')[0])
+                    query += " AND p.severity_int = ?"
+                    params.append(severity_int)
+                except (ValueError, IndexError):
+                    pass  # Invalid format, skip filter
+            elif severity_dirs is not None and len(severity_dirs) > 0:
+                severity_ints = []
+                for sd in severity_dirs:
+                    try:
+                        severity_ints.append(int(sd.split('_')[0]))
+                    except (ValueError, IndexError):
+                        pass
+                if severity_ints:
+                    sev_placeholders = ",".join("?" * len(severity_ints))
+                    query += f" AND p.severity_int IN ({sev_placeholders})"
+                    params.extend(severity_ints)
+
+            if has_metasploit is not None:
+                query += " AND p.has_metasploit = ?"
+                params.append(1 if has_metasploit else 0)
+
+            if plugin_ids is not None and len(plugin_ids) > 0:
+                pid_placeholders = ",".join("?" * len(plugin_ids))
+                query += f" AND f.plugin_id IN ({pid_placeholders})"
+                params.extend(plugin_ids)
+
+            # Order by plugin_id then scan_id so grouping logic finds lowest scan_id first
+            query += " ORDER BY p.plugin_id ASC, f.scan_id ASC"
+
+            rows = query_all(c, query, tuple(params))
+
+            # Group rows by plugin_id; track all Finding instances and one Plugin per plugin_id
+            all_instances: dict[int, list[Finding]] = {}
+            plugin_map: dict[int, Plugin] = {}
+
+            for row in rows:
+                finding = cls(
+                    finding_id=row[0],
+                    scan_id=row[1],
+                    plugin_id=row[2],
+                    review_state=row[3],
+                    reviewed_at=row[4],
+                    reviewed_by=row[5],
+                    review_notes=row[6],
+                )
+
+                pid = row[2]
+
+                if pid not in all_instances:
+                    all_instances[pid] = []
+                    # First row for this plugin_id has the lowest scan_id (due to ORDER BY)
+                    cves_json = row[14]
+                    cves = json.loads(cves_json) if cves_json else None
+                    plugin_map[pid] = Plugin(
+                        plugin_id=row[7],
+                        plugin_name=row[8],
+                        severity_int=row[9],
+                        severity_label=row[10],
+                        has_metasploit=bool(row[11]),
+                        cvss3_score=row[12],
+                        cvss2_score=row[13],
+                        cves=cves,
+                        plugin_url=row[15],
+                        metadata_fetched_at=row[16],
+                    )
+
+                all_instances[pid].append(finding)
+
+            # Build display_list: representative Finding (lowest scan_id) paired with Plugin
+            display_list: list[tuple[Finding, Plugin]] = [
+                (all_instances[pid][0], plugin_map[pid])
+                for pid in all_instances
+            ]
+
+            return display_list, all_instances
+
+    @classmethod
     def count_by_scan_severity(
         cls,
         scan_id: int,

@@ -96,6 +96,7 @@ class ReviewContext:
     Attributes:
         scan_dir: Scan directory path
         scan_id: Database scan ID
+        scan_ids: List of all selected scan IDs (includes scan_id for single-scan mode)
         sev_dir: Severity directory (None for MSF/workflow modes)
         finding: Current Finding object (None until file selected)
         plugin: Current Plugin metadata (None until file selected)
@@ -113,6 +114,9 @@ class ReviewContext:
     # Scan context (required)
     scan_dir: Path
     scan_id: int
+
+    # Scan context (optional - list of all selected scan IDs)
+    scan_ids: list[int] = field(default_factory=list)
 
     # Severity context (optional - None for MSF/workflow modes)
     sev_dir: Optional[Path] = None

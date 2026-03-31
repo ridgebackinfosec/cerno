@@ -586,6 +586,7 @@ def render_finding_list_table(
     get_counts_for: Any,
     row_offset: int = 0,
     show_severity: bool = False,
+    scan_labels: Optional[dict[int, str]] = None,
 ) -> None:
     """Render a paginated file list table with plugin info from database.
 
@@ -595,6 +596,8 @@ def render_finding_list_table(
         get_counts_for: Function to get (host_count, ports_str) for a Finding object
         row_offset: Starting row number for pagination
         show_severity: Deprecated - severity column is now always shown
+        scan_labels: Optional dict mapping plugin_id to scan label (e.g., "All 4" or "2 of 4").
+                     When provided, adds a "Scans" column. When None (default), single-scan mode.
     """
 
     table = Table(
@@ -606,6 +609,8 @@ def render_finding_list_table(
     table.add_column("Name", overflow="fold")
     # Always show host count column
     table.add_column("Hosts", justify="right", no_wrap=True, max_width=8)
+    if scan_labels is not None:
+        table.add_column("Scans", justify="right", no_wrap=True, max_width=10)
 
     for i, (plugin_file, plugin) in enumerate(display, 1):
         row_number = row_offset + i
@@ -652,6 +657,9 @@ def render_finding_list_table(
         # Always retrieve and show host count from database
         host_count, _ports_str = get_counts_for(plugin_file)
         row_data.append(str(host_count))
+
+        if scan_labels is not None:
+            row_data.append(scan_labels.get(plugin.plugin_id, ""))
 
         table.add_row(*row_data)
 

@@ -3,7 +3,7 @@
 Database-only mode: all session state stored in SQLite database.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -27,6 +27,7 @@ class SessionState:
         skipped_count: Count of skipped (empty) files
         tool_executions: Count of tool executions
         cve_extractions: Count of CVE extractions performed
+        additional_scan_ids: List of additional scan IDs included in a multi-scan session
     """
 
     scan_name: str
@@ -36,6 +37,7 @@ class SessionState:
     skipped_count: int
     tool_executions: int
     cve_extractions: int
+    additional_scan_ids: list[int] = field(default_factory=list)
 
 
 def save_session(
@@ -46,6 +48,7 @@ def save_session(
     skipped_count: int = 0,
     tool_executions: int = 0,
     cve_extractions: int = 0,
+    additional_scan_ids: Optional[list[int]] = None,
 ) -> Optional[int]:
     """
     Save session state to database.
@@ -58,6 +61,7 @@ def save_session(
         skipped_count: Count of skipped files
         tool_executions: Count of tool executions
         cve_extractions: Count of CVE extractions
+        additional_scan_ids: Additional scan IDs for multi-scan sessions
 
     Returns:
         session_id if successful, None otherwise
@@ -69,6 +73,8 @@ def save_session(
 
     if session_id:
         log_info(f"Session saved to database (ID: {session_id})")
+        if additional_scan_ids:
+            _db_save_session_scans(session_id, scan_id, additional_scan_ids)
 
     return session_id
 
@@ -87,7 +93,7 @@ def load_session(scan_id: int) -> Optional[SessionState]:
         SessionState object with counts from database, or None if no active session
     """
     try:
-        from .database import db_transaction, query_one
+        from .database import db_transaction, query_one, query_all
 
         with db_transaction() as conn:
             # Query active session using v_session_stats view
@@ -116,6 +122,14 @@ def load_session(scan_id: int) -> Optional[SessionState]:
             if not row:
                 return None
 
+            # Load additional scan IDs for multi-scan sessions
+            additional_ids_rows = query_all(
+                conn,
+                "SELECT scan_id FROM session_scans WHERE session_id = ? AND scan_id != ?",
+                (row["session_id"], scan_id)
+            )
+            additional_scan_ids = [r["scan_id"] for r in additional_ids_rows]
+
             return SessionState(
                 scan_name=row["scan_name"],
                 session_start=row["session_start"],
@@ -124,6 +138,7 @@ def load_session(scan_id: int) -> Optional[SessionState]:
                 skipped_count=row["skipped_count"],
                 tool_executions=row["tools_executed"],
                 cve_extractions=row["cves_extracted"],
+                additional_scan_ids=additional_scan_ids,
             )
 
     except Exception as e:
@@ -206,6 +221,35 @@ def _db_save_session(
     except Exception as e:
         log_error(f"Failed to save session to database: {e}")
         return None
+
+
+def _db_save_session_scans(
+    session_id: int,
+    primary_scan_id: int,
+    additional_scan_ids: list[int],
+) -> None:
+    """Upsert scan associations for a multi-scan session.
+
+    Stores all scan_ids (primary + additional) in session_scans table.
+    Uses INSERT OR IGNORE to be idempotent (safe to call multiple times).
+
+    Args:
+        session_id: Session ID to associate scans with
+        primary_scan_id: Primary scan ID for the session
+        additional_scan_ids: Additional scan IDs included in the session
+    """
+    try:
+        from .database import db_transaction
+
+        all_scan_ids = [primary_scan_id] + additional_scan_ids
+        with db_transaction() as conn:
+            for sid in all_scan_ids:
+                conn.execute(
+                    "INSERT OR IGNORE INTO session_scans (session_id, scan_id) VALUES (?, ?)",
+                    (session_id, sid)
+                )
+    except Exception as e:
+        log_error(f"Failed to save session_scans: {e}")
 
 
 def _db_end_session(scan_id: int) -> None:

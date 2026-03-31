@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Multi-scan review mode: users can now select multiple scans at the review prompt using single numbers, ranges (e.g. `1-3`), or comma-separated lists (e.g. `1,3,5`); findings from all selected scans are presented in a merged, deduplicated view (`cerno.py`, `cerno_pkg/tui.py`)
+- New `parse_scan_selection()` function in `tui.py` for parsing multi-scan index input (mirrors `parse_severity_selection()` pattern)
+- New `Finding.get_by_scan_ids_merged()` classmethod in `models.py` for cross-scan plugin deduplication; returns one representative Finding per plugin_id and a dict of all instances across scans
+- "Scans" column in finding list table showing `"All N"` or `"M of N"` scan coverage per plugin when reviewing multiple scans (`render.py:render_finding_list_table()`)
+- Review state broadcasts across all selected scans: marking a finding as reviewed/completed/skipped updates that finding in ALL selected scans containing the same plugin (`cerno.py:browse_file_list()`)
+- New `session_scans` junction table in SQLite schema for tracking which scans belong to a multi-scan session (`database.py`)
+- Multi-scan session persistence: `save_session()` and `load_session()` in `session.py` now store and restore additional scan IDs via `session_scans` table
+- New `scan_ids: list[int]` field on `ReviewContext` dataclass in `tool_context.py` for multi-scan context propagation
+
 ## [1.2.24] - 2026-02-05
 
 ### Added

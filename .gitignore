@@ -54,6 +54,9 @@ htmlcov/
 .hypothesis/
 test_goad_export/
 
+# Git worktrees
+.worktrees/
+
 # Type checking
 .mypy_cache/
 .dmypy.json
