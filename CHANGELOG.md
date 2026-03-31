@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.26] - 2026-03-31
+
+### Changed
+- Updated CLAUDE.md to document multi-scan review architecture: `session_scans` junction table, `Finding.get_by_scan_ids_merged()` query method, `ReviewContext` field count (15 fields), multi-scan session resume behavior, and multi-scan syntax in Common Commands
+
+## [1.2.25] - 2026-03-31
+
 ### Added
 - Multi-scan review mode: users can now select multiple scans at the review prompt using single numbers, ranges (e.g. `1-3`), or comma-separated lists (e.g. `1,3,5`); findings from all selected scans are presented in a merged, deduplicated view (`cerno.py`, `cerno_pkg/tui.py`)
 - New `parse_scan_selection()` function in `tui.py` for parsing multi-scan index input (mirrors `parse_severity_selection()` pattern)

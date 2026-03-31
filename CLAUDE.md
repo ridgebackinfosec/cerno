@@ -239,6 +239,7 @@ cerno --help
 # Common commands
 cerno import nessus scan.nessus   # Import Nessus scan
 cerno review                      # Start interactive review
+                                  #   At scan prompt, enter "1-3" or "1,3,5" to review multiple scans merged
 cerno scan list                   # List all scans
 cerno scan delete <scan_name>     # Delete scan from database
 cerno scan compare <s1> <s2>      # Compare findings between two scans
@@ -347,13 +348,14 @@ cerno.py                  # Main entry point (Typer CLI commands, 1,679 lines)
 cerno_pkg/
   ├── database.py          # SQLite connection, schema, transactions
   ├── models.py            # ORM models (Scan, Plugin, Finding, Session, ToolExecution, Artifact)
+  │                        # Single-scan: Finding.get_by_scan_with_plugin(); Multi-scan: Finding.get_by_scan_ids_merged()
   ├── nessus_import.py     # .nessus XML parsing and database import
   ├── parsing.py           # Host:port parsing (canonical parser, ParsedHostsPorts model)
   ├── analysis.py          # Cross-file comparison, superset analysis
   ├── session.py           # Review session state management (396 lines)
   │                        # Includes: scan summary, session statistics
   ├── tool_context.py      # Context dataclasses for review operations (137 lines)
-  │                        # ToolContext, ReviewContext (14 fields to replace 8-11 parameter lists)
+  │                        # ToolContext, ReviewContext (15 fields; scan_ids: list[int] added for multi-scan)
   ├── tools.py             # Tool execution and workflow orchestration (1,055 lines)
   │                        # Command builders, NSE profiles, workflow building/execution
   ├── tool_registry.py     # ToolSpec registry pattern
@@ -386,6 +388,7 @@ cerno_pkg/
 2. **Review**: `Finding.get_by_scan_with_plugin()` → `(Finding, Plugin)` tuples → `render.py` tables → User actions → Update `review_state` column
 3. **Tools**: TUI menu → Pass `Plugin`/`Finding` objects → `tools.py` → Execute command → `tool_executions` + `artifacts` tables
 4. **Session**: Auto-save to `sessions` table (start time, duration, statistics)
+5. **Multi-scan review**: User selects multiple scans at prompt (e.g. `1,3` or `1-3`) → `Finding.get_by_scan_ids_merged(scan_ids)` deduplicates by `plugin_id` (one representative Finding per plugin) → "Scans" column shows `All N` or `M of N` → review-state changes broadcast to all selected scans → `session_scans` junction table records all scan IDs for the session
 
 **Key principle**: Plugin and Finding database objects flow through entire call chain. No filename parsing for plugin_id extraction - synthetic paths used only for display/directory structure.
 
@@ -428,6 +431,7 @@ cerno_pkg/
   - Uses foreign keys to `scans`, `hosts`, and `ports` tables
 - `sessions`: Review session tracking (start time, end time)
   - Note: Statistics computed via `v_session_stats` view
+- `session_scans`: Junction table linking sessions to their scans in multi-scan mode (session_id FK, scan_id FK; composite PK)
 - `tool_executions`: Command history (tool_name, command_text, exit_code, duration, sudo usage)
 - `artifacts`: Generated files (artifact_path, artifact_type_id FK, file_hash, file_size, metadata JSON)
   - Uses `artifact_type_id` foreign key to `artifact_types` table
@@ -777,6 +781,8 @@ python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['pro
 **Resume prompt**: On startup, shows session details (reviewed/completed/skipped counts, session start time).
 
 **Cleanup**: Auto-delete session after successful completion.
+
+**Multi-scan sessions**: When reviewing multiple scans, all selected scan IDs are recorded in `session_scans` (junction table). On resume, the same set of scans is restored automatically.
 
 ### Terminal Responsiveness
 
