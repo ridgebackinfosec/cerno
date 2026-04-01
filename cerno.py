@@ -116,6 +116,7 @@ def browse_workflow_groups(
     workflow_mapper,
     config: Optional["CernoConfig"] = None,
     session_start_time: Optional[Any] = None,
+    scan_label: Optional[str] = None,
 ) -> None:
     """
     Browse workflow groups and findings within selected workflow.
@@ -132,6 +133,7 @@ def browse_workflow_groups(
         reviewed_total: List of reviewed filenames
         completed_total: List of completed filenames
         workflow_mapper: WorkflowMapper instance
+        scan_label: Optional display label override (used for multi-scan breadcrumbs)
     """
     # Load config if not provided (defensive programming)
     if config is None:
@@ -139,6 +141,7 @@ def browse_workflow_groups(
         config = load_config()
 
     scan_dir = Path(scan.export_root) / scan.scan_name
+    _wf_label = scan_label if scan_label else scan_dir.name
     if not workflow_groups:
         warn("No findings with mapped workflows found.")
         return
@@ -146,7 +149,7 @@ def browse_workflow_groups(
     while True:
         # Build table of workflows
         from cerno_pkg import breadcrumb
-        bc = breadcrumb(scan_dir.name, "Workflow Mapped Findings")
+        bc = breadcrumb(_wf_label, "Workflow Mapped Findings")
         header(bc if bc else "Workflow Mapped Findings - Select Workflow")
 
         table = Table(title="Workflows", box=box.SIMPLE)
@@ -395,8 +398,13 @@ def browse_file_list(
         try:
             from cerno_pkg import breadcrumb
 
+            if is_multi_scan:
+                _names = [s.scan_name for s in scans]
+                _scan_label = f"{_names[0]} + {_names[1]}" if len(_names) == 2 else f"{len(_names)} scans"
+            else:
+                _scan_label = scan_dir.name
             filter_info = f"filtered: '{file_filter}'" if file_filter else "Findings"
-            bc = breadcrumb(scan_dir.name, severity_label, filter_info)
+            bc = breadcrumb(_scan_label, severity_label, filter_info)
             header(bc if bc else f"Severity: {severity_label}")
 
             # Show startup hint on first iteration
@@ -1390,6 +1398,7 @@ def main(args: types.SimpleNamespace) -> None:
                             workflow_mapper,
                             config=config,
                             session_start_time=session_start_time,
+                            scan_label=_scan_label,
                         )
 
                 # End of severity loop - continue to scan selection loop

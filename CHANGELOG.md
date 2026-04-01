@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.29] - 2026-04-01
+
+### Fixed
+- Findings list and workflow group breadcrumbs now reflect all selected scans in multi-scan review mode (`cerno.py`)
+  - `browse_file_list()` breadcrumb shows "ScanA + ScanB" or "N scans" instead of only the primary scan name
+  - `browse_workflow_groups()` accepts new `scan_label` param and uses it in the breadcrumb when provided; call site passes `_scan_label` built from all selected scans
+
 ## [1.2.28] - 2026-04-01
 
 ### Fixed
