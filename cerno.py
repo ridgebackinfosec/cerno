@@ -310,25 +310,36 @@ def browse_file_list(
     scan_dir = Path(primary_scan.export_root) / primary_scan.scan_name
 
     def get_counts_for(finding: "Finding") -> Tuple[int, str]:
-        """Get host/port counts from database via v_finding_stats view.
+        """Get host/port counts from database.
+
+        In multi-scan mode, counts distinct hosts across all finding_ids for this plugin.
 
         Args:
             finding: Finding database object
 
         Returns:
-            Tuple of (host_count, ports_string) - computed from v_finding_stats view
+            Tuple of (host_count, ports_string)
         """
-        # Query v_finding_stats view for computed host/port counts
         from cerno_pkg.database import query_one, get_connection
         with get_connection() as conn:
+            if is_multi_scan and all_instances:
+                all_fids = [
+                    f.finding_id for f in all_instances.get(finding.plugin_id, [])
+                    if f.finding_id is not None
+                ]
+            else:
+                all_fids = [finding.finding_id] if finding.finding_id is not None else []
+
+            if not all_fids:
+                return (0, "")
+
+            placeholders = ",".join("?" * len(all_fids))
             row = query_one(
                 conn,
-                "SELECT host_count, port_count FROM v_finding_stats WHERE finding_id = ?",
-                (finding.finding_id,)
+                f"SELECT COUNT(DISTINCT host_id) FROM finding_affected_hosts WHERE finding_id IN ({placeholders})",
+                tuple(all_fids)
             )
-            if row:
-                return (row["host_count"] or 0, "")
-            return (0, "")
+            return (row[0] if row else 0, "")
 
     # Initialize multi-scan tracking variables (updated each loop iteration)
     all_instances: dict[int, list["Finding"]] = {}
@@ -673,6 +684,14 @@ def browse_file_list(
             else:
                 chosen_sev_dir = sev_dir
 
+            # In multi-scan mode, attach all sibling finding_ids so host/port
+            # queries inside process_single_finding cover all selected scans.
+            if is_multi_scan and all_instances:
+                finding.extra_finding_ids = [
+                    f.finding_id for f in all_instances.get(finding.plugin_id, [])
+                    if f.finding_id is not None and f.finding_id != finding.finding_id
+                ]
+
             # Process the file
             process_single_finding(
                 chosen_path,
@@ -718,6 +737,7 @@ def show_session_statistics(
     skipped_total: list[str],
     scan_dir: Path,
     scan_id: Optional[int] = None,
+    scan_ids: Optional[list[int]] = None,
 ) -> None:
     """
     Display rich session statistics at the end of a review session.
@@ -729,6 +749,7 @@ def show_session_statistics(
         skipped_total: List of skipped (empty) findings
         scan_dir: Scan directory for severity analysis
         scan_id: Optional scan ID for database queries
+        scan_ids: Optional list of scan IDs for multi-scan queries (overrides scan_id)
     """
     from datetime import datetime
     from rich.table import Table
@@ -764,7 +785,25 @@ def show_session_statistics(
         severity_counts = {}
 
         # Use database if available, otherwise fall back to filesystem
-        if scan_id is not None:
+        if scan_ids and len(scan_ids) > 1:
+            from cerno_pkg.database import db_transaction, query_all
+            with db_transaction() as conn:
+                placeholders = ",".join("?" * len(scan_ids))
+                rows = query_all(
+                    conn,
+                    f"""
+                    SELECT p.severity_label, COUNT(DISTINCT f.plugin_id) as count
+                    FROM findings f
+                    JOIN v_plugins_with_severity p ON f.plugin_id = p.plugin_id
+                    WHERE f.scan_id IN ({placeholders}) AND f.review_state = 'completed'
+                    GROUP BY p.severity_label
+                    """,
+                    tuple(scan_ids)
+                )
+                for row in rows:
+                    sev_label = pretty_severity_label(row[0])
+                    severity_counts[sev_label] = row[1]
+        elif scan_id is not None:
             from cerno_pkg.database import db_transaction, query_all
 
             # Query database for completed findings grouped by severity
@@ -941,6 +980,7 @@ def main(args: types.SimpleNamespace) -> None:
                                 skipped_total,
                                 scan_dir,
                                 scan_id=scan_id,
+                                scan_ids=all_scan_ids if len(all_scan_ids) > 1 else None,
                             )
 
                     delete_session(scan_id)
@@ -1440,6 +1480,7 @@ def main(args: types.SimpleNamespace) -> None:
                             skipped_total,
                             scan_dir,
                             scan_id=scan_id,
+                            scan_ids=all_scan_ids if len(all_scan_ids) > 1 else None,
                         )
 
                 # Always end session (mark session_end timestamp in database)

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Optional, cast
 
@@ -328,6 +328,9 @@ class Finding:
     reviewed_at: Optional[str] = None
     reviewed_by: Optional[str] = None
     review_notes: Optional[str] = None
+    # Transient (not stored in DB): extra finding_ids from other selected scans.
+    # Set by browse_file_list in multi-scan mode so all host/port queries cover all scans.
+    extra_finding_ids: list[int] = field(default_factory=list)
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> Finding:
@@ -878,24 +881,25 @@ class Finding:
             return [], ""
 
         with db_transaction(conn) as c:
-            # Query all host:port combinations for this file
+            all_ids = [self.finding_id] + self.extra_finding_ids
+            placeholders = ",".join("?" * len(all_ids))
             rows = query_all(
                 c,
-                """
-                SELECT
+                f"""
+                SELECT DISTINCT
                     h.scan_target,
                     fah.port_number,
                     h.scan_target_type
                 FROM finding_affected_hosts fah
                 JOIN hosts h ON fah.host_id = h.host_id
-                WHERE fah.finding_id = ?
+                WHERE fah.finding_id IN ({placeholders})
                 ORDER BY
                     CASE WHEN h.scan_target_type = 'ipv4' THEN 0
                          WHEN h.scan_target_type = 'ipv6' THEN 1
                          ELSE 2 END,
                     h.scan_target ASC
                 """,
-                (self.finding_id,)
+                tuple(all_ids)
             )
 
             if not rows:
@@ -939,18 +943,20 @@ class Finding:
             return {}
 
         with db_transaction(conn) as c:
+            all_ids = [self.finding_id] + self.extra_finding_ids
+            placeholders = ",".join("?" * len(all_ids))
             rows = query_all(
                 c,
-                """
+                f"""
                 SELECT
                     fah.port_number,
                     COUNT(DISTINCT fah.host_id) as host_count
                 FROM finding_affected_hosts fah
-                WHERE fah.finding_id = ?
+                WHERE fah.finding_id IN ({placeholders})
                 GROUP BY fah.port_number
                 ORDER BY fah.port_number ASC
                 """,
-                (self.finding_id,)
+                tuple(all_ids)
             )
 
             if not rows:
@@ -984,17 +990,18 @@ class Finding:
             return []
 
         with db_transaction(conn) as c:
-            # Query all host:port combinations for this file
+            all_ids = [self.finding_id] + self.extra_finding_ids
+            placeholders = ",".join("?" * len(all_ids))
             rows = query_all(
                 c,
-                """
-                SELECT
+                f"""
+                SELECT DISTINCT
                     h.scan_target,
                     fah.port_number,
                     h.scan_target_type
                 FROM finding_affected_hosts fah
                 JOIN hosts h ON fah.host_id = h.host_id
-                WHERE fah.finding_id = ?
+                WHERE fah.finding_id IN ({placeholders})
                 ORDER BY
                     CASE WHEN h.scan_target_type = 'ipv4' THEN 0
                          WHEN h.scan_target_type = 'ipv6' THEN 1
@@ -1002,7 +1009,7 @@ class Finding:
                     h.scan_target ASC,
                     fah.port_number ASC
                 """,
-                (self.finding_id,)
+                tuple(all_ids)
             )
 
             if not rows:
@@ -1053,17 +1060,18 @@ class Finding:
             return []
 
         with db_transaction(conn) as c:
-            # Query all host:port:plugin_output combinations for this file
+            all_ids = [self.finding_id] + self.extra_finding_ids
+            placeholders = ",".join("?" * len(all_ids))
             rows = query_all(
                 c,
-                """
-                SELECT
+                f"""
+                SELECT DISTINCT
                     h.scan_target,
                     fah.port_number,
                     fah.plugin_output
                 FROM finding_affected_hosts fah
                 JOIN hosts h ON fah.host_id = h.host_id
-                WHERE fah.finding_id = ?
+                WHERE fah.finding_id IN ({placeholders})
                 ORDER BY
                     CASE WHEN h.scan_target_type = 'ipv4' THEN 0
                          WHEN h.scan_target_type = 'ipv6' THEN 1
@@ -1071,7 +1079,7 @@ class Finding:
                     h.scan_target ASC,
                     fah.port_number ASC
                 """,
-                (self.finding_id,)
+                tuple(all_ids)
             )
 
             if not rows:

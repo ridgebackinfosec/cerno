@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.31] - 2026-04-01
+
+### Fixed
+- Finding host counts, affected hosts, plugin output, and view formats now aggregate across all selected scans in multi-scan review mode (`cerno_pkg/models.py`, `cerno.py`)
+  - Added transient `extra_finding_ids: list[int]` field to `Finding` dataclass; set by `browse_file_list` before opening a finding so all downstream queries cover every selected scan
+  - `get_hosts_and_ports()`, `get_all_host_port_lines()`, `get_port_distribution()`, and `get_plugin_outputs_by_host()` now expand `WHERE finding_id = ?` to `WHERE finding_id IN (...)` using `extra_finding_ids` when populated; DISTINCT ensures no duplicate host/port rows
+  - `get_counts_for()` in `browse_file_list` now queries `COUNT(DISTINCT host_id)` across all finding_ids from `all_instances` in multi-scan mode, fixing host counts in the findings list table
+- Session statistics severity breakdown now aggregates across all selected scans in multi-scan mode using `COUNT(DISTINCT plugin_id)` (`cerno.py:show_session_statistics()`)
+
 ## [1.2.30] - 2026-04-01
 
 ### Fixed
