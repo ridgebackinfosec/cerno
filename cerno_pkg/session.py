@@ -285,7 +285,9 @@ def _db_end_session(scan_id: int) -> None:
 def show_scan_summary(
     scan_dir: Path,
     top_ports_n: int = 25,
-    scan_id: Optional[int] = None
+    scan_id: Optional[int] = None,
+    scan_ids: Optional[list[int]] = None,
+    scan_names: Optional[list[str]] = None,
 ) -> None:
     """
     Display comprehensive scan overview with host/port statistics.
@@ -293,9 +295,11 @@ def show_scan_summary(
     Database-only mode: queries all statistics from database.
 
     Args:
-        scan_dir: Scan directory (used for display name only)
+        scan_dir: Scan directory (used for display name only in single-scan mode)
         top_ports_n: Number of top ports to display
-        scan_id: Scan ID (required for database queries)
+        scan_id: Scan ID (required for database queries in single-scan mode)
+        scan_ids: Optional list of scan IDs for multi-scan queries (overrides scan_id)
+        scan_names: Optional list of scan names for multi-scan header display
     """
     from collections import Counter
     from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
@@ -305,14 +309,28 @@ def show_scan_summary(
     from .analysis import count_reviewed_in_scan
     from .database import db_transaction, query_all
 
-    if scan_id is None:
+    if scan_id is None and not scan_ids:
         err("Database scan_id is required for scan summary")
         return
 
     _console_global = get_console()
-    header(f"Scan Overview — {scan_dir.name}")
 
-    total_files, reviewed_files = count_reviewed_in_scan(scan_dir, scan_id=scan_id)
+    # Build title: single scan uses scan_dir.name, multi-scan lists all names
+    is_multi = scan_ids and len(scan_ids) > 1
+    if is_multi and scan_names:
+        if len(scan_names) == 2:
+            title_names = f"{scan_names[0]} + {scan_names[1]}"
+        else:
+            title_names = ", ".join(scan_names)
+        header(f"Scan Overview — {title_names}")
+    else:
+        header(f"Scan Overview — {scan_dir.name}")
+
+    effective_scan_id = scan_id or (scan_ids[0] if scan_ids else 0)
+    total_files, reviewed_files = count_reviewed_in_scan(
+        scan_dir, scan_id=effective_scan_id,
+        scan_ids=scan_ids if is_multi else None
+    )
 
     # Query all host/port data from database
     unique_hosts = set()
@@ -331,30 +349,52 @@ def show_scan_summary(
         task = progress.add_task("Querying database for overview...", total=None)
 
         with db_transaction() as conn:
-            # Get all host/port combinations for this scan
-            rows = query_all(
-                conn,
-                """
-                SELECT DISTINCT h.ip_address, fah.port_number, h.scan_target_type, fah.finding_id
-                FROM finding_affected_hosts fah
-                JOIN findings f ON fah.finding_id = f.finding_id
-                JOIN hosts h ON fah.host_id = h.host_id
-                WHERE f.scan_id = ?
-                """,
-                (scan_id,)
-            )
-
-            # Count findings with no hosts (empty findings)
-            empty_files = query_all(
-                conn,
-                """
-                SELECT f.finding_id
-                FROM findings f
-                LEFT JOIN finding_affected_hosts fah ON f.finding_id = fah.finding_id
-                WHERE f.scan_id = ? AND fah.finding_id IS NULL
-                """,
-                (scan_id,)
-            )
+            # Get all host/port combinations for this scan (or all selected scans)
+            if is_multi and scan_ids:
+                id_placeholders = ",".join("?" * len(scan_ids))
+                rows = query_all(
+                    conn,
+                    f"""
+                    SELECT DISTINCT h.ip_address, fah.port_number, h.scan_target_type, fah.finding_id
+                    FROM finding_affected_hosts fah
+                    JOIN findings f ON fah.finding_id = f.finding_id
+                    JOIN hosts h ON fah.host_id = h.host_id
+                    WHERE f.scan_id IN ({id_placeholders})
+                    """,
+                    tuple(scan_ids)
+                )
+                empty_files = query_all(
+                    conn,
+                    f"""
+                    SELECT DISTINCT f.plugin_id
+                    FROM findings f
+                    LEFT JOIN finding_affected_hosts fah ON f.finding_id = fah.finding_id
+                    WHERE f.scan_id IN ({id_placeholders}) AND fah.finding_id IS NULL
+                    """,
+                    tuple(scan_ids)
+                )
+            else:
+                rows = query_all(
+                    conn,
+                    """
+                    SELECT DISTINCT h.ip_address, fah.port_number, h.scan_target_type, fah.finding_id
+                    FROM finding_affected_hosts fah
+                    JOIN findings f ON fah.finding_id = f.finding_id
+                    JOIN hosts h ON fah.host_id = h.host_id
+                    WHERE f.scan_id = ?
+                    """,
+                    (effective_scan_id,)
+                )
+                empty_files = query_all(
+                    conn,
+                    """
+                    SELECT f.finding_id
+                    FROM findings f
+                    LEFT JOIN finding_affected_hosts fah ON f.finding_id = fah.finding_id
+                    WHERE f.scan_id = ? AND fah.finding_id IS NULL
+                    """,
+                    (effective_scan_id,)
+                )
             empties = len(empty_files)
 
         # Track unique host:port combinations to avoid counting duplicates

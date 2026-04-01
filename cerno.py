@@ -1068,7 +1068,13 @@ def main(args: types.SimpleNamespace) -> None:
                     warn(f"top_ports_count {top_ports} is very large, capping at 100")
                     top_ports = 100
 
-                show_scan_summary(scan_dir, top_ports_n=top_ports, scan_id=scan_id)
+                show_scan_summary(
+                    scan_dir,
+                    top_ports_n=top_ports,
+                    scan_id=scan_id,
+                    scan_ids=all_scan_ids if len(all_scan_ids) > 1 else None,
+                    scan_names=[s.scan_name for s in selected_scans] if len(selected_scans) > 1 else None,
+                )
 
                 # Show workflow guidance for first-time or returning users
                 from cerno_pkg.onboarding import show_workflow_guidance
@@ -1078,11 +1084,21 @@ def main(args: types.SimpleNamespace) -> None:
                 host_filter: Optional[str] = None  # Active host filter (IP/hostname)
                 host_filter_plugin_ids: Optional[list[int]] = None  # Cached plugin IDs for filter
 
+                # Build multi-scan display label for breadcrumb/header
+                if len(selected_scans) > 1:
+                    names = [s.scan_name for s in selected_scans]
+                    if len(names) == 2:
+                        _scan_label = f"{names[0]} + {names[1]}"
+                    else:
+                        _scan_label = f"{len(names)} scans"
+                else:
+                    _scan_label = scan_dir.name
+
                 # Severity loop (inner loop)
                 while True:
                     from cerno_pkg import breadcrumb
-                    bc = breadcrumb(scan_dir.name, "Choose severity")
-                    header(bc if bc else f"Scan: {scan_dir.name} — choose severity")
+                    bc = breadcrumb(_scan_label, "Choose severity")
+                    header(bc if bc else f"Scan: {_scan_label} — choose severity")
 
                     # Get severity directories from database (database-only mode)
                     # Apply host filter if active

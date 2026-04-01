@@ -756,34 +756,50 @@ class Finding:
     def count_by_scan(
         cls,
         scan_id: int,
-        conn: Optional[sqlite3.Connection] = None
+        conn: Optional[sqlite3.Connection] = None,
+        *,
+        scan_ids: Optional[list[int]] = None,
     ) -> tuple[int, int]:
         """Count total and reviewed files across all severities for a scan.
 
         Args:
-            scan_id: Scan ID to count files for
+            scan_id: Scan ID to count files for (ignored when scan_ids is provided)
             conn: Database connection
+            scan_ids: Optional list of scan IDs for multi-scan queries (overrides scan_id);
+                uses COUNT(DISTINCT plugin_id) to deduplicate across scans
 
         Returns:
             Tuple of (total_files, reviewed_files)
             where reviewed means review_state == 'completed'
         """
         with db_transaction(conn) as c:
-            # Count total files
-            total_row = query_one(
-                c,
-                "SELECT COUNT(*) FROM findings WHERE scan_id = ?",
-                (scan_id,)
-            )
-            total_count = total_row[0] if total_row else 0
-
-            # Count reviewed files (review_state = 'completed')
-            reviewed_row = query_one(
-                c,
-                "SELECT COUNT(*) FROM findings WHERE scan_id = ? AND review_state = 'completed'",
-                (scan_id,)
-            )
-            reviewed_count = reviewed_row[0] if reviewed_row else 0
+            if scan_ids and len(scan_ids) > 1:
+                placeholders = ",".join("?" * len(scan_ids))
+                total_row = query_one(
+                    c,
+                    f"SELECT COUNT(DISTINCT plugin_id) FROM findings WHERE scan_id IN ({placeholders})",
+                    tuple(scan_ids)
+                )
+                total_count = total_row[0] if total_row else 0
+                reviewed_row = query_one(
+                    c,
+                    f"SELECT COUNT(DISTINCT plugin_id) FROM findings WHERE scan_id IN ({placeholders}) AND review_state = 'completed'",
+                    tuple(scan_ids)
+                )
+                reviewed_count = reviewed_row[0] if reviewed_row else 0
+            else:
+                total_row = query_one(
+                    c,
+                    "SELECT COUNT(*) FROM findings WHERE scan_id = ?",
+                    (scan_id,)
+                )
+                total_count = total_row[0] if total_row else 0
+                reviewed_row = query_one(
+                    c,
+                    "SELECT COUNT(*) FROM findings WHERE scan_id = ? AND review_state = 'completed'",
+                    (scan_id,)
+                )
+                reviewed_count = reviewed_row[0] if reviewed_row else 0
 
             return total_count, reviewed_count
 

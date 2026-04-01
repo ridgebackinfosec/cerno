@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.28] - 2026-04-01
+
+### Fixed
+- Scan Overview now reflects all selected scans in multi-scan review mode; previously only the primary scan's hosts, ports, and finding counts were shown (`cerno_pkg/session.py:show_scan_summary()`)
+  - Host/port queries use `IN (scan_ids)` for multi-scan; empty-findings count deduplicates by `plugin_id`
+  - Finding counts use `COUNT(DISTINCT plugin_id)` across all selected scans via `Finding.count_by_scan()` and `count_reviewed_in_scan()`
+  - Header displays all scan names (e.g. "Scan Overview — ScanA + ScanB" or comma-separated for 3+)
+- Severity selection breadcrumb/header now shows all selected scan names instead of only the primary scan (e.g. "ScanA + ScanB > Choose severity" or "3 scans > Choose severity") (`cerno.py`)
+
 ## [1.2.27] - 2026-04-01
 
 ### Fixed
