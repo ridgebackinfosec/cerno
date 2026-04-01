@@ -685,15 +685,18 @@ class Finding:
         scan_id: int,
         severity_dir: str,
         plugin_ids: Optional[list[int]] = None,
-        conn: Optional[sqlite3.Connection] = None
+        conn: Optional[sqlite3.Connection] = None,
+        *,
+        scan_ids: Optional[list[int]] = None,
     ) -> tuple[int, int, int]:
         """Count files in a severity directory by review state.
 
         Args:
-            scan_id: Scan ID to count files for
+            scan_id: Scan ID to count files for (ignored when scan_ids is provided)
             severity_dir: Severity directory (e.g., "3_High")
             plugin_ids: Optional list of plugin IDs to filter by (for host filtering)
             conn: Database connection
+            scan_ids: Optional list of scan IDs for multi-scan queries (overrides scan_id)
 
         Returns:
             Tuple of (unreviewed_count, reviewed_count, total_count)
@@ -708,10 +711,17 @@ class Finding:
                 return (0, 0, 0)
 
             # Build base query and params
-            base_query = """SELECT COUNT(*) FROM findings pf
-                   JOIN plugins p ON pf.plugin_id = p.plugin_id
-                   WHERE pf.scan_id = ? AND p.severity_int = ?"""
-            base_params: list[Any] = [scan_id, severity_int]
+            if scan_ids and len(scan_ids) > 1:
+                id_placeholders = ",".join("?" * len(scan_ids))
+                base_query = f"""SELECT COUNT(DISTINCT pf.plugin_id) FROM findings pf
+                       JOIN plugins p ON pf.plugin_id = p.plugin_id
+                       WHERE pf.scan_id IN ({id_placeholders}) AND p.severity_int = ?"""
+                base_params: list[Any] = list(scan_ids) + [severity_int]
+            else:
+                base_query = """SELECT COUNT(*) FROM findings pf
+                       JOIN plugins p ON pf.plugin_id = p.plugin_id
+                       WHERE pf.scan_id = ? AND p.severity_int = ?"""
+                base_params = [scan_id, severity_int]
 
             # Add plugin_ids filter if provided
             plugin_filter = ""
@@ -783,7 +793,8 @@ class Finding:
         scan_id: int,
         conn: Optional[sqlite3.Connection] = None,
         *,
-        plugin_ids: Optional[list[int]] = None
+        plugin_ids: Optional[list[int]] = None,
+        scan_ids: Optional[list[int]] = None,
     ) -> list[str]:
         """Get distinct severity directories for a scan, sorted by severity level.
 
@@ -791,21 +802,32 @@ class Finding:
         Returns names like ["4_Critical", "3_High", "2_Medium", "1_Low", "0_Info"].
 
         Args:
-            scan_id: Scan ID to query
+            scan_id: Scan ID to query (ignored when scan_ids is provided)
             conn: Database connection
             plugin_ids: Optional list of plugin IDs to filter by (for host filtering)
+            scan_ids: Optional list of scan IDs for multi-scan queries (overrides scan_id)
 
         Returns:
             List of severity directory names sorted by severity (highest first)
         """
         with db_transaction(conn) as c:
-            query = """
-                SELECT DISTINCT p.severity_int, p.severity_label
-                FROM findings pf
-                JOIN v_plugins_with_severity p ON pf.plugin_id = p.plugin_id
-                WHERE pf.scan_id = ?
-            """
-            params: list[Any] = [scan_id]
+            if scan_ids and len(scan_ids) > 1:
+                id_placeholders = ",".join("?" * len(scan_ids))
+                query = f"""
+                    SELECT DISTINCT p.severity_int, p.severity_label
+                    FROM findings pf
+                    JOIN v_plugins_with_severity p ON pf.plugin_id = p.plugin_id
+                    WHERE pf.scan_id IN ({id_placeholders})
+                """
+                params: list[Any] = list(scan_ids)
+            else:
+                query = """
+                    SELECT DISTINCT p.severity_int, p.severity_label
+                    FROM findings pf
+                    JOIN v_plugins_with_severity p ON pf.plugin_id = p.plugin_id
+                    WHERE pf.scan_id = ?
+                """
+                params = [scan_id]
 
             if plugin_ids is not None and len(plugin_ids) > 0:
                 placeholders = ",".join("?" * len(plugin_ids))

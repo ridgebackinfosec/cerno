@@ -1021,6 +1021,7 @@ def main(args: types.SimpleNamespace) -> None:
                     continue
 
                 scan_id = selected_scan.scan_id
+                all_scan_ids = [s.scan_id for s in selected_scans if s.scan_id is not None]
                 if len(selected_scans) > 1:
                     names = ", ".join(s.scan_name for s in selected_scans)
                     ok(f"Selected: {names}")
@@ -1086,7 +1087,8 @@ def main(args: types.SimpleNamespace) -> None:
                     # Get severity directories from database (database-only mode)
                     # Apply host filter if active
                     severity_dir_names = Finding.get_severity_dirs_for_scan(
-                        scan_id, plugin_ids=host_filter_plugin_ids
+                        scan_id, plugin_ids=host_filter_plugin_ids,
+                        scan_ids=all_scan_ids if len(all_scan_ids) > 1 else None
                     )
                     if not severity_dir_names:
                         warn("No severity directories in this scan.")
@@ -1098,11 +1100,18 @@ def main(args: types.SimpleNamespace) -> None:
 
                     # Metasploit Module virtual group (menu counts) - query from database
                     # Apply host filter if active
-                    msf_files = Finding.get_by_scan_with_plugin(
-                        scan_id=scan_id,
-                        has_metasploit=True,
-                        plugin_ids=host_filter_plugin_ids
-                    )
+                    if len(all_scan_ids) > 1:
+                        msf_files, _ = Finding.get_by_scan_ids_merged(
+                            scan_ids=all_scan_ids,
+                            has_metasploit=True,
+                            plugin_ids=host_filter_plugin_ids
+                        )
+                    else:
+                        msf_files = Finding.get_by_scan_with_plugin(
+                            scan_id=scan_id,
+                            has_metasploit=True,
+                            plugin_ids=host_filter_plugin_ids
+                        )
 
                     has_msf = len(msf_files) > 0
                     msf_total = len(msf_files)
@@ -1131,10 +1140,16 @@ def main(args: types.SimpleNamespace) -> None:
                                 if pid in host_filter_plugin_ids
                             ]
                         if workflow_plugin_ids_int:
-                            workflow_files = Finding.get_by_scan_with_plugin(
-                                scan_id=scan_id,
-                                plugin_ids=workflow_plugin_ids_int
-                            )
+                            if len(all_scan_ids) > 1:
+                                workflow_files, _ = Finding.get_by_scan_ids_merged(
+                                    scan_ids=all_scan_ids,
+                                    plugin_ids=workflow_plugin_ids_int
+                                )
+                            else:
+                                workflow_files = Finding.get_by_scan_with_plugin(
+                                    scan_id=scan_id,
+                                    plugin_ids=workflow_plugin_ids_int
+                                )
                         else:
                             workflow_files = []
                     else:
@@ -1160,7 +1175,8 @@ def main(args: types.SimpleNamespace) -> None:
                         msf_summary=msf_summary,
                         workflow_summary=workflow_summary,
                         scan_id=scan_id,
-                        plugin_ids=host_filter_plugin_ids
+                        plugin_ids=host_filter_plugin_ids,
+                        scan_ids=all_scan_ids if len(all_scan_ids) > 1 else None
                     )
 
                     # Show host filter status if active

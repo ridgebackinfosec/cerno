@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.27] - 2026-04-01
+
+### Fixed
+- Severity menu now correctly aggregates findings across all selected scans in multi-scan review mode; previously only the primary (first) scan's findings were counted and displayed (`cerno.py`, `cerno_pkg/models.py`, `cerno_pkg/render.py`)
+  - `Finding.get_severity_dirs_for_scan()` and `Finding.count_by_scan_severity()` accept new `scan_ids` param; multi-scan uses `IN (...)` clause and `COUNT(DISTINCT plugin_id)` for accurate deduplication
+  - MSF and Workflow Mapped virtual groups now use `Finding.get_by_scan_ids_merged()` for multi-scan count queries
+  - `render_severity_table()` and `count_severity_findings()` thread `scan_ids` through to model layer
+
 ## [1.2.26] - 2026-03-31
 
 ### Changed

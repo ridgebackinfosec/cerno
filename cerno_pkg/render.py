@@ -506,6 +506,7 @@ def render_severity_table(
     workflow_summary: Optional[tuple[int, int, int]] = None,
     scan_id: Optional[int] = None,
     plugin_ids: Optional[list[int]] = None,
+    scan_ids: Optional[list[int]] = None,
 ) -> None:
     """Render a table of severity levels with review progress percentages.
 
@@ -522,6 +523,7 @@ def render_severity_table(
             for Workflow Mapped row. Only shown if provided.
         scan_id: Scan ID for database queries (required)
         plugin_ids: Optional list of plugin IDs to filter counts by (for host filtering)
+        scan_ids: Optional list of scan IDs for multi-scan queries (overrides scan_id)
     """
     table = Table(
         title=None, box=box.SIMPLE, show_lines=False, pad_edge=False
@@ -533,15 +535,17 @@ def render_severity_table(
     table.add_column("Reviewed (%)", justify="right", no_wrap=True, max_width=14)
     table.add_column("Total", justify="right", no_wrap=True, max_width=8)
 
-    if scan_id is None:
+    if scan_id is None and not scan_ids:
         # scan_id should always be provided in DB-only mode, but handle gracefully
         from .ansi import warn
         warn("scan_id not provided - cannot render severity table")
         return
 
+    effective_scan_id = scan_id or (scan_ids[0] if scan_ids else 0)
+
     for i, severity_dir in enumerate(severities, 1):
         unreviewed, reviewed, total = count_severity_findings(
-            severity_dir, scan_id=scan_id, plugin_ids=plugin_ids
+            severity_dir, scan_id=effective_scan_id, plugin_ids=plugin_ids, scan_ids=scan_ids
         )
         label = pretty_severity_label(severity_dir.name)
         table.add_row(
@@ -1160,7 +1164,8 @@ def render_responsive_action_menu(
 def count_severity_findings(
     directory: Path,
     scan_id: int,
-    plugin_ids: Optional[list[int]] = None
+    plugin_ids: Optional[list[int]] = None,
+    scan_ids: Optional[list[int]] = None,
 ) -> tuple[int, int, int]:
     """Count unreviewed, reviewed, and total files in a severity directory.
 
@@ -1170,13 +1175,14 @@ def count_severity_findings(
         directory: Severity directory path
         scan_id: Scan ID for database queries (required)
         plugin_ids: Optional list of plugin IDs to filter by (for host filtering)
+        scan_ids: Optional list of scan IDs for multi-scan queries (overrides scan_id)
 
     Returns:
         Tuple of (unreviewed_count, reviewed_count, total_count)
     """
     from .models import Finding
     severity_dir_name = directory.name
-    return Finding.count_by_scan_severity(scan_id, severity_dir_name, plugin_ids=plugin_ids)
+    return Finding.count_by_scan_severity(scan_id, severity_dir_name, plugin_ids=plugin_ids, scan_ids=scan_ids)
 
 
 def severity_cell(label: str) -> Any:
