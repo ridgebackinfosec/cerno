@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.30] - 2026-04-01
+
+### Fixed
+- Workflow findings sub-level breadcrumb now reflects all selected scans in multi-scan mode (`cerno.py:browse_workflow_groups()`)
+  - `browse_workflow_groups()` accepts new `scans` param (full list of selected scans); passes it to `browse_file_list()` so the inner findings view uses multi-scan mode and shows the correct breadcrumb
+  - Post-review workflow refresh query now uses `Finding.get_by_scan_ids_merged()` for multi-scan instead of single-scan `get_by_scan_with_plugin()`
+
 ## [1.2.29] - 2026-04-01
 
 ### Fixed

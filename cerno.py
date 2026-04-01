@@ -106,7 +106,7 @@ def get_current_config():
 
 
 def browse_workflow_groups(
-    scan: Any,  # Scan object
+    scan: Any,  # Scan object (primary scan)
     workflow_groups: Dict[str, List[Tuple[Any, Any]]],
     args: types.SimpleNamespace,
     use_sudo: bool,
@@ -117,6 +117,7 @@ def browse_workflow_groups(
     config: Optional["CernoConfig"] = None,
     session_start_time: Optional[Any] = None,
     scan_label: Optional[str] = None,
+    scans: Optional[List[Any]] = None,
 ) -> None:
     """
     Browse workflow groups and findings within selected workflow.
@@ -125,7 +126,7 @@ def browse_workflow_groups(
     then shows findings for that workflow.
 
     Args:
-        scan: Scan database object
+        scan: Primary Scan database object
         workflow_groups: Dict mapping workflow_name -> list of (Finding, Plugin) tuples
         args: Command-line arguments
         use_sudo: Whether sudo is available
@@ -134,6 +135,7 @@ def browse_workflow_groups(
         completed_total: List of completed filenames
         workflow_mapper: WorkflowMapper instance
         scan_label: Optional display label override (used for multi-scan breadcrumbs)
+        scans: Optional full list of selected Scan objects for multi-scan support
     """
     # Load config if not provided (defensive programming)
     if config is None:
@@ -201,8 +203,9 @@ def browse_workflow_groups(
             plugin_ids.append(plugin.plugin_id)
 
         # Browse findings for this workflow using database query filtered by plugin IDs
+        all_scans = scans if scans else [scan]
         browse_file_list(
-            [scan],
+            all_scans,
             None,  # No specific severity dir (workflow may span multiple severities)
             None,  # No severity filter
             f"Workflow: {workflow_name}",
@@ -221,10 +224,17 @@ def browse_workflow_groups(
         # Refresh workflow files from database to get updated review_state values
         # This ensures the statistics display shows current counts after marking files reviewed
         from cerno_pkg.models import Finding
-        refreshed_files = Finding.get_by_scan_with_plugin(
-            scan_id=scan.scan_id,
-            plugin_ids=plugin_ids if plugin_ids else None,
-        )
+        all_scan_ids = [s.scan_id for s in all_scans if s.scan_id is not None]
+        if len(all_scan_ids) > 1:
+            refreshed_files, _ = Finding.get_by_scan_ids_merged(
+                scan_ids=all_scan_ids,
+                plugin_ids=plugin_ids if plugin_ids else None,
+            )
+        else:
+            refreshed_files = Finding.get_by_scan_with_plugin(
+                scan_id=scan.scan_id,
+                plugin_ids=plugin_ids if plugin_ids else None,
+            )
         workflow_groups[workflow_name] = refreshed_files
 
 
@@ -1399,6 +1409,7 @@ def main(args: types.SimpleNamespace) -> None:
                             config=config,
                             session_start_time=session_start_time,
                             scan_label=_scan_label,
+                            scans=selected_scans,
                         )
 
                 # End of severity loop - continue to scan selection loop
