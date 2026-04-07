@@ -68,6 +68,9 @@ class CernoConfig:
     nxc_enrichment_enabled: bool = True
     """Enable NetExec enrichment in finding displays (default: True)."""
 
+    claude_assistant_enabled: bool = True
+    """Enable Claude Assistant (BETA) interactive chat panel in review TUI (default: True)."""
+
 
 def get_config_path() -> Path:
     """Get the path to the user's config file.
@@ -118,6 +121,7 @@ def load_config() -> CernoConfig:
             term_override=data.get("term_override"),
             nxc_workspace_path=data.get("nxc_workspace_path"),
             nxc_enrichment_enabled=data.get("nxc_enrichment_enabled", True),
+            claude_assistant_enabled=data.get("claude_assistant_enabled", True),
         )
 
         # Note: Don't log here since logger isn't initialized yet
@@ -160,6 +164,7 @@ def save_config(config: CernoConfig) -> bool:
                 "term_override": config.term_override,
                 "nxc_workspace_path": config.nxc_workspace_path,
                 "nxc_enrichment_enabled": config.nxc_enrichment_enabled,
+                "claude_assistant_enabled": config.claude_assistant_enabled,
             }.items()
             if v is not None
         }
@@ -197,6 +202,7 @@ def create_example_config() -> bool:
         term_override=None,
         nxc_workspace_path=None,  # Uses ~/.nxc/workspaces/default/ by default
         nxc_enrichment_enabled=True,
+        claude_assistant_enabled=True,
     )
 
     return save_config(default_config)

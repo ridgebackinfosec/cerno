@@ -105,6 +105,87 @@ def get_current_config():
 # === Main application logic ===
 
 
+def browse_claude_chat(
+    finding: Any,
+    plugin: Any,
+    hosts: list[str],
+) -> None:
+    """Interactive Claude Assistant chat panel for a finding (BETA).
+
+    Opens a persistent chat overlay for the given finding. Loads prior conversation
+    history from SQLite, displays it, and enters an input loop.
+
+    Args:
+        finding: Finding database object
+        plugin: Plugin database object
+        hosts: List of affected host strings for context
+    """
+    from cerno_pkg.database import get_connection
+    from cerno_pkg import claude_assistant
+    from cerno_pkg.models import ClaudeConversationTurn
+    from cerno_pkg.render import render_claude_panel
+    from rich.prompt import Prompt
+
+    finding_id = finding.finding_id
+    if finding_id is None:
+        warn("Finding has no ID — cannot open Claude Assistant.")
+        return
+
+    # Track whether BETA notice has been shown this session (per-call local state)
+    beta_notice_shown = False
+
+    with get_connection() as conn:
+        turns = ClaudeConversationTurn.get_by_finding(conn, finding_id)
+        is_resumed = bool(turns)
+
+        # Show BETA notice once per call (not stored in DB)
+        if not beta_notice_shown:
+            from cerno_pkg.claude_assistant import BETA_NOTICE
+            _console_global.print(BETA_NOTICE)
+            beta_notice_shown = True
+
+        while True:
+            # Render the full panel (clears and redraws on each iteration)
+            render_claude_panel(turns, is_resumed=is_resumed)
+
+            try:
+                raw = Prompt.ask("Ask Claude").strip()
+            except KeyboardInterrupt:
+                break
+
+            if not raw:
+                continue
+
+            # Clear history
+            if raw.lower() in ("c", "clear"):
+                from rich.prompt import Confirm
+                if Confirm.ask("Clear conversation history for this finding?", default=False):
+                    cleared = ClaudeConversationTurn.clear(conn, finding_id)
+                    turns = []
+                    is_resumed = False
+                    ok(f"Cleared {cleared} turn(s).")
+                continue
+
+            # Exit keys
+            if raw.lower() in ("q", "quit", "exit", "esc"):
+                break
+
+            # Send to Claude
+            with _console_global.status("[cyan]Asking Claude...[/cyan]"):
+                response = claude_assistant.run_exchange(
+                    conn=conn,
+                    finding_id=finding_id,
+                    plugin=plugin,
+                    finding=finding,
+                    hosts=hosts,
+                    question=raw,
+                )
+
+            # Reload turns after exchange (includes new user+assistant turn)
+            turns = ClaudeConversationTurn.get_by_finding(conn, finding_id)
+            is_resumed = bool(turns)
+
+
 def browse_workflow_groups(
     scan: Any,  # Scan object (primary scan)
     workflow_groups: Dict[str, List[Tuple[Any, Any]]],
@@ -561,9 +642,29 @@ def browse_file_list(
                     render_empty_state("no_severity")
                 # Don't render table if no findings
             else:
+                # Query Claude chat history for ✦ indicator (per-page, lightweight)
+                chat_history_ids: frozenset[int] = frozenset()
+                try:
+                    from cerno_pkg.models import ClaudeConversationTurn
+                    from cerno_pkg.database import get_connection
+                    page_finding_ids = [
+                        f.finding_id for f, _ in page_items
+                        if f.finding_id is not None
+                    ]
+                    if page_finding_ids:
+                        with get_connection() as _chat_conn:
+                            chat_history_ids = frozenset(
+                                ClaudeConversationTurn.finding_has_history(
+                                    _chat_conn, page_finding_ids
+                                )
+                            )
+                except Exception:
+                    pass  # Non-critical: indicator simply won't show on error
+
                 render_finding_list_table(
                     page_items, sort_mode, get_counts_for, row_offset=start,
-                    show_severity=is_msf_mode, scan_labels=scan_labels
+                    show_severity=is_msf_mode, scan_labels=scan_labels,
+                    chat_history_finding_ids=chat_history_ids,
                 )
 
                 # Add hint on first page if more results exist

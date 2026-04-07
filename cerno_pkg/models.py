@@ -1849,3 +1849,118 @@ def get_http_urls_for_scan(
             urls.append(f"{scheme}://{host}:{port}")
 
         return urls
+
+
+# ========== Model: ClaudeConversationTurn ==========
+
+@dataclass
+class ClaudeConversationTurn:
+    """Represents a single turn in a Claude Assistant conversation for a finding (BETA)."""
+
+    id: Optional[int] = None
+    finding_id: int = 0
+    role: str = "user"  # 'user' | 'assistant'
+    content: str = ""
+    created_at: Optional[str] = None
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> ClaudeConversationTurn:
+        """Create ClaudeConversationTurn from database row."""
+        return cls(
+            id=row["id"],
+            finding_id=row["finding_id"],
+            role=row["role"],
+            content=row["content"],
+            created_at=row["created_at"],
+        )
+
+    @classmethod
+    def get_by_finding(
+        cls,
+        conn: sqlite3.Connection,
+        finding_id: int,
+    ) -> list[ClaudeConversationTurn]:
+        """Return all turns for a finding, ordered by creation time.
+
+        Args:
+            conn: Database connection
+            finding_id: Finding ID to query
+
+        Returns:
+            List of ClaudeConversationTurn instances (may be empty)
+        """
+        rows = query_all(
+            conn,
+            "SELECT * FROM claude_conversations WHERE finding_id = ? ORDER BY id ASC",
+            (finding_id,),
+        )
+        return [cls.from_row(row) for row in rows]
+
+    @classmethod
+    def add(
+        cls,
+        conn: sqlite3.Connection,
+        finding_id: int,
+        role: str,
+        content: str,
+    ) -> int:
+        """Insert a new conversation turn.
+
+        Args:
+            conn: Database connection
+            finding_id: Finding ID this turn belongs to
+            role: 'user' or 'assistant'
+            content: Text content of the turn
+
+        Returns:
+            Row ID of the inserted turn
+        """
+        with db_transaction(conn) as c:
+            cursor = c.execute(
+                "INSERT INTO claude_conversations (finding_id, role, content) VALUES (?, ?, ?)",
+                (finding_id, role, content),
+            )
+            return cursor.lastrowid or 0
+
+    @classmethod
+    def clear(cls, conn: sqlite3.Connection, finding_id: int) -> int:
+        """Delete all conversation turns for a finding.
+
+        Args:
+            conn: Database connection
+            finding_id: Finding ID to clear history for
+
+        Returns:
+            Number of rows deleted
+        """
+        with db_transaction(conn) as c:
+            cursor = c.execute(
+                "DELETE FROM claude_conversations WHERE finding_id = ?",
+                (finding_id,),
+            )
+            return cursor.rowcount
+
+    @classmethod
+    def finding_has_history(
+        cls,
+        conn: sqlite3.Connection,
+        finding_ids: list[int],
+    ) -> set[int]:
+        """Return the subset of finding_ids that have at least one conversation turn.
+
+        Args:
+            conn: Database connection
+            finding_ids: List of finding IDs to check
+
+        Returns:
+            Set of finding_ids that have conversation history
+        """
+        if not finding_ids:
+            return set()
+        placeholders = ",".join("?" * len(finding_ids))
+        rows = query_all(
+            conn,
+            f"SELECT DISTINCT finding_id FROM claude_conversations WHERE finding_id IN ({placeholders})",
+            tuple(finding_ids),
+        )
+        return {row["finding_id"] for row in rows}

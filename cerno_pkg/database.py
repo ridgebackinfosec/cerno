@@ -279,6 +279,19 @@ CREATE TABLE IF NOT EXISTS host_services (
 CREATE INDEX IF NOT EXISTS idx_host_services_scan ON host_services(scan_id);
 CREATE INDEX IF NOT EXISTS idx_host_services_host ON host_services(host_id);
 CREATE INDEX IF NOT EXISTS idx_host_services_svc ON host_services(svc_name);
+
+-- Claude Assistant conversation history (BETA)
+-- Stores per-finding chat turns; cascades on finding delete
+CREATE TABLE IF NOT EXISTS claude_conversations (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    finding_id  INTEGER NOT NULL REFERENCES findings(finding_id) ON DELETE CASCADE,
+    role        TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+    content     TEXT NOT NULL,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_claude_conversations_finding
+    ON claude_conversations(finding_id);
 """
 
 SCHEMA_SQL_VIEWS = """
