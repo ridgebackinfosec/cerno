@@ -591,6 +591,7 @@ def render_finding_list_table(
     row_offset: int = 0,
     show_severity: bool = False,
     scan_labels: Optional[dict[int, str]] = None,
+    chat_history_finding_ids: frozenset[int] = frozenset(),
 ) -> None:
     """Render a paginated file list table with plugin info from database.
 
@@ -602,7 +603,10 @@ def render_finding_list_table(
         show_severity: Deprecated - severity column is now always shown
         scan_labels: Optional dict mapping plugin_id to scan label (e.g., "All 4" or "2 of 4").
                      When provided, adds a "Scans" column. When None (default), single-scan mode.
+        chat_history_finding_ids: Set of finding_ids that have Claude conversation history.
+                                   When non-empty, adds an "AI" column with a ✦ indicator.
     """
+    show_ai_column = bool(chat_history_finding_ids)
 
     table = Table(
         title=None, box=box.SIMPLE, show_lines=False, pad_edge=False
@@ -615,6 +619,8 @@ def render_finding_list_table(
     table.add_column("Hosts", justify="right", no_wrap=True, max_width=8)
     if scan_labels is not None:
         table.add_column("Scans", justify="right", no_wrap=True, max_width=10)
+    if show_ai_column:
+        table.add_column("AI", justify="center", no_wrap=True, max_width=4)
 
     for i, (plugin_file, plugin) in enumerate(display, 1):
         row_number = row_offset + i
@@ -664,6 +670,14 @@ def render_finding_list_table(
 
         if scan_labels is not None:
             row_data.append(scan_labels.get(plugin.plugin_id, ""))
+
+        if show_ai_column:
+            finding_id = getattr(plugin_file, "finding_id", None)
+            if finding_id is not None and finding_id in chat_history_finding_ids:
+                ai_cell = Text("✦", style="bold magenta")
+            else:
+                ai_cell = Text("")
+            row_data.append(ai_cell)  # type: ignore[arg-type]
 
         table.add_row(*row_data)
 
@@ -848,6 +862,8 @@ def render_finding_actions_footer(
     *,
     has_workflow: bool = False,
     has_nxc_data: bool = False,
+    has_claude: bool = False,
+    claude_installed: bool = False,
 ) -> None:
     """Render action footer for finding review with responsive layout.
 
@@ -859,6 +875,8 @@ def render_finding_actions_footer(
     Args:
         has_workflow: Whether workflow action is available for this plugin
         has_nxc_data: Whether NetExec data is available for these hosts
+        has_claude: Whether Claude Assistant is enabled and available
+        claude_installed: Whether claude CLI is on PATH (used for grayed-out hint)
     """
     from .ansi import get_terminal_width
 
@@ -885,6 +903,17 @@ def render_finding_actions_footer(
     left_row3 = join_actions_texts([key_text("M", "Mark reviewed")])
     right_row3 = join_actions_texts([key_text("B", "Back")])
 
+    # Row 4: Claude Assistant (conditional)
+    claude_row: Optional[Text] = None
+    if has_claude:
+        claude_row = join_actions_texts([key_text("A", "Ask Claude (BETA)")])
+    elif claude_installed:
+        # Show grayed-out hint when claude is installed but assistant is disabled
+        not_enabled = Text()
+        not_enabled.append("[A]", style="dim")
+        not_enabled.append(" Ask Claude (disabled)", style="dim")
+        claude_row = not_enabled
+
     term_width = get_terminal_width()
     _console_global.print("[cyan]>>[/cyan]")
 
@@ -899,6 +928,8 @@ def render_finding_actions_footer(
         else:
             grid.add_row(right_row2, Text())  # Run tool alone
         grid.add_row(left_row3, right_row3)
+        if claude_row is not None:
+            grid.add_row(claude_row, Text())
         _console_global.print(grid)
     else:
         # Narrow terminal: single-column layout to prevent wrapping
@@ -909,6 +940,90 @@ def render_finding_actions_footer(
         _console_global.print(right_row2)
         _console_global.print(left_row3)
         _console_global.print(right_row3)
+        if claude_row is not None:
+            _console_global.print(claude_row)
+
+
+def render_claude_panel(
+    turns: list[Any],
+    is_resumed: bool,
+    pending_input: str = "",
+) -> None:
+    """Render the Claude Assistant chat overlay panel.
+
+    Displays prior conversation history (dimmed) and the current input prompt.
+    When the conversation is resumed, shows a header indicating prior exchange count.
+
+    Args:
+        turns: List of ClaudeConversationTurn objects (may be empty for new conversations)
+        is_resumed: True if this finding has prior conversation history
+        pending_input: Current text the user is typing (shown at input prompt)
+    """
+    from datetime import datetime, timezone
+
+    _console_global.print()
+
+    # Header
+    if is_resumed and turns:
+        exchange_count = len(turns) // 2
+        # Timestamp of last turn
+        last_turn = turns[-1]
+        age_str = ""
+        try:
+            ts = datetime.fromisoformat(last_turn.created_at.replace("Z", "+00:00"))
+            now = datetime.now(timezone.utc)
+            delta_secs = int((now - ts).total_seconds())
+            if delta_secs < 3600:
+                age_str = f"{delta_secs // 60}m ago"
+            elif delta_secs < 86400:
+                age_str = f"{delta_secs // 3600}h ago"
+            else:
+                age_str = f"{delta_secs // 86400}d ago"
+        except Exception:
+            pass
+
+        summary = f"resumed · {exchange_count} exchange{'s' if exchange_count != 1 else ''}"
+        if age_str:
+            summary += f" · {age_str}"
+        header_text = Text()
+        header_text.append("── ✦ Claude (BETA) ── ", style="bold magenta")
+        header_text.append(summary, style="dim")
+        header_text.append(" ──", style="bold magenta")
+        _console_global.print(header_text)
+    else:
+        _console_global.print("[bold magenta]── ✦ Claude Assistant (BETA) ──[/bold magenta]")
+
+    # Conversation history
+    if turns:
+        for turn in turns:
+            if turn.role == "user":
+                label = Text("You: ", style="dim cyan")
+                body = Text(turn.content, style="dim")
+            else:
+                label = Text("Claude: ", style="dim magenta")
+                body = Text(turn.content, style="dim")
+            line = Text()
+            line.append_text(label)
+            line.append_text(body)
+            _console_global.print(line)
+        _console_global.print()
+    else:
+        _console_global.print("[dim]No chat history for this finding.[/dim]")
+        _console_global.print()
+
+    # Input prompt
+    prompt_line = Text()
+    prompt_line.append("Ask Claude", style="cyan")
+    prompt_line.append(": ", style="cyan")
+    if pending_input:
+        prompt_line.append(pending_input, style="white")
+    prompt_line.append("_", style="dim")
+    _console_global.print(prompt_line)
+
+    # Controls hint
+    _console_global.print(
+        "[dim]  [Enter] send  [C] clear history  [Esc/Q] back[/dim]"
+    )
 
 
 def render_tool_availability_table(include_unavailable: bool = True) -> None:

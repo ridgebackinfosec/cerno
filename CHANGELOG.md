@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-04-01
+
+### Added
+- Claude Assistant (BETA): interactive AI chat panel for findings, opened with `[A]` in the review TUI
+  - On-demand overlay panel powered by `claude -p` (Claude Code CLI); no API key required
+  - Persistent per-finding conversation history stored in SQLite (`claude_conversations` table, FK to `findings` with CASCADE delete)
+  - Structured finding context injected automatically into every prompt (plugin name/ID, severity, CVSS, CVEs, MSF modules, affected hosts, review state, multi-scan note)
+  - Gated on `claude` CLI availability (same pattern as nmap/netexec/msfconsole checks); `[A]` shown grayed out when claude is installed but assistant is disabled
+  - Custom skill file (`.claude/skills/cerno-assistant.md`) used as system prompt for all exchanges
+  - Config toggle: `claude_assistant_enabled` (default: `true`); disable with `cerno config set claude_assistant_enabled false`
+  - `✦` (magenta) indicator in findings list for findings with existing conversation history; column only shown when history exists (no visual noise on fresh scans)
+  - BETA notice shown once per panel open; "resumed · N exchanges · Xh ago" header on re-open
+  - `[C]` to clear history, `[Esc/Q]` to return to finding review
+- New module `cerno_pkg/claude_assistant.py`: availability check, context builder, prompt formatter, subprocess caller, exchange orchestrator
+- `ClaudeConversationTurn` model (`models.py`): dataclass + `get_by_finding()`, `add()`, `clear()`, `finding_has_history()` class methods
+- `render_claude_panel()` in `render.py`: chat overlay with dimmed history, input prompt, and controls hint
+- `claude_assistant_enabled` config field in `CernoConfig` (default: `True`)
+
 ## [1.2.31] - 2026-04-01
 
 ### Fixed
