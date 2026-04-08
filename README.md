@@ -8,6 +8,7 @@ A **TUI tool** for reviewing Nessus scan findings and orchestrating security too
 - ⚡ One-command tool launches (nmap NSE scripts, NetExec, custom workflows)
 - 📊 CVE extraction, Metasploit module search, host comparison
 - 🔗 NetExec database integration (correlate credentials with findings)
+- 🤖 Claude Assistant (BETA) — on-demand AI chat at finding, severity, and findings-list scope
 
 **📺 Watch the demo:**
 
@@ -111,7 +112,7 @@ Cerno uses **automated releases** triggered by version changes in [pyproject.tom
 ## Requirements
 
 - **Python 3.11+**
-- **Optional tools:** `nmap`, `nxc`/`netexec`, `msfconsole` (only if you use them)
+- **Optional tools:** `nmap`, `nxc`/`netexec`, `msfconsole`, `claude` (only if you use them)
 - **Linux recommended** (clipboard tools: `xclip`, `xsel`, or `wl-copy`)
 
 ---
@@ -182,6 +183,32 @@ Extract CVEs, search Metasploit modules, and compare findings across hosts.
   <br>
   <em>Analyze superset relationships to find which findings cover others</em>
 </p>
+
+---
+
+### 🤖 Claude Assistant (BETA)
+
+Ask Claude questions about findings without leaving the TUI. Powered by the `claude` CLI (`claude -p`) — no API key required, no data sent to external services beyond what `claude` itself handles.
+
+**Three scopes:**
+- **Finding level** — press `[A]` inside a finding detail view to discuss that specific plugin: CVEs, CVSS context, exploitability, verification steps
+- **Severity menu** — press `[A]` at the severity selection screen to discuss all findings across the selected scan(s)
+- **Findings list** — press `[A]` in the findings list footer to discuss the current set of findings (respects any active severity, name, or group filter)
+
+**Conversation persistence:** History is saved per-scope in SQLite and resumed automatically on re-entry. Press `C` inside the chat to clear history for the current scope.
+
+**Setup:**
+```bash
+# Install Claude Code CLI (required)
+npm install -g @anthropic-ai/claude-code   # or follow https://claude.ai/code
+
+# Disable if not wanted
+cerno config set claude_assistant_enabled false
+```
+
+**Tool availability:** `[A]` is hidden when `claude` is not on PATH or `claude_assistant_enabled` is `false`. It appears in the tool availability table on review startup alongside nmap/netexec/msfconsole.
+
+> **Note:** This feature is in beta. Responses may be inaccurate — always verify before acting on suggestions.
 
 ---
 
@@ -262,6 +289,7 @@ cerno config show | reset | get <key> | set <key> <value>
 - `[S]` - Cycle sort modes (plugin ID, severity, host count)
 - `[O]` - View overlapping findings analysis
 - `[W]` - View workflow verification steps (when available)
+- `[A]` - Ask Claude (BETA) — available at severity menu, findings list, and finding detail view
 - `[F]` - Filter findings by text (plugin name, description, etc.)
 - `[V]` - Filter findings by severity level
 - `[C]` - Clear all active filters

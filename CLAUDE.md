@@ -342,16 +342,22 @@ Cerno uses a **fully normalized database architecture** with SQLite as the sourc
 ### Module Structure
 
 ```
-cerno.py                  # Main entry point (Typer CLI commands, 1,679 lines)
+cerno.py                  # Main entry point (Typer CLI commands)
                             # CLI layer: review/import/scan/config commands
                             # Navigation: browse_file_list, browse_workflow_groups, show_session_statistics
+                            # Claude chat: browse_claude_chat() (per-finding), browse_claude_chat_aggregate() (scope-level)
 cerno_pkg/
   ├── database.py          # SQLite connection, schema, transactions
   ├── models.py            # ORM models (Scan, Plugin, Finding, Session, ToolExecution, Artifact)
   │                        # Single-scan: Finding.get_by_scan_with_plugin(); Multi-scan: Finding.get_by_scan_ids_merged()
+  │                        # Claude: ClaudeConversationTurn (per-finding), ClaudeAggregateConversationTurn (scope-level)
   ├── nessus_import.py     # .nessus XML parsing and database import
   ├── parsing.py           # Host:port parsing (canonical parser, ParsedHostsPorts model)
   ├── analysis.py          # Cross-file comparison, superset analysis
+  ├── claude_assistant.py  # Claude Assistant integration (BETA)
+  │                        # check_claude_available(), build_finding_context(), run_exchange()
+  │                        # build_aggregate_context(), run_aggregate_exchange()
+  │                        # load_skill_prompt() (loads .claude/skills/cerno-assistant.md or fallback)
   ├── session.py           # Review session state management (396 lines)
   │                        # Includes: scan summary, session statistics
   ├── tool_context.py      # Context dataclasses for review operations (137 lines)
@@ -359,17 +365,20 @@ cerno_pkg/
   ├── tools.py             # Tool execution and workflow orchestration (1,055 lines)
   │                        # Command builders, NSE profiles, workflow building/execution
   ├── tool_registry.py     # ToolSpec registry pattern
-  ├── render.py            # Rich UI rendering (1,105 lines)
+  ├── render.py            # Rich UI rendering
   │                        # Tables, menus, pagination, finding display, CVE display
+  │                        # render_claude_panel() — chat overlay; render_tool_availability_table() — includes claude row
   ├── tui.py               # Terminal User Interface navigation (587 lines)
   │                        # Interactive menus, file list actions, severity selection
   ├── fs.py                # File operations and processing (591 lines)
   │                        # File viewing, workflow display, review state management
+  │                        # handle_finding_view() — [A] key dispatches to browse_claude_chat()
   ├── enums.py             # Type-safe enums (23 lines)
   │                        # DisplayFormat, ViewFormat, SortMode
   ├── ops.py               # Command execution, sudo handling
   ├── workflow_mapper.py   # YAML workflow configuration
   ├── config.py            # YAML config file management
+  │                        # claude_assistant_enabled: bool (default: True)
   ├── constants.py         # Global constants (paths, severities, NSE profiles)
   ├── ansi.py              # ANSI color helpers
   ├── logging_setup.py     # Loguru setup with rotation
@@ -389,6 +398,7 @@ cerno_pkg/
 3. **Tools**: TUI menu → Pass `Plugin`/`Finding` objects → `tools.py` → Execute command → `tool_executions` + `artifacts` tables
 4. **Session**: Auto-save to `sessions` table (start time, duration, statistics)
 5. **Multi-scan review**: User selects multiple scans at prompt (e.g. `1,3` or `1-3`) → `Finding.get_by_scan_ids_merged(scan_ids)` deduplicates by `plugin_id` (one representative Finding per plugin) → "Scans" column shows `All N` or `M of N` → review-state changes broadcast to all selected scans → `session_scans` junction table records all scan IDs for the session
+6. **Claude Assistant**: `[A]` key → `browse_claude_chat()` (per-finding) or `browse_claude_chat_aggregate()` (scope-level) → `claude_assistant.py` builds context + calls `claude -p` → response persisted in `claude_conversations` (per-finding FK) or `claude_aggregate_conversations` (context_key string)
 
 **Key principle**: Plugin and Finding database objects flow through entire call chain. No filename parsing for plugin_id extraction - synthetic paths used only for display/directory structure.
 
@@ -436,6 +446,12 @@ cerno_pkg/
 - `artifacts`: Generated files (artifact_path, artifact_type_id FK, file_hash, file_size, metadata JSON)
   - Uses `artifact_type_id` foreign key to `artifact_types` table
 - `workflow_executions`: Custom workflow tracking
+- `claude_conversations`: Per-finding Claude Assistant chat history (finding_id FK → findings, CASCADE delete)
+  - Keyed to `finding_id`; each row is one turn (role: user|assistant, content, created_at)
+  - Used by `browse_claude_chat()` / `ClaudeConversationTurn` model
+- `claude_aggregate_conversations`: Scope-level Claude Assistant chat history (no FK — free-form context_key)
+  - context_key format: `"sev_menu:{scan_ids}"` or `"findings_list:{scan_ids}:{scope_hash}"`
+  - Used by `browse_claude_chat_aggregate()` / `ClaudeAggregateConversationTurn` model
 
 **SQL Views** (Computed Statistics):
 - `v_finding_stats`: Host/port counts per finding
@@ -720,6 +736,7 @@ python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['pro
 - `default_netexec_protocol` - Default protocol for NetExec (e.g., `smb`, `ssh`)
 - `nmap_default_profile` - Default NSE profile name
 - `custom_workflows_path` - Path to custom workflows YAML file
+- `claude_assistant_enabled` - Enable/disable Claude Assistant (BETA) (default: `true`); set to `false` to hide `[A]` entirely
 
 **NSE profiles** (`constants.py:NSE_PROFILES`): Pre-configured nmap script sets (SMB, SSL, HTTP, etc.)
 

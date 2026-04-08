@@ -1,10 +1,22 @@
 """Claude Assistant integration (BETA) — interactive AI chat for Nessus findings.
 
-Provides on-demand AI-assisted analysis of findings via the Claude CLI (`claude -p`).
-Conversation history is persisted per-finding in SQLite.
+Provides on-demand AI-assisted analysis via the Claude CLI (`claude -p`) at three scopes:
+
+  - Per-finding:  [A] in finding detail view → build_finding_context() + run_exchange()
+                  History keyed to finding_id in claude_conversations table.
+
+  - Severity menu: [A] at severity selection → build_aggregate_context() + run_aggregate_exchange()
+                   Context covers all findings in the selected scan(s).
+
+  - Findings list: [A] in findings list footer → build_aggregate_context() + run_aggregate_exchange()
+                   Context covers the current candidates (respects severity/name/group filters).
+                   History keyed by a deterministic context_key in claude_aggregate_conversations.
 
 Availability gate: only active when `claude` is on PATH and claude_assistant_enabled=True
 in user config. Matches the pattern used for nmap/netexec/msfconsole availability checks.
+
+Aggregate context caps at 50 findings, ordered Critical→Info, with a note on what was
+excluded when the cap is hit.
 """
 
 from __future__ import annotations
