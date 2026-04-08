@@ -1106,6 +1106,18 @@ def render_tool_availability_table(include_unavailable: bool = True) -> None:
 
         table.add_row(tool_name, status_icon, details_text)
 
+    # Claude Code (assistant — not a workflow tool, so not in the registry)
+    claude_available = bool(shutil.which("claude"))
+    if include_unavailable or claude_available:
+        if claude_available:
+            claude_version = get_tool_version("claude")
+            claude_details_text = Text(f"v{claude_version}" if claude_version else "Available")
+            claude_details_text.stylize(style_if_enabled("green"))
+        else:
+            claude_details_text = Text("Not found in PATH")
+            claude_details_text.stylize(style_if_enabled("red"))
+        table.add_row("claude (assistant)", "✅" if claude_available else "❌", claude_details_text)
+
     # Print table
     _console_global.print(table)
 

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-04-07
+
+### Changed
+- Tool availability table now includes `claude (assistant)` row showing Claude Code CLI install status and version (`render.py:render_tool_availability_table()`)
+
 ## [1.3.0] - 2026-04-01
 
 ### Added
