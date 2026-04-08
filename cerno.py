@@ -186,6 +186,75 @@ def browse_claude_chat(
             is_resumed = bool(turns)
 
 
+def browse_claude_chat_aggregate(
+    context_key: str,
+    scope_description: str,
+    scan_names: list[str],
+    findings_with_plugins: list[Any],
+) -> None:
+    """Interactive Claude Assistant chat for an aggregate scope (BETA).
+
+    Used at severity-menu level (all findings in scan) and findings-list level
+    (all findings in current filter/severity selection). Conversation history is
+    persisted in SQLite keyed by context_key.
+
+    Args:
+        context_key: Deterministic string identifying the conversation scope
+        scope_description: Human-readable scope label shown to the user
+        scan_names: Display names of the selected scan(s)
+        findings_with_plugins: List of (Finding, Plugin) tuples in scope
+    """
+    from cerno_pkg.database import get_connection
+    from cerno_pkg import claude_assistant
+    from cerno_pkg.models import ClaudeAggregateConversationTurn
+    from cerno_pkg.render import render_claude_panel
+    from rich.prompt import Prompt
+
+    with get_connection() as conn:
+        turns = ClaudeAggregateConversationTurn.get_by_context(conn, context_key)
+        is_resumed = bool(turns)
+
+        from cerno_pkg.claude_assistant import BETA_NOTICE
+        _console_global.print(BETA_NOTICE)
+        _console_global.print(f"[dim]Scope: {scope_description}[/dim]")
+
+        while True:
+            render_claude_panel(turns, is_resumed=is_resumed)
+
+            try:
+                raw = Prompt.ask("Ask Claude").strip()
+            except KeyboardInterrupt:
+                break
+
+            if not raw:
+                continue
+
+            if raw.lower() in ("c", "clear"):
+                from rich.prompt import Confirm
+                if Confirm.ask("Clear conversation history for this scope?", default=False):
+                    cleared = ClaudeAggregateConversationTurn.clear(conn, context_key)
+                    turns = []
+                    is_resumed = False
+                    ok(f"Cleared {cleared} turn(s).")
+                continue
+
+            if raw.lower() in ("q", "quit", "exit", "esc"):
+                break
+
+            with _console_global.status("[cyan]Asking Claude...[/cyan]"):
+                response = claude_assistant.run_aggregate_exchange(
+                    conn=conn,
+                    context_key=context_key,
+                    scope_description=scope_description,
+                    scan_names=scan_names,
+                    findings_with_plugins=findings_with_plugins,
+                    question=raw,
+                )
+
+            turns = ClaudeAggregateConversationTurn.get_by_context(conn, context_key)
+            is_resumed = bool(turns)
+
+
 def browse_workflow_groups(
     scan: Any,  # Scan object (primary scan)
     workflow_groups: Dict[str, List[Tuple[Any, Any]]],
@@ -388,7 +457,12 @@ def browse_file_list(
     scan_id = primary_scan.scan_id
     is_multi_scan = len(scans) > 1
     scan_ids = [s.scan_id for s in scans]
+    scan_names = [s.scan_name for s in scans]
     scan_dir = Path(primary_scan.export_root) / primary_scan.scan_name
+
+    # Claude availability check (once per browse session)
+    from cerno_pkg.claude_assistant import check_claude_available
+    has_claude = check_claude_available() and config.claude_assistant_enabled
 
     def get_counts_for(finding: "Finding") -> Tuple[int, str]:
         """Get host/port counts from database.
@@ -683,12 +757,37 @@ def browse_file_list(
                 sort_mode=sort_mode,
                 can_next=can_next,
                 can_prev=can_prev,
+                has_claude=has_claude,
             )
 
             ans = Prompt.ask("Choose a file number, or action").strip().lower()
         except KeyboardInterrupt:
             warn("\nInterrupted — returning to severity menu.")
             break
+
+        # Handle Claude aggregate chat (intercept before generic action handler)
+        if ans == "a":
+            if has_claude:
+                import hashlib
+                scope_parts = [f"Severity: {severity_label}"]
+                if file_filter:
+                    scope_parts.append(f"filter: {file_filter}")
+                if group_filter:
+                    _, _, group_desc = group_filter
+                    scope_parts.append(f"group: {group_desc}")
+                scope_desc = " | ".join(scope_parts)
+                scan_ids_str = ",".join(str(sid) for sid in sorted(scan_ids))
+                scope_hash = hashlib.md5(scope_desc.encode()).hexdigest()[:8]
+                context_key = f"findings_list:{scan_ids_str}:{scope_hash}"
+                browse_claude_chat_aggregate(
+                    context_key=context_key,
+                    scope_description=scope_desc,
+                    scan_names=scan_names,
+                    findings_with_plugins=candidates,
+                )
+            else:
+                warn("Claude Assistant is not available. Install the claude CLI to use this feature.")
+            continue
 
         # Handle actions
         action_result = handle_finding_list_actions(
@@ -1243,6 +1342,10 @@ def main(args: types.SimpleNamespace) -> None:
                 host_filter: Optional[str] = None  # Active host filter (IP/hostname)
                 host_filter_plugin_ids: Optional[list[int]] = None  # Cached plugin IDs for filter
 
+                # Claude availability (computed once per scan selection)
+                from cerno_pkg.claude_assistant import check_claude_available as _check_claude
+                _has_claude_sev = _check_claude() and config.claude_assistant_enabled
+
                 # Build multi-scan display label for breadcrumb/header
                 if len(selected_scans) > 1:
                     names = [s.scan_name for s in selected_scans]
@@ -1359,10 +1462,13 @@ def main(args: types.SimpleNamespace) -> None:
                         info(f"Filtering by host: {host_filter}")
 
                     # Show action menu with appropriate options
+                    _sev_menu_items: list[tuple[str, str]] = [("H", "Host search")]
                     if host_filter:
-                        print_action_menu([("H", "Host search"), ("C", "Clear filter"), ("B", "Back")])
-                    else:
-                        print_action_menu([("H", "Host search"), ("B", "Back")])
+                        _sev_menu_items.append(("C", "Clear filter"))
+                    if _has_claude_sev:
+                        _sev_menu_items.append(("A", "Ask Claude (BETA)"))
+                    _sev_menu_items.append(("B", "Back"))
+                    print_action_menu(_sev_menu_items)
 
                     # Dynamic tip message based on available special filters
                     if has_msf and has_workflows:
@@ -1419,6 +1525,37 @@ def main(args: types.SimpleNamespace) -> None:
                         host_filter = None
                         host_filter_plugin_ids = None
                         ok("Host filter cleared.")
+                        continue
+
+                    elif ans == "a":
+                        if _has_claude_sev:
+                            # Build aggregate context from all findings in the current scan scope
+                            _sev_scan_names = [s.scan_name for s in selected_scans]
+                            _sev_scope = "All findings — " + ", ".join(_sev_scan_names)
+                            if host_filter:
+                                _sev_scope += f" (host filter: {host_filter})"
+                            _sev_scan_ids_str = ",".join(str(sid) for sid in sorted(all_scan_ids))
+                            _host_suffix = f":{host_filter}" if host_filter else ""
+                            _sev_context_key = f"sev_menu:{_sev_scan_ids_str}{_host_suffix}"
+                            # Fetch all findings for context (no severity filter)
+                            if len(all_scan_ids) > 1:
+                                _sev_findings, _ = Finding.get_by_scan_ids_merged(
+                                    scan_ids=all_scan_ids,
+                                    plugin_ids=host_filter_plugin_ids,
+                                )
+                            else:
+                                _sev_findings = Finding.get_by_scan_with_plugin(
+                                    scan_id=scan_id,
+                                    plugin_ids=host_filter_plugin_ids,
+                                )
+                            browse_claude_chat_aggregate(
+                                context_key=_sev_context_key,
+                                scope_description=_sev_scope,
+                                scan_names=_sev_scan_names,
+                                findings_with_plugins=_sev_findings,
+                            )
+                        else:
+                            warn("Claude Assistant is not available. Install the claude CLI to use this feature.")
                         continue
 
                     # Parse selection (supports ranges, comma-separated, and M/W letters)

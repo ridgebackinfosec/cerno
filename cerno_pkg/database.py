@@ -292,6 +292,20 @@ CREATE TABLE IF NOT EXISTS claude_conversations (
 
 CREATE INDEX IF NOT EXISTS idx_claude_conversations_finding
     ON claude_conversations(finding_id);
+
+-- Claude Assistant aggregate conversations (BETA)
+-- Stores chat turns for severity-menu and findings-list scope conversations.
+-- Keyed by a context_key string (not a FK) since scope spans multiple findings.
+CREATE TABLE IF NOT EXISTS claude_aggregate_conversations (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    context_key TEXT NOT NULL,
+    role        TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+    content     TEXT NOT NULL,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_claude_aggregate_context
+    ON claude_aggregate_conversations(context_key);
 """
 
 SCHEMA_SQL_VIEWS = """

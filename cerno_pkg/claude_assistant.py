@@ -12,12 +12,12 @@ from __future__ import annotations
 import shutil
 import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from .logging_setup import log_debug, log_error
 
 if TYPE_CHECKING:
-    from .models import ClaudeConversationTurn, Finding, Plugin
+    from .models import ClaudeAggregateConversationTurn, ClaudeConversationTurn, Finding, Plugin
 
 
 BETA_NOTICE = (
@@ -145,7 +145,7 @@ def build_finding_context(
 def format_prompt(
     skill: str,
     context: str,
-    turns: list[ClaudeConversationTurn],
+    turns: "list[Any]",
     question: str,
 ) -> str:
     """Build the full prompt string for `claude -p`.
@@ -257,5 +257,126 @@ def run_exchange(
         # Persist both turns
         ClaudeConversationTurn.add(conn, finding_id, "user", question)
         ClaudeConversationTurn.add(conn, finding_id, "assistant", response)
+
+    return response
+
+
+def build_aggregate_context(
+    scan_names: list[str],
+    scope_description: str,
+    findings_with_plugins: list[tuple[Any, Any]],
+) -> str:
+    """Assemble a context block summarising a collection of findings.
+
+    Used for severity-menu and findings-list aggregate conversations where the
+    analyst wants to discuss a broad scope rather than a single finding.
+
+    Args:
+        scan_names: Display names of the selected scan(s)
+        scope_description: Human-readable description of what's in scope
+        findings_with_plugins: List of (Finding, Plugin) tuples in scope
+
+    Returns:
+        Formatted context string to prepend to the prompt
+    """
+    from collections import Counter
+
+    severity_labels = {0: "Info", 1: "Low", 2: "Medium", 3: "High", 4: "Critical"}
+    total = len(findings_with_plugins)
+
+    lines: list[str] = ["=== Aggregate Findings Context ==="]
+    lines.append(f"Scans: {', '.join(scan_names)}")
+    lines.append(f"Scope: {scope_description}")
+    lines.append(f"Total findings in scope: {total}")
+
+    # Severity breakdown
+    sev_counts: Counter[int] = Counter()
+    for _finding, plugin in findings_with_plugins:
+        sev_counts[plugin.severity_int] += 1
+    if sev_counts:
+        lines.append("Severity breakdown:")
+        for sev_int in sorted(sev_counts.keys(), reverse=True):
+            label = severity_labels.get(sev_int, str(sev_int))
+            lines.append(f"  {label}: {sev_counts[sev_int]}")
+
+    # Review state breakdown
+    state_counts: Counter[str] = Counter()
+    for finding, _plugin in findings_with_plugins:
+        state_counts[finding.review_state] += 1
+    if state_counts:
+        lines.append("Review state:")
+        for state, count in state_counts.most_common():
+            lines.append(f"  {state}: {count}")
+
+    # MSF summary
+    msf_count = sum(1 for _f, p in findings_with_plugins if p.has_metasploit)
+    if msf_count:
+        lines.append(f"Findings with Metasploit modules: {msf_count}")
+
+    # Findings list (capped at 50 to keep prompts manageable, sorted Critical→Info)
+    cap = 50
+    sorted_findings = sorted(
+        findings_with_plugins, key=lambda fp: fp[1].severity_int, reverse=True
+    )
+    lines.append(f"Findings (showing {min(total, cap)} of {total}, highest severity first):")
+    for finding, plugin in sorted_findings[:cap]:
+        sev_label = severity_labels.get(plugin.severity_int, str(plugin.severity_int))
+        msf_flag = " [MSF]" if plugin.has_metasploit else ""
+        cve_str = ""
+        if plugin.cves:
+            cve_list = plugin.cves if isinstance(plugin.cves, list) else [plugin.cves]
+            shown = [str(c) for c in cve_list[:3]]
+            cve_str = f" CVEs: {', '.join(shown)}"
+            if len(cve_list) > 3:
+                cve_str += f" +{len(cve_list) - 3} more"
+        lines.append(
+            f"  [{sev_label}] {plugin.plugin_name} (ID:{plugin.plugin_id}){msf_flag}{cve_str}"
+        )
+    if total > cap:
+        lowest_shown = sorted_findings[cap - 1][1].severity_int
+        lowest_label = severity_labels.get(lowest_shown, str(lowest_shown))
+        lines.append(f"  ... and {total - cap} more not shown (below {lowest_label} severity)")
+
+    lines.append("=== End Context ===")
+    return "\n".join(lines)
+
+
+def run_aggregate_exchange(
+    conn: object,
+    context_key: str,
+    scope_description: str,
+    scan_names: list[str],
+    findings_with_plugins: list[tuple[Any, Any]],
+    question: str,
+) -> str:
+    """Full aggregate exchange: load history → build prompt → call claude → persist.
+
+    Args:
+        conn: SQLite database connection
+        context_key: Deterministic key identifying this conversation scope
+        scope_description: Human-readable scope for display and context
+        scan_names: Names of the selected scan(s)
+        findings_with_plugins: List of (Finding, Plugin) tuples in scope
+        question: User question text
+
+    Returns:
+        Claude's response text (or an error message)
+    """
+    from .models import ClaudeAggregateConversationTurn
+
+    import sqlite3 as _sqlite3
+
+    assert isinstance(conn, _sqlite3.Connection)
+
+    turns = ClaudeAggregateConversationTurn.get_by_context(conn, context_key)
+    skill = load_skill_prompt()
+    context = build_aggregate_context(scan_names, scope_description, findings_with_plugins)
+    prompt = format_prompt(skill, context, turns, question)
+
+    response, exit_code = ask_claude(prompt)
+
+    if exit_code == 0 and response:
+        ClaudeAggregateConversationTurn.add(conn, context_key, "user", question)
+        ClaudeAggregateConversationTurn.add(conn, context_key, "assistant", response)
 
     return response

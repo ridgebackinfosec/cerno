@@ -1964,3 +1964,81 @@ class ClaudeConversationTurn:
             tuple(finding_ids),
         )
         return {row["finding_id"] for row in rows}
+
+
+# ========== Model: ClaudeAggregateConversationTurn ==========
+
+@dataclass
+class ClaudeAggregateConversationTurn:
+    """A single turn in a Claude Assistant aggregate conversation (BETA).
+
+    Used for severity-menu and findings-list scope conversations.
+    Keyed by a context_key string (not a finding FK) since scope spans many findings.
+    """
+
+    id: Optional[int] = None
+    context_key: str = ""
+    role: str = "user"  # 'user' | 'assistant'
+    content: str = ""
+    created_at: Optional[str] = None
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> "ClaudeAggregateConversationTurn":
+        """Create instance from database row."""
+        return cls(
+            id=row["id"],
+            context_key=row["context_key"],
+            role=row["role"],
+            content=row["content"],
+            created_at=row["created_at"],
+        )
+
+    @classmethod
+    def get_by_context(
+        cls,
+        conn: sqlite3.Connection,
+        context_key: str,
+    ) -> "list[ClaudeAggregateConversationTurn]":
+        """Return all turns for a context key, ordered by creation time."""
+        rows = query_all(
+            conn,
+            "SELECT * FROM claude_aggregate_conversations WHERE context_key = ? ORDER BY id ASC",
+            (context_key,),
+        )
+        return [cls.from_row(row) for row in rows]
+
+    @classmethod
+    def add(
+        cls,
+        conn: sqlite3.Connection,
+        context_key: str,
+        role: str,
+        content: str,
+    ) -> int:
+        """Insert a new conversation turn. Returns the inserted row ID."""
+        with db_transaction(conn) as c:
+            cursor = c.execute(
+                "INSERT INTO claude_aggregate_conversations (context_key, role, content) VALUES (?, ?, ?)",
+                (context_key, role, content),
+            )
+            return cursor.lastrowid or 0
+
+    @classmethod
+    def clear(cls, conn: sqlite3.Connection, context_key: str) -> int:
+        """Delete all turns for a context key. Returns number of rows deleted."""
+        with db_transaction(conn) as c:
+            cursor = c.execute(
+                "DELETE FROM claude_aggregate_conversations WHERE context_key = ?",
+                (context_key,),
+            )
+            return cursor.rowcount
+
+    @classmethod
+    def has_history(cls, conn: sqlite3.Connection, context_key: str) -> bool:
+        """Return True if any turns exist for this context key."""
+        row = query_one(
+            conn,
+            "SELECT 1 FROM claude_aggregate_conversations WHERE context_key = ? LIMIT 1",
+            (context_key,),
+        )
+        return row is not None

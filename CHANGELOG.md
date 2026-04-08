@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Claude Assistant aggregate chat at severity selection menu (`[A]` key): discuss all findings across selected scan(s); context includes severity breakdown, review state, MSF/CVE summary, and up to 50 findings
+- Claude Assistant aggregate chat at findings list (`[A]` key in action footer): discuss the current findings in scope (filtered by severity, name filter, or group filter); context adapts to whatever filter is active
+- `browse_claude_chat_aggregate()` in `cerno.py` — shared chat loop for both aggregate entry points
+- `build_aggregate_context()` and `run_aggregate_exchange()` in `cerno_pkg/claude_assistant.py`
+- `ClaudeAggregateConversationTurn` model in `cerno_pkg/models.py` — conversation persistence keyed by `context_key` string
+- `claude_aggregate_conversations` table in SQLite schema (`cerno_pkg/database.py`) with index on `context_key`
+
 ## [1.3.1] - 2026-04-07
 
 ### Changed

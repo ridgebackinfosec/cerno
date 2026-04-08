@@ -771,6 +771,7 @@ def render_actions_footer(
     sort_mode: str,
     can_next: bool,
     can_prev: bool,
+    has_claude: bool = False,
 ) -> None:
     """Render action footer with responsive layout based on terminal width.
 
@@ -783,6 +784,7 @@ def render_actions_footer(
         sort_mode: Current sort mode ("plugin_id", "hosts", or "name")
         can_next: Whether next page is available
         can_prev: Whether previous page is available
+        has_claude: Whether Claude Assistant is available and enabled
     """
     from .ansi import get_terminal_width
 
@@ -833,7 +835,10 @@ def render_actions_footer(
             key_text("M", f"Mark reviewed ({candidates_count})"),
         ]
     )
-    right_row3 = Text()  # Empty for now, reserved for future actions
+    right_row3_items = []
+    if has_claude:
+        right_row3_items.append(key_text("A", "Ask Claude (BETA)"))
+    right_row3 = join_actions_texts(right_row3_items) if right_row3_items else Text()
 
     # Detect terminal width for responsive layout
     term_width = get_terminal_width()
