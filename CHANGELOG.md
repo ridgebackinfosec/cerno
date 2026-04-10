@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.3] - 2026-04-10
+
+### Added
+- Bundled `cerno_pkg/skills/cerno-assistant.md` skill prompt ships with the package — Claude Assistant now works out of the box after `pipx install`
+
+### Changed
+- `load_skill_prompt()` in `claude_assistant.py` now reads the bundled skill only, with inline fallback if the file is missing (previously only checked the gitignored repo-root path, so `pipx` installs always fell back to the minimal inline prompt)
+- `pyproject.toml` package-data updated to include `skills/*.md` so the skill file is included in the wheel
+
 ## [1.3.2] - 2026-04-07
 
 ### Added

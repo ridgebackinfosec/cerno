@@ -67,23 +67,20 @@ def check_claude_available() -> bool:
 def load_skill_prompt() -> str:
     """Load the cerno-assistant skill file as a system prompt string.
 
-    Looks for .claude/skills/cerno-assistant.md relative to the package root
-    (two levels up from this module: cerno_pkg/ -> repo root -> .claude/skills/).
+    Reads the bundled skill at cerno_pkg/skills/cerno-assistant.md.
     Falls back to a minimal inline prompt if the file is not found.
 
     Returns:
         Skill file contents, or minimal fallback prompt string
     """
     try:
-        # cerno_pkg/claude_assistant.py -> cerno_pkg/ -> repo root
         pkg_dir = Path(__file__).parent
-        repo_root = pkg_dir.parent
-        skill_path = repo_root / ".claude" / "skills" / "cerno-assistant.md"
+        skill_path = pkg_dir / "skills" / "cerno-assistant.md"
         if skill_path.exists():
             content = skill_path.read_text(encoding="utf-8")
             log_debug(f"Loaded skill prompt from {skill_path} ({len(content)} chars)")
             return content
-        log_debug(f"Skill file not found at {skill_path}, using fallback prompt")
+        log_debug("Bundled skill file not found, using fallback prompt")
     except Exception as exc:
         log_error(f"Failed to load skill file: {exc}")
     return _FALLBACK_SKILL_PROMPT
