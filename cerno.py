@@ -2491,5 +2491,90 @@ def workflow_list(
     info(f"Total workflows: {len(all_workflows)}")
 
 
+@app.command(name="reset", help="Reset cerno to a fresh installation state (destructive)")
+def reset_installation() -> None:
+    """Purge all cerno data under ~/.cerno and return to a fresh installation state.
+
+    This permanently deletes:
+    - cerno.db (all scans, findings, sessions, tool executions)
+    - config.yaml (user configuration)
+    - cerno.log and rotated log files
+    - artifacts/ directory (generated tool output)
+    - scans/ directory (scan export files)
+
+    Shell completions (e.g. ~/.bashrc entries) are NOT affected.
+    """
+    import shutil
+
+    cerno_dir = Path.home() / ".cerno"
+
+    if not cerno_dir.exists():
+        info("~/.cerno does not exist — nothing to reset.")
+        raise typer.Exit(0)
+
+    # Enumerate what will be deleted
+    db_path = cerno_dir / "cerno.db"
+    config_path = cerno_dir / "config.yaml"
+    log_files = list(cerno_dir.glob("cerno.log*"))
+    artifacts_dir = cerno_dir / "artifacts"
+    scans_dir = cerno_dir / "scans"
+
+    warn("This will permanently delete the following from ~/.cerno/:")
+    if db_path.exists():
+        warn("  cerno.db       — entire database (scans, findings, sessions, tool executions)")
+    if config_path.exists():
+        warn("  config.yaml    — user configuration")
+    if log_files:
+        warn(f"  cerno.log*     — {len(log_files)} log file(s)")
+    if artifacts_dir.exists():
+        warn("  artifacts/     — generated tool output files")
+    if scans_dir.exists():
+        warn("  scans/         — scan export directories")
+    _console_global.print()
+    info("Shell completions (e.g. ~/.bashrc entries) are NOT affected.")
+    _console_global.print()
+
+    try:
+        response = Prompt.ask('Type "reset" to confirm').strip()
+    except KeyboardInterrupt:
+        _console_global.print()
+        info("Reset cancelled.")
+        raise typer.Exit(0)
+
+    if response != "reset":
+        info("Reset cancelled.")
+        raise typer.Exit(0)
+
+    # Delete each item, continuing past failures
+    had_error = False
+
+    for target in [db_path, config_path, *log_files]:
+        if target.exists():
+            try:
+                target.unlink()
+            except OSError as e:
+                err(f"Failed to delete {target}: {e}")
+                had_error = True
+
+    for directory in [artifacts_dir, scans_dir]:
+        if directory.exists():
+            try:
+                shutil.rmtree(directory)
+            except OSError as e:
+                err(f"Failed to delete {directory}: {e}")
+                had_error = True
+
+    # Remove the ~/.cerno directory itself if now empty
+    try:
+        cerno_dir.rmdir()  # Only succeeds if empty; ignore if non-empty
+    except OSError:
+        pass
+
+    if had_error:
+        warn("Reset completed with errors — some files may not have been deleted.")
+    else:
+        ok("cerno has been reset. Run any cerno command to reinitialize.")
+
+
 if __name__ == "__main__":
     app()
