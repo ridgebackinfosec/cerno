@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.5] - 2026-04-13
+
+### Added
+- `cerno import nessus` now accepts a directory path; recursively discovers `.nessus` files, lists staged imports with file sizes, and prompts for confirmation before importing each in sequence with progress tracking and a final summary
+
 ## [1.3.4] - 2026-04-13
 
 ### Added

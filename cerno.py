@@ -1930,17 +1930,37 @@ def show_nessus_tool_suggestions(nessus_file: Path, scan_name: str) -> None:
 # === Import Sub-App Commands ===
 # Grouped under 'cerno import'
 
-@import_app.command(name="nessus", help="Import .nessus file and populate database with findings")
+@import_app.command(name="nessus", help="Import .nessus file (or directory of .nessus files) and populate database with findings")
 def import_scan(
     nessus: Path = typer.Argument(
-        ..., exists=True, readable=True, help="Path to a .nessus file"
+        ..., help="Path to a .nessus file or directory containing .nessus files"
     ),
 ) -> None:
     """
-    Import .nessus file and export finding host lists to organized directory.
+    Import .nessus file(s) and export finding host lists to organized directory.
 
+    Accepts a single .nessus file or a directory. When given a directory, recursively
+    discovers all .nessus files, lists them for confirmation, then imports each in sequence.
     Auto-detects scan name from .nessus file and exports to ~/.cerno/scans/<scan_name>.
     """
+    if not nessus.exists():
+        err(f"Path does not exist: {nessus}")
+        raise typer.Exit(1)
+
+    if nessus.is_dir():
+        _import_nessus_directory(nessus)
+    elif nessus.is_file():
+        if nessus.suffix.lower() != ".nessus":
+            err(f"File does not have .nessus extension: {nessus.name}")
+            raise typer.Exit(1)
+        _import_single_nessus(nessus)
+    else:
+        err(f"Path is not a file or directory: {nessus}")
+        raise typer.Exit(1)
+
+
+def _import_single_nessus(nessus: Path) -> bool:
+    """Import a single .nessus file. Returns True on success, False on skip/cancel."""
     from cerno_pkg.nessus_import import import_nessus_file, extract_scan_name_from_nessus
     from cerno_pkg.constants import SCANS_ROOT
 
@@ -1950,7 +1970,6 @@ def import_scan(
     # Determine output directory (always use SCANS_ROOT/<scan_name>)
     out_dir = SCANS_ROOT / scan_name
     info(f"Using scan name: {scan_name}")
-    # info(f"Findings location: {out_dir}")
 
     # Check for duplicate imports
     from cerno_pkg.database import compute_file_hash
@@ -1963,7 +1982,7 @@ def import_scan(
         # Check if it's the identical file
         if existing_scan.nessus_file_hash == new_file_hash:
             ok(f"Scan '{scan_name}' already imported (identical file). Skipping.")
-            raise typer.Exit(0)
+            return False
 
         # Different file, same name - prompt user
         warn(f"A scan named '{scan_name}' already exists.")
@@ -1997,7 +2016,7 @@ def import_scan(
             info(f"Importing as: {scan_name}")
         else:
             info("Import cancelled.")
-            raise typer.Exit(0)
+            return False
 
     # Run export
     header("Importing scan to database")
@@ -2047,11 +2066,65 @@ def import_scan(
 
     except Exception as e:
         err(f"Export failed: {e}")
-        raise typer.Exit(1)
+        return False
 
     # Show suggested tool commands
     _console_global.print()  # Blank line for spacing
     show_nessus_tool_suggestions(nessus, scan_name)
+    return True
+
+
+def _import_nessus_directory(directory: Path) -> None:
+    """Discover and import all .nessus files under a directory."""
+    from rich.table import Table
+    from rich import box
+    from cerno_pkg.ansi import style_if_enabled
+
+    files = sorted(directory.rglob("*.nessus"))
+    if not files:
+        err(f"No .nessus files found in: {directory}")
+        raise typer.Exit(1)
+
+    n = len(files)
+    _console_global.print()
+    header(f"Found {n} .nessus file{'s' if n != 1 else ''} in {directory}")
+
+    stage_table = Table(show_header=True, header_style=style_if_enabled("bold cyan"), box=box.SIMPLE)
+    stage_table.add_column("#", justify="right", style=style_if_enabled("cyan"))
+    stage_table.add_column("File", style=style_if_enabled("white"))
+    stage_table.add_column("Size", justify="right", style=style_if_enabled("yellow"))
+
+    for i, f in enumerate(files, 1):
+        size_bytes = f.stat().st_size
+        if size_bytes >= 1_048_576:
+            size_str = f"{size_bytes / 1_048_576:.1f} MB"
+        elif size_bytes >= 1_024:
+            size_str = f"{size_bytes / 1_024:.1f} KB"
+        else:
+            size_str = f"{size_bytes} B"
+        stage_table.add_row(str(i), str(f.relative_to(directory)), size_str)
+
+    _console_global.print(stage_table)
+    _console_global.print()
+
+    if not Confirm.ask(f"Import all {n} file{'s' if n != 1 else ''} above?", default=True):
+        info("Import cancelled.")
+        raise typer.Exit(0)
+
+    _console_global.print()
+    imported = 0
+    skipped = 0
+    for i, f in enumerate(files, 1):
+        _console_global.rule(f"[cyan][{i}/{n}] {f.name}[/cyan]")
+        success = _import_single_nessus(f)
+        if success:
+            imported += 1
+        else:
+            skipped += 1
+        _console_global.print()
+
+    _console_global.rule("[bold cyan]Import Complete[/bold cyan]")
+    ok(f"Summary: {imported} imported, {skipped} skipped")
 
 
 # === Scan Sub-App Commands ===
