@@ -1336,7 +1336,12 @@ def main(args: types.SimpleNamespace) -> None:
 
                 # Show workflow guidance for first-time or returning users
                 from cerno_pkg.onboarding import show_workflow_guidance
-                show_workflow_guidance(scan_name=scan.scan_name, scan_id=scan_id)
+                show_workflow_guidance(
+                    scan_name=selected_scan.scan_name,
+                    scan_id=scan_id,
+                    scan_ids=all_scan_ids if len(all_scan_ids) > 1 else None,
+                    scan_names=[s.scan_name for s in selected_scans] if len(selected_scans) > 1 else None,
+                )
 
                 # Host filter state (persists across severity loop iterations)
                 host_filter: Optional[str] = None  # Active host filter (IP/hostname)

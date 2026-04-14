@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.6] - 2026-04-14
+
+### Fixed
+- Fixed "Getting Started" and "Tips" panels showing single-scan statistics when reviewing multiple scans simultaneously (`onboarding.py:show_workflow_guidance()`, `onboarding.py:_show_context_aware_tips()`)
+- Fixed `scan.scan_name` variable reference bug at the `show_workflow_guidance()` call site (`cerno.py`) — now correctly uses `selected_scan.scan_name`
+
 ## [1.3.5] - 2026-04-13
 
 ### Added
