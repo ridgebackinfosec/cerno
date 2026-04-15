@@ -307,41 +307,49 @@ def build_nmap_cmd(
     ports_str: str,
     use_sudo: bool,
     output_base: Path,
+    use_proxy: bool = False,
 ) -> list[str]:
     """
     Build an nmap command with the specified options.
-    
+
     Args:
         udp: Whether to perform UDP scanning
         nse_option: NSE script option string (e.g., "--script=...")
         ips_file: Path to file containing IP addresses
         ports_str: Port specification string
-        use_sudo: Whether to run with sudo
+        use_sudo: Whether to run with sudo (ignored when use_proxy=True)
         output_base: Base path for output files
-        
+        use_proxy: When True, adds -Pn (ICMP won't traverse SOCKS) and
+                   omits sudo (raw socket scanning unavailable through proxy)
+
     Returns:
         Command as list of strings ready for subprocess execution
     """
     cmd = []
-    
-    if use_sudo:
+
+    # sudo is not useful through a SOCKS proxy (raw sockets don't traverse)
+    if use_sudo and not use_proxy:
         cmd.append("sudo")
-    
+
     cmd.extend(["nmap", "-A"])
-    
+
+    # -Pn required when proxying: ICMP host discovery doesn't work through SOCKS
+    if use_proxy:
+        cmd.append("-Pn")
+
     if nse_option:
         cmd.append(nse_option)
-    
+
     cmd.extend(["-iL", str(ips_file)])
-    
+
     if udp:
         cmd.append("-sU")
-    
+
     if ports_str:
         cmd.extend(["-p", ports_str])
-    
+
     cmd.extend(["-oA", str(output_base)])
-    
+
     return cmd
 
 

@@ -13,6 +13,7 @@ from cerno_pkg.ops import (
     log_artifact,
     log_artifacts_for_nmap,
 )
+from cerno_pkg.tools import build_nmap_cmd
 
 
 class TestExecutionMetadata:
@@ -715,3 +716,64 @@ class TestCommandAvailability:
                         render_tool_availability_table(include_unavailable=True)
                     except Exception as e:
                         pytest.fail(f"render_tool_availability_table() raised unexpected exception: {e}")
+
+
+class TestBuildNmapCmd:
+    """Tests for build_nmap_cmd command builder."""
+
+    @pytest.mark.unit
+    def test_basic_tcp_no_sudo(self, tmp_path):
+        ips = tmp_path / "ips.txt"
+        out = tmp_path / "output"
+        cmd = build_nmap_cmd(False, None, ips, "80,443", False, out)
+        assert cmd == ["nmap", "-A", "-iL", str(ips), "-p", "80,443", "-oA", str(out)]
+
+    @pytest.mark.unit
+    def test_sudo_without_proxy(self, tmp_path):
+        ips = tmp_path / "ips.txt"
+        out = tmp_path / "output"
+        cmd = build_nmap_cmd(False, None, ips, "", True, out)
+        assert cmd[0] == "sudo"
+        assert "nmap" in cmd
+        assert "-Pn" not in cmd
+
+    @pytest.mark.unit
+    def test_proxy_adds_pn_and_drops_sudo(self, tmp_path):
+        ips = tmp_path / "ips.txt"
+        out = tmp_path / "output"
+        # use_sudo=True but use_proxy=True → sudo must be dropped, -Pn must be added
+        cmd = build_nmap_cmd(False, None, ips, "80", True, out, use_proxy=True)
+        assert "sudo" not in cmd
+        assert "-Pn" in cmd
+        assert cmd[0] == "nmap"
+
+    @pytest.mark.unit
+    def test_proxy_pn_position(self, tmp_path):
+        """Verify -Pn appears immediately after 'nmap -A'."""
+        ips = tmp_path / "ips.txt"
+        out = tmp_path / "output"
+        cmd = build_nmap_cmd(False, None, ips, "443", False, out, use_proxy=True)
+        nmap_idx = cmd.index("nmap")
+        pn_idx = cmd.index("-Pn")
+        assert pn_idx == nmap_idx + 2  # nmap, -A, -Pn
+
+    @pytest.mark.unit
+    def test_nse_option_included(self, tmp_path):
+        ips = tmp_path / "ips.txt"
+        out = tmp_path / "output"
+        cmd = build_nmap_cmd(False, "--script=smb-vuln-ms17-010", ips, "445", False, out)
+        assert "--script=smb-vuln-ms17-010" in cmd
+
+    @pytest.mark.unit
+    def test_udp_flag(self, tmp_path):
+        ips = tmp_path / "ips.txt"
+        out = tmp_path / "output"
+        cmd = build_nmap_cmd(True, None, ips, "161", False, out)
+        assert "-sU" in cmd
+
+    @pytest.mark.unit
+    def test_no_ports_str(self, tmp_path):
+        ips = tmp_path / "ips.txt"
+        out = tmp_path / "output"
+        cmd = build_nmap_cmd(False, None, ips, "", False, out)
+        assert "-p" not in cmd
