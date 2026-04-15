@@ -816,7 +816,15 @@ def build_nmap_workflow(ctx: "ToolContext") -> Optional["CommandResult"]:
 
     ips_file = ctx.udp_ips if udp_ports else ctx.tcp_ips
     require_cmd("nmap")
-    cmd = build_nmap_cmd(udp_ports, nse_option, ips_file, ctx.ports_str, ctx.use_sudo, ctx.oabase)
+
+    if ctx.use_proxy:
+        from .ansi import warn as _proxy_warn
+        _proxy_warn("[!] Proxy mode: nmap adjustments applied")
+        print("    \u2022 -Pn added (ICMP does not traverse SOCKS)")
+        print("    \u2022 SYN scan (-sS) replaced by TCP connect (proxychains4 limitation)")
+        print("    \u2022 UDP scanning not supported through SOCKS proxy")
+
+    cmd = build_nmap_cmd(udp_ports, nse_option, ips_file, ctx.ports_str, ctx.use_sudo, ctx.oabase, use_proxy=ctx.use_proxy)
 
     return CommandResult(
         command=cmd,
@@ -1015,6 +1023,22 @@ def run_tool_workflow(
     # Create synthetic path for ToolContext and logging (matches original chosen parameter)
     synthetic_path = Path(f"{synthetic_filename}.txt")
 
+    # Build proxy config once — proxy state is determined at session start,
+    # not re-evaluated per tool dispatch.
+    from .ops import ProxyConfig
+    from .config import load_config as _load_config_for_proxy
+    _initial_config = _load_config_for_proxy()
+    _proxy_enabled = _initial_config.proxychains_enabled
+    if getattr(args, 'proxy', False):
+        _proxy_enabled = True
+    elif getattr(args, 'no_proxy', False):
+        _proxy_enabled = False
+    proxy_config = ProxyConfig(
+        enabled=_proxy_enabled,
+        host=_initial_config.proxychains_host,
+        port=_initial_config.proxychains_port,
+    )
+
     while True:
 
         from .config import load_config
@@ -1101,7 +1125,8 @@ def run_tool_workflow(
                                             run_command_with_progress(
                                                 selected_cmd,
                                                 shell=True,
-                                                executable=shell_exec
+                                                executable=shell_exec,
+                                                proxy_config=proxy_config,
                                             )
                                             ok("\nCommand completed.")
 
@@ -1128,7 +1153,8 @@ def run_tool_workflow(
                                                         run_command_with_progress(
                                                             info_cmd,
                                                             shell=True,
-                                                            executable=shell_exec
+                                                            executable=shell_exec,
+                                                            proxy_config=proxy_config,
                                                         )
                                                         ok("\nInfo command completed.")
                                                     else:
@@ -1168,6 +1194,7 @@ def run_tool_workflow(
             tcp_sockets=tcp_sockets,
             ports_str=ports_str,
             use_sudo=use_sudo,
+            use_proxy=proxy_config.enabled,
             workdir=workdir,
             results_dir=results_dir,
             oabase=oabase,
@@ -1228,10 +1255,10 @@ def run_tool_workflow(
 
                 # Execute command and capture metadata
                 if isinstance(cmd, list):
-                    exec_metadata = run_command_with_progress(cmd, shell=False)
+                    exec_metadata = run_command_with_progress(cmd, shell=False, proxy_config=proxy_config)
                 else:
                     shell_exec = shutil.which("bash") or shutil.which("sh")
-                    exec_metadata = run_command_with_progress(cmd, shell=True, executable=shell_exec)
+                    exec_metadata = run_command_with_progress(cmd, shell=True, executable=shell_exec, proxy_config=proxy_config)
 
                 # Log execution to database
                 cmd_str = display_cmd if isinstance(display_cmd, str) else " ".join(str(x) for x in display_cmd)
