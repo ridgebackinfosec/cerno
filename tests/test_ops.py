@@ -87,6 +87,13 @@ class TestProxyConfig:
         content = config_path.read_text()
         assert "socks5 127.0.0.1 9000" in content
 
+    @pytest.mark.unit
+    def test_write_proxychains_config_no_op_when_disabled(self, tmp_path):
+        proxy = ProxyConfig(enabled=False, host="127.0.0.1", port=9000)
+        config_path = tmp_path / "proxychains4.conf"
+        write_proxychains_config(proxy, config_path)
+        assert not config_path.exists()
+
 
 class TestLogToolExecution:
     """Tests for log_tool_execution function."""

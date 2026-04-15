@@ -61,16 +61,20 @@ class ProxyConfig:
     port: int
 
 
-def write_proxychains_config(proxy: "ProxyConfig", config_path: Path) -> None:
+def write_proxychains_config(proxy: ProxyConfig, config_path: Path) -> None:
     """Write a proxychains4 configuration file from ProxyConfig settings.
 
-    Overwrites any existing file at config_path. Creates parent directories
-    if they do not exist.
+    No-op if proxy.enabled is False.
+
+    Overwrites any existing file at config_path when enabled. Creates parent
+    directories if they do not exist.
 
     Args:
         proxy: Proxy configuration with host and port
         config_path: Destination path for the proxychains4.conf file
     """
+    if not proxy.enabled:
+        return
     content = (
         "strict_chain\n"
         "proxy_dns\n"
