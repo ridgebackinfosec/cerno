@@ -20,6 +20,7 @@ from contextlib import contextmanager
 import time
 
 from .ansi import info, warn, header, get_console, style_if_enabled
+from .config import load_config
 from .constants import SEVERITY_COLORS
 from .fs import default_page_size, pretty_severity_label
 from .logging_setup import log_timing, log_debug
@@ -1110,6 +1111,32 @@ def render_tool_availability_table(include_unavailable: bool = True) -> None:
             details_text.stylize(style_if_enabled("red"))
 
         table.add_row(tool_name, status_icon, details_text)
+
+    # proxychains4 (proxy wrapper — not a workflow tool, so not in the registry)
+    _proxy_cfg = load_config()
+    pc4_available = bool(shutil.which("proxychains4"))
+    if include_unavailable or pc4_available:
+        if pc4_available:
+            pc4_version = get_tool_version("proxychains4")
+            if _proxy_cfg.proxychains_enabled:
+                pc4_details_str = (
+                    f"SOCKS5 {_proxy_cfg.proxychains_host}:{_proxy_cfg.proxychains_port} (active)"
+                )
+            else:
+                pc4_details_str = f"v{pc4_version}" if pc4_version else "Available"
+            pc4_details_text = Text(pc4_details_str)
+            pc4_details_text.stylize(
+                style_if_enabled("magenta") if _proxy_cfg.proxychains_enabled
+                else style_if_enabled("green")
+            )
+        else:
+            if _proxy_cfg.proxychains_enabled:
+                pc4_details_str = "Not found in PATH — proxy mode will not work"
+            else:
+                pc4_details_str = "Not found in PATH"
+            pc4_details_text = Text(pc4_details_str)
+            pc4_details_text.stylize(style_if_enabled("red"))
+        table.add_row("proxychains4", "✅" if pc4_available else "❌", pc4_details_text)
 
     # Claude Code (assistant — not a workflow tool, so not in the registry)
     claude_available = bool(shutil.which("claude"))

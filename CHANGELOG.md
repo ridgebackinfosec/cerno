@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- proxychains4 row added to `render_tool_availability_table()` (`render.py`); shows active SOCKS5 details when proxy is enabled and binary is found, a warning when enabled but binary is missing, or standard availability info when disabled
+
 ## [1.3.6] - 2026-04-14
 
 ### Fixed

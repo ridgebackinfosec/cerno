@@ -777,3 +777,135 @@ class TestBuildNmapCmd:
         out = tmp_path / "output"
         cmd = build_nmap_cmd(False, None, ips, "", False, out)
         assert "-p" not in cmd
+
+
+class TestRunCommandWithProgressProxy:
+    """Tests for proxy wrapping in run_command_with_progress."""
+
+    @pytest.mark.unit
+    def test_proxy_config_wraps_list_command(self, tmp_path, monkeypatch):
+        """Verify proxychains4 is prepended to list commands when proxy is enabled."""
+        from cerno_pkg.ops import ProxyConfig, run_command_with_progress
+        import subprocess
+
+        captured = {}
+
+        def fake_popen(cmd, **kwargs):
+            captured["cmd"] = cmd
+            class FakeProc:
+                returncode = 0
+                stdout = iter([])
+                def wait(self): pass
+                def terminate(self): pass
+            return FakeProc()
+
+        monkeypatch.setattr(subprocess, "Popen", fake_popen)
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+
+        proxy = ProxyConfig(enabled=True, host="127.0.0.1", port=9000)
+        try:
+            run_command_with_progress(["echo", "hello"], proxy_config=proxy)
+        except Exception:
+            pass
+
+        assert captured.get("cmd", [])[:2] == ["proxychains4", "-f"]
+        assert captured["cmd"][3:] == ["echo", "hello"]
+
+    @pytest.mark.unit
+    def test_no_proxy_leaves_command_unchanged(self, tmp_path, monkeypatch):
+        """Verify command is not wrapped when proxy is disabled."""
+        from cerno_pkg.ops import ProxyConfig, run_command_with_progress
+        import subprocess
+
+        captured = {}
+
+        def fake_popen(cmd, **kwargs):
+            captured["cmd"] = cmd
+            class FakeProc:
+                returncode = 0
+                stdout = iter([])
+                def wait(self): pass
+            return FakeProc()
+
+        monkeypatch.setattr(subprocess, "Popen", fake_popen)
+
+        proxy = ProxyConfig(enabled=False, host="127.0.0.1", port=9000)
+        try:
+            run_command_with_progress(["echo", "hello"], proxy_config=proxy)
+        except Exception:
+            pass
+
+        assert captured.get("cmd") == ["echo", "hello"]
+
+    @pytest.mark.unit
+    def test_none_proxy_config_leaves_command_unchanged(self, tmp_path, monkeypatch):
+        """Verify proxy_config=None does not wrap command (backward compat)."""
+        from cerno_pkg.ops import run_command_with_progress
+        import subprocess
+
+        captured = {}
+
+        def fake_popen(cmd, **kwargs):
+            captured["cmd"] = cmd
+            class FakeProc:
+                returncode = 0
+                stdout = iter([])
+                def wait(self): pass
+            return FakeProc()
+
+        monkeypatch.setattr(subprocess, "Popen", fake_popen)
+
+        try:
+            run_command_with_progress(["echo", "hello"])
+        except Exception:
+            pass
+
+        assert captured.get("cmd") == ["echo", "hello"]
+
+
+class TestProxychainsRenderRow:
+    """Tests for proxychains4 row in render_tool_availability_table."""
+
+    @pytest.mark.unit
+    def test_proxychains4_row_appears_when_disabled(self, monkeypatch, capsys):
+        """proxychains4 row always appears (proxy disabled in config)."""
+        from cerno_pkg.render import render_tool_availability_table
+        from cerno_pkg.config import CernoConfig
+
+        monkeypatch.setattr("cerno_pkg.render.load_config", lambda: CernoConfig(proxychains_enabled=False))
+        # Don't need proxychains4 on PATH — just verify row name is rendered
+        render_tool_availability_table(include_unavailable=True)
+        captured = capsys.readouterr()
+        assert "proxychains4" in captured.out
+
+    @pytest.mark.unit
+    def test_proxychains4_row_shows_active_when_enabled_and_found(self, monkeypatch, capsys):
+        """When proxy enabled and binary found, show 'active' details."""
+        from cerno_pkg.render import render_tool_availability_table
+        from cerno_pkg.config import CernoConfig
+        import shutil as _shutil
+
+        config = CernoConfig(proxychains_enabled=True, proxychains_host="127.0.0.1", proxychains_port=9000)
+        monkeypatch.setattr("cerno_pkg.render.load_config", lambda: config)
+        monkeypatch.setattr(_shutil, "which", lambda name: "/usr/bin/proxychains4" if name == "proxychains4" else None)
+
+        render_tool_availability_table(include_unavailable=True)
+        captured = capsys.readouterr()
+        assert "active" in captured.out or "9000" in captured.out
+
+    @pytest.mark.unit
+    def test_proxychains4_row_warns_when_enabled_but_missing(self, monkeypatch, capsys):
+        """When proxy enabled but binary missing, show warning in details."""
+        from cerno_pkg.render import render_tool_availability_table
+        from cerno_pkg.config import CernoConfig
+        import shutil as _shutil
+
+        config = CernoConfig(proxychains_enabled=True)
+        monkeypatch.setattr("cerno_pkg.render.load_config", lambda: config)
+        monkeypatch.setattr(_shutil, "which", lambda name: None)
+
+        render_tool_availability_table(include_unavailable=True)
+        captured = capsys.readouterr()
+        assert "proxychains4" in captured.out
+        # Should contain a warning about not being found
+        assert "not" in captured.out.lower() or "❌" in captured.out
