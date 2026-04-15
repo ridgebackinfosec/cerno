@@ -2427,6 +2427,18 @@ def config_show() -> None:
     rows.append(("nxc_enrichment_enabled", config.nxc_enrichment_enabled,
                 config.nxc_enrichment_enabled == defaults.nxc_enrichment_enabled, "Show NetExec context in findings"))
 
+    # Claude Assistant
+    rows.append(("claude_assistant_enabled", config.claude_assistant_enabled,
+                config.claude_assistant_enabled == defaults.claude_assistant_enabled, "Enable Claude Assistant (BETA)"))
+
+    # Proxychains
+    rows.append(("proxychains_enabled", config.proxychains_enabled,
+                config.proxychains_enabled == defaults.proxychains_enabled, "Route tools through SOCKS5 proxy"))
+    rows.append(("proxychains_host", config.proxychains_host,
+                config.proxychains_host == defaults.proxychains_host, "SOCKS5 proxy host"))
+    rows.append(("proxychains_port", config.proxychains_port,
+                config.proxychains_port == defaults.proxychains_port, "SOCKS5 proxy port"))
+
     # Sort rows alphabetically by setting name (first element of tuple)
     rows.sort(key=lambda row: row[0])
 
@@ -2457,7 +2469,9 @@ def config_get(
         err(f"Unknown config key: {key}")
         info("Available keys: results_root, default_page_size, top_ports_count, custom_workflows_path,")
         info("                default_tool, default_netexec_protocol, nmap_default_profile,")
-        info("                log_path, debug_logging, no_color, term_override")
+        info("                log_path, debug_logging, no_color, term_override, nxc_workspace_path,")
+        info("                nxc_enrichment_enabled, claude_assistant_enabled, proxychains_enabled,")
+        info("                proxychains_host, proxychains_port")
         raise typer.Exit(1)
 
     value = getattr(config, key)
@@ -2482,15 +2496,17 @@ def config_set(
         err(f"Unknown config key: {key}")
         info("Available keys: results_root, default_page_size, top_ports_count, custom_workflows_path,")
         info("                default_tool, default_netexec_protocol, nmap_default_profile,")
-        info("                log_path, debug_logging, no_color, term_override")
+        info("                log_path, debug_logging, no_color, term_override, nxc_workspace_path,")
+        info("                nxc_enrichment_enabled, claude_assistant_enabled, proxychains_enabled,")
+        info("                proxychains_host, proxychains_port")
         raise typer.Exit(1)
 
     # Type conversion based on key
     try:
         typed_value: int | bool | str
-        if key in ["default_page_size", "top_ports_count"]:
+        if key in ["default_page_size", "top_ports_count", "proxychains_port"]:
             typed_value = int(value)
-        elif key in ["no_color", "debug_logging"]:
+        elif key in ["no_color", "debug_logging", "nxc_enrichment_enabled", "claude_assistant_enabled", "proxychains_enabled"]:
             typed_value = value.lower() in ("true", "1", "yes", "on")
         else:
             typed_value = value
