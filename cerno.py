@@ -919,6 +919,7 @@ def browse_file_list(
                 completed_total,
                 show_severity=is_msf_mode,
                 workflow_mapper=workflow_mapper,
+                use_proxy=_proxy_active,
             )
 
             # In multi-scan mode, broadcast review state changes to all other instances

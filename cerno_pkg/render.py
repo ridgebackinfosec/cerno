@@ -870,6 +870,7 @@ def render_finding_actions_footer(
     has_nxc_data: bool = False,
     has_claude: bool = False,
     claude_installed: bool = False,
+    use_proxy: bool = False,
 ) -> None:
     """Render action footer for finding review with responsive layout.
 
@@ -921,6 +922,10 @@ def render_finding_actions_footer(
         claude_row = not_enabled
 
     term_width = get_terminal_width()
+    if use_proxy:
+        proxy_badge = Text()
+        proxy_badge.append("[PROXY]", style="bold magenta")
+        _console_global.print(proxy_badge)
     _console_global.print("[cyan]>>[/cyan]")
 
     if term_width >= 100:

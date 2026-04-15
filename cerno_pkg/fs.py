@@ -278,6 +278,7 @@ def handle_finding_view(
     ports_str: Optional[str] = None,
     args: Any = None,
     use_sudo: bool = False,
+    use_proxy: bool = False,
 ) -> Optional[str]:
     """
     Interactive file viewing menu (raw/grouped/hosts-only/copy/CVE info/workflow/tool/mark).
@@ -346,6 +347,7 @@ def handle_finding_view(
             has_nxc_data=has_nxc_data,
             has_claude=has_claude,
             claude_installed=claude_installed,
+            use_proxy=use_proxy,
         )
         try:
             action_choice = Prompt.ask("Choose action").strip().lower()
@@ -568,6 +570,7 @@ def process_single_finding(
     completed_total: List[str],
     show_severity: bool = False,
     workflow_mapper: Optional["WorkflowMapper"] = None,
+    use_proxy: bool = False,
 ) -> None:
     """
     Process a single plugin file: preview, view, run tools, mark complete (database-only).
@@ -621,6 +624,7 @@ def process_single_finding(
         ports_str=ports_str,
         args=args,
         use_sudo=use_sudo,
+        use_proxy=use_proxy,
     )
 
     # Handle result from file view

@@ -603,6 +603,11 @@ def command_review_menu(
             summary.append("Tool: ", style="cyan")
             summary.append(f"{tool_name}\n", style="yellow")
 
+        # Proxy status
+        if ctx.use_proxy:
+            summary.append("Proxy: ", style="cyan")
+            summary.append("proxychains4 ACTIVE\n", style="bold magenta")
+
         # Target information
         target_count = 0
         if ctx.tcp_ips and Path(ctx.tcp_ips).exists():

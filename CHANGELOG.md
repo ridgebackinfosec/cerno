@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.9] - 2026-04-15
+
+### Fixed
+- `[PROXY]` badge now appears in finding action footer (`render_finding_actions_footer`) when focused on a specific finding — previously only shown in the findings list menu
+- `[PROXY]` badge now appears in the Execution Summary panel (`command_review_menu`) as "Proxy: proxychains4 ACTIVE" before confirming tool execution — previously invisible at command preview step
+
 ## [1.3.8] - 2026-04-15
 
 ### Changed
