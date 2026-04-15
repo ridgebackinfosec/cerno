@@ -435,6 +435,13 @@ def browse_file_list(
         from cerno_pkg.config import load_config
         config = load_config()
 
+    # Resolve proxy state (CLI override takes precedence over config)
+    _proxy_active = config.proxychains_enabled
+    if getattr(args, 'proxy', False):
+        _proxy_active = True
+    elif getattr(args, 'no_proxy', False):
+        _proxy_active = False
+
     file_filter = ""
     reviewed_filter = ""
     group_filter: Optional[Tuple[int, set, str]] = None
@@ -667,6 +674,12 @@ def browse_file_list(
                 if reviewed_total or completed_total or skipped_total:
                     session_stats += f" | R:{len(reviewed_total)} C:{len(completed_total)} S:{len(skipped_total)}"
                 status_parts.append(session_stats)
+
+            # Proxy badge
+            if _proxy_active:
+                proxy_badge = Text()
+                proxy_badge.append("[PROXY]", style="bold magenta")
+                status_parts.insert(0, proxy_badge)
 
             # Responsive layout based on terminal width
             term_width = get_terminal_width()
@@ -1829,6 +1842,12 @@ def review(
     check: bool = typer.Option(
         False, "--check", help="Check tool availability and exit (no review)."
     ),
+    proxy: bool = typer.Option(
+        False, "--proxy", help="Force-enable proxy routing via proxychains4 for this session (overrides config)."
+    ),
+    no_proxy: bool = typer.Option(
+        False, "--no-proxy", help="Force-disable proxy routing for this session (overrides config)."
+    ),
 ) -> None:
     """
     Run interactive review mode with database-driven workflow.
@@ -1860,6 +1879,8 @@ def review(
         custom_workflows=custom_workflows,
         custom_workflows_only=custom_workflows_only,
         check=check,
+        proxy=proxy,
+        no_proxy=no_proxy,
     )
     try:
         main(args)
