@@ -47,6 +47,42 @@ class ExecutionMetadata:
     used_sudo: bool
 
 
+@dataclass
+class ProxyConfig:
+    """Configuration for proxychains4 SOCKS proxy routing.
+
+    Attributes:
+        enabled: Whether proxy routing is active
+        host: SOCKS5 proxy host (e.g., "127.0.0.1")
+        port: SOCKS5 proxy port (e.g., 9000)
+    """
+    enabled: bool
+    host: str
+    port: int
+
+
+def write_proxychains_config(proxy: "ProxyConfig", config_path: Path) -> None:
+    """Write a proxychains4 configuration file from ProxyConfig settings.
+
+    Overwrites any existing file at config_path. Creates parent directories
+    if they do not exist.
+
+    Args:
+        proxy: Proxy configuration with host and port
+        config_path: Destination path for the proxychains4.conf file
+    """
+    content = (
+        "strict_chain\n"
+        "proxy_dns\n"
+        "tcp_read_time_out 15000\n"
+        "tcp_connect_time_out 8000\n"
+        "[ProxyList]\n"
+        f"socks5 {proxy.host} {proxy.port}\n"
+    )
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(content, encoding="utf-8")
+
+
 @log_timing
 def run_command_with_progress(
     cmd: list[str] | str,

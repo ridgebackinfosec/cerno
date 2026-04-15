@@ -7,6 +7,8 @@ import pytest
 
 from cerno_pkg.ops import (
     ExecutionMetadata,
+    ProxyConfig,
+    write_proxychains_config,
     log_tool_execution,
     log_artifact,
     log_artifacts_for_nmap,
@@ -39,6 +41,51 @@ class TestExecutionMetadata:
         assert metadata.exit_code == 1
         assert metadata.duration_seconds == 5.2
         assert metadata.used_sudo is False
+
+
+class TestProxyConfig:
+    """Tests for ProxyConfig dataclass and write_proxychains_config helper."""
+
+    @pytest.mark.unit
+    def test_proxy_config_defaults(self):
+        proxy = ProxyConfig(enabled=False, host="127.0.0.1", port=9000)
+        assert proxy.enabled is False
+        assert proxy.host == "127.0.0.1"
+        assert proxy.port == 9000
+
+    @pytest.mark.unit
+    def test_proxy_config_custom_values(self):
+        proxy = ProxyConfig(enabled=True, host="10.10.0.1", port=1080)
+        assert proxy.enabled is True
+        assert proxy.host == "10.10.0.1"
+        assert proxy.port == 1080
+
+    @pytest.mark.unit
+    def test_write_proxychains_config_content(self, tmp_path):
+        proxy = ProxyConfig(enabled=True, host="10.10.0.1", port=1080)
+        config_path = tmp_path / "proxychains4.conf"
+        write_proxychains_config(proxy, config_path)
+        content = config_path.read_text()
+        assert "strict_chain" in content
+        assert "proxy_dns" in content
+        assert "socks5 10.10.0.1 1080" in content
+        assert "[ProxyList]" in content
+
+    @pytest.mark.unit
+    def test_write_proxychains_config_creates_parent_dirs(self, tmp_path):
+        proxy = ProxyConfig(enabled=True, host="127.0.0.1", port=9000)
+        config_path = tmp_path / "nested" / "dir" / "proxychains4.conf"
+        write_proxychains_config(proxy, config_path)
+        assert config_path.exists()
+
+    @pytest.mark.unit
+    def test_write_proxychains_config_is_idempotent(self, tmp_path):
+        proxy = ProxyConfig(enabled=True, host="127.0.0.1", port=9000)
+        config_path = tmp_path / "proxychains4.conf"
+        write_proxychains_config(proxy, config_path)
+        write_proxychains_config(proxy, config_path)
+        content = config_path.read_text()
+        assert "socks5 127.0.0.1 9000" in content
 
 
 class TestLogToolExecution:
