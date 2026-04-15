@@ -4,17 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## General Development Principles
 
-**IMPORTANT**: Always adhere to Python development and architecture best practices when working on this project.
+Follow Python best practices (PEP 8, type hints, docstrings, SOLID, DRY, parameterized queries, proper error handling). The following are project-specific mandates:
 
-This includes:
-
-- **Code Quality**: Follow PEP 8 style guidelines, use type hints for function signatures, clear and descriptive naming conventions, and proper docstrings for modules, classes, and functions
-- **Architecture**: Apply SOLID principles (Single Responsibility, Open/Closed, Liskov Substitution, Interface Segregation, Dependency Inversion), maintain separation of concerns, follow DRY (Don't Repeat Yourself), and use dependency injection and loose coupling
-- **Database Design**: ALWAYS follow relational database best practices and SQLite-specific optimizations (see Database Design Principles section below). Normalize data properly, avoid redundant storage, use foreign keys, leverage SQL views for computed values, and design for query efficiency
-- **Testing**: Write unit tests for isolated logic, integration tests for database/filesystem operations, use parametrized tests for multiple input variations, and maintain high coverage on critical paths
-- **Error Handling**: Use specific exception types, proper context managers for resources, and graceful degradation where appropriate
-- **Performance**: Write efficient database queries, implement caching where beneficial, and avoid N+1 query patterns
-- **Security**: Validate all inputs, use parameterized queries to prevent SQL injection, and prevent command injection vulnerabilities
 - **Documentation**: Always update relevant documentation alongside code changes to keep everything synchronized and up-to-date automatically. This includes docstrings, CLAUDE.md, README.md, and **MANDATORY** updates to the [Unreleased] section in CHANGELOG.md for all user-visible code changes
 - **Smoke Testing**: After completing ANY changes (code, documentation, configuration), ALWAYS provide a concise smoke test summary with manual testing steps the user can perform to verify the changes work correctly. Include specific commands, expected outputs, and edge cases to validate
 - **Git Operations**: The user handles all git staging and commits manually. However, ALWAYS provide a concise one-line git commit message suggestion that accurately describes the change following conventional commit format (e.g., "feat: add user authentication", "fix: resolve parsing edge case", "docs: update installation guide", "refactor: extract validation logic"). Keep messages under 72 characters when possible. Do NOT execute git commands like `git add` or `git commit` - only provide the suggested commit message
@@ -96,21 +87,10 @@ Before implementing any schema change, verify:
 
 ## Python Packaging Best Practices
 
-**CRITICAL**: When adding new Python subpackages to the project, you MUST update `pyproject.toml` to include them in the distribution. Failure to do so will cause missing modules in pipx/pip installations.
+**CRITICAL**: When adding new Python subpackages, you MUST explicitly list them in `pyproject.toml`. Setuptools does NOT auto-discover subpackages — omitting one causes `ModuleNotFoundError` in pipx/pip installations.
 
-### Package Structure
-
-Cerno uses setuptools with the following structure:
-- `cerno.py` - Main entry point (top-level module)
-- `cerno_pkg/` - Main package directory
-  - `migrations/` - Database migration scripts (SUBPACKAGE - must be explicitly included)
-  - Other modules...
-
-### pyproject.toml Configuration
-
-**Current configuration** (lines 59-64):
+**Current `[tool.setuptools]` in pyproject.toml:**
 ```toml
-[tool.setuptools]
 packages = ["cerno_pkg", "cerno_pkg.migrations"]
 py-modules = ["cerno"]
 
@@ -118,102 +98,7 @@ py-modules = ["cerno"]
 cerno_pkg = ["*.yaml"]
 ```
 
-### Adding New Subpackages
-
-When adding a new subdirectory with `__init__.py` under `cerno_pkg/`:
-
-1. **Add to packages list**: Update `[tool.setuptools] packages` in pyproject.toml
-2. **Test installation**: Install via `pip install -e .` and verify subpackage is accessible
-3. **Verify in pipx**: If users install via pipx, check that the subpackage appears in site-packages
-
-**Example**: Adding a new `cerno_pkg/plugins/` subpackage:
-```toml
-[tool.setuptools]
-packages = [
-    "cerno_pkg",
-    "cerno_pkg.migrations",
-    "cerno_pkg.plugins"  # NEW
-]
-```
-
-### Package Data (Non-Python Files)
-
-For non-Python files (YAML, JSON, etc.) that need to be included:
-
-```toml
-[tool.setuptools.package-data]
-cerno_pkg = ["*.yaml", "*.json"]  # Files in cerno_pkg/
-"cerno_pkg.migrations" = ["*.sql"]  # Files in cerno_pkg/migrations/
-```
-
-### Testing Package Distribution
-
-**Before releasing**, always verify the package contents:
-
-```bash
-# Build distribution
-python -m build
-
-# Check package contents
-tar -tzf dist/cerno-*.tar.gz | grep cerno_pkg
-
-# Expected output should include:
-# cerno_pkg/
-# cerno_pkg/__init__.py
-# cerno_pkg/migrations/
-# cerno_pkg/migrations/__init__.py
-# cerno_pkg/migrations/migration_001_plugin_output.py
-# cerno_pkg/migrations/migration_002_remove_filesystem_columns.py
-# cerno_pkg/migrations/migration_003_foundation_tables.py
-# cerno_pkg/*.yaml
-```
-
-**Test installation in isolated environment**:
-```bash
-# Install in clean venv
-python -m venv test_env
-source test_env/bin/activate  # or test_env\Scripts\activate on Windows
-pip install dist/cerno-*.whl
-
-# Verify subpackage exists
-python -c "from cerno_pkg.migrations import get_all_migrations; print(get_all_migrations())"
-# Should print list of migrations, not ModuleNotFoundError
-```
-
-### Common Packaging Mistakes
-
-❌ **DON'T**: Assume setuptools auto-discovers subpackages
-```toml
-packages = ["cerno_pkg"]  # WRONG: migrations/ won't be included
-```
-
-✅ **DO**: Explicitly list all subpackages
-```toml
-packages = ["cerno_pkg", "cerno_pkg.migrations"]  # CORRECT
-```
-
-❌ **DON'T**: Forget to test pipx installations
-```bash
-# Developer only tests pip install -e .
-pip install -e .  # Works because source is available
-```
-
-✅ **DO**: Test actual wheel installation
-```bash
-python -m build
-pipx install dist/cerno-*.whl  # Test real installation
-```
-
-### Verification Checklist
-
-Before releasing a new version:
-- [ ] All subpackages listed in `pyproject.toml` packages
-- [ ] All non-Python files listed in package-data (if needed)
-- [ ] `python -m build` runs without errors
-- [ ] Wheel contains all expected files (check with `unzip -l dist/*.whl`)
-- [ ] Test installation in clean venv works
-- [ ] Import all subpackages succeeds
-- [ ] Migrations directory exists in installed package (if applicable)
+When adding a new `cerno_pkg/<subpkg>/` directory with `__init__.py`, add it to the `packages` list.
 
 ## Build & Development Commands
 
@@ -293,32 +178,7 @@ pyright cerno_pkg/tui.py
 
 ### Type Checking Philosophy
 
-Cerno uses **dual type checking** for maximum coverage:
-
-- **MyPy**: Primary checker, runs in CI/CD (currently `continue-on-error: true`)
-- **Pyright**: Secondary checker, catches edge cases MyPy misses, used locally
-
-**When to use each:**
-- Always run both locally before committing
-- Fix mypy errors first (will eventually block CI/CD)
-- Fix pyright errors to maintain type safety and prevent Pylance issues
-- Use tool-specific ignore comments sparingly and document why
-
-**Type annotation standards:**
-- All public functions must have parameter and return type hints
-- Use `from __future__ import annotations` for forward references
-- Use `TYPE_CHECKING` guards for circular imports
-- Prefer explicit types over `Any` (use `Any` only when truly dynamic)
-- Document complex types with docstring examples
-
-**Configuration files:**
-- `pyproject.toml`: Contains `[tool.mypy]` configuration
-- `pyrightconfig.json`: Contains pyright configuration (typeCheckingMode: "basic")
-
-**Known type checking issues** (as of v1.1.0):
-- Current CI/CD mypy checks set to `continue-on-error: true` (non-blocking)
-- Several modules have type errors revealed in `pylance-report.json`
-- Type checking will become stricter in future releases as issues are resolved
+**Dual type checking**: mypy (primary, CI/CD with `continue-on-error: true`) + pyright (secondary, local). Config: `pyproject.toml` `[tool.mypy]` and `pyrightconfig.json` (typeCheckingMode: "basic"). Fix mypy errors first. Known type errors documented in `pylance-report.json` — checking will become stricter in future releases.
 
 ## Architecture
 
@@ -500,26 +360,6 @@ Version is defined in `pyproject.toml:project.version` (single source of truth).
 5. Include file references where helpful (e.g., `render.py:render_actions_footer()`)
 6. Preserve any existing [Unreleased] content (append, don't replace)
 
-**Format Guidelines:**
-- Start bullets with action verbs (Added, Fixed, Improved, Resolved, Updated)
-- Be specific about what changed and why (not just "updated code")
-- Include file/function references for complex changes
-- Use sub-bullets for multi-part changes
-- Group related changes together
-
-**Example [Unreleased] entry:**
-```markdown
-## [Unreleased]
-
-### Fixed
-- Resolved import optimization bug in render.py affecting color output
-- Fixed host parsing edge case in nessus_import.py for malformed IPv6 addresses
-
-### Changed
-- Improved terminal width detection fallback logic (ansi.py:get_terminal_width())
-- Updated error messages for invalid plugin IDs to include suggestions
-```
-
 **Enforcement:**
 - This is NOT optional - Claude will proactively update [Unreleased] after code changes
 - If you make changes without updating [Unreleased], that is a bug in Claude's behavior
@@ -627,95 +467,9 @@ Only after user confirms the changelog content:
 - Always check `pyproject.toml` for current version, not git tags
 - The automated release workflow will fail if CHANGELOG.md is missing the version entry or has incorrect format
 
-**Example transformation:**
-
-User requests: "Bump version to 1.1.1"
-
-Claude presents:
-```
-I found the following changes since version 1.1.0:
-
-### Fixed
-- Resolved race condition in session persistence (session.py)
-- Fixed terminal width detection on Windows (ansi.py)
-
-### Changed
-- Improved error messages for invalid plugin IDs
-
-### Undocumented Changes
-- Commit a1b2c3d: fix: handle empty host list in parsing.py (NOT DOCUMENTED)
-
-Questions:
-1. Should I add the undocumented parsing fix to the changelog?
-2. Any other changes to include?
-3. Confirm version 1.1.1?
-```
-
-User confirms: "Yes, add the parsing fix, version 1.1.1 is correct"
-
-Claude updates CHANGELOG.md:
-```markdown
-## [Unreleased]
-
-## [1.1.1] - 2026-01-10
-
-### Fixed
-- Resolved race condition in session persistence (session.py)
-- Fixed terminal width detection on Windows (ansi.py)
-- Handle empty host list edge case in parsing.py
-
-### Changed
-- Improved error messages for invalid plugin IDs
-```
-
 #### Automated Release Workflow
 
-**File**: `.github/workflows/release.yml`
-
-The release workflow is **automatically triggered** when `pyproject.toml` is modified on the `main` branch (via PR merge or direct commit).
-
-**Workflow steps**:
-1. **Version detection**: Compares current `pyproject.toml` version with previous commit
-2. **Validation**: Ensures version follows semver format (X.Y.Z)
-3. **Changelog extraction**: Parses `CHANGELOG.md` using `scripts/extract_changelog.py`
-4. **Build**: Creates wheel and source distribution (`python -m build`)
-5. **Tag creation**: Creates annotated git tag (e.g., `v1.0.1`) as `github-actions[bot]`
-6. **Release creation**: Creates GitHub Release with extracted changelog and distribution artifacts
-7. **Mark as latest**: Release is automatically marked as latest
-
-**Key features**:
-- Works for both PR merges and direct commits to main
-- Idempotent (re-running doesn't duplicate releases)
-- Skips release if version unchanged (prevents false triggers)
-- Attaches built wheel/sdist to release for distribution
-
-**Creating a new release**:
-1. Update version in `pyproject.toml` (e.g., `1.0.1` → `1.0.2`)
-2. Add release entry to `CHANGELOG.md` with format: `## [X.Y.Z] - YYYY-MM-DD`
-3. Commit changes and push/merge to `main`
-4. Workflow automatically creates tag and GitHub Release
-
-**Changelog format**: Must follow [Keep a Changelog](https://keepachangelog.com/) format:
-```markdown
-## [1.0.2] - 2026-01-10
-
-### Added
-- New feature description
-
-### Fixed
-- Bug fix description
-```
-
-**Helper script**: `scripts/extract_changelog.py` extracts version-specific sections from `CHANGELOG.md`
-
-**Testing locally**:
-```bash
-# Test changelog extraction
-python scripts/extract_changelog.py 1.0.1
-
-# Verify version parsing
-python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])"
-```
+**Release workflow** (`.github/workflows/release.yml`): Triggered automatically when `pyproject.toml` version changes on `main`. Requires matching `## [X.Y.Z] - YYYY-MM-DD` entry in CHANGELOG.md. Creates annotated git tag and GitHub Release automatically.
 
 ### Constants & Configuration
 
@@ -767,11 +521,7 @@ python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['pro
 
 ### Data vs Render Separation
 
-**Pattern**: Compute pure data first, then render with Rich.
-
-**Example**: `analysis.py:build_compare_data()` returns data dict → `render_compare_table()` creates Rich table.
-
-**Why**: Enables testing business logic without Rich rendering, keeps functions focused.
+**Pattern**: Compute pure data first, then render with Rich. Example: `analysis.py:build_compare_data()` returns data dict → `render_compare_table()` creates Rich table.
 
 ### Severity Handling
 
@@ -845,27 +595,6 @@ Set to `null` or omit for automatic detection from terminal height. Falls back t
 - `@pytest.mark.integration`: DB or filesystem (< 1s each)
 - `@pytest.mark.slow`: Large file processing (mark as slow)
 
-### Parametrized Tests
-
-Use `@pytest.mark.parametrize` for testing multiple input variations:
-
-```python
-@pytest.mark.parametrize("input_str,expected_host,expected_port", [
-    ("192.168.1.1:80", "192.168.1.1", 80),
-    ("[::1]:8080", "::1", 8080),
-])
-def test_split_host_port(input_str, expected_host, expected_port):
-    host, port = split_host_port(input_str)
-    assert host == expected_host
-    assert port == expected_port
-```
-
-### Coverage Practices
-
-- Run `pytest --cov-report=html` to identify untested branches
-- Exclude boilerplate with `# pragma: no cover` sparingly
-- Focus coverage on critical paths (DB ops, parsing, import)
-
 ## Common Tasks
 
 ### Adding a New Command
@@ -888,15 +617,7 @@ def test_split_host_port(input_str, expected_host, expected_port):
 
 ### Database Schema Management
 
-**Current approach**: The database is created directly in its final normalized structure. There is no migration system currently implemented.
-
-**Key points**:
-- `initialize_database()` creates all tables in final structure on first run
-- Uses `CREATE TABLE IF NOT EXISTS` for idempotency
-- Foundation tables (severity_levels, artifact_types) populated automatically
-- SQL views created automatically for computed statistics
-
-**Schema changes**: Currently require major version bump and users re-importing scans. A proper migration system will be implemented in a future release from a clean slate.
+**Current approach**: No migration system — database created directly in final normalized structure. Schema changes require major version bump and users re-importing scans.
 
 **Testing the schema**:
 ```bash

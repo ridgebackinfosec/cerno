@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.8] - 2026-04-15
+
+### Changed
+- Trimmed CLAUDE.md by 29% (279 lines) — removed generic Python principles, verbose packaging examples, release workflow internals, and test pattern boilerplate to improve Claude Code context efficiency
+
 ## [1.3.7] - 2026-04-15
 
 ### Added
