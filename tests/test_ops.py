@@ -892,7 +892,7 @@ class TestProxychainsRenderRow:
 
         render_tool_availability_table(include_unavailable=True)
         captured = capsys.readouterr()
-        assert "active" in captured.out or "9000" in captured.out
+        assert "SOCKS5 127.0.0.1:9000 (active)" in captured.out
 
     @pytest.mark.unit
     def test_proxychains4_row_warns_when_enabled_but_missing(self, monkeypatch, capsys):
@@ -909,5 +909,21 @@ class TestProxychainsRenderRow:
         render_tool_availability_table(include_unavailable=True)
         captured = capsys.readouterr()
         assert "proxychains4" in captured.out
-        # Should contain a warning about not being found
-        assert "not" in captured.out.lower() or "❌" in captured.out
+        assert "proxy mode will not work" in captured.out
+
+    @pytest.mark.unit
+    def test_proxychains4_row_shows_version_when_available_and_disabled(self, monkeypatch, capsys):
+        """When proxy disabled and binary found, show version (no SOCKS5/active marker)."""
+        from cerno_pkg.render import render_tool_availability_table
+        from cerno_pkg.config import CernoConfig
+        import shutil as _shutil
+
+        config = CernoConfig(proxychains_enabled=False)
+        monkeypatch.setattr("cerno_pkg.render.load_config", lambda: config)
+        monkeypatch.setattr(_shutil, "which", lambda name: "/usr/bin/proxychains4" if name == "proxychains4" else None)
+
+        render_tool_availability_table(include_unavailable=True)
+        captured = capsys.readouterr()
+        assert "proxychains4" in captured.out
+        assert "active" not in captured.out
+        assert "SOCKS5" not in captured.out

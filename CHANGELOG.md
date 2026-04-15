@@ -7,14 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.7] - 2026-04-15
+
 ### Added
 - proxychains4 integration: route all tool executions (nmap, netexec, Metasploit, custom) through a SOCKS5 proxy via proxychains4
   - New config fields: `proxychains_enabled` (default: false), `proxychains_host` (default: 127.0.0.1), `proxychains_port` (default: 9000)
   - Cerno manages its own `~/.cerno/proxychains4.conf` — system config is not touched
   - `--proxy` / `--no-proxy` flags on `cerno review` to override config per session
-  - nmap proxy adjustments: `-Pn` added automatically, sudo dropped, limitations note shown (`ops.py`, `tools.py`)
-  - `[PROXY]` badge (magenta) in review session status line when proxy is active (`cerno.py`)
-  - proxychains4 row in startup tool availability table with active/inactive state (`render.py`)
+  - nmap proxy adjustments: `-Pn` added automatically, sudo dropped, limitations note shown
+  - `[PROXY]` badge (magenta) in review session status line when proxy is active
+  - proxychains4 row in startup tool availability table with active/inactive state
+
+### Documentation
+- README: added proxychains4 integration section under Features
+- README: Commands section updated with `cerno import nessus <directory>`, `cerno review --proxy/--no-proxy/--check`, `cerno scan compare`, `cerno scan history`, `cerno reset`, and `cerno config get`
+- README: Keyboard Shortcuts expanded from 9 to 25 shortcuts, split into findings-list view and finding-detail view contexts
+- README: Configuration section updated with proxychains4 config keys and `cerno config get`
+- README: Troubleshooting section updated with `cerno reset` as full environment reset option
 
 ## [1.3.6] - 2026-04-14
 

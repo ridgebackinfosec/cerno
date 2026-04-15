@@ -1117,12 +1117,12 @@ def render_tool_availability_table(include_unavailable: bool = True) -> None:
     pc4_available = bool(shutil.which("proxychains4"))
     if include_unavailable or pc4_available:
         if pc4_available:
-            pc4_version = get_tool_version("proxychains4")
             if _proxy_cfg.proxychains_enabled:
                 pc4_details_str = (
                     f"SOCKS5 {_proxy_cfg.proxychains_host}:{_proxy_cfg.proxychains_port} (active)"
                 )
             else:
+                pc4_version = get_tool_version("proxychains4")
                 pc4_details_str = f"v{pc4_version}" if pc4_version else "Available"
             pc4_details_text = Text(pc4_details_str)
             pc4_details_text.stylize(
