@@ -8,7 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- proxychains4 row added to `render_tool_availability_table()` (`render.py`); shows active SOCKS5 details when proxy is enabled and binary is found, a warning when enabled but binary is missing, or standard availability info when disabled
+- proxychains4 integration: route all tool executions (nmap, netexec, Metasploit, custom) through a SOCKS5 proxy via proxychains4
+  - New config fields: `proxychains_enabled` (default: false), `proxychains_host` (default: 127.0.0.1), `proxychains_port` (default: 9000)
+  - Cerno manages its own `~/.cerno/proxychains4.conf` — system config is not touched
+  - `--proxy` / `--no-proxy` flags on `cerno review` to override config per session
+  - nmap proxy adjustments: `-Pn` added automatically, sudo dropped, limitations note shown (`ops.py`, `tools.py`)
+  - `[PROXY]` badge (magenta) in review session status line when proxy is active (`cerno.py`)
+  - proxychains4 row in startup tool availability table with active/inactive state (`render.py`)
 
 ## [1.3.6] - 2026-04-14
 
