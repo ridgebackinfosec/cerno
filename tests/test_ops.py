@@ -883,6 +883,7 @@ class TestProxychainsRenderRow:
         """When proxy enabled and binary found, show 'active' details."""
         from cerno_pkg.render import render_tool_availability_table
         from cerno_pkg.config import CernoConfig
+
         import shutil as _shutil
 
         config = CernoConfig(proxychains_enabled=True, proxychains_host="127.0.0.1", proxychains_port=9000)
@@ -898,6 +899,7 @@ class TestProxychainsRenderRow:
         """When proxy enabled but binary missing, show warning in details."""
         from cerno_pkg.render import render_tool_availability_table
         from cerno_pkg.config import CernoConfig
+
         import shutil as _shutil
 
         config = CernoConfig(proxychains_enabled=True)
