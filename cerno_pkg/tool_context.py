@@ -34,6 +34,7 @@ class ToolContext:
         tcp_sockets: Path to TCP host:port list file
         ports_str: Comma-separated port list (e.g., "80,443,8080")
         use_sudo: Whether sudo is available for privileged commands
+        use_proxy: Whether to route commands through proxychains4
         workdir: Working directory for temporary files
         results_dir: Directory for final results/output
         oabase: Output file base path (for -oA style outputs)
@@ -62,6 +63,7 @@ class ToolContext:
     # Optional metadata
     plugin_url: Optional[str] = None
     chosen_file: Optional[Path] = None
+    use_proxy: bool = False
 
 
 @dataclass
