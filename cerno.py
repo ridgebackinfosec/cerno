@@ -1873,6 +1873,10 @@ def review(
         err("Cannot use both --custom-workflows and --custom-workflows-only")
         raise typer.Exit(1)
 
+    if proxy and no_proxy:
+        err("Cannot use both --proxy and --no-proxy")
+        raise typer.Exit(1)
+
     args = types.SimpleNamespace(
         export_root=export_root,
         no_tools=no_tools,
