@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import shutil
 import sqlite3
 import subprocess
@@ -72,9 +73,16 @@ def write_proxychains_config(proxy: ProxyConfig, config_path: Path) -> None:
     Args:
         proxy: Proxy configuration with host and port
         config_path: Destination path for the proxychains4.conf file
+
+    Raises:
+        ValueError: If host or port values are malformed.
     """
     if not proxy.enabled:
         return
+    if "\n" in proxy.host or " " in proxy.host:
+        raise ValueError(f"Invalid proxychains host: {proxy.host!r}")
+    if not (0 < proxy.port < 65536):
+        raise ValueError(f"Invalid proxychains port: {proxy.port}")
     content = (
         "strict_chain\n"
         "proxy_dns\n"
@@ -93,6 +101,7 @@ def run_command_with_progress(
     *,
     shell: bool = False,
     executable: Optional[str] = None,
+    proxy_config: Optional[ProxyConfig] = None,
 ) -> ExecutionMetadata:
     """Execute a command with a Rich progress spinner.
 
@@ -103,6 +112,8 @@ def run_command_with_progress(
         cmd: Command to execute (list of args or shell string)
         shell: Whether to execute via shell
         executable: Shell executable to use (if shell=True)
+        proxy_config: Optional proxy configuration. When enabled, wraps command
+            with proxychains4 and writes a proxychains4.conf to ~/.cerno/.
 
     Returns:
         ExecutionMetadata with exit code, duration, and sudo usage
@@ -157,6 +168,26 @@ def run_command_with_progress(
     except Exception:
         # Non-fatal: even if pre-validation fails, fallback to normal behavior
         pass
+
+    # Apply proxychains4 wrapping if proxy is enabled.
+    # Must happen AFTER sudo detection (used_sudo checks original cmd)
+    # and BEFORE Popen (so the wrapped command is what actually runs).
+    if proxy_config is not None and proxy_config.enabled:
+        cerno_dir = Path.home() / ".cerno"
+        pc4_conf = cerno_dir / "proxychains4.conf"
+        write_proxychains_config(proxy_config, pc4_conf)
+        if isinstance(cmd, list):
+            cmd = ["proxychains4", "-f", str(pc4_conf)] + list(cmd)
+        else:
+            cmd = f"proxychains4 -f {shlex.quote(str(pc4_conf))} {cmd}"
+        log_info(
+            f"Proxy: routing through SOCKS5 "
+            f"{proxy_config.host}:{proxy_config.port} via proxychains4"
+        )
+        get_console().print(
+            f"[proxy] Routing through SOCKS5 "
+            f"{proxy_config.host}:{proxy_config.port} via proxychains4"
+        )
 
     if isinstance(cmd, list):
         proc = subprocess.Popen(

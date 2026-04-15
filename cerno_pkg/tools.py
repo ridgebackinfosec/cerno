@@ -821,7 +821,7 @@ def build_nmap_workflow(ctx: "ToolContext") -> Optional["CommandResult"]:
         from .ansi import warn as _proxy_warn
         _proxy_warn("[!] Proxy mode: nmap adjustments applied")
         print("    \u2022 -Pn added (ICMP does not traverse SOCKS)")
-        print("    \u2022 SYN scan (-sS) replaced by TCP connect (proxychains4 limitation)")
+        print("    \u2022 SYN scan (-sS) unavailable \u2014 proxychains4 forces TCP connect")
         print("    \u2022 UDP scanning not supported through SOCKS proxy")
 
     cmd = build_nmap_cmd(udp_ports, nse_option, ips_file, ctx.ports_str, ctx.use_sudo, ctx.oabase, use_proxy=ctx.use_proxy)
