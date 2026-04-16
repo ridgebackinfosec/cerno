@@ -1106,7 +1106,7 @@ class TestBuildNmapRemoteCmd:
             nse_option="",
             timestamp="20260416_143022",
         )
-        assert result.startswith("curl -s http://10.10.14.5:8877/ips.txt |")
+        assert result.startswith("curl -sk https://10.10.14.5:8877/ips.txt |")
         assert "sudo nmap -sS -A -iL -" in result
         assert "-p 445,139" in result
         assert "-oA /tmp/cerno_20260416_143022" in result
@@ -1122,6 +1122,7 @@ class TestBuildNmapRemoteCmd:
             timestamp="20260416_143022",
         )
         assert "-p" not in result
+        assert "https://" in result
 
     @pytest.mark.unit
     def test_remote_oneliner_includes_nse_option(self):
@@ -1146,3 +1147,4 @@ class TestBuildNmapRemoteCmd:
             timestamp="20260416_143022",
         )
         assert "-Pn" not in result
+        assert "curl -sk" in result
