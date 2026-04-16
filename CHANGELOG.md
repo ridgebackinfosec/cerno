@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.12] - 2026-04-16
+
+### Fixed
+- `build_nmap_remote_oneliner` function was written to `ops.py` during v1.3.11 implementation but never committed — caused `ImportError` on `pipx upgrade cerno` since `tools.py` imported it but the installed package lacked the definition
+
 ## [1.3.11] - 2026-04-16
 
 ### Added
