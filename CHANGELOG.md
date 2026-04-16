@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.10] - 2026-04-16
+
+### Fixed
+- Claude Assistant now correctly reports Metasploit module names for findings with mapped MSF modules — `metasploit_names` was not included in the `get_by_scan_with_plugin` and `get_by_scan_ids_merged` SELECT queries, so `Plugin` objects always had `metasploit_names=None` and the context block always showed "Metasploit Modules: None" even when `has_metasploit=True` (`models.py`)
+
 ## [1.3.9] - 2026-04-15
 
 ### Fixed

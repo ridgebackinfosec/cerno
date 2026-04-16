@@ -458,7 +458,7 @@ class Finding:
                     f.review_state, f.reviewed_at, f.reviewed_by, f.review_notes,
                     p.plugin_id as p_plugin_id, p.plugin_name, p.severity_int, p.severity_label,
                     p.has_metasploit, p.cvss3_score, p.cvss2_score, p.cves,
-                    p.plugin_url, p.metadata_fetched_at
+                    p.plugin_url, p.metadata_fetched_at, p.metasploit_names
                 FROM findings f
                 INNER JOIN v_plugins_with_severity p ON f.plugin_id = p.plugin_id
                 WHERE f.scan_id = ?
@@ -523,9 +523,11 @@ class Finding:
                     review_notes=row[6]
                 )
 
-                # Create Plugin from row (columns 7-15, indices shifted down by 2)
+                # Create Plugin from row (columns 7-17)
                 cves_json = row[14]
                 cves = json.loads(cves_json) if cves_json else None
+                msf_names_json = row[17]
+                msf_names = json.loads(msf_names_json) if msf_names_json else None
 
                 plugin = Plugin(
                     plugin_id=row[7],
@@ -537,7 +539,8 @@ class Finding:
                     cvss2_score=row[13],
                     cves=cves,
                     plugin_url=row[15],
-                    metadata_fetched_at=row[16]
+                    metadata_fetched_at=row[16],
+                    metasploit_names=msf_names,
                 )
 
                 results.append((plugin_file, plugin))
@@ -596,7 +599,7 @@ class Finding:
                     f.review_state, f.reviewed_at, f.reviewed_by, f.review_notes,
                     p.plugin_id as p_plugin_id, p.plugin_name, p.severity_int, p.severity_label,
                     p.has_metasploit, p.cvss3_score, p.cvss2_score, p.cves,
-                    p.plugin_url, p.metadata_fetched_at
+                    p.plugin_url, p.metadata_fetched_at, p.metasploit_names
                 FROM findings f
                 INNER JOIN v_plugins_with_severity p ON f.plugin_id = p.plugin_id
                 WHERE f.scan_id IN ({placeholders})
@@ -659,6 +662,8 @@ class Finding:
                     # First row for this plugin_id has the lowest scan_id (due to ORDER BY)
                     cves_json = row[14]
                     cves = json.loads(cves_json) if cves_json else None
+                    msf_names_json = row[17]
+                    msf_names = json.loads(msf_names_json) if msf_names_json else None
                     plugin_map[pid] = Plugin(
                         plugin_id=row[7],
                         plugin_name=row[8],
@@ -670,6 +675,7 @@ class Finding:
                         cves=cves,
                         plugin_url=row[15],
                         metadata_fetched_at=row[16],
+                        metasploit_names=msf_names,
                     )
 
                 all_instances[pid].append(finding)
