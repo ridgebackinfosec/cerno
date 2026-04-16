@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.17] - 2026-04-16
+
+### Changed
+- Claude Assistant per-finding context now includes Nessus plugin output (raw scanner text per host) so Claude can reference specific version strings, banners, and paths from the scan; capped at 5 hosts × 600 chars each with truncation notice (`claude_assistant.py:build_finding_context`, `run_exchange`)
+
 ## [1.3.16] - 2026-04-16
 
 ### Changed

@@ -103,6 +103,7 @@ def build_finding_context(
     plugin: Plugin,
     finding: Finding,
     hosts: list[str],
+    plugin_outputs: list[tuple[str, int | None, str | None]] | None = None,
 ) -> str:
     """Assemble a structured context block describing the finding.
 
@@ -110,6 +111,10 @@ def build_finding_context(
         plugin: Plugin database object with metadata
         finding: Finding database object with review state
         hosts: List of affected host strings (host:port format)
+        plugin_outputs: Optional list of (host, port, plugin_output) tuples from
+            finding_affected_hosts. When provided, the raw Nessus scanner output
+            is appended to the context so Claude can reference specific banners,
+            version strings, and paths discovered during the scan.
 
     Returns:
         Formatted context string to prepend to the prompt
@@ -159,6 +164,25 @@ def build_finding_context(
     if finding.extra_finding_ids:
         scan_count = 1 + len(finding.extra_finding_ids)
         lines.append(f"Note: This finding appears in {scan_count} selected scans.")
+
+    if plugin_outputs:
+        MAX_HOSTS = 5
+        MAX_CHARS = 600
+        lines.append("")
+        lines.append("=== Nessus Plugin Output ===")
+        shown = plugin_outputs[:MAX_HOSTS]
+        for host, port, output in shown:
+            label = f"{host}:{port}" if port else host
+            lines.append(f"Host: {label}")
+            if output:
+                text = output.strip()
+                if len(text) > MAX_CHARS:
+                    text = text[:MAX_CHARS] + f"\n... [truncated, {len(output) - MAX_CHARS} chars omitted]"
+                lines.append(text)
+            else:
+                lines.append("(no plugin output recorded)")
+        if len(plugin_outputs) > MAX_HOSTS:
+            lines.append(f"... and {len(plugin_outputs) - MAX_HOSTS} more host(s) omitted")
 
     lines.append("=== End Context ===")
     return "\n".join(lines)
@@ -270,7 +294,8 @@ def run_exchange(
 
     turns = ClaudeConversationTurn.get_by_finding(conn, finding_id)
     skill = load_skill_prompt()
-    context = build_finding_context(plugin, finding, hosts)
+    plugin_outputs = finding.get_plugin_outputs_by_host(conn)
+    context = build_finding_context(plugin, finding, hosts, plugin_outputs)
     prompt = format_prompt(skill, context, turns, question)
 
     response, exit_code = ask_claude(prompt)
