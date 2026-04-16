@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
-- Remote scan mode: upgraded HTTP server to HTTPS with self-signed certificate; curl one-liner now uses `curl -sk https://` instead of `curl -s http://` to skip certificate verification (`ops.py`, `build_nmap_remote_oneliner`)
+- Remote scan mode: curl one-liner now uses `curl -sk https://` instead of `curl -s http://` (`ops.py`, `build_nmap_remote_oneliner`) — HTTPS server upgrade in progress
 
 ## [1.3.13] - 2026-04-16
 
