@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.11] - 2026-04-16
+
+### Added
+- Remote Scan Mode for nmap: `[R] Toggle Remote Mode` in the nmap options menu hosts the target list via a temporary HTTP server and generates a `curl | sudo nmap -sS` one-liner for the operator to run directly on a pivot host — enabling full SYN scans without proxychains constraints (`tools.py`, `ops.py`)
+- Interface picker: on first remote mode activation with no `pivot_interface` configured, prompts user to select from detected network interfaces and saves the choice to `~/.cerno/config.yaml` automatically (`tools.py`)
+- `get_interface_ip(interface)` and `list_interfaces()` utilities in `ops.py` for detecting IPv4 address from a named network interface using `fcntl`/`socket`
+- `start_ips_server(ips_path, port)` in `ops.py`: minimal HTTP server serving only `GET /ips.txt` — no directory listing, 404 for all other paths, request logging suppressed
+- `build_nmap_remote_oneliner()` in `ops.py`: constructs the `curl -s http://<ip>:<port>/ips.txt | sudo nmap -sS -A -iL -` one-liner with optional port and NSE flags; no `-Pn` (not needed without proxychains)
+- `pivot_interface` (default: `null`) and `pivot_http_port` (default: `8877`) config fields (`config.py`)
+- `CommandResult.is_remote`, `CommandResult.cleanup`, `CommandResult.remote_output_path` fields for display-only remote workflow results that cerno shows but does not execute (`tool_context.py`)
+- Post-scan guidance: after the operator dismisses the remote command screen, cerno prints `scp` and `cerno import nmap` commands to retrieve and import results
+
 ## [1.3.10] - 2026-04-16
 
 ### Fixed
