@@ -722,20 +722,32 @@ def start_ips_server(
     tmpdir = tempfile.mkdtemp()
     cert_file = os.path.join(tmpdir, "cert.pem")
     key_file = os.path.join(tmpdir, "key.pem")
-    subprocess.run(
-        [
-            "openssl", "req", "-x509", "-newkey", "rsa:2048",
-            "-keyout", key_file,
-            "-out", cert_file,
-            "-days", "1", "-nodes",
-            "-subj", "/CN=cerno",
-        ],
-        check=True,
-        capture_output=True,
-    )
+    try:
+        subprocess.run(
+            [
+                "openssl", "req", "-x509", "-newkey", "rsa:2048",
+                "-keyout", key_file,
+                "-out", cert_file,
+                "-days", "1", "-nodes",
+                "-subj", "/CN=cerno",
+            ],
+            check=True,
+            capture_output=True,
+        )
+    except FileNotFoundError:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+        raise RuntimeError(
+            "openssl not found — install openssl to use remote scan mode"
+        )
+    except subprocess.CalledProcessError as e:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+        raise RuntimeError(
+            f"openssl failed to generate certificate: {e.stderr.decode(errors='replace').strip()}"
+        )
 
     # Wrap with TLS
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
     ctx.load_cert_chain(cert_file, key_file)
 
     server = _ReuseAddrHTTPServer((bind_ip, port), _IpsHandler)

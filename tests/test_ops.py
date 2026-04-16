@@ -804,7 +804,7 @@ class TestStartIpsServer:
         ctx.check_hostname = False
         ctx.verify_mode = _ssl.CERT_NONE
         with pytest.raises((urllib.error.URLError, ConnectionRefusedError, OSError)):
-            urllib.request.urlopen("https://127.0.0.1:18879/ips.txt", context=ctx)
+            urllib.request.urlopen("https://127.0.0.1:18879/ips.txt", context=ctx, timeout=2)
 
     @pytest.mark.unit
     def test_cleanup_removes_cert_tempdir(self, tmp_path):
