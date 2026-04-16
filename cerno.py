@@ -2465,6 +2465,12 @@ def config_show() -> None:
     rows.append(("proxychains_port", config.proxychains_port,
                 config.proxychains_port == defaults.proxychains_port, "SOCKS5 proxy port"))
 
+    # Remote scan mode
+    rows.append(("pivot_interface", config.pivot_interface or "(not set)",
+                config.pivot_interface == defaults.pivot_interface, "Interface for remote scan HTTP server"))
+    rows.append(("pivot_http_port", config.pivot_http_port,
+                config.pivot_http_port == defaults.pivot_http_port, "Port for remote scan HTTP server"))
+
     # Sort rows alphabetically by setting name (first element of tuple)
     rows.sort(key=lambda row: row[0])
 

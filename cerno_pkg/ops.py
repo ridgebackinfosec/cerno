@@ -705,7 +705,10 @@ def start_ips_server(ips_path: Path, port: int) -> tuple["http.server.HTTPServer
         def log_message(self, format: str, *args: object) -> None:
             pass  # Suppress request logging to terminal
 
-    server = http.server.HTTPServer(("0.0.0.0", port), _IpsHandler)
+    class _ReuseAddrHTTPServer(http.server.HTTPServer):
+        allow_reuse_address = True
+
+    server = _ReuseAddrHTTPServer(("0.0.0.0", port), _IpsHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server, thread

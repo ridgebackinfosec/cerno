@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.13] - 2026-04-16
+
+### Fixed
+- Remote scan mode HTTP server now fully releases its port after shutdown — `server.server_close()` is called alongside `server.shutdown()`, and `allow_reuse_address = True` is set so the port is immediately reclaimable; previously the socket remained bound, causing `Address already in use` on the second remote command invocation (`ops.py`, `tools.py`)
+- `pivot_interface` and `pivot_http_port` now appear in `cerno config show` output (`cerno.py`)
+
 ## [1.3.12] - 2026-04-16
 
 ### Fixed

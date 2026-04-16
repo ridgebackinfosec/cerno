@@ -917,7 +917,7 @@ def build_nmap_workflow(ctx: "ToolContext") -> Optional["CommandResult"]:
         return CommandResult(
             display_command=one_liner,
             is_remote=True,
-            cleanup=server.shutdown,
+            cleanup=lambda: (server.shutdown(), server.server_close()),
             remote_output_path=output_path,
         )
     # --- End remote scan mode ---
