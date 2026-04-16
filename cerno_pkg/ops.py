@@ -699,7 +699,7 @@ def start_ips_server(
 
     class _IpsHandler(http.server.BaseHTTPRequestHandler):
         def do_GET(self) -> None:
-            if self.path == "/ips.txt":
+            if self.path == "/targets.txt":
                 try:
                     content = _ips_path.read_bytes()
                     self.send_response(200)
@@ -771,11 +771,12 @@ def build_nmap_remote_oneliner(
     ports_str: str,
     nse_option: str,
     timestamp: str,
+    udp: bool = False,
 ) -> str:
     """Build the curl+nmap one-liner for remote scan mode.
 
     The operator pastes this into a shell on the pivot host.
-    Requires root (sudo) on the pivot for -sS.
+    Requires root (sudo) on the pivot for -sS / -sU.
 
     Args:
         server_ip: IP address of the cerno HTTPS server (from pivot_interface)
@@ -783,15 +784,17 @@ def build_nmap_remote_oneliner(
         ports_str: Comma-separated ports string (e.g. '445,139') or empty string
         nse_option: NSE option string (e.g. '--script=smb-vuln-ms17-010') or empty string
         timestamp: Timestamp string for output filename (e.g. '20260416_143022')
+        udp: If True, use -sU (UDP scan) instead of -sS (TCP SYN scan)
 
     Returns:
         Complete one-liner command string
     """
     output_path = f"/tmp/cerno_{timestamp}"
-    nmap_parts = ["sudo", "nmap", "-sS", "-A", "-iL", "-"]
+    scan_flag = "-sU" if udp else "-sS"
+    nmap_parts = ["sudo", "nmap", scan_flag, "-A", "-iL", "-"]
     if ports_str:
         nmap_parts += ["-p", ports_str]
     if nse_option:
         nmap_parts.append(nse_option)
     nmap_parts += ["-oA", output_path]
-    return f"curl -sk https://{server_ip}:{server_port}/ips.txt | " + " ".join(nmap_parts)
+    return f"curl -sk https://{server_ip}:{server_port}/targets.txt | " + " ".join(nmap_parts)

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.16] - 2026-04-16
+
+### Changed
+- Remote scan server status message updated from "HTTP server running" to "HTTPS server running" for clarity (`tools.py`)
+- Remote scan server status message updated from "serving IP list" to "serving target list" (`tools.py`)
+- Served target file URL path renamed from `/ips.txt` to `/targets.txt` in HTTPS server and curl one-liner (`ops.py`)
+- Proxy indicator badge renamed from `[PROXY]` to `[PROXY ENABLED]` in review session status line and finding action footer (`cerno.py`, `render.py`)
+
+### Fixed
+- Remote scan UDP mode: `build_nmap_remote_oneliner()` now accepts a `udp` parameter and emits `-sU` instead of hardcoded `-sS` when a UDP scan is requested; caller in `tools.py` passes `udp=bool(udp_ports)` (`ops.py`, `tools.py`)
+- Claude Assistant report brief trigger word changed from `summarize`/`scenario` to `report`; removed the unverified-finding caveat from both the system prompt and the injected query (`claude_assistant.py`, `cerno-assistant.md`)
+
 ## [1.3.15] - 2026-04-16
 
 ### Changed

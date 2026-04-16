@@ -38,7 +38,7 @@ BETA_NOTICE = (
 )
 
 # Keywords that trigger a pentest report brief instead of a freeform question
-REPORT_BRIEF_TRIGGERS: frozenset[str] = frozenset({"summarize", "scenario"})
+REPORT_BRIEF_TRIGGERS: frozenset[str] = frozenset({"report"})
 
 # Expanded prompt sent to Claude when a report brief trigger is detected
 REPORT_BRIEF_QUERY = (
@@ -46,8 +46,7 @@ REPORT_BRIEF_QUERY = (
     "Requirements: write entirely in past tense; mention the specific affected systems "
     "(IP addresses or hostnames) and ports from the context; include the finding name and "
     "severity; if any Metasploit modules are listed in the context, name them; keep it to "
-    "2–3 sentences; note explicitly that this finding has not yet been independently "
-    "verified as a true-positive and should be confirmed before inclusion in a final report. "
+    "2–3 sentences. "
     "Use plain prose only — no markdown, no headers, no bullet points."
 )
 

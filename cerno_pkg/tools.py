@@ -909,6 +909,7 @@ def build_nmap_workflow(ctx: "ToolContext") -> Optional["CommandResult"]:
             ports_str=ctx.ports_str,
             nse_option=nse_option,
             timestamp=timestamp,
+            udp=bool(udp_ports),
         )
         output_path = f"/tmp/cerno_{timestamp}"
 
@@ -1326,7 +1327,7 @@ def run_tool_workflow(
         if result.is_remote:
             from .ansi import warn as _warn, ok as _ok
             print()
-            _warn("[!] Remote scan mode — HTTP server running (serving IP list)")
+            _warn("[!] Remote scan mode — HTTPS server running (serving target list)")
             print()
             print("Command to run on pivot:")
             print("─" * 70)

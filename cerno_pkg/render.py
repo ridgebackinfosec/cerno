@@ -924,7 +924,7 @@ def render_finding_actions_footer(
     term_width = get_terminal_width()
     if use_proxy:
         proxy_badge = Text()
-        proxy_badge.append("[PROXY]", style="bold magenta")
+        proxy_badge.append("[PROXY ENABLED]", style="bold magenta")
         _console_global.print(proxy_badge)
     _console_global.print("[cyan]>>[/cyan]")
 

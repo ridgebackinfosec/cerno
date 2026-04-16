@@ -767,7 +767,7 @@ class TestStartIpsServer:
             ctx = _ssl.create_default_context()
             ctx.check_hostname = False
             ctx.verify_mode = _ssl.CERT_NONE
-            response = urllib.request.urlopen("https://127.0.0.1:18877/ips.txt", context=ctx)
+            response = urllib.request.urlopen("https://127.0.0.1:18877/targets.txt", context=ctx)
             content = response.read().decode()
             assert "10.10.10.1" in content
             assert "10.10.10.2" in content
@@ -804,7 +804,7 @@ class TestStartIpsServer:
         ctx.check_hostname = False
         ctx.verify_mode = _ssl.CERT_NONE
         with pytest.raises((urllib.error.URLError, ConnectionRefusedError, OSError)):
-            urllib.request.urlopen("https://127.0.0.1:18879/ips.txt", context=ctx, timeout=2)
+            urllib.request.urlopen("https://127.0.0.1:18879/targets.txt", context=ctx, timeout=2)
 
     @pytest.mark.unit
     def test_cleanup_removes_cert_tempdir(self, tmp_path):
@@ -1127,7 +1127,7 @@ class TestBuildNmapRemoteCmd:
             nse_option="",
             timestamp="20260416_143022",
         )
-        assert result.startswith("curl -sk https://10.10.14.5:8877/ips.txt |")
+        assert result.startswith("curl -sk https://10.10.14.5:8877/targets.txt |")
         assert "sudo nmap -sS -A -iL -" in result
         assert "-p 445,139" in result
         assert "-oA /tmp/cerno_20260416_143022" in result
@@ -1156,6 +1156,20 @@ class TestBuildNmapRemoteCmd:
             timestamp="20260416_143022",
         )
         assert "--script=smb-vuln-ms17-010" in result
+
+    @pytest.mark.unit
+    def test_remote_oneliner_udp_uses_sU_not_sS(self):
+        from cerno_pkg.ops import build_nmap_remote_oneliner
+        result = build_nmap_remote_oneliner(
+            server_ip="10.10.14.5",
+            server_port=8877,
+            ports_str="161",
+            nse_option="",
+            timestamp="20260416_143022",
+            udp=True,
+        )
+        assert "-sU" in result
+        assert "-sS" not in result
 
     @pytest.mark.unit
     def test_remote_oneliner_no_pn_flag(self):

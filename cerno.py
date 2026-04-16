@@ -686,7 +686,7 @@ def browse_file_list(
             # Proxy badge
             if _proxy_active:
                 proxy_badge = Text()
-                proxy_badge.append("[PROXY]", style="bold magenta")
+                proxy_badge.append("[PROXY ENABLED]", style="bold magenta")
                 status_parts.insert(0, proxy_badge)
 
             # Responsive layout based on terminal width
