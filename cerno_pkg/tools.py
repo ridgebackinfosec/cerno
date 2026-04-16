@@ -912,12 +912,14 @@ def build_nmap_workflow(ctx: "ToolContext") -> Optional["CommandResult"]:
         )
         output_path = f"/tmp/cerno_{timestamp}"
 
-        server, _thread = start_ips_server(ips_file, config.pivot_http_port)
+        server, _thread, server_cleanup = start_ips_server(
+            ips_file, config.pivot_http_port, bind_ip=ip
+        )
 
         return CommandResult(
             display_command=one_liner,
             is_remote=True,
-            cleanup=lambda: (server.shutdown(), server.server_close()),
+            cleanup=server_cleanup,
             remote_output_path=output_path,
         )
     # --- End remote scan mode ---

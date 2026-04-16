@@ -17,7 +17,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from rich.progress import (
     Progress,
@@ -669,21 +669,31 @@ def list_interfaces() -> list[tuple[str, str]]:
     return interfaces
 
 
-def start_ips_server(ips_path: Path, port: int) -> tuple["http.server.HTTPServer", "threading.Thread"]:
-    """Start a temporary HTTP server serving the IP list at /ips.txt.
+def start_ips_server(
+    ips_path: Path,
+    port: int,
+    bind_ip: str,
+) -> tuple["http.server.HTTPServer", "threading.Thread", Callable[[], None]]:
+    """Start a temporary HTTPS server serving the IP list at /ips.txt.
 
-    The server binds to 0.0.0.0 and serves ONLY GET /ips.txt — all other
-    paths return 404. No directory listing.
+    Binds to the specified interface IP only (not 0.0.0.0) to limit
+    exposure. Uses a self-signed certificate generated at startup.
+    Serves ONLY GET /ips.txt — all other paths return 404.
 
     Args:
         ips_path: Path to the tcp_ips.list file to serve
         port: Port to listen on
+        bind_ip: IP address of the interface to bind to (e.g. '10.10.14.5')
 
     Returns:
-        (server, thread) — call server.shutdown() to stop.
+        (server, thread, cleanup_fn) — call cleanup_fn() to stop the server
+        and remove the temporary certificate files.
     """
     import http.server
     import threading
+    import ssl
+    import subprocess
+    import tempfile
 
     _ips_path = ips_path  # capture for closure
 
@@ -708,10 +718,39 @@ def start_ips_server(ips_path: Path, port: int) -> tuple["http.server.HTTPServer
     class _ReuseAddrHTTPServer(http.server.HTTPServer):
         allow_reuse_address = True
 
-    server = _ReuseAddrHTTPServer(("0.0.0.0", port), _IpsHandler)
+    # Generate self-signed cert
+    tmpdir = tempfile.mkdtemp()
+    cert_file = os.path.join(tmpdir, "cert.pem")
+    key_file = os.path.join(tmpdir, "key.pem")
+    subprocess.run(
+        [
+            "openssl", "req", "-x509", "-newkey", "rsa:2048",
+            "-keyout", key_file,
+            "-out", cert_file,
+            "-days", "1", "-nodes",
+            "-subj", "/CN=cerno",
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+    # Wrap with TLS
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.load_cert_chain(cert_file, key_file)
+
+    server = _ReuseAddrHTTPServer((bind_ip, port), _IpsHandler)
+    server.socket = ctx.wrap_socket(server.socket, server_side=True)
+    server._cert_tmpdir = tmpdir  # type: ignore[attr-defined]
+
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    return server, thread
+
+    def _cleanup() -> None:
+        server.shutdown()
+        server.server_close()
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    return server, thread, _cleanup
 
 
 def build_nmap_remote_oneliner(

@@ -754,48 +754,69 @@ class TestListInterfaces:
 
 
 class TestStartIpsServer:
-    """Tests for start_ips_server()."""
+    """Tests for start_ips_server() — HTTPS, interface-bound."""
 
     @pytest.mark.unit
-    def test_serves_ips_file_at_ips_txt(self, tmp_path):
+    def test_serves_ips_file_over_https(self, tmp_path):
         from cerno_pkg.ops import start_ips_server
-        import urllib.request
+        import urllib.request, ssl as _ssl
         ips_file = tmp_path / "tcp_ips.list"
         ips_file.write_text("10.10.10.1\n10.10.10.2\n")
-        server, thread = start_ips_server(ips_file, port=18877)
+        server, thread, cleanup = start_ips_server(ips_file, port=18877, bind_ip="127.0.0.1")
         try:
-            response = urllib.request.urlopen("http://127.0.0.1:18877/ips.txt")
+            ctx = _ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = _ssl.CERT_NONE
+            response = urllib.request.urlopen("https://127.0.0.1:18877/ips.txt", context=ctx)
             content = response.read().decode()
             assert "10.10.10.1" in content
             assert "10.10.10.2" in content
         finally:
-            server.shutdown()
+            cleanup()
 
     @pytest.mark.unit
     def test_returns_404_for_other_paths(self, tmp_path):
         from cerno_pkg.ops import start_ips_server
-        import urllib.request, urllib.error
+        import urllib.request, urllib.error, ssl as _ssl
         ips_file = tmp_path / "tcp_ips.list"
         ips_file.write_text("10.0.0.1\n")
-        server, thread = start_ips_server(ips_file, port=18878)
+        server, thread, cleanup = start_ips_server(ips_file, port=18878, bind_ip="127.0.0.1")
         try:
+            ctx = _ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = _ssl.CERT_NONE
             with pytest.raises(urllib.error.HTTPError) as exc_info:
-                urllib.request.urlopen("http://127.0.0.1:18878/other.txt")
+                urllib.request.urlopen("https://127.0.0.1:18878/other.txt", context=ctx)
             assert exc_info.value.code == 404
         finally:
-            server.shutdown()
+            cleanup()
 
     @pytest.mark.unit
-    def test_server_stops_after_shutdown(self, tmp_path):
+    def test_server_stops_after_cleanup(self, tmp_path):
         from cerno_pkg.ops import start_ips_server
-        import urllib.request, urllib.error
+        import urllib.request, urllib.error, ssl as _ssl
         ips_file = tmp_path / "tcp_ips.list"
         ips_file.write_text("10.0.0.1\n")
-        server, thread = start_ips_server(ips_file, port=18879)
-        server.shutdown()
+        server, thread, cleanup = start_ips_server(ips_file, port=18879, bind_ip="127.0.0.1")
+        cleanup()
         thread.join(timeout=2)
+        ctx = _ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = _ssl.CERT_NONE
         with pytest.raises((urllib.error.URLError, ConnectionRefusedError, OSError)):
-            urllib.request.urlopen("http://127.0.0.1:18879/ips.txt", timeout=1)
+            urllib.request.urlopen("https://127.0.0.1:18879/ips.txt", context=ctx)
+
+    @pytest.mark.unit
+    def test_cleanup_removes_cert_tempdir(self, tmp_path):
+        from cerno_pkg.ops import start_ips_server
+        import os
+        ips_file = tmp_path / "tcp_ips.list"
+        ips_file.write_text("10.0.0.1\n")
+        server, thread, cleanup = start_ips_server(ips_file, port=18880, bind_ip="127.0.0.1")
+        tmpdir = server._cert_tmpdir
+        assert os.path.isdir(tmpdir)
+        cleanup()
+        assert not os.path.exists(tmpdir)
 
 
 class TestBuildNmapCmd:
