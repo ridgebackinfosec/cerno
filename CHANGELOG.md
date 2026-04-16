@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.15] - 2026-04-16
+
 ### Changed
 - Remote scan mode server upgraded from HTTP to HTTPS: self-signed certificate generated at startup via `openssl req`, server socket wrapped with `ssl.SSLContext` (TLS 1.2+ enforced), server now binds to the configured `pivot_interface` IP only instead of `0.0.0.0` — limiting exposure to other networks (`ops.py`, `start_ips_server`)
 - Remote scan curl one-liner updated to `curl -sk https://` to match the HTTPS server; `-k` skips self-signed cert verification on the pivot (`ops.py`, `build_nmap_remote_oneliner`)
