@@ -863,6 +863,40 @@ class TestRunCommandWithProgressProxy:
         assert captured.get("cmd") == ["echo", "hello"]
 
 
+class TestPivotConfig:
+    """Tests for pivot/remote scan config fields."""
+
+    @pytest.mark.unit
+    def test_pivot_interface_defaults_to_none(self):
+        from cerno_pkg.config import CernoConfig
+        config = CernoConfig()
+        assert config.pivot_interface is None
+
+    @pytest.mark.unit
+    def test_pivot_http_port_defaults_to_8877(self):
+        from cerno_pkg.config import CernoConfig
+        config = CernoConfig()
+        assert config.pivot_http_port == 8877
+
+    @pytest.mark.unit
+    def test_pivot_interface_roundtrips_through_save_load(self, tmp_path, monkeypatch):
+        from cerno_pkg.config import CernoConfig, save_config, load_config
+        monkeypatch.setattr("cerno_pkg.config.get_config_path", lambda: tmp_path / "config.yaml")
+        config = CernoConfig(pivot_interface="tun0")
+        save_config(config)
+        loaded = load_config()
+        assert loaded.pivot_interface == "tun0"
+
+    @pytest.mark.unit
+    def test_pivot_http_port_roundtrips_through_save_load(self, tmp_path, monkeypatch):
+        from cerno_pkg.config import CernoConfig, save_config, load_config
+        monkeypatch.setattr("cerno_pkg.config.get_config_path", lambda: tmp_path / "config.yaml")
+        config = CernoConfig(pivot_http_port=9999)
+        save_config(config)
+        loaded = load_config()
+        assert loaded.pivot_http_port == 9999
+
+
 class TestProxychainsRenderRow:
     """Tests for proxychains4 row in render_tool_availability_table."""
 
