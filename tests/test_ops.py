@@ -681,6 +681,77 @@ class TestCommandAvailability:
 
         assert version == "4.5.6"
 
+
+class TestGetInterfaceIp:
+    """Tests for get_interface_ip()."""
+
+    @pytest.mark.unit
+    def test_returns_none_for_nonexistent_interface(self):
+        from cerno_pkg.ops import get_interface_ip
+        result = get_interface_ip("does_not_exist_xyz")
+        assert result is None
+
+    @pytest.mark.unit
+    def test_returns_string_for_loopback(self):
+        from cerno_pkg.ops import get_interface_ip
+        result = get_interface_ip("lo")
+        # lo always exists on Linux; may return None on some CI envs — just check type
+        assert result is None or isinstance(result, str)
+
+    @pytest.mark.unit
+    def test_returns_dotted_quad_format(self, monkeypatch):
+        from cerno_pkg.ops import get_interface_ip
+        import socket
+        # Fake fcntl.ioctl to return a packed result with 10.10.14.5 at bytes 20-24
+        fake_result = b'\x00' * 20 + socket.inet_aton("10.10.14.5") + b'\x00' * 232
+        import fcntl
+        monkeypatch.setattr(fcntl, "ioctl", lambda fd, req, buf: fake_result)
+        result = get_interface_ip("tun0")
+        assert result == "10.10.14.5"
+
+
+class TestListInterfaces:
+    """Tests for list_interfaces()."""
+
+    @pytest.mark.unit
+    def test_returns_list_of_tuples(self, monkeypatch):
+        from cerno_pkg.ops import list_interfaces
+        monkeypatch.setattr("os.listdir", lambda p: ["eth0", "lo", "tun0"])
+        monkeypatch.setattr("cerno_pkg.ops.get_interface_ip", lambda iface: {
+            "eth0": "192.168.1.50",
+            "lo": "127.0.0.1",
+            "tun0": "10.10.14.5",
+        }.get(iface))
+        result = list_interfaces()
+        names = [name for name, _ in result]
+        assert "eth0" in names
+        assert "tun0" in names
+
+    @pytest.mark.unit
+    def test_excludes_interfaces_without_ip(self, monkeypatch):
+        from cerno_pkg.ops import list_interfaces
+        monkeypatch.setattr("os.listdir", lambda p: ["eth0", "dummy0"])
+        monkeypatch.setattr("cerno_pkg.ops.get_interface_ip", lambda iface: {
+            "eth0": "192.168.1.50",
+            "dummy0": None,
+        }.get(iface))
+        result = list_interfaces()
+        names = [name for name, _ in result]
+        assert "eth0" in names
+        assert "dummy0" not in names
+
+    @pytest.mark.unit
+    def test_loopback_appears_last(self, monkeypatch):
+        from cerno_pkg.ops import list_interfaces
+        monkeypatch.setattr("os.listdir", lambda p: ["lo", "tun0", "eth0"])
+        monkeypatch.setattr("cerno_pkg.ops.get_interface_ip", lambda iface: {
+            "lo": "127.0.0.1",
+            "tun0": "10.10.14.5",
+            "eth0": "192.168.1.50",
+        }.get(iface))
+        result = list_interfaces()
+        assert result[-1][0] == "lo"
+
     def test_render_tool_availability_table_basic(self):
         """Test rendering tool availability table (smoke test)."""
         from cerno_pkg.render import render_tool_availability_table

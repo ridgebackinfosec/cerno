@@ -619,3 +619,51 @@ def log_artifacts_for_nmap(
                 artifact_ids.append(artifact_id)
 
     return artifact_ids
+
+
+def get_interface_ip(interface: str) -> Optional[str]:
+    """Return the IPv4 address of a network interface, or None if unavailable.
+
+    Args:
+        interface: Interface name (e.g. 'tun0', 'eth0')
+
+    Returns:
+        IPv4 address string in dotted-quad format, or None
+    """
+    import socket
+    import struct
+    import fcntl
+    SIOCGIFADDR = 0x8915
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            result = fcntl.ioctl(
+                s.fileno(),
+                SIOCGIFADDR,
+                struct.pack("256s", interface[:15].encode()),
+            )
+        return socket.inet_ntoa(result[20:24])
+    except OSError:
+        return None
+
+
+def list_interfaces() -> list[tuple[str, str]]:
+    """Return all network interfaces that have an IPv4 address.
+
+    Returns:
+        List of (interface_name, ip_address) tuples, loopback last.
+    """
+    import os
+    try:
+        names = os.listdir("/sys/class/net/")
+    except OSError:
+        return []
+
+    interfaces = []
+    for name in sorted(names):
+        ip = get_interface_ip(name)
+        if ip:
+            interfaces.append((name, ip))
+
+    # Move loopback to end so it doesn't dominate the picker
+    interfaces.sort(key=lambda x: x[0] == "lo")
+    return interfaces
