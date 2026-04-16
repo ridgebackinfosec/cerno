@@ -117,7 +117,7 @@ def choose_nse_profile(config: Optional["CernoConfig"] = None) -> tuple[list[str
         warn("Invalid choice.")
 
 
-def configure_nmap_options(config: Optional["CernoConfig"] = None) -> Optional[tuple[list[str], bool]]:
+def configure_nmap_options(config: Optional["CernoConfig"] = None) -> Optional[tuple[list[str], bool, bool]]:
     """
     Consolidated nmap configuration screen.
 
@@ -128,7 +128,7 @@ def configure_nmap_options(config: Optional["CernoConfig"] = None) -> Optional[t
         config: Optional configuration object. If None, loads config.
 
     Returns:
-        Tuple of (script_list, needs_udp) or None if user cancels
+        Tuple of (script_list, needs_udp, remote_mode) or None if user cancels
     """
     from rich.panel import Panel
     from rich.text import Text
@@ -142,6 +142,7 @@ def configure_nmap_options(config: Optional["CernoConfig"] = None) -> Optional[t
     selected_profile_index: Optional[int] = None
     custom_scripts: list[str] = []
     force_udp: bool = False
+    remote_mode: bool = False
 
     # Set default profile from config
     if config.nmap_default_profile:
@@ -196,14 +197,25 @@ def configure_nmap_options(config: Optional["CernoConfig"] = None) -> Optional[t
         else:
             summary.append("No\n", style="dim")
 
+        # Remote mode section
+        summary.append("\nRemote Mode: ", style="cyan")
+        if remote_mode:
+            from .ops import get_interface_ip
+            iface = config.pivot_interface or "?"
+            ip = get_interface_ip(iface) if config.pivot_interface else None
+            addr = f"{iface} → {ip}" if ip else iface
+            summary.append(f"ON  ({addr})\n", style="bold magenta")
+        else:
+            summary.append("OFF\n", style="dim")
+
         panel = Panel(summary, border_style="cyan")
         _console.print(panel)
 
         # Show menu options with responsive layout
         render_responsive_action_menu([
             [("P", "Select NSE Profile"), ("S", "Add/Edit Custom Scripts")],
-            [("U", f"Toggle UDP ({'ON' if force_udp else 'OFF'})"), ("Enter", "Continue")],
-            [("B", "Back/Cancel")],
+            [("U", f"Toggle UDP ({'ON' if force_udp else 'OFF'})"), ("R", f"Toggle Remote Mode ({'ON' if remote_mode else 'OFF'})")],
+            [("Enter", "Continue"), ("B", "Back/Cancel")],
         ])
 
         try:
@@ -241,7 +253,7 @@ def configure_nmap_options(config: Optional["CernoConfig"] = None) -> Optional[t
             else:
                 ok("Configuration saved: No NSE scripts selected")
 
-            return final_scripts, final_needs_udp
+            return final_scripts, final_needs_udp, remote_mode
 
         elif answer in ("b", "back", "q"):
             return None
@@ -296,6 +308,60 @@ def configure_nmap_options(config: Optional["CernoConfig"] = None) -> Optional[t
             # Toggle UDP
             force_udp = not force_udp
             ok(f"UDP scan: {'ON' if force_udp else 'OFF'}")
+
+        elif answer == "r":
+            if remote_mode:
+                remote_mode = False
+            elif config.pivot_interface:
+                remote_mode = True
+            else:
+                # No interface configured — show picker
+                from .ops import list_interfaces, get_interface_ip
+                from .config import save_config
+                ifaces = list_interfaces()
+                if not ifaces:
+                    warn("No network interfaces with IPv4 addresses found.")
+                    continue
+
+                print()
+                print("No pivot interface configured. Available interfaces:\n")
+                for idx, (name, ip) in enumerate(ifaces, start=1):
+                    print(f"  [{idx}] {name}   ({ip})")
+                print("  [I] Enter manually")
+                print("  [B] Cancel")
+                print()
+
+                try:
+                    iface_answer = Prompt.ask("Choose", default="").strip().lower()
+                except KeyboardInterrupt:
+                    continue
+
+                chosen_interface = None
+                if iface_answer == "b":
+                    pass
+                elif iface_answer == "i":
+                    try:
+                        manual = Prompt.ask("Interface name").strip()
+                    except KeyboardInterrupt:
+                        continue
+                    if manual:
+                        detected = get_interface_ip(manual)
+                        if detected:
+                            chosen_interface = manual
+                        else:
+                            warn(f"Could not detect IP for interface '{manual}'. Try another.")
+                elif iface_answer.isdigit():
+                    pick = int(iface_answer) - 1
+                    if 0 <= pick < len(ifaces):
+                        chosen_interface = ifaces[pick][0]
+                    else:
+                        warn("Invalid selection.")
+
+                if chosen_interface:
+                    config.pivot_interface = chosen_interface
+                    save_config(config)
+                    ok(f"Saved pivot_interface = '{chosen_interface}' to config.")
+                    remote_mode = True
 
 
 # ========== Command Builders ==========
@@ -812,7 +878,7 @@ def build_nmap_workflow(ctx: "ToolContext") -> Optional["CommandResult"]:
     if nmap_config is None:
         return None
 
-    nse_scripts, udp_ports = nmap_config
+    nse_scripts, udp_ports, remote_mode = nmap_config
 
     if nse_scripts:
         info(f"{C.BOLD}NSE scripts to run:{C.RESET} {','.join(nse_scripts)}")
@@ -821,6 +887,40 @@ def build_nmap_workflow(ctx: "ToolContext") -> Optional["CommandResult"]:
 
     ips_file = ctx.udp_ips if udp_ports else ctx.tcp_ips
     require_cmd("nmap")
+
+    # --- Remote scan mode ---
+    if remote_mode:
+        from .ops import get_interface_ip, start_ips_server, build_nmap_remote_oneliner
+        from .ansi import warn
+        from datetime import datetime
+
+        ip = get_interface_ip(config.pivot_interface or "")
+        if not ip:
+            warn(
+                f"[!] Could not detect IP for interface '{config.pivot_interface}'. "
+                "Check with `cerno config set pivot_interface <iface>`."
+            )
+            return None
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        one_liner = build_nmap_remote_oneliner(
+            server_ip=ip,
+            server_port=config.pivot_http_port,
+            ports_str=ctx.ports_str,
+            nse_option=nse_option,
+            timestamp=timestamp,
+        )
+        output_path = f"/tmp/cerno_{timestamp}"
+
+        server, _thread = start_ips_server(ips_file, config.pivot_http_port)
+
+        return CommandResult(
+            display_command=one_liner,
+            is_remote=True,
+            cleanup=server.shutdown,
+            remote_output_path=output_path,
+        )
+    # --- End remote scan mode ---
 
     if ctx.use_proxy:
         from .ansi import warn as _proxy_warn
