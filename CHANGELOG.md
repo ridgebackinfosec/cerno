@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Remote scan mode: curl one-liner now uses `curl -sk https://` instead of `curl -s http://` (`ops.py`, `build_nmap_remote_oneliner`) — HTTPS server upgrade in progress
 
+## [1.3.14] - 2026-04-16
+
+### Added
+- Claude Assistant: typing `summarize` or `scenario` in the chat prompt now generates a past-tense pentest report brief for the current finding or scope — mentions affected systems/ports, severity, any mapped Metasploit modules, and flags the finding as unverified (`claude_assistant.py`, `cerno.py`, `cerno_pkg/skills/cerno-assistant.md`)
+
 ## [1.3.13] - 2026-04-16
 
 ### Fixed

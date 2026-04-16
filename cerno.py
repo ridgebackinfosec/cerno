@@ -170,6 +170,10 @@ def browse_claude_chat(
             if raw.lower() in ("q", "quit", "exit", "esc"):
                 break
 
+            # Report brief shortcut
+            if raw.lower() in claude_assistant.REPORT_BRIEF_TRIGGERS:
+                raw = claude_assistant.REPORT_BRIEF_QUERY
+
             # Send to Claude
             with _console_global.status("[cyan]Asking Claude...[/cyan]"):
                 response = claude_assistant.run_exchange(
@@ -240,6 +244,10 @@ def browse_claude_chat_aggregate(
 
             if raw.lower() in ("q", "quit", "exit", "esc"):
                 break
+
+            # Report brief shortcut
+            if raw.lower() in claude_assistant.REPORT_BRIEF_TRIGGERS:
+                raw = claude_assistant.REPORT_BRIEF_QUERY
 
             with _console_global.status("[cyan]Asking Claude...[/cyan]"):
                 response = claude_assistant.run_aggregate_exchange(

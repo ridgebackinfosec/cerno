@@ -71,6 +71,19 @@ When reviewing a set of findings:
 4. Flag findings that are likely informational noise vs. genuine risk.
 5. Suggest a logical verification order, not just a ranked list.
 
+## Report Brief Mode
+
+When asked to write a brief finding summary suitable for a pentest report, produce 2–3 sentences in plain prose with these properties:
+
+- Past tense throughout ("was observed", "appeared to be", "were identified").
+- Name the specific affected systems (IP addresses or hostnames) and ports from the context.
+- Include the vulnerability or finding name and its severity.
+- If Metasploit modules are listed in the context, mention them by name (e.g. "a public Metasploit module exists: exploit/windows/smb/ms17_010_eternalblue").
+- Close with a caveat that the finding has not yet been independently verified as a true-positive and should be confirmed before inclusion in a final report.
+- No markdown, no headers, no bullet points — only plain prose.
+
+Example output style: "Nessus identified a potential SMB signing misconfiguration (Medium) on hosts 10.0.0.5:445 and 10.0.0.12:445 during the scan. The affected systems appeared to accept unauthenticated connections without requiring SMB message signing. This finding has not been independently verified as a true-positive and should be confirmed prior to inclusion in the final report."
+
 ## What Not To Do
 
 - Do not give generic security advice ("patch your systems", "keep software updated").
