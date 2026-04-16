@@ -1041,3 +1041,53 @@ class TestProxychainsRenderRow:
         assert "proxychains4" in captured.out
         assert "active" not in captured.out
         assert "SOCKS5" not in captured.out
+
+
+class TestCommandResultRemote:
+    """Tests for remote-mode fields on CommandResult."""
+
+    @pytest.mark.unit
+    def test_is_remote_defaults_to_false(self):
+        from cerno_pkg.tool_context import CommandResult
+        result = CommandResult(display_command="nmap ...")
+        assert result.is_remote is False
+
+    @pytest.mark.unit
+    def test_cleanup_defaults_to_none(self):
+        from cerno_pkg.tool_context import CommandResult
+        result = CommandResult(display_command="nmap ...")
+        assert result.cleanup is None
+
+    @pytest.mark.unit
+    def test_remote_output_path_defaults_to_none(self):
+        from cerno_pkg.tool_context import CommandResult
+        result = CommandResult(display_command="nmap ...")
+        assert result.remote_output_path is None
+
+    @pytest.mark.unit
+    def test_can_construct_remote_result(self):
+        from cerno_pkg.tool_context import CommandResult
+        called = []
+        cleanup = lambda: called.append(True)
+        result = CommandResult(
+            display_command="curl ... | sudo nmap ...",
+            is_remote=True,
+            cleanup=cleanup,
+            remote_output_path="/tmp/cerno_20260416_143022",
+        )
+        assert result.is_remote is True
+        assert result.remote_output_path == "/tmp/cerno_20260416_143022"
+        result.cleanup()
+        assert called == [True]
+
+    @pytest.mark.unit
+    def test_existing_non_remote_construction_still_works(self):
+        """Ensure existing callers (command, display_command, artifact_note) are unaffected."""
+        from cerno_pkg.tool_context import CommandResult
+        result = CommandResult(
+            command=["nmap", "-sV"],
+            display_command=["nmap", "-sV"],
+            artifact_note="Results at /tmp/scan",
+        )
+        assert result.command == ["nmap", "-sV"]
+        assert result.is_remote is False

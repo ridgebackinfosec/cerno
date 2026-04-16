@@ -12,7 +12,7 @@ This enables clean, generic dispatch without tool-specific parameter passing.
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, Union, List, TYPE_CHECKING
+from typing import Callable, Optional, Union, List, TYPE_CHECKING
 import types
 
 if TYPE_CHECKING:
@@ -75,16 +75,27 @@ class CommandResult:
     unpacking logic in dispatch.
 
     Attributes:
-        command: The actual command to execute (list for subprocess, str for shell)
         display_command: Command to show user (may differ from command)
+        command: The actual command to execute (list for subprocess, str for shell).
+                 None in remote mode — cerno does not execute the command.
         artifact_note: Human-readable note about where output will be saved
         relay_path: Optional path to relay targets file (netexec-specific)
+        is_remote: When True, cerno displays the command but does not execute it.
+                   The operator runs the command manually on a pivot host.
+        cleanup: Optional callable invoked when the user exits the remote command
+                 display screen (e.g. stops the HTTP server).
+        remote_output_path: The -oA output base path on the pivot host (e.g.
+                            '/tmp/cerno_20260416_143022'). Used to generate
+                            scp + import guidance shown after the operator runs the scan.
     """
 
-    command: Union[str, List[str]]
     display_command: Union[str, List[str]]
-    artifact_note: str
+    command: Optional[Union[str, List[str]]] = None
+    artifact_note: str = ""
     relay_path: Optional[Path] = None
+    is_remote: bool = False
+    cleanup: Optional[Callable[[], None]] = None
+    remote_output_path: Optional[str] = None
 
 
 @dataclass
