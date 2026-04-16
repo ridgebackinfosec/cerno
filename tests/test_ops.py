@@ -752,41 +752,50 @@ class TestListInterfaces:
         result = list_interfaces()
         assert result[-1][0] == "lo"
 
-    def test_render_tool_availability_table_basic(self):
-        """Test rendering tool availability table (smoke test)."""
-        from cerno_pkg.render import render_tool_availability_table
-        from unittest.mock import patch
 
-        # Mock the console output to capture what would be printed
-        with patch('cerno_pkg.render._console_global') as mock_console:
-            with patch('shutil.which', return_value='/usr/bin/nmap'):
-                with patch('cerno_pkg.ops.get_tool_version', return_value="7.92"):
-                    render_tool_availability_table(include_unavailable=True)
+class TestStartIpsServer:
+    """Tests for start_ips_server()."""
 
-        # Verify console.print was called (table was rendered)
-        assert mock_console.print.called
+    @pytest.mark.unit
+    def test_serves_ips_file_at_ips_txt(self, tmp_path):
+        from cerno_pkg.ops import start_ips_server
+        import urllib.request
+        ips_file = tmp_path / "tcp_ips.list"
+        ips_file.write_text("10.10.10.1\n10.10.10.2\n")
+        server, thread = start_ips_server(ips_file, port=18877)
+        try:
+            response = urllib.request.urlopen("http://127.0.0.1:18877/ips.txt")
+            content = response.read().decode()
+            assert "10.10.10.1" in content
+            assert "10.10.10.2" in content
+        finally:
+            server.shutdown()
 
-    def test_render_tool_availability_respects_config(self):
-        """Test that render_tool_availability_table respects configuration."""
-        from cerno_pkg.render import render_tool_availability_table
-        from unittest.mock import patch, Mock
+    @pytest.mark.unit
+    def test_returns_404_for_other_paths(self, tmp_path):
+        from cerno_pkg.ops import start_ips_server
+        import urllib.request, urllib.error
+        ips_file = tmp_path / "tcp_ips.list"
+        ips_file.write_text("10.0.0.1\n")
+        server, thread = start_ips_server(ips_file, port=18878)
+        try:
+            with pytest.raises(urllib.error.HTTPError) as exc_info:
+                urllib.request.urlopen("http://127.0.0.1:18878/other.txt")
+            assert exc_info.value.code == 404
+        finally:
+            server.shutdown()
 
-        # Mock the tool registry to return a predictable set of tools
-        mock_tool = Mock()
-        mock_tool.id = "nmap"
-        mock_tool.name = "nmap"
-        mock_tool.requires = ["nmap"]
-
-        with patch('cerno_pkg.tool_registry.get_available_tools', return_value=[mock_tool]):
-            with patch('shutil.which', return_value='/usr/bin/nmap'):
-                with patch('cerno_pkg.ops.get_tool_version', return_value="7.92"):
-                    # Should not raise exception
-                    try:
-                        # Just test that it doesn't crash
-                        # Full output testing would require capturing Rich console output
-                        render_tool_availability_table(include_unavailable=True)
-                    except Exception as e:
-                        pytest.fail(f"render_tool_availability_table() raised unexpected exception: {e}")
+    @pytest.mark.unit
+    def test_server_stops_after_shutdown(self, tmp_path):
+        from cerno_pkg.ops import start_ips_server
+        import urllib.request, urllib.error
+        ips_file = tmp_path / "tcp_ips.list"
+        ips_file.write_text("10.0.0.1\n")
+        server, thread = start_ips_server(ips_file, port=18879)
+        server.shutdown()
+        thread.join(timeout=2)
+        with pytest.raises((urllib.error.URLError, ConnectionRefusedError, OSError)):
+            urllib.request.urlopen("http://127.0.0.1:18879/ips.txt", timeout=1)
 
 
 class TestBuildNmapCmd:

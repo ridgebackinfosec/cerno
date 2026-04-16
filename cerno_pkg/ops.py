@@ -667,3 +667,45 @@ def list_interfaces() -> list[tuple[str, str]]:
     # Move loopback to end so it doesn't dominate the picker
     interfaces.sort(key=lambda x: x[0] == "lo")
     return interfaces
+
+
+def start_ips_server(ips_path: Path, port: int) -> tuple["http.server.HTTPServer", "threading.Thread"]:
+    """Start a temporary HTTP server serving the IP list at /ips.txt.
+
+    The server binds to 0.0.0.0 and serves ONLY GET /ips.txt — all other
+    paths return 404. No directory listing.
+
+    Args:
+        ips_path: Path to the tcp_ips.list file to serve
+        port: Port to listen on
+
+    Returns:
+        (server, thread) — call server.shutdown() to stop.
+    """
+    import http.server
+    import threading
+
+    _ips_path = ips_path  # capture for closure
+
+    class _IpsHandler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            if self.path == "/ips.txt":
+                try:
+                    content = _ips_path.read_bytes()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/plain; charset=utf-8")
+                    self.send_header("Content-Length", str(len(content)))
+                    self.end_headers()
+                    self.wfile.write(content)
+                except OSError:
+                    self.send_error(500, "Could not read IP list")
+            else:
+                self.send_error(404, "Not found")
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass  # Suppress request logging to terminal
+
+    server = http.server.HTTPServer(("0.0.0.0", port), _IpsHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread
