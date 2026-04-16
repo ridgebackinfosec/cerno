@@ -1320,6 +1320,43 @@ def run_tool_workflow(
             else:
                 continue
 
+        # ── Remote scan mode ─────────────────────────────────────
+        if result.is_remote:
+            from .ansi import warn as _warn, ok as _ok
+            print()
+            _warn("[!] Remote scan mode — HTTP server running (serving IP list)")
+            print()
+            print("Command to run on pivot:")
+            print("─" * 70)
+            print(result.display_command)
+            print("─" * 70)
+            print()
+            print_action_menu([
+                ("C", "Copy to clipboard"),
+                ("Enter", "Done (stops server)"),
+            ])
+            while True:
+                try:
+                    remote_answer = Prompt.ask("Choose", default="").strip().lower()
+                except KeyboardInterrupt:
+                    break
+                if remote_answer in ("c", "copy"):
+                    copy_to_clipboard(str(result.display_command))
+                    _ok("Copied to clipboard.")
+                elif remote_answer in ("", "done"):
+                    break
+            if result.cleanup:
+                result.cleanup()
+            if result.remote_output_path:
+                fname = result.remote_output_path.split("/")[-1]
+                print()
+                _ok("When complete, retrieve and import results:")
+                print(f"  scp pivot:{result.remote_output_path}.xml ~/.cerno/artifacts/")
+                print(f"  cerno import nmap ~/.cerno/artifacts/{fname}.xml")
+                print()
+            continue  # back to tool menu — no execution, no artifact logging
+        # ── End remote scan mode ──────────────────────────────────
+
         # Extract results from unified CommandResult
         cmd = result.command
         display_cmd = result.display_command
