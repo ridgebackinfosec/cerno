@@ -1091,3 +1091,58 @@ class TestCommandResultRemote:
         )
         assert result.command == ["nmap", "-sV"]
         assert result.is_remote is False
+
+
+class TestBuildNmapRemoteCmd:
+    """Tests for remote one-liner generation."""
+
+    @pytest.mark.unit
+    def test_remote_oneliner_contains_curl_and_nmap(self):
+        from cerno_pkg.ops import build_nmap_remote_oneliner
+        result = build_nmap_remote_oneliner(
+            server_ip="10.10.14.5",
+            server_port=8877,
+            ports_str="445,139",
+            nse_option="",
+            timestamp="20260416_143022",
+        )
+        assert result.startswith("curl -s http://10.10.14.5:8877/ips.txt |")
+        assert "sudo nmap -sS -A -iL -" in result
+        assert "-p 445,139" in result
+        assert "-oA /tmp/cerno_20260416_143022" in result
+
+    @pytest.mark.unit
+    def test_remote_oneliner_omits_port_flag_when_no_ports(self):
+        from cerno_pkg.ops import build_nmap_remote_oneliner
+        result = build_nmap_remote_oneliner(
+            server_ip="10.10.14.5",
+            server_port=8877,
+            ports_str="",
+            nse_option="",
+            timestamp="20260416_143022",
+        )
+        assert "-p" not in result
+
+    @pytest.mark.unit
+    def test_remote_oneliner_includes_nse_option(self):
+        from cerno_pkg.ops import build_nmap_remote_oneliner
+        result = build_nmap_remote_oneliner(
+            server_ip="10.10.14.5",
+            server_port=8877,
+            ports_str="445",
+            nse_option="--script=smb-vuln-ms17-010",
+            timestamp="20260416_143022",
+        )
+        assert "--script=smb-vuln-ms17-010" in result
+
+    @pytest.mark.unit
+    def test_remote_oneliner_no_pn_flag(self):
+        from cerno_pkg.ops import build_nmap_remote_oneliner
+        result = build_nmap_remote_oneliner(
+            server_ip="10.10.14.5",
+            server_port=8877,
+            ports_str="80",
+            nse_option="",
+            timestamp="20260416_143022",
+        )
+        assert "-Pn" not in result

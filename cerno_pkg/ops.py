@@ -709,3 +709,35 @@ def start_ips_server(ips_path: Path, port: int) -> tuple["http.server.HTTPServer
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server, thread
+
+
+def build_nmap_remote_oneliner(
+    server_ip: str,
+    server_port: int,
+    ports_str: str,
+    nse_option: str,
+    timestamp: str,
+) -> str:
+    """Build the curl+nmap one-liner for remote scan mode.
+
+    The operator pastes this into a shell on the pivot host.
+    Requires root (sudo) on the pivot for -sS.
+
+    Args:
+        server_ip: IP address of the cerno HTTP server (from pivot_interface)
+        server_port: Port of the cerno HTTP server
+        ports_str: Comma-separated ports string (e.g. '445,139') or empty string
+        nse_option: NSE option string (e.g. '--script=smb-vuln-ms17-010') or empty string
+        timestamp: Timestamp string for output filename (e.g. '20260416_143022')
+
+    Returns:
+        Complete one-liner command string
+    """
+    output_path = f"/tmp/cerno_{timestamp}"
+    nmap_parts = ["sudo", "nmap", "-sS", "-A", "-iL", "-"]
+    if ports_str:
+        nmap_parts += ["-p", ports_str]
+    if nse_option:
+        nmap_parts.append(nse_option)
+    nmap_parts += ["-oA", output_path]
+    return f"curl -s http://{server_ip}:{server_port}/ips.txt | " + " ".join(nmap_parts)
