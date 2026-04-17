@@ -8,6 +8,8 @@ A **TUI tool** for reviewing Nessus scan findings and orchestrating security too
 - ⚡ One-command tool launches (nmap NSE scripts, NetExec, custom workflows)
 - 📊 CVE extraction, Metasploit module search, host comparison
 - 🔗 NetExec database integration (correlate credentials with findings)
+- 🤖 Claude Assistant (BETA) — on-demand AI chat at finding, severity, and findings-list scope
+- 🔀 Proxychains4 integration — route all tool executions through a SOCKS5 proxy
 
 **📺 Watch the demo:**
 
@@ -111,7 +113,7 @@ Cerno uses **automated releases** triggered by version changes in [pyproject.tom
 ## Requirements
 
 - **Python 3.11+**
-- **Optional tools:** `nmap`, `nxc`/`netexec`, `msfconsole` (only if you use them)
+- **Optional tools:** `nmap`, `nxc`/`netexec`, `msfconsole`, `claude` (only if you use them)
 - **Linux recommended** (clipboard tools: `xclip`, `xsel`, or `wl-copy`)
 
 ---
@@ -123,9 +125,17 @@ Cerno uses **automated releases** triggered by version changes in [pyproject.tom
 Auto-created with defaults on first run. All settings managed via config file.
 
 ```bash
-cerno config show        # View all settings with current values
-cerno config set <key> <value>  # Change a setting
-cerno config reset       # Reset to defaults (creates backup)
+cerno config show                    # View all settings with current values
+cerno config get <key>               # Get a single config value
+cerno config set <key> <value>       # Change a setting
+cerno config reset                   # Reset to defaults (creates backup)
+```
+
+**Proxychains4 proxy settings:**
+```bash
+cerno config set proxychains_enabled true        # Enable proxy routing (default: false)
+cerno config set proxychains_host 127.0.0.1      # SOCKS5 proxy host
+cerno config set proxychains_port 9000           # SOCKS5 proxy port (matches ssh -D default)
 ```
 
 <p align="center">
@@ -185,6 +195,32 @@ Extract CVEs, search Metasploit modules, and compare findings across hosts.
 
 ---
 
+### 🤖 Claude Assistant (BETA)
+
+Ask Claude questions about findings without leaving the TUI. Powered by the `claude` CLI (`claude -p`) — no API key required, no data sent to external services beyond what `claude` itself handles.
+
+**Three scopes:**
+- **Finding level** — press `[A]` inside a finding detail view to discuss that specific plugin: CVEs, CVSS context, exploitability, verification steps
+- **Severity menu** — press `[A]` at the severity selection screen to discuss all findings across the selected scan(s)
+- **Findings list** — press `[A]` in the findings list footer to discuss the current set of findings (respects any active severity, name, or group filter)
+
+**Conversation persistence:** History is saved per-scope in SQLite and resumed automatically on re-entry. Press `C` inside the chat to clear history for the current scope.
+
+**Setup:**
+```bash
+# Install Claude Code CLI (required)
+npm install -g @anthropic-ai/claude-code   # or follow https://claude.ai/code
+
+# Disable if not wanted
+cerno config set claude_assistant_enabled false
+```
+
+**Tool availability:** `[A]` is hidden when `claude` is not on PATH or `claude_assistant_enabled` is `false`. It appears in the tool availability table on review startup alongside nmap/netexec/msfconsole.
+
+> **Note:** This feature is in beta. Responses may be inaccurate — always verify before acting on suggestions.
+
+---
+
 ### 🔗 NetExec Database Integration (Beta)
 
 Automatically enrich finding displays with data from your NetExec databases—see which credentials work on affected hosts, share access, and security misconfigurations.
@@ -236,37 +272,95 @@ Launch nmap NSE scripts, NetExec, Metasploit, or custom commands with placeholde
 
 ---
 
+### 🔀 Proxychains4 Integration
+
+Route all tool executions (nmap, NetExec, Metasploit, custom commands) through a SOCKS5 proxy via `proxychains4`. Designed for use with an SSH `-D` tunnel.
+
+**Enable in config (persists across sessions):**
+```bash
+cerno config set proxychains_enabled true
+cerno config set proxychains_host 127.0.0.1
+cerno config set proxychains_port 9000           # Matches: ssh -D 9000 user@host
+```
+
+**Or override per session:**
+```bash
+cerno review --proxy      # Force-enable for this session
+cerno review --no-proxy   # Force-disable for this session
+```
+
+**Behavior when active:**
+- `[PROXY]` badge (magenta) shown in the review session status line
+- proxychains4 row appears in the startup tool availability table
+- nmap automatically adds `-Pn` and drops `sudo` when proxied (ICMP and raw sockets don't traverse SOCKS)
+- Cerno manages its own `~/.cerno/proxychains4.conf` — system config is not touched
+
+> **Requires:** `proxychains4` installed and available on PATH.
+
+---
+
 ## Commands
 
 ```bash
 # Import and review
-cerno import nessus <scan.nessus>
-cerno review [--custom-workflows PATH]
+cerno import nessus <scan.nessus>              # Import a single .nessus file
+cerno import nessus <directory>                # Recursively import all .nessus files in a directory
+cerno review [--custom-workflows PATH]         # Start interactive review
+cerno review --proxy                           # Force-enable proxychains4 routing for this session
+cerno review --no-proxy                        # Force-disable proxychains4 routing for this session
+cerno review --check                           # Check tool availability and exit
 
 # Manage scans
 cerno scan list
 cerno scan delete <scan_name>
+cerno scan compare <scan1> <scan2>             # Compare findings between two scans
+cerno scan history <host_ip>                   # View vulnerability timeline for a host
 
 # View workflows
 cerno workflow list [--custom-workflows PATH]
 
 # Configuration
-cerno config show | reset | get <key> | set <key> <value>
+cerno config show                              # Display all settings with current values
+cerno config get <key>                         # Get a single config value
+cerno config set <key> <value>                 # Set a config value
+cerno config reset                             # Reset to defaults (creates backup)
+
+# Maintenance
+cerno reset                                    # Purge ~/.cerno and return to fresh state
 ```
 
 ---
 
 ## Keyboard Shortcuts
 
-**During Interactive Review:**
-- `[S]` - Cycle sort modes (plugin ID, severity, host count)
-- `[O]` - View overlapping findings analysis
-- `[W]` - View workflow verification steps (when available)
+**In the findings list view:**
+- `[S]` - Cycle sort modes (severity, plugin ID, name, host count)
 - `[F]` - Filter findings by text (plugin name, description, etc.)
 - `[V]` - Filter findings by severity level
-- `[C]` - Clear all active filters
-- `[U]` - Undo review state (restore to pending)
+- `[C]` - Clear active text/severity filter
+- `[H]` - Compare: group findings by identical host:port combinations
+- `[O]` - Overlapping: find findings whose affected hosts are a superset of another's
+- `[X]` - Clear group filter (when a comparison/overlap group is active)
+- `[D]` - View full group details in pager (when a group filter is active)
+- `[E]` - Extract CVEs for all findings matching current filter
+- `[M]` - Mark all filtered findings as review completed
+- `[R]` - Show completed findings (with undo)
+- `[U]` - Undo review completion (restore a completed finding to pending)
+- `[A]` - Ask Claude (BETA) — chat about the current filtered findings set
+- `[W]` - View workflow verification steps (when available for selected finding)
+- `[N]` / `[P]` - Next / previous page
+- `[B]` - Back to severity menu
 - `[?]` - Show help menu with all available actions
+
+**In the finding detail view:**
+- `[I]` - Finding Info (plugin metadata, CVSS, CVEs)
+- `[D]` - Finding Details (host list, port distribution, plugin output)
+- `[N]` - NetExec Data (per-host credential and access breakdown)
+- `[T]` - Run Tool (launch nmap, NetExec, Metasploit, or custom workflow)
+- `[A]` - Ask Claude (BETA) — chat about this specific finding
+- `[W]` - View workflow verification steps
+- `[U]` - Undo review completion
+- `[B]` - Back to findings list
 
 ---
 
@@ -328,6 +422,12 @@ cerno import nessus scan.nessus
 ```bash
 # Reset config to defaults (creates backup)
 cerno config reset
+```
+
+**Full environment reset:**
+```bash
+# Purge ~/.cerno entirely and return to a fresh installation state
+cerno reset   # Prompts for typed confirmation before deleting
 ```
 
 **Import failures:**

@@ -68,6 +68,27 @@ class CernoConfig:
     nxc_enrichment_enabled: bool = True
     """Enable NetExec enrichment in finding displays (default: True)."""
 
+    claude_assistant_enabled: bool = True
+    """Enable Claude Assistant (BETA) interactive chat panel in review TUI (default: True)."""
+
+    # Proxy settings
+    proxychains_enabled: bool = False
+    """Route all tool executions through proxychains4 SOCKS5 proxy (default: False)."""
+
+    proxychains_host: str = "127.0.0.1"
+    """SOCKS5 proxy host for proxychains4 (default: 127.0.0.1)."""
+
+    proxychains_port: int = 9000
+    """SOCKS5 proxy port for proxychains4 (default: 9000, matching ssh -D 9000)."""
+
+    # Remote scan mode (pivot) settings
+    pivot_interface: Optional[str] = None
+    """Network interface whose IP is advertised in the remote scan HTTP server URL (e.g. 'tun0').
+    Set on first remote mode activation via the nmap options menu."""
+
+    pivot_http_port: int = 8877
+    """Port for the temporary HTTP server used in remote scan mode (default: 8877)."""
+
 
 def get_config_path() -> Path:
     """Get the path to the user's config file.
@@ -118,6 +139,12 @@ def load_config() -> CernoConfig:
             term_override=data.get("term_override"),
             nxc_workspace_path=data.get("nxc_workspace_path"),
             nxc_enrichment_enabled=data.get("nxc_enrichment_enabled", True),
+            claude_assistant_enabled=data.get("claude_assistant_enabled", True),
+            proxychains_enabled=data.get("proxychains_enabled", False),
+            proxychains_host=data.get("proxychains_host", "127.0.0.1"),
+            proxychains_port=data.get("proxychains_port", 9000),
+            pivot_interface=data.get("pivot_interface", None),
+            pivot_http_port=data.get("pivot_http_port", 8877),
         )
 
         # Note: Don't log here since logger isn't initialized yet
@@ -160,6 +187,12 @@ def save_config(config: CernoConfig) -> bool:
                 "term_override": config.term_override,
                 "nxc_workspace_path": config.nxc_workspace_path,
                 "nxc_enrichment_enabled": config.nxc_enrichment_enabled,
+                "claude_assistant_enabled": config.claude_assistant_enabled,
+                "proxychains_enabled": config.proxychains_enabled,
+                "proxychains_host": config.proxychains_host,
+                "proxychains_port": config.proxychains_port,
+                "pivot_interface": config.pivot_interface,
+                "pivot_http_port": config.pivot_http_port,
             }.items()
             if v is not None
         }
@@ -197,6 +230,12 @@ def create_example_config() -> bool:
         term_override=None,
         nxc_workspace_path=None,  # Uses ~/.nxc/workspaces/default/ by default
         nxc_enrichment_enabled=True,
+        claude_assistant_enabled=True,
+        proxychains_enabled=False,
+        proxychains_host="127.0.0.1",
+        proxychains_port=9000,
+        pivot_interface=None,
+        pivot_http_port=8877,
     )
 
     return save_config(default_config)

@@ -21,7 +21,8 @@ __all__ = [
     "setup_logging", "log_info", "log_error",
     # Ops module
     "require_cmd", "resolve_cmd", "root_or_sudo_available", "get_tool_version",
-    "run_command_with_progress", "ExecutionMetadata", "log_tool_execution",
+    "run_command_with_progress", "ExecutionMetadata", "ProxyConfig",
+    "write_proxychains_config", "log_tool_execution",
     "log_artifact", "log_artifacts_for_nmap",
     # Parsing module
     "is_ipv6", "is_ipv4", "is_valid_token", "build_item_set", "normalize_combos",
@@ -88,8 +89,8 @@ from .constants import (
 from .logging_setup import setup_logging, log_info, log_error
 from .ops import (
     require_cmd, resolve_cmd, root_or_sudo_available, get_tool_version,
-    run_command_with_progress, ExecutionMetadata,
-    log_tool_execution, log_artifact, log_artifacts_for_nmap
+    run_command_with_progress, ExecutionMetadata, ProxyConfig,
+    write_proxychains_config, log_tool_execution, log_artifact, log_artifacts_for_nmap
 )
 from .parsing import (
     is_ipv6, is_ipv4,

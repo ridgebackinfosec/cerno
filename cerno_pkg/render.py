@@ -20,6 +20,7 @@ from contextlib import contextmanager
 import time
 
 from .ansi import info, warn, header, get_console, style_if_enabled
+from .config import load_config
 from .constants import SEVERITY_COLORS
 from .fs import default_page_size, pretty_severity_label
 from .logging_setup import log_timing, log_debug
@@ -506,6 +507,7 @@ def render_severity_table(
     workflow_summary: Optional[tuple[int, int, int]] = None,
     scan_id: Optional[int] = None,
     plugin_ids: Optional[list[int]] = None,
+    scan_ids: Optional[list[int]] = None,
 ) -> None:
     """Render a table of severity levels with review progress percentages.
 
@@ -522,6 +524,7 @@ def render_severity_table(
             for Workflow Mapped row. Only shown if provided.
         scan_id: Scan ID for database queries (required)
         plugin_ids: Optional list of plugin IDs to filter counts by (for host filtering)
+        scan_ids: Optional list of scan IDs for multi-scan queries (overrides scan_id)
     """
     table = Table(
         title=None, box=box.SIMPLE, show_lines=False, pad_edge=False
@@ -533,15 +536,17 @@ def render_severity_table(
     table.add_column("Reviewed (%)", justify="right", no_wrap=True, max_width=14)
     table.add_column("Total", justify="right", no_wrap=True, max_width=8)
 
-    if scan_id is None:
+    if scan_id is None and not scan_ids:
         # scan_id should always be provided in DB-only mode, but handle gracefully
         from .ansi import warn
         warn("scan_id not provided - cannot render severity table")
         return
 
+    effective_scan_id = scan_id or (scan_ids[0] if scan_ids else 0)
+
     for i, severity_dir in enumerate(severities, 1):
         unreviewed, reviewed, total = count_severity_findings(
-            severity_dir, scan_id=scan_id, plugin_ids=plugin_ids
+            severity_dir, scan_id=effective_scan_id, plugin_ids=plugin_ids, scan_ids=scan_ids
         )
         label = pretty_severity_label(severity_dir.name)
         table.add_row(
@@ -586,6 +591,8 @@ def render_finding_list_table(
     get_counts_for: Any,
     row_offset: int = 0,
     show_severity: bool = False,
+    scan_labels: Optional[dict[int, str]] = None,
+    chat_history_finding_ids: frozenset[int] = frozenset(),
 ) -> None:
     """Render a paginated file list table with plugin info from database.
 
@@ -595,7 +602,12 @@ def render_finding_list_table(
         get_counts_for: Function to get (host_count, ports_str) for a Finding object
         row_offset: Starting row number for pagination
         show_severity: Deprecated - severity column is now always shown
+        scan_labels: Optional dict mapping plugin_id to scan label (e.g., "All 4" or "2 of 4").
+                     When provided, adds a "Scans" column. When None (default), single-scan mode.
+        chat_history_finding_ids: Set of finding_ids that have Claude conversation history.
+                                   When non-empty, adds an "AI" column with a ✦ indicator.
     """
+    show_ai_column = bool(chat_history_finding_ids)
 
     table = Table(
         title=None, box=box.SIMPLE, show_lines=False, pad_edge=False
@@ -606,6 +618,10 @@ def render_finding_list_table(
     table.add_column("Name", overflow="fold")
     # Always show host count column
     table.add_column("Hosts", justify="right", no_wrap=True, max_width=8)
+    if scan_labels is not None:
+        table.add_column("Scans", justify="right", no_wrap=True, max_width=10)
+    if show_ai_column:
+        table.add_column("AI", justify="center", no_wrap=True, max_width=4)
 
     for i, (plugin_file, plugin) in enumerate(display, 1):
         row_number = row_offset + i
@@ -652,6 +668,17 @@ def render_finding_list_table(
         # Always retrieve and show host count from database
         host_count, _ports_str = get_counts_for(plugin_file)
         row_data.append(str(host_count))
+
+        if scan_labels is not None:
+            row_data.append(scan_labels.get(plugin.plugin_id, ""))
+
+        if show_ai_column:
+            finding_id = getattr(plugin_file, "finding_id", None)
+            if finding_id is not None and finding_id in chat_history_finding_ids:
+                ai_cell = Text("✦", style="bold magenta")
+            else:
+                ai_cell = Text("")
+            row_data.append(ai_cell)  # type: ignore[arg-type]
 
         table.add_row(*row_data)
 
@@ -745,6 +772,7 @@ def render_actions_footer(
     sort_mode: str,
     can_next: bool,
     can_prev: bool,
+    has_claude: bool = False,
 ) -> None:
     """Render action footer with responsive layout based on terminal width.
 
@@ -757,6 +785,7 @@ def render_actions_footer(
         sort_mode: Current sort mode ("plugin_id", "hosts", or "name")
         can_next: Whether next page is available
         can_prev: Whether previous page is available
+        has_claude: Whether Claude Assistant is available and enabled
     """
     from .ansi import get_terminal_width
 
@@ -807,7 +836,10 @@ def render_actions_footer(
             key_text("M", f"Mark reviewed ({candidates_count})"),
         ]
     )
-    right_row3 = Text()  # Empty for now, reserved for future actions
+    right_row3_items = []
+    if has_claude:
+        right_row3_items.append(key_text("A", "Ask Claude (BETA)"))
+    right_row3 = join_actions_texts(right_row3_items) if right_row3_items else Text()
 
     # Detect terminal width for responsive layout
     term_width = get_terminal_width()
@@ -836,6 +868,9 @@ def render_finding_actions_footer(
     *,
     has_workflow: bool = False,
     has_nxc_data: bool = False,
+    has_claude: bool = False,
+    claude_installed: bool = False,
+    use_proxy: bool = False,
 ) -> None:
     """Render action footer for finding review with responsive layout.
 
@@ -847,6 +882,8 @@ def render_finding_actions_footer(
     Args:
         has_workflow: Whether workflow action is available for this plugin
         has_nxc_data: Whether NetExec data is available for these hosts
+        has_claude: Whether Claude Assistant is enabled and available
+        claude_installed: Whether claude CLI is on PATH (used for grayed-out hint)
     """
     from .ansi import get_terminal_width
 
@@ -873,7 +910,22 @@ def render_finding_actions_footer(
     left_row3 = join_actions_texts([key_text("M", "Mark reviewed")])
     right_row3 = join_actions_texts([key_text("B", "Back")])
 
+    # Row 4: Claude Assistant (conditional)
+    claude_row: Optional[Text] = None
+    if has_claude:
+        claude_row = join_actions_texts([key_text("A", "Ask Claude (BETA)")])
+    elif claude_installed:
+        # Show grayed-out hint when claude is installed but assistant is disabled
+        not_enabled = Text()
+        not_enabled.append("[A]", style="dim")
+        not_enabled.append(" Ask Claude (disabled)", style="dim")
+        claude_row = not_enabled
+
     term_width = get_terminal_width()
+    if use_proxy:
+        proxy_badge = Text()
+        proxy_badge.append("[PROXY ENABLED]", style="bold magenta")
+        _console_global.print(proxy_badge)
     _console_global.print("[cyan]>>[/cyan]")
 
     if term_width >= 100:
@@ -887,6 +939,8 @@ def render_finding_actions_footer(
         else:
             grid.add_row(right_row2, Text())  # Run tool alone
         grid.add_row(left_row3, right_row3)
+        if claude_row is not None:
+            grid.add_row(claude_row, Text())
         _console_global.print(grid)
     else:
         # Narrow terminal: single-column layout to prevent wrapping
@@ -897,6 +951,90 @@ def render_finding_actions_footer(
         _console_global.print(right_row2)
         _console_global.print(left_row3)
         _console_global.print(right_row3)
+        if claude_row is not None:
+            _console_global.print(claude_row)
+
+
+def render_claude_panel(
+    turns: list[Any],
+    is_resumed: bool,
+    pending_input: str = "",
+) -> None:
+    """Render the Claude Assistant chat overlay panel.
+
+    Displays prior conversation history (dimmed) and the current input prompt.
+    When the conversation is resumed, shows a header indicating prior exchange count.
+
+    Args:
+        turns: List of ClaudeConversationTurn objects (may be empty for new conversations)
+        is_resumed: True if this finding has prior conversation history
+        pending_input: Current text the user is typing (shown at input prompt)
+    """
+    from datetime import datetime, timezone
+
+    _console_global.print()
+
+    # Header
+    if is_resumed and turns:
+        exchange_count = len(turns) // 2
+        # Timestamp of last turn
+        last_turn = turns[-1]
+        age_str = ""
+        try:
+            ts = datetime.fromisoformat(last_turn.created_at.replace("Z", "+00:00"))
+            now = datetime.now(timezone.utc)
+            delta_secs = int((now - ts).total_seconds())
+            if delta_secs < 3600:
+                age_str = f"{delta_secs // 60}m ago"
+            elif delta_secs < 86400:
+                age_str = f"{delta_secs // 3600}h ago"
+            else:
+                age_str = f"{delta_secs // 86400}d ago"
+        except Exception:
+            pass
+
+        summary = f"resumed · {exchange_count} exchange{'s' if exchange_count != 1 else ''}"
+        if age_str:
+            summary += f" · {age_str}"
+        header_text = Text()
+        header_text.append("── ✦ Claude (BETA) ── ", style="bold magenta")
+        header_text.append(summary, style="dim")
+        header_text.append(" ──", style="bold magenta")
+        _console_global.print(header_text)
+    else:
+        _console_global.print("[bold magenta]── ✦ Claude Assistant (BETA) ──[/bold magenta]")
+
+    # Conversation history
+    if turns:
+        for turn in turns:
+            if turn.role == "user":
+                label = Text("You: ", style="dim cyan")
+                body = Text(turn.content, style="dim")
+            else:
+                label = Text("Claude: ", style="dim magenta")
+                body = Text(turn.content, style="dim")
+            line = Text()
+            line.append_text(label)
+            line.append_text(body)
+            _console_global.print(line)
+        _console_global.print()
+    else:
+        _console_global.print("[dim]No chat history for this finding.[/dim]")
+        _console_global.print()
+
+    # Input prompt
+    prompt_line = Text()
+    prompt_line.append("Ask Claude", style="cyan")
+    prompt_line.append(": ", style="cyan")
+    if pending_input:
+        prompt_line.append(pending_input, style="white")
+    prompt_line.append("_", style="dim")
+    _console_global.print(prompt_line)
+
+    # Controls hint
+    _console_global.print(
+        "[dim]  [Enter] send  [C] clear history  [Esc/Q] back[/dim]"
+    )
 
 
 def render_tool_availability_table(include_unavailable: bool = True) -> None:
@@ -978,6 +1116,44 @@ def render_tool_availability_table(include_unavailable: bool = True) -> None:
             details_text.stylize(style_if_enabled("red"))
 
         table.add_row(tool_name, status_icon, details_text)
+
+    # proxychains4 (proxy wrapper — not a workflow tool, so not in the registry)
+    _proxy_cfg = load_config()
+    pc4_available = bool(shutil.which("proxychains4"))
+    if include_unavailable or pc4_available:
+        if pc4_available:
+            if _proxy_cfg.proxychains_enabled:
+                pc4_details_str = (
+                    f"SOCKS5 {_proxy_cfg.proxychains_host}:{_proxy_cfg.proxychains_port} (active)"
+                )
+            else:
+                pc4_version = get_tool_version("proxychains4")
+                pc4_details_str = f"v{pc4_version}" if pc4_version else "Available"
+            pc4_details_text = Text(pc4_details_str)
+            pc4_details_text.stylize(
+                style_if_enabled("magenta") if _proxy_cfg.proxychains_enabled
+                else style_if_enabled("green")
+            )
+        else:
+            if _proxy_cfg.proxychains_enabled:
+                pc4_details_str = "Not found in PATH — proxy mode will not work"
+            else:
+                pc4_details_str = "Not found in PATH"
+            pc4_details_text = Text(pc4_details_str)
+            pc4_details_text.stylize(style_if_enabled("red"))
+        table.add_row("proxychains4", "✅" if pc4_available else "❌", pc4_details_text)
+
+    # Claude Code (assistant — not a workflow tool, so not in the registry)
+    claude_available = bool(shutil.which("claude"))
+    if include_unavailable or claude_available:
+        if claude_available:
+            claude_version = get_tool_version("claude")
+            claude_details_text = Text(f"v{claude_version}" if claude_version else "Available")
+            claude_details_text.stylize(style_if_enabled("green"))
+        else:
+            claude_details_text = Text("Not found in PATH")
+            claude_details_text.stylize(style_if_enabled("red"))
+        table.add_row("claude (assistant)", "✅" if claude_available else "❌", claude_details_text)
 
     # Print table
     _console_global.print(table)
@@ -1152,7 +1328,8 @@ def render_responsive_action_menu(
 def count_severity_findings(
     directory: Path,
     scan_id: int,
-    plugin_ids: Optional[list[int]] = None
+    plugin_ids: Optional[list[int]] = None,
+    scan_ids: Optional[list[int]] = None,
 ) -> tuple[int, int, int]:
     """Count unreviewed, reviewed, and total files in a severity directory.
 
@@ -1162,13 +1339,14 @@ def count_severity_findings(
         directory: Severity directory path
         scan_id: Scan ID for database queries (required)
         plugin_ids: Optional list of plugin IDs to filter by (for host filtering)
+        scan_ids: Optional list of scan IDs for multi-scan queries (overrides scan_id)
 
     Returns:
         Tuple of (unreviewed_count, reviewed_count, total_count)
     """
     from .models import Finding
     severity_dir_name = directory.name
-    return Finding.count_by_scan_severity(scan_id, severity_dir_name, plugin_ids=plugin_ids)
+    return Finding.count_by_scan_severity(scan_id, severity_dir_name, plugin_ids=plugin_ids, scan_ids=scan_ids)
 
 
 def severity_cell(label: str) -> Any:
@@ -2118,14 +2296,14 @@ def display_bulk_cve_results(results: dict[str, list[str]]) -> None:
             # Combined list: all unique CVEs across all findings
             info(f"\nAll unique CVEs ({total_unique_cves}):\n")
             for cve in sorted(all_cves):
-                info(f"  {cve}")
+                info(cve)
         else:
             # Separated by file (default)
             info(f"\nCVEs by finding ({total_findings}):\n")
             for plugin_name, cves in sorted(results.items()):
                 info(f"{plugin_name}:")
                 for cve in cves:
-                    info(f"  {cve}")
+                    info(cve)
                 _console_global.print()  # Blank line between plugins
     else:
         warn("No CVEs found for any of the filtered findings.")

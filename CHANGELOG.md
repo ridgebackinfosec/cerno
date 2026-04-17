@@ -7,6 +7,236 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.22] - 2026-04-17
+
+### Fixed
+- `render.py`: Remove leading spaces from CVEs in separated-by-finding bulk CVE list output
+
+## [1.3.21] - 2026-04-17
+
+### Fixed
+- `render.py`: Remove leading spaces from CVEs in combined bulk CVE list for clean copy/paste into reports
+
+## [1.3.20] - 2026-04-17
+
+### Fixed
+- `claude_assistant.py`: `TypeError` when Claude subprocess times out — `log_error()` was called with two positional args but only accepts one; fixed to use f-string interpolation
+- `claude_assistant.py`: Increased default `ask_claude()` timeout from 30s to 120s to prevent premature `TimeoutExpired` errors on slow Claude responses
+
+## [1.3.19] - 2026-04-17
+
+### Changed
+- Report Brief Mode in `cerno-assistant.md`: ports for the same host are now grouped on a single line, comma-separated (e.g. `192.168.56.4:80,443,8080`) rather than one line per host:port combination
+- Report Brief Mode in `cerno-assistant.md`: single-host findings now name the host inline in the prose rather than listing it below
+
+## [1.3.18] - 2026-04-17
+
+### Changed
+- Report Brief Mode in `cerno-assistant.md`: removed Nessus severity rating from output (analyst determines severity independently); replaced inline host list with a plain line-per-host block after the prose ("across the N systems below"), or "across X systems (listed in Appendix C)" for 100+ hosts; hosts output with no leading dash to avoid Word bullet formatting conflicts
+
+## [1.3.17] - 2026-04-16
+
+### Changed
+- Claude Assistant per-finding context now includes Nessus plugin output (raw scanner text per host) so Claude can reference specific version strings, banners, and paths from the scan; capped at 5 hosts × 600 chars each with truncation notice (`claude_assistant.py:build_finding_context`, `run_exchange`)
+
+## [1.3.16] - 2026-04-16
+
+### Changed
+- Remote scan server status message updated from "HTTP server running" to "HTTPS server running" for clarity (`tools.py`)
+- Remote scan server status message updated from "serving IP list" to "serving target list" (`tools.py`)
+- Served target file URL path renamed from `/ips.txt` to `/targets.txt` in HTTPS server and curl one-liner (`ops.py`)
+- Proxy indicator badge renamed from `[PROXY]` to `[PROXY ENABLED]` in review session status line and finding action footer (`cerno.py`, `render.py`)
+
+### Fixed
+- Remote scan UDP mode: `build_nmap_remote_oneliner()` now accepts a `udp` parameter and emits `-sU` instead of hardcoded `-sS` when a UDP scan is requested; caller in `tools.py` passes `udp=bool(udp_ports)` (`ops.py`, `tools.py`)
+- Claude Assistant report brief trigger word changed from `summarize`/`scenario` to `report`; removed the unverified-finding caveat from both the system prompt and the injected query (`claude_assistant.py`, `cerno-assistant.md`)
+
+## [1.3.15] - 2026-04-16
+
+### Changed
+- Remote scan mode server upgraded from HTTP to HTTPS: self-signed certificate generated at startup via `openssl req`, server socket wrapped with `ssl.SSLContext` (TLS 1.2+ enforced), server now binds to the configured `pivot_interface` IP only instead of `0.0.0.0` — limiting exposure to other networks (`ops.py`, `start_ips_server`)
+- Remote scan curl one-liner updated to `curl -sk https://` to match the HTTPS server; `-k` skips self-signed cert verification on the pivot (`ops.py`, `build_nmap_remote_oneliner`)
+
+## [1.3.14] - 2026-04-16
+
+### Added
+- Claude Assistant: typing `summarize` or `scenario` in the chat prompt now generates a past-tense pentest report brief for the current finding or scope — mentions affected systems/ports, severity, any mapped Metasploit modules, and flags the finding as unverified (`claude_assistant.py`, `cerno.py`, `cerno_pkg/skills/cerno-assistant.md`)
+
+## [1.3.13] - 2026-04-16
+
+### Fixed
+- Remote scan mode HTTP server now fully releases its port after shutdown — `server.server_close()` is called alongside `server.shutdown()`, and `allow_reuse_address = True` is set so the port is immediately reclaimable; previously the socket remained bound, causing `Address already in use` on the second remote command invocation (`ops.py`, `tools.py`)
+- `pivot_interface` and `pivot_http_port` now appear in `cerno config show` output (`cerno.py`)
+
+## [1.3.12] - 2026-04-16
+
+### Fixed
+- `build_nmap_remote_oneliner` function was written to `ops.py` during v1.3.11 implementation but never committed — caused `ImportError` on `pipx upgrade cerno` since `tools.py` imported it but the installed package lacked the definition
+
+## [1.3.11] - 2026-04-16
+
+### Added
+- Remote Scan Mode for nmap: `[R] Toggle Remote Mode` in the nmap options menu hosts the target list via a temporary HTTP server and generates a `curl | sudo nmap -sS` one-liner for the operator to run directly on a pivot host — enabling full SYN scans without proxychains constraints (`tools.py`, `ops.py`)
+- Interface picker: on first remote mode activation with no `pivot_interface` configured, prompts user to select from detected network interfaces and saves the choice to `~/.cerno/config.yaml` automatically (`tools.py`)
+- `get_interface_ip(interface)` and `list_interfaces()` utilities in `ops.py` for detecting IPv4 address from a named network interface using `fcntl`/`socket`
+- `start_ips_server(ips_path, port)` in `ops.py`: minimal HTTP server serving only `GET /ips.txt` — no directory listing, 404 for all other paths, request logging suppressed
+- `build_nmap_remote_oneliner()` in `ops.py`: constructs the `curl -s http://<ip>:<port>/ips.txt | sudo nmap -sS -A -iL -` one-liner with optional port and NSE flags; no `-Pn` (not needed without proxychains)
+- `pivot_interface` (default: `null`) and `pivot_http_port` (default: `8877`) config fields (`config.py`)
+- `CommandResult.is_remote`, `CommandResult.cleanup`, `CommandResult.remote_output_path` fields for display-only remote workflow results that cerno shows but does not execute (`tool_context.py`)
+- Post-scan guidance: after the operator dismisses the remote command screen, cerno prints `scp` and `cerno import nmap` commands to retrieve and import results
+
+## [1.3.10] - 2026-04-16
+
+### Fixed
+- Claude Assistant now correctly reports Metasploit module names for findings with mapped MSF modules — `metasploit_names` was not included in the `get_by_scan_with_plugin` and `get_by_scan_ids_merged` SELECT queries, so `Plugin` objects always had `metasploit_names=None` and the context block always showed "Metasploit Modules: None" even when `has_metasploit=True` (`models.py`)
+
+## [1.3.9] - 2026-04-15
+
+### Fixed
+- `[PROXY]` badge now appears in finding action footer (`render_finding_actions_footer`) when focused on a specific finding — previously only shown in the findings list menu
+- `[PROXY]` badge now appears in the Execution Summary panel (`command_review_menu`) as "Proxy: proxychains4 ACTIVE" before confirming tool execution — previously invisible at command preview step
+
+## [1.3.8] - 2026-04-15
+
+### Changed
+- Trimmed CLAUDE.md by 29% (279 lines) — removed generic Python principles, verbose packaging examples, release workflow internals, and test pattern boilerplate to improve Claude Code context efficiency
+
+## [1.3.7] - 2026-04-15
+
+### Added
+- proxychains4 integration: route all tool executions (nmap, netexec, Metasploit, custom) through a SOCKS5 proxy via proxychains4
+  - New config fields: `proxychains_enabled` (default: false), `proxychains_host` (default: 127.0.0.1), `proxychains_port` (default: 9000)
+  - Cerno manages its own `~/.cerno/proxychains4.conf` — system config is not touched
+  - `--proxy` / `--no-proxy` flags on `cerno review` to override config per session
+  - nmap proxy adjustments: `-Pn` added automatically, sudo dropped, limitations note shown
+  - `[PROXY]` badge (magenta) in review session status line when proxy is active
+  - proxychains4 row in startup tool availability table with active/inactive state
+
+### Documentation
+- README: added proxychains4 integration section under Features
+- README: Commands section updated with `cerno import nessus <directory>`, `cerno review --proxy/--no-proxy/--check`, `cerno scan compare`, `cerno scan history`, `cerno reset`, and `cerno config get`
+- README: Keyboard Shortcuts expanded from 9 to 25 shortcuts, split into findings-list view and finding-detail view contexts
+- README: Configuration section updated with proxychains4 config keys and `cerno config get`
+- README: Troubleshooting section updated with `cerno reset` as full environment reset option
+
+## [1.3.6] - 2026-04-14
+
+### Fixed
+- Fixed "Getting Started" and "Tips" panels showing single-scan statistics when reviewing multiple scans simultaneously (`onboarding.py:show_workflow_guidance()`, `onboarding.py:_show_context_aware_tips()`)
+- Fixed `scan.scan_name` variable reference bug at the `show_workflow_guidance()` call site (`cerno.py`) — now correctly uses `selected_scan.scan_name`
+
+## [1.3.5] - 2026-04-13
+
+### Added
+- `cerno import nessus` now accepts a directory path; recursively discovers `.nessus` files, lists staged imports with file sizes, and prompts for confirmation before importing each in sequence with progress tracking and a final summary
+
+## [1.3.4] - 2026-04-13
+
+### Added
+- `cerno reset` command to purge `~/.cerno` and return to a fresh installation state, with type-to-confirm safety prompt
+
+## [1.3.3] - 2026-04-10
+
+### Added
+- Bundled `cerno_pkg/skills/cerno-assistant.md` skill prompt ships with the package — Claude Assistant now works out of the box after `pipx install`
+
+### Changed
+- `load_skill_prompt()` in `claude_assistant.py` now reads the bundled skill only, with inline fallback if the file is missing (previously only checked the gitignored repo-root path, so `pipx` installs always fell back to the minimal inline prompt)
+- `pyproject.toml` package-data updated to include `skills/*.md` so the skill file is included in the wheel
+
+## [1.3.2] - 2026-04-07
+
+### Added
+- Claude Assistant aggregate chat at severity selection menu (`[A]` key): discuss all findings across selected scan(s); context includes severity breakdown, review state, MSF/CVE summary, and up to 50 findings (highest severity first)
+- Claude Assistant aggregate chat at findings list (`[A]` key in action footer): discuss the current findings in scope (filtered by severity, name filter, or group filter); context adapts to whatever filter is active
+- `browse_claude_chat_aggregate()` in `cerno.py` — shared chat loop for both aggregate entry points
+- `build_aggregate_context()` and `run_aggregate_exchange()` in `cerno_pkg/claude_assistant.py`
+- `ClaudeAggregateConversationTurn` model in `cerno_pkg/models.py` — conversation persistence keyed by `context_key` string
+- `claude_aggregate_conversations` table in SQLite schema (`cerno_pkg/database.py`) with index on `context_key`
+
+### Changed
+- Documentation updates: README and CLAUDE.md updated for Claude Assistant feature (all three scopes, keyboard shortcuts, config option, requirements)
+
+## [1.3.1] - 2026-04-07
+
+### Changed
+- Tool availability table now includes `claude (assistant)` row showing Claude Code CLI install status and version (`render.py:render_tool_availability_table()`)
+
+## [1.3.0] - 2026-04-01
+
+### Added
+- Claude Assistant (BETA): interactive AI chat panel for findings, opened with `[A]` in the review TUI
+  - On-demand overlay panel powered by `claude -p` (Claude Code CLI); no API key required
+  - Persistent per-finding conversation history stored in SQLite (`claude_conversations` table, FK to `findings` with CASCADE delete)
+  - Structured finding context injected automatically into every prompt (plugin name/ID, severity, CVSS, CVEs, MSF modules, affected hosts, review state, multi-scan note)
+  - Gated on `claude` CLI availability (same pattern as nmap/netexec/msfconsole checks); `[A]` shown grayed out when claude is installed but assistant is disabled
+  - Custom skill file (`.claude/skills/cerno-assistant.md`) used as system prompt for all exchanges
+  - Config toggle: `claude_assistant_enabled` (default: `true`); disable with `cerno config set claude_assistant_enabled false`
+  - `✦` (magenta) indicator in findings list for findings with existing conversation history; column only shown when history exists (no visual noise on fresh scans)
+  - BETA notice shown once per panel open; "resumed · N exchanges · Xh ago" header on re-open
+  - `[C]` to clear history, `[Esc/Q]` to return to finding review
+- New module `cerno_pkg/claude_assistant.py`: availability check, context builder, prompt formatter, subprocess caller, exchange orchestrator
+- `ClaudeConversationTurn` model (`models.py`): dataclass + `get_by_finding()`, `add()`, `clear()`, `finding_has_history()` class methods
+- `render_claude_panel()` in `render.py`: chat overlay with dimmed history, input prompt, and controls hint
+- `claude_assistant_enabled` config field in `CernoConfig` (default: `True`)
+
+## [1.2.31] - 2026-04-01
+
+### Fixed
+- Finding host counts, affected hosts, plugin output, and view formats now aggregate across all selected scans in multi-scan review mode (`cerno_pkg/models.py`, `cerno.py`)
+  - Added transient `extra_finding_ids: list[int]` field to `Finding` dataclass; set by `browse_file_list` before opening a finding so all downstream queries cover every selected scan
+  - `get_hosts_and_ports()`, `get_all_host_port_lines()`, `get_port_distribution()`, and `get_plugin_outputs_by_host()` now expand `WHERE finding_id = ?` to `WHERE finding_id IN (...)` using `extra_finding_ids` when populated; DISTINCT ensures no duplicate host/port rows
+  - `get_counts_for()` in `browse_file_list` now queries `COUNT(DISTINCT host_id)` across all finding_ids from `all_instances` in multi-scan mode, fixing host counts in the findings list table
+- Session statistics severity breakdown now aggregates across all selected scans in multi-scan mode using `COUNT(DISTINCT plugin_id)` (`cerno.py:show_session_statistics()`)
+
+## [1.2.30] - 2026-04-01
+
+### Fixed
+- Workflow findings sub-level breadcrumb now reflects all selected scans in multi-scan mode (`cerno.py:browse_workflow_groups()`)
+  - `browse_workflow_groups()` accepts new `scans` param (full list of selected scans); passes it to `browse_file_list()` so the inner findings view uses multi-scan mode and shows the correct breadcrumb
+  - Post-review workflow refresh query now uses `Finding.get_by_scan_ids_merged()` for multi-scan instead of single-scan `get_by_scan_with_plugin()`
+
+## [1.2.29] - 2026-04-01
+
+### Fixed
+- Findings list and workflow group breadcrumbs now reflect all selected scans in multi-scan review mode (`cerno.py`)
+  - `browse_file_list()` breadcrumb shows "ScanA + ScanB" or "N scans" instead of only the primary scan name
+  - `browse_workflow_groups()` accepts new `scan_label` param and uses it in the breadcrumb when provided; call site passes `_scan_label` built from all selected scans
+
+## [1.2.28] - 2026-04-01
+
+### Fixed
+- Scan Overview now reflects all selected scans in multi-scan review mode; previously only the primary scan's hosts, ports, and finding counts were shown (`cerno_pkg/session.py:show_scan_summary()`)
+  - Host/port queries use `IN (scan_ids)` for multi-scan; empty-findings count deduplicates by `plugin_id`
+  - Finding counts use `COUNT(DISTINCT plugin_id)` across all selected scans via `Finding.count_by_scan()` and `count_reviewed_in_scan()`
+  - Header displays all scan names (e.g. "Scan Overview — ScanA + ScanB" or comma-separated for 3+)
+- Severity selection breadcrumb/header now shows all selected scan names instead of only the primary scan (e.g. "ScanA + ScanB > Choose severity" or "3 scans > Choose severity") (`cerno.py`)
+
+## [1.2.27] - 2026-04-01
+
+### Fixed
+- Severity menu now correctly aggregates findings across all selected scans in multi-scan review mode; previously only the primary (first) scan's findings were counted and displayed (`cerno.py`, `cerno_pkg/models.py`, `cerno_pkg/render.py`)
+  - `Finding.get_severity_dirs_for_scan()` and `Finding.count_by_scan_severity()` accept new `scan_ids` param; multi-scan uses `IN (...)` clause and `COUNT(DISTINCT plugin_id)` for accurate deduplication
+  - MSF and Workflow Mapped virtual groups now use `Finding.get_by_scan_ids_merged()` for multi-scan count queries
+  - `render_severity_table()` and `count_severity_findings()` thread `scan_ids` through to model layer
+
+## [1.2.26] - 2026-03-31
+
+### Changed
+- Updated CLAUDE.md to document multi-scan review architecture: `session_scans` junction table, `Finding.get_by_scan_ids_merged()` query method, `ReviewContext` field count (15 fields), multi-scan session resume behavior, and multi-scan syntax in Common Commands
+
+## [1.2.25] - 2026-03-31
+
+### Added
+- Multi-scan review mode: users can now select multiple scans at the review prompt using single numbers, ranges (e.g. `1-3`), or comma-separated lists (e.g. `1,3,5`); findings from all selected scans are presented in a merged, deduplicated view (`cerno.py`, `cerno_pkg/tui.py`)
+- New `parse_scan_selection()` function in `tui.py` for parsing multi-scan index input (mirrors `parse_severity_selection()` pattern)
+- New `Finding.get_by_scan_ids_merged()` classmethod in `models.py` for cross-scan plugin deduplication; returns one representative Finding per plugin_id and a dict of all instances across scans
+- "Scans" column in finding list table showing `"All N"` or `"M of N"` scan coverage per plugin when reviewing multiple scans (`render.py:render_finding_list_table()`)
+- Review state broadcasts across all selected scans: marking a finding as reviewed/completed/skipped updates that finding in ALL selected scans containing the same plugin (`cerno.py:browse_file_list()`)
+- New `session_scans` junction table in SQLite schema for tracking which scans belong to a multi-scan session (`database.py`)
+- Multi-scan session persistence: `save_session()` and `load_session()` in `session.py` now store and restore additional scan IDs via `session_scans` table
+- New `scan_ids: list[int]` field on `ReviewContext` dataclass in `tool_context.py` for multi-scan context propagation
+
 ## [1.2.24] - 2026-02-05
 
 ### Added

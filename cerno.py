@@ -105,8 +105,166 @@ def get_current_config():
 # === Main application logic ===
 
 
+def browse_claude_chat(
+    finding: Any,
+    plugin: Any,
+    hosts: list[str],
+) -> None:
+    """Interactive Claude Assistant chat panel for a finding (BETA).
+
+    Opens a persistent chat overlay for the given finding. Loads prior conversation
+    history from SQLite, displays it, and enters an input loop.
+
+    Args:
+        finding: Finding database object
+        plugin: Plugin database object
+        hosts: List of affected host strings for context
+    """
+    from cerno_pkg.database import get_connection
+    from cerno_pkg import claude_assistant
+    from cerno_pkg.models import ClaudeConversationTurn
+    from cerno_pkg.render import render_claude_panel
+    from rich.prompt import Prompt
+
+    finding_id = finding.finding_id
+    if finding_id is None:
+        warn("Finding has no ID — cannot open Claude Assistant.")
+        return
+
+    # Track whether BETA notice has been shown this session (per-call local state)
+    beta_notice_shown = False
+
+    with get_connection() as conn:
+        turns = ClaudeConversationTurn.get_by_finding(conn, finding_id)
+        is_resumed = bool(turns)
+
+        # Show BETA notice once per call (not stored in DB)
+        if not beta_notice_shown:
+            from cerno_pkg.claude_assistant import BETA_NOTICE
+            _console_global.print(BETA_NOTICE)
+            beta_notice_shown = True
+
+        while True:
+            # Render the full panel (clears and redraws on each iteration)
+            render_claude_panel(turns, is_resumed=is_resumed)
+
+            try:
+                raw = Prompt.ask("Ask Claude").strip()
+            except KeyboardInterrupt:
+                break
+
+            if not raw:
+                continue
+
+            # Clear history
+            if raw.lower() in ("c", "clear"):
+                from rich.prompt import Confirm
+                if Confirm.ask("Clear conversation history for this finding?", default=False):
+                    cleared = ClaudeConversationTurn.clear(conn, finding_id)
+                    turns = []
+                    is_resumed = False
+                    ok(f"Cleared {cleared} turn(s).")
+                continue
+
+            # Exit keys
+            if raw.lower() in ("q", "quit", "exit", "esc"):
+                break
+
+            # Report brief shortcut
+            if raw.lower() in claude_assistant.REPORT_BRIEF_TRIGGERS:
+                raw = claude_assistant.REPORT_BRIEF_QUERY
+
+            # Send to Claude
+            with _console_global.status("[cyan]Asking Claude...[/cyan]"):
+                response = claude_assistant.run_exchange(
+                    conn=conn,
+                    finding_id=finding_id,
+                    plugin=plugin,
+                    finding=finding,
+                    hosts=hosts,
+                    question=raw,
+                )
+
+            # Reload turns after exchange (includes new user+assistant turn)
+            turns = ClaudeConversationTurn.get_by_finding(conn, finding_id)
+            is_resumed = bool(turns)
+
+
+def browse_claude_chat_aggregate(
+    context_key: str,
+    scope_description: str,
+    scan_names: list[str],
+    findings_with_plugins: list[Any],
+) -> None:
+    """Interactive Claude Assistant chat for an aggregate scope (BETA).
+
+    Used at severity-menu level (all findings in scan) and findings-list level
+    (all findings in current filter/severity selection). Conversation history is
+    persisted in SQLite keyed by context_key.
+
+    Args:
+        context_key: Deterministic string identifying the conversation scope
+        scope_description: Human-readable scope label shown to the user
+        scan_names: Display names of the selected scan(s)
+        findings_with_plugins: List of (Finding, Plugin) tuples in scope
+    """
+    from cerno_pkg.database import get_connection
+    from cerno_pkg import claude_assistant
+    from cerno_pkg.models import ClaudeAggregateConversationTurn
+    from cerno_pkg.render import render_claude_panel
+    from rich.prompt import Prompt
+
+    with get_connection() as conn:
+        turns = ClaudeAggregateConversationTurn.get_by_context(conn, context_key)
+        is_resumed = bool(turns)
+
+        from cerno_pkg.claude_assistant import BETA_NOTICE
+        _console_global.print(BETA_NOTICE)
+        _console_global.print(f"[dim]Scope: {scope_description}[/dim]")
+
+        while True:
+            render_claude_panel(turns, is_resumed=is_resumed)
+
+            try:
+                raw = Prompt.ask("Ask Claude").strip()
+            except KeyboardInterrupt:
+                break
+
+            if not raw:
+                continue
+
+            if raw.lower() in ("c", "clear"):
+                from rich.prompt import Confirm
+                if Confirm.ask("Clear conversation history for this scope?", default=False):
+                    cleared = ClaudeAggregateConversationTurn.clear(conn, context_key)
+                    turns = []
+                    is_resumed = False
+                    ok(f"Cleared {cleared} turn(s).")
+                continue
+
+            if raw.lower() in ("q", "quit", "exit", "esc"):
+                break
+
+            # Report brief shortcut
+            if raw.lower() in claude_assistant.REPORT_BRIEF_TRIGGERS:
+                raw = claude_assistant.REPORT_BRIEF_QUERY
+
+            with _console_global.status("[cyan]Asking Claude...[/cyan]"):
+                response = claude_assistant.run_aggregate_exchange(
+                    conn=conn,
+                    context_key=context_key,
+                    scope_description=scope_description,
+                    scan_names=scan_names,
+                    findings_with_plugins=findings_with_plugins,
+                    question=raw,
+                )
+
+            turns = ClaudeAggregateConversationTurn.get_by_context(conn, context_key)
+            is_resumed = bool(turns)
+
+
 def browse_workflow_groups(
-    scan: Any,  # Scan object
+    scan: Any,  # Scan object (primary scan)
     workflow_groups: Dict[str, List[Tuple[Any, Any]]],
     args: types.SimpleNamespace,
     use_sudo: bool,
@@ -116,6 +274,8 @@ def browse_workflow_groups(
     workflow_mapper,
     config: Optional["CernoConfig"] = None,
     session_start_time: Optional[Any] = None,
+    scan_label: Optional[str] = None,
+    scans: Optional[List[Any]] = None,
 ) -> None:
     """
     Browse workflow groups and findings within selected workflow.
@@ -124,7 +284,7 @@ def browse_workflow_groups(
     then shows findings for that workflow.
 
     Args:
-        scan: Scan database object
+        scan: Primary Scan database object
         workflow_groups: Dict mapping workflow_name -> list of (Finding, Plugin) tuples
         args: Command-line arguments
         use_sudo: Whether sudo is available
@@ -132,6 +292,8 @@ def browse_workflow_groups(
         reviewed_total: List of reviewed filenames
         completed_total: List of completed filenames
         workflow_mapper: WorkflowMapper instance
+        scan_label: Optional display label override (used for multi-scan breadcrumbs)
+        scans: Optional full list of selected Scan objects for multi-scan support
     """
     # Load config if not provided (defensive programming)
     if config is None:
@@ -139,6 +301,7 @@ def browse_workflow_groups(
         config = load_config()
 
     scan_dir = Path(scan.export_root) / scan.scan_name
+    _wf_label = scan_label if scan_label else scan_dir.name
     if not workflow_groups:
         warn("No findings with mapped workflows found.")
         return
@@ -146,7 +309,7 @@ def browse_workflow_groups(
     while True:
         # Build table of workflows
         from cerno_pkg import breadcrumb
-        bc = breadcrumb(scan_dir.name, "Workflow Mapped Findings")
+        bc = breadcrumb(_wf_label, "Workflow Mapped Findings")
         header(bc if bc else "Workflow Mapped Findings - Select Workflow")
 
         table = Table(title="Workflows", box=box.SIMPLE)
@@ -198,8 +361,9 @@ def browse_workflow_groups(
             plugin_ids.append(plugin.plugin_id)
 
         # Browse findings for this workflow using database query filtered by plugin IDs
+        all_scans = scans if scans else [scan]
         browse_file_list(
-            scan,
+            all_scans,
             None,  # No specific severity dir (workflow may span multiple severities)
             None,  # No severity filter
             f"Workflow: {workflow_name}",
@@ -218,10 +382,17 @@ def browse_workflow_groups(
         # Refresh workflow files from database to get updated review_state values
         # This ensures the statistics display shows current counts after marking files reviewed
         from cerno_pkg.models import Finding
-        refreshed_files = Finding.get_by_scan_with_plugin(
-            scan_id=scan.scan_id,
-            plugin_ids=plugin_ids if plugin_ids else None,
-        )
+        all_scan_ids = [s.scan_id for s in all_scans if s.scan_id is not None]
+        if len(all_scan_ids) > 1:
+            refreshed_files, _ = Finding.get_by_scan_ids_merged(
+                scan_ids=all_scan_ids,
+                plugin_ids=plugin_ids if plugin_ids else None,
+            )
+        else:
+            refreshed_files = Finding.get_by_scan_with_plugin(
+                scan_id=scan.scan_id,
+                plugin_ids=plugin_ids if plugin_ids else None,
+            )
         workflow_groups[workflow_name] = refreshed_files
 
 
@@ -230,7 +401,7 @@ def browse_workflow_groups(
 
 
 def browse_file_list(
-    scan: Any,  # Scan object
+    scans: list[Any],  # List of Scan objects (single-scan: [scan])
     sev_dir: Optional[Path],
     severity_dir_filter: Optional[str],
     severity_label: str,
@@ -251,7 +422,7 @@ def browse_file_list(
     Browse and interact with file list (unified for severity and MSF modes).
 
     Args:
-        scan: Scan database object
+        scans: List of Scan database objects (single-scan: pass [scan])
         sev_dir: Severity directory for file operations (optional, derived if needed)
         severity_dir_filter: Severity directory filter for database query (e.g., "3_High")
         severity_label: Display label for the severity
@@ -272,6 +443,13 @@ def browse_file_list(
         from cerno_pkg.config import load_config
         config = load_config()
 
+    # Resolve proxy state (CLI override takes precedence over config)
+    _proxy_active = config.proxychains_enabled
+    if getattr(args, 'proxy', False):
+        _proxy_active = True
+    elif getattr(args, 'no_proxy', False):
+        _proxy_active = False
+
     file_filter = ""
     reviewed_filter = ""
     group_filter: Optional[Tuple[int, set, str]] = None
@@ -289,39 +467,80 @@ def browse_file_list(
     page_idx = 0
     first_iteration = True  # Track first iteration for startup hint
 
-    # Derive scan_dir from scan object
-    scan_dir = Path(scan.export_root) / scan.scan_name
+    # Derive scan variables from scans list
+    primary_scan = scans[0]
+    scan_id = primary_scan.scan_id
+    is_multi_scan = len(scans) > 1
+    scan_ids = [s.scan_id for s in scans]
+    scan_names = [s.scan_name for s in scans]
+    scan_dir = Path(primary_scan.export_root) / primary_scan.scan_name
+
+    # Claude availability check (once per browse session)
+    from cerno_pkg.claude_assistant import check_claude_available
+    has_claude = check_claude_available() and config.claude_assistant_enabled
 
     def get_counts_for(finding: "Finding") -> Tuple[int, str]:
-        """Get host/port counts from database via v_finding_stats view.
+        """Get host/port counts from database.
+
+        In multi-scan mode, counts distinct hosts across all finding_ids for this plugin.
 
         Args:
             finding: Finding database object
 
         Returns:
-            Tuple of (host_count, ports_string) - computed from v_finding_stats view
+            Tuple of (host_count, ports_string)
         """
-        # Query v_finding_stats view for computed host/port counts
         from cerno_pkg.database import query_one, get_connection
         with get_connection() as conn:
+            if is_multi_scan and all_instances:
+                all_fids = [
+                    f.finding_id for f in all_instances.get(finding.plugin_id, [])
+                    if f.finding_id is not None
+                ]
+            else:
+                all_fids = [finding.finding_id] if finding.finding_id is not None else []
+
+            if not all_fids:
+                return (0, "")
+
+            placeholders = ",".join("?" * len(all_fids))
             row = query_one(
                 conn,
-                "SELECT host_count, port_count FROM v_finding_stats WHERE finding_id = ?",
-                (finding.finding_id,)
+                f"SELECT COUNT(DISTINCT host_id) FROM finding_affected_hosts WHERE finding_id IN ({placeholders})",
+                tuple(all_fids)
             )
-            if row:
-                return (row["host_count"] or 0, "")
-            return (0, "")
+            return (row[0] if row else 0, "")
+
+    # Initialize multi-scan tracking variables (updated each loop iteration)
+    all_instances: dict[int, list["Finding"]] = {}
+    scan_labels: Optional[dict[int, str]] = None
 
     while True:
         # Query database for findings with plugin info
-        all_records = Finding.get_by_scan_with_plugin(
-            scan_id=scan.scan_id,
-            severity_dir=severity_dir_filter,
-            severity_dirs=severity_dirs_filter,
-            has_metasploit=has_metasploit_filter,
-            plugin_ids=plugin_ids_filter,
-        )
+        if is_multi_scan:
+            all_records, all_instances = Finding.get_by_scan_ids_merged(
+                scan_ids=scan_ids,
+                severity_dir=severity_dir_filter,
+                severity_dirs=severity_dirs_filter,
+                has_metasploit=has_metasploit_filter,
+                plugin_ids=plugin_ids_filter,
+            )
+            # Build scan label strings: "All N" or "M of N"
+            total_scans = len(scans)
+            scan_labels = {
+                pid: f"All {total_scans}" if len(findings) == total_scans else f"{len(findings)} of {total_scans}"
+                for pid, findings in all_instances.items()
+            }
+        else:
+            all_records = Finding.get_by_scan_with_plugin(
+                scan_id=scan_id,
+                severity_dir=severity_dir_filter,
+                severity_dirs=severity_dirs_filter,
+                has_metasploit=has_metasploit_filter,
+                plugin_ids=plugin_ids_filter,
+            )
+            all_instances = {}
+            scan_labels = None
 
         # Separate reviewed and unreviewed based on review_state from database
         reviewed = [
@@ -370,8 +589,13 @@ def browse_file_list(
         try:
             from cerno_pkg import breadcrumb
 
+            if is_multi_scan:
+                _names = [s.scan_name for s in scans]
+                _scan_label = f"{_names[0]} + {_names[1]}" if len(_names) == 2 else f"{len(_names)} scans"
+            else:
+                _scan_label = scan_dir.name
             filter_info = f"filtered: '{file_filter}'" if file_filter else "Findings"
-            bc = breadcrumb(scan_dir.name, severity_label, filter_info)
+            bc = breadcrumb(_scan_label, severity_label, filter_info)
             header(bc if bc else f"Severity: {severity_label}")
 
             # Show startup hint on first iteration
@@ -459,6 +683,12 @@ def browse_file_list(
                     session_stats += f" | R:{len(reviewed_total)} C:{len(completed_total)} S:{len(skipped_total)}"
                 status_parts.append(session_stats)
 
+            # Proxy badge
+            if _proxy_active:
+                proxy_badge = Text()
+                proxy_badge.append("[PROXY ENABLED]", style="bold magenta")
+                status_parts.insert(0, proxy_badge)
+
             # Responsive layout based on terminal width
             term_width = get_terminal_width()
 
@@ -507,9 +737,29 @@ def browse_file_list(
                     render_empty_state("no_severity")
                 # Don't render table if no findings
             else:
+                # Query Claude chat history for ✦ indicator (per-page, lightweight)
+                chat_history_ids: frozenset[int] = frozenset()
+                try:
+                    from cerno_pkg.models import ClaudeConversationTurn
+                    from cerno_pkg.database import get_connection
+                    page_finding_ids = [
+                        f.finding_id for f, _ in page_items
+                        if f.finding_id is not None
+                    ]
+                    if page_finding_ids:
+                        with get_connection() as _chat_conn:
+                            chat_history_ids = frozenset(
+                                ClaudeConversationTurn.finding_has_history(
+                                    _chat_conn, page_finding_ids
+                                )
+                            )
+                except Exception:
+                    pass  # Non-critical: indicator simply won't show on error
+
                 render_finding_list_table(
                     page_items, sort_mode, get_counts_for, row_offset=start,
-                    show_severity=is_msf_mode
+                    show_severity=is_msf_mode, scan_labels=scan_labels,
+                    chat_history_finding_ids=chat_history_ids,
                 )
 
                 # Add hint on first page if more results exist
@@ -528,12 +778,37 @@ def browse_file_list(
                 sort_mode=sort_mode,
                 can_next=can_next,
                 can_prev=can_prev,
+                has_claude=has_claude,
             )
 
             ans = Prompt.ask("Choose a file number, or action").strip().lower()
         except KeyboardInterrupt:
             warn("\nInterrupted — returning to severity menu.")
             break
+
+        # Handle Claude aggregate chat (intercept before generic action handler)
+        if ans == "a":
+            if has_claude:
+                import hashlib
+                scope_parts = [f"Severity: {severity_label}"]
+                if file_filter:
+                    scope_parts.append(f"filter: {file_filter}")
+                if group_filter:
+                    _, _, group_desc = group_filter
+                    scope_parts.append(f"group: {group_desc}")
+                scope_desc = " | ".join(scope_parts)
+                scan_ids_str = ",".join(str(sid) for sid in sorted(scan_ids))
+                scope_hash = hashlib.md5(scope_desc.encode()).hexdigest()[:8]
+                context_key = f"findings_list:{scan_ids_str}:{scope_hash}"
+                browse_claude_chat_aggregate(
+                    context_key=context_key,
+                    scope_description=scope_desc,
+                    scan_names=scan_names,
+                    findings_with_plugins=candidates,
+                )
+            else:
+                warn("Claude Assistant is not available. Install the claude CLI to use this feature.")
+            continue
 
         # Handle actions
         action_result = handle_finding_list_actions(
@@ -598,6 +873,11 @@ def browse_file_list(
                         marked += 1
                         display_name = f"Plugin {plugin.plugin_id}: {plugin.plugin_name}"
                         completed_total.append(display_name)
+                        # Broadcast to other scan instances in multi-scan mode
+                        if is_multi_scan:
+                            for other_f in all_instances.get(plugin.plugin_id, []):
+                                if other_f.finding_id != finding.finding_id:
+                                    other_f.update_review_state("completed")
                     progress.advance(task)
             ok(f"Summary: {marked} marked, {len(candidates)-marked} skipped.")
             continue
@@ -625,6 +905,14 @@ def browse_file_list(
             else:
                 chosen_sev_dir = sev_dir
 
+            # In multi-scan mode, attach all sibling finding_ids so host/port
+            # queries inside process_single_finding cover all selected scans.
+            if is_multi_scan and all_instances:
+                finding.extra_finding_ids = [
+                    f.finding_id for f in all_instances.get(finding.plugin_id, [])
+                    if f.finding_id is not None and f.finding_id != finding.finding_id
+                ]
+
             # Process the file
             process_single_finding(
                 chosen_path,
@@ -639,7 +927,24 @@ def browse_file_list(
                 completed_total,
                 show_severity=is_msf_mode,
                 workflow_mapper=workflow_mapper,
+                use_proxy=_proxy_active,
             )
+
+            # In multi-scan mode, broadcast review state changes to all other instances
+            if is_multi_scan and all_instances:
+                from cerno_pkg.database import query_one, get_connection
+                with get_connection() as conn:
+                    state_row = query_one(
+                        conn,
+                        "SELECT review_state FROM findings WHERE finding_id = ?",
+                        (finding.finding_id,)
+                    )
+                if state_row:
+                    new_state = state_row["review_state"]
+                    for other_f in all_instances.get(finding.plugin_id, []):
+                        if other_f.finding_id != finding.finding_id:
+                            other_f.update_review_state(new_state)
+
         elif action_type is None:
             continue
 
@@ -654,6 +959,7 @@ def show_session_statistics(
     skipped_total: list[str],
     scan_dir: Path,
     scan_id: Optional[int] = None,
+    scan_ids: Optional[list[int]] = None,
 ) -> None:
     """
     Display rich session statistics at the end of a review session.
@@ -665,6 +971,7 @@ def show_session_statistics(
         skipped_total: List of skipped (empty) findings
         scan_dir: Scan directory for severity analysis
         scan_id: Optional scan ID for database queries
+        scan_ids: Optional list of scan IDs for multi-scan queries (overrides scan_id)
     """
     from datetime import datetime
     from rich.table import Table
@@ -700,7 +1007,25 @@ def show_session_statistics(
         severity_counts = {}
 
         # Use database if available, otherwise fall back to filesystem
-        if scan_id is not None:
+        if scan_ids and len(scan_ids) > 1:
+            from cerno_pkg.database import db_transaction, query_all
+            with db_transaction() as conn:
+                placeholders = ",".join("?" * len(scan_ids))
+                rows = query_all(
+                    conn,
+                    f"""
+                    SELECT p.severity_label, COUNT(DISTINCT f.plugin_id) as count
+                    FROM findings f
+                    JOIN v_plugins_with_severity p ON f.plugin_id = p.plugin_id
+                    WHERE f.scan_id IN ({placeholders}) AND f.review_state = 'completed'
+                    GROUP BY p.severity_label
+                    """,
+                    tuple(scan_ids)
+                )
+                for row in rows:
+                    sev_label = pretty_severity_label(row[0])
+                    severity_counts[sev_label] = row[1]
+        elif scan_id is not None:
             from cerno_pkg.database import db_transaction, query_all
 
             # Query database for completed findings grouped by severity
@@ -877,6 +1202,7 @@ def main(args: types.SimpleNamespace) -> None:
                                 skipped_total,
                                 scan_dir,
                                 scan_id=scan_id,
+                                scan_ids=all_scan_ids if len(all_scan_ids) > 1 else None,
                             )
 
                     delete_session(scan_id)
@@ -947,7 +1273,7 @@ def main(args: types.SimpleNamespace) -> None:
                 print_action_menu([("Q", "Quit")])
 
                 try:
-                    ans = Prompt.ask("Choose scan").strip().lower()
+                    ans = Prompt.ask("Choose scan(s) (e.g. 1  or  1-3  or  1,3,5)").strip()
                 except KeyboardInterrupt:
                     warn("\nInterrupted — exiting.")
                     return
@@ -955,11 +1281,14 @@ def main(args: types.SimpleNamespace) -> None:
                 if ans in ("x", "exit", "q", "quit"):
                     return
 
-                if not ans.isdigit() or not (1 <= int(ans) <= len(all_scans)):
-                    warn(f"Invalid choice. Please enter 1-{len(all_scans)} or [Q]uit.")
-                    continue  # Back to scan selection
+                from cerno_pkg.tui import parse_scan_selection
+                indices = parse_scan_selection(ans, len(all_scans))
+                if indices is None:
+                    warn(f"Invalid choice. Enter 1-{len(all_scans)}, a range like 1-3, or [Q]uit.")
+                    continue
 
-                selected_scan = all_scans[int(ans) - 1]
+                selected_scans = [all_scans[i - 1] for i in indices]
+                selected_scan = selected_scans[0]  # Primary scan for backward compat
                 export_root = Path(selected_scan.export_root)
                 scan_dir = export_root / selected_scan.scan_name
 
@@ -972,7 +1301,12 @@ def main(args: types.SimpleNamespace) -> None:
                     continue
 
                 scan_id = selected_scan.scan_id
-                ok(f"Selected: {selected_scan.scan_name}")
+                all_scan_ids = [s.scan_id for s in selected_scans if s.scan_id is not None]
+                if len(selected_scans) > 1:
+                    names = ", ".join(s.scan_name for s in selected_scans)
+                    ok(f"Selected: {names}")
+                else:
+                    ok(f"Selected: {selected_scan.scan_name}")
 
                 # Check for existing session
                 previous_session = load_session(scan_id)
@@ -1014,26 +1348,52 @@ def main(args: types.SimpleNamespace) -> None:
                     warn(f"top_ports_count {top_ports} is very large, capping at 100")
                     top_ports = 100
 
-                show_scan_summary(scan_dir, top_ports_n=top_ports, scan_id=scan_id)
+                show_scan_summary(
+                    scan_dir,
+                    top_ports_n=top_ports,
+                    scan_id=scan_id,
+                    scan_ids=all_scan_ids if len(all_scan_ids) > 1 else None,
+                    scan_names=[s.scan_name for s in selected_scans] if len(selected_scans) > 1 else None,
+                )
 
                 # Show workflow guidance for first-time or returning users
                 from cerno_pkg.onboarding import show_workflow_guidance
-                show_workflow_guidance(scan_name=scan.scan_name, scan_id=scan_id)
+                show_workflow_guidance(
+                    scan_name=selected_scan.scan_name,
+                    scan_id=scan_id,
+                    scan_ids=all_scan_ids if len(all_scan_ids) > 1 else None,
+                    scan_names=[s.scan_name for s in selected_scans] if len(selected_scans) > 1 else None,
+                )
 
                 # Host filter state (persists across severity loop iterations)
                 host_filter: Optional[str] = None  # Active host filter (IP/hostname)
                 host_filter_plugin_ids: Optional[list[int]] = None  # Cached plugin IDs for filter
 
+                # Claude availability (computed once per scan selection)
+                from cerno_pkg.claude_assistant import check_claude_available as _check_claude
+                _has_claude_sev = _check_claude() and config.claude_assistant_enabled
+
+                # Build multi-scan display label for breadcrumb/header
+                if len(selected_scans) > 1:
+                    names = [s.scan_name for s in selected_scans]
+                    if len(names) == 2:
+                        _scan_label = f"{names[0]} + {names[1]}"
+                    else:
+                        _scan_label = f"{len(names)} scans"
+                else:
+                    _scan_label = scan_dir.name
+
                 # Severity loop (inner loop)
                 while True:
                     from cerno_pkg import breadcrumb
-                    bc = breadcrumb(scan_dir.name, "Choose severity")
-                    header(bc if bc else f"Scan: {scan_dir.name} — choose severity")
+                    bc = breadcrumb(_scan_label, "Choose severity")
+                    header(bc if bc else f"Scan: {_scan_label} — choose severity")
 
                     # Get severity directories from database (database-only mode)
                     # Apply host filter if active
                     severity_dir_names = Finding.get_severity_dirs_for_scan(
-                        scan_id, plugin_ids=host_filter_plugin_ids
+                        scan_id, plugin_ids=host_filter_plugin_ids,
+                        scan_ids=all_scan_ids if len(all_scan_ids) > 1 else None
                     )
                     if not severity_dir_names:
                         warn("No severity directories in this scan.")
@@ -1045,11 +1405,18 @@ def main(args: types.SimpleNamespace) -> None:
 
                     # Metasploit Module virtual group (menu counts) - query from database
                     # Apply host filter if active
-                    msf_files = Finding.get_by_scan_with_plugin(
-                        scan_id=scan_id,
-                        has_metasploit=True,
-                        plugin_ids=host_filter_plugin_ids
-                    )
+                    if len(all_scan_ids) > 1:
+                        msf_files, _ = Finding.get_by_scan_ids_merged(
+                            scan_ids=all_scan_ids,
+                            has_metasploit=True,
+                            plugin_ids=host_filter_plugin_ids
+                        )
+                    else:
+                        msf_files = Finding.get_by_scan_with_plugin(
+                            scan_id=scan_id,
+                            has_metasploit=True,
+                            plugin_ids=host_filter_plugin_ids
+                        )
 
                     has_msf = len(msf_files) > 0
                     msf_total = len(msf_files)
@@ -1078,10 +1445,16 @@ def main(args: types.SimpleNamespace) -> None:
                                 if pid in host_filter_plugin_ids
                             ]
                         if workflow_plugin_ids_int:
-                            workflow_files = Finding.get_by_scan_with_plugin(
-                                scan_id=scan_id,
-                                plugin_ids=workflow_plugin_ids_int
-                            )
+                            if len(all_scan_ids) > 1:
+                                workflow_files, _ = Finding.get_by_scan_ids_merged(
+                                    scan_ids=all_scan_ids,
+                                    plugin_ids=workflow_plugin_ids_int
+                                )
+                            else:
+                                workflow_files = Finding.get_by_scan_with_plugin(
+                                    scan_id=scan_id,
+                                    plugin_ids=workflow_plugin_ids_int
+                                )
                         else:
                             workflow_files = []
                     else:
@@ -1107,7 +1480,8 @@ def main(args: types.SimpleNamespace) -> None:
                         msf_summary=msf_summary,
                         workflow_summary=workflow_summary,
                         scan_id=scan_id,
-                        plugin_ids=host_filter_plugin_ids
+                        plugin_ids=host_filter_plugin_ids,
+                        scan_ids=all_scan_ids if len(all_scan_ids) > 1 else None
                     )
 
                     # Show host filter status if active
@@ -1115,10 +1489,13 @@ def main(args: types.SimpleNamespace) -> None:
                         info(f"Filtering by host: {host_filter}")
 
                     # Show action menu with appropriate options
+                    _sev_menu_items: list[tuple[str, str]] = [("H", "Host search")]
                     if host_filter:
-                        print_action_menu([("H", "Host search"), ("C", "Clear filter"), ("B", "Back")])
-                    else:
-                        print_action_menu([("H", "Host search"), ("B", "Back")])
+                        _sev_menu_items.append(("C", "Clear filter"))
+                    if _has_claude_sev:
+                        _sev_menu_items.append(("A", "Ask Claude (BETA)"))
+                    _sev_menu_items.append(("B", "Back"))
+                    print_action_menu(_sev_menu_items)
 
                     # Dynamic tip message based on available special filters
                     if has_msf and has_workflows:
@@ -1177,6 +1554,37 @@ def main(args: types.SimpleNamespace) -> None:
                         ok("Host filter cleared.")
                         continue
 
+                    elif ans == "a":
+                        if _has_claude_sev:
+                            # Build aggregate context from all findings in the current scan scope
+                            _sev_scan_names = [s.scan_name for s in selected_scans]
+                            _sev_scope = "All findings — " + ", ".join(_sev_scan_names)
+                            if host_filter:
+                                _sev_scope += f" (host filter: {host_filter})"
+                            _sev_scan_ids_str = ",".join(str(sid) for sid in sorted(all_scan_ids))
+                            _host_suffix = f":{host_filter}" if host_filter else ""
+                            _sev_context_key = f"sev_menu:{_sev_scan_ids_str}{_host_suffix}"
+                            # Fetch all findings for context (no severity filter)
+                            if len(all_scan_ids) > 1:
+                                _sev_findings, _ = Finding.get_by_scan_ids_merged(
+                                    scan_ids=all_scan_ids,
+                                    plugin_ids=host_filter_plugin_ids,
+                                )
+                            else:
+                                _sev_findings = Finding.get_by_scan_with_plugin(
+                                    scan_id=scan_id,
+                                    plugin_ids=host_filter_plugin_ids,
+                                )
+                            browse_claude_chat_aggregate(
+                                context_key=_sev_context_key,
+                                scope_description=_sev_scope,
+                                scan_names=_sev_scan_names,
+                                findings_with_plugins=_sev_findings,
+                            )
+                        else:
+                            warn("Claude Assistant is not available. Install the claude CLI to use this feature.")
+                        continue
+
                     # Parse selection (supports ranges, comma-separated, and M/W letters)
                     selection = parse_severity_selection(ans, len(severities))
 
@@ -1215,7 +1623,7 @@ def main(args: types.SimpleNamespace) -> None:
                         if host_filter:
                             label = f"{combined_label} (Host: {host_filter})"
                         browse_file_list(
-                            selected_scan,
+                            selected_scans,
                             selected_sev_dirs[0] if selected_sev_dirs else None,
                             None,  # Single severity filter not used for multi-severity
                             label,
@@ -1246,7 +1654,7 @@ def main(args: types.SimpleNamespace) -> None:
                             label = f"{label} (Host: {host_filter})"
 
                         browse_file_list(
-                            selected_scan,
+                            selected_scans,
                             sev_dir,
                             severity_dir_filter,
                             label,
@@ -1271,7 +1679,7 @@ def main(args: types.SimpleNamespace) -> None:
 
                         # Query database for metasploit plugins across all severities
                         browse_file_list(
-                            selected_scan,
+                            selected_scans,
                             None,  # No single severity dir
                             None,  # No severity filter
                             label,
@@ -1305,6 +1713,8 @@ def main(args: types.SimpleNamespace) -> None:
                             workflow_mapper,
                             config=config,
                             session_start_time=session_start_time,
+                            scan_label=_scan_label,
+                            scans=selected_scans,
                         )
 
                 # End of severity loop - continue to scan selection loop
@@ -1314,12 +1724,14 @@ def main(args: types.SimpleNamespace) -> None:
             # Always save session on exit (handles early exits via q, Ctrl+C, or errors)
             # Only save if scan was actually selected (scan_id != 0)
             if scan_id != 0:
+                additional_ids = [s.scan_id for s in selected_scans[1:]] if len(selected_scans) > 1 else None
                 save_session(
                     scan_id,
                     session_start_time,
                     reviewed_count=len(reviewed_total),
                     completed_count=len(completed_total),
                     skipped_count=len(skipped_total),
+                    additional_scan_ids=additional_ids,
                 )
 
                 # Session summary with rich statistics (only if work was done)
@@ -1333,6 +1745,7 @@ def main(args: types.SimpleNamespace) -> None:
                             skipped_total,
                             scan_dir,
                             scan_id=scan_id,
+                            scan_ids=all_scan_ids if len(all_scan_ids) > 1 else None,
                         )
 
                 # Always end session (mark session_end timestamp in database)
@@ -1438,6 +1851,12 @@ def review(
     check: bool = typer.Option(
         False, "--check", help="Check tool availability and exit (no review)."
     ),
+    proxy: bool = typer.Option(
+        False, "--proxy", help="Force-enable proxy routing via proxychains4 for this session (overrides config)."
+    ),
+    no_proxy: bool = typer.Option(
+        False, "--no-proxy", help="Force-disable proxy routing for this session (overrides config)."
+    ),
 ) -> None:
     """
     Run interactive review mode with database-driven workflow.
@@ -1463,12 +1882,18 @@ def review(
         err("Cannot use both --custom-workflows and --custom-workflows-only")
         raise typer.Exit(1)
 
+    if proxy and no_proxy:
+        err("Cannot use both --proxy and --no-proxy")
+        raise typer.Exit(1)
+
     args = types.SimpleNamespace(
         export_root=export_root,
         no_tools=no_tools,
         custom_workflows=custom_workflows,
         custom_workflows_only=custom_workflows_only,
         check=check,
+        proxy=proxy,
+        no_proxy=no_proxy,
     )
     try:
         main(args)
@@ -1544,17 +1969,37 @@ def show_nessus_tool_suggestions(nessus_file: Path, scan_name: str) -> None:
 # === Import Sub-App Commands ===
 # Grouped under 'cerno import'
 
-@import_app.command(name="nessus", help="Import .nessus file and populate database with findings")
+@import_app.command(name="nessus", help="Import .nessus file (or directory of .nessus files) and populate database with findings")
 def import_scan(
     nessus: Path = typer.Argument(
-        ..., exists=True, readable=True, help="Path to a .nessus file"
+        ..., help="Path to a .nessus file or directory containing .nessus files"
     ),
 ) -> None:
     """
-    Import .nessus file and export finding host lists to organized directory.
+    Import .nessus file(s) and export finding host lists to organized directory.
 
+    Accepts a single .nessus file or a directory. When given a directory, recursively
+    discovers all .nessus files, lists them for confirmation, then imports each in sequence.
     Auto-detects scan name from .nessus file and exports to ~/.cerno/scans/<scan_name>.
     """
+    if not nessus.exists():
+        err(f"Path does not exist: {nessus}")
+        raise typer.Exit(1)
+
+    if nessus.is_dir():
+        _import_nessus_directory(nessus)
+    elif nessus.is_file():
+        if nessus.suffix.lower() != ".nessus":
+            err(f"File does not have .nessus extension: {nessus.name}")
+            raise typer.Exit(1)
+        _import_single_nessus(nessus)
+    else:
+        err(f"Path is not a file or directory: {nessus}")
+        raise typer.Exit(1)
+
+
+def _import_single_nessus(nessus: Path) -> bool:
+    """Import a single .nessus file. Returns True on success, False on skip/cancel."""
     from cerno_pkg.nessus_import import import_nessus_file, extract_scan_name_from_nessus
     from cerno_pkg.constants import SCANS_ROOT
 
@@ -1564,7 +2009,6 @@ def import_scan(
     # Determine output directory (always use SCANS_ROOT/<scan_name>)
     out_dir = SCANS_ROOT / scan_name
     info(f"Using scan name: {scan_name}")
-    # info(f"Findings location: {out_dir}")
 
     # Check for duplicate imports
     from cerno_pkg.database import compute_file_hash
@@ -1577,7 +2021,7 @@ def import_scan(
         # Check if it's the identical file
         if existing_scan.nessus_file_hash == new_file_hash:
             ok(f"Scan '{scan_name}' already imported (identical file). Skipping.")
-            raise typer.Exit(0)
+            return False
 
         # Different file, same name - prompt user
         warn(f"A scan named '{scan_name}' already exists.")
@@ -1611,7 +2055,7 @@ def import_scan(
             info(f"Importing as: {scan_name}")
         else:
             info("Import cancelled.")
-            raise typer.Exit(0)
+            return False
 
     # Run export
     header("Importing scan to database")
@@ -1661,11 +2105,65 @@ def import_scan(
 
     except Exception as e:
         err(f"Export failed: {e}")
-        raise typer.Exit(1)
+        return False
 
     # Show suggested tool commands
     _console_global.print()  # Blank line for spacing
     show_nessus_tool_suggestions(nessus, scan_name)
+    return True
+
+
+def _import_nessus_directory(directory: Path) -> None:
+    """Discover and import all .nessus files under a directory."""
+    from rich.table import Table
+    from rich import box
+    from cerno_pkg.ansi import style_if_enabled
+
+    files = sorted(directory.rglob("*.nessus"))
+    if not files:
+        err(f"No .nessus files found in: {directory}")
+        raise typer.Exit(1)
+
+    n = len(files)
+    _console_global.print()
+    header(f"Found {n} .nessus file{'s' if n != 1 else ''} in {directory}")
+
+    stage_table = Table(show_header=True, header_style=style_if_enabled("bold cyan"), box=box.SIMPLE)
+    stage_table.add_column("#", justify="right", style=style_if_enabled("cyan"))
+    stage_table.add_column("File", style=style_if_enabled("white"))
+    stage_table.add_column("Size", justify="right", style=style_if_enabled("yellow"))
+
+    for i, f in enumerate(files, 1):
+        size_bytes = f.stat().st_size
+        if size_bytes >= 1_048_576:
+            size_str = f"{size_bytes / 1_048_576:.1f} MB"
+        elif size_bytes >= 1_024:
+            size_str = f"{size_bytes / 1_024:.1f} KB"
+        else:
+            size_str = f"{size_bytes} B"
+        stage_table.add_row(str(i), str(f.relative_to(directory)), size_str)
+
+    _console_global.print(stage_table)
+    _console_global.print()
+
+    if not Confirm.ask(f"Import all {n} file{'s' if n != 1 else ''} above?", default=True):
+        info("Import cancelled.")
+        raise typer.Exit(0)
+
+    _console_global.print()
+    imported = 0
+    skipped = 0
+    for i, f in enumerate(files, 1):
+        _console_global.rule(f"[cyan][{i}/{n}] {f.name}[/cyan]")
+        success = _import_single_nessus(f)
+        if success:
+            imported += 1
+        else:
+            skipped += 1
+        _console_global.print()
+
+    _console_global.rule("[bold cyan]Import Complete[/bold cyan]")
+    ok(f"Summary: {imported} imported, {skipped} skipped")
 
 
 # === Scan Sub-App Commands ===
@@ -1963,6 +2461,24 @@ def config_show() -> None:
     rows.append(("nxc_enrichment_enabled", config.nxc_enrichment_enabled,
                 config.nxc_enrichment_enabled == defaults.nxc_enrichment_enabled, "Show NetExec context in findings"))
 
+    # Claude Assistant
+    rows.append(("claude_assistant_enabled", config.claude_assistant_enabled,
+                config.claude_assistant_enabled == defaults.claude_assistant_enabled, "Enable Claude Assistant (BETA)"))
+
+    # Proxychains
+    rows.append(("proxychains_enabled", config.proxychains_enabled,
+                config.proxychains_enabled == defaults.proxychains_enabled, "Route tools through SOCKS5 proxy"))
+    rows.append(("proxychains_host", config.proxychains_host,
+                config.proxychains_host == defaults.proxychains_host, "SOCKS5 proxy host"))
+    rows.append(("proxychains_port", config.proxychains_port,
+                config.proxychains_port == defaults.proxychains_port, "SOCKS5 proxy port"))
+
+    # Remote scan mode
+    rows.append(("pivot_interface", config.pivot_interface or "(not set)",
+                config.pivot_interface == defaults.pivot_interface, "Interface for remote scan HTTP server"))
+    rows.append(("pivot_http_port", config.pivot_http_port,
+                config.pivot_http_port == defaults.pivot_http_port, "Port for remote scan HTTP server"))
+
     # Sort rows alphabetically by setting name (first element of tuple)
     rows.sort(key=lambda row: row[0])
 
@@ -1993,7 +2509,9 @@ def config_get(
         err(f"Unknown config key: {key}")
         info("Available keys: results_root, default_page_size, top_ports_count, custom_workflows_path,")
         info("                default_tool, default_netexec_protocol, nmap_default_profile,")
-        info("                log_path, debug_logging, no_color, term_override")
+        info("                log_path, debug_logging, no_color, term_override, nxc_workspace_path,")
+        info("                nxc_enrichment_enabled, claude_assistant_enabled, proxychains_enabled,")
+        info("                proxychains_host, proxychains_port")
         raise typer.Exit(1)
 
     value = getattr(config, key)
@@ -2018,15 +2536,17 @@ def config_set(
         err(f"Unknown config key: {key}")
         info("Available keys: results_root, default_page_size, top_ports_count, custom_workflows_path,")
         info("                default_tool, default_netexec_protocol, nmap_default_profile,")
-        info("                log_path, debug_logging, no_color, term_override")
+        info("                log_path, debug_logging, no_color, term_override, nxc_workspace_path,")
+        info("                nxc_enrichment_enabled, claude_assistant_enabled, proxychains_enabled,")
+        info("                proxychains_host, proxychains_port")
         raise typer.Exit(1)
 
     # Type conversion based on key
     try:
         typed_value: int | bool | str
-        if key in ["default_page_size", "top_ports_count"]:
+        if key in ["default_page_size", "top_ports_count", "proxychains_port"]:
             typed_value = int(value)
-        elif key in ["no_color", "debug_logging"]:
+        elif key in ["no_color", "debug_logging", "nxc_enrichment_enabled", "claude_assistant_enabled", "proxychains_enabled"]:
             typed_value = value.lower() in ("true", "1", "yes", "on")
         else:
             typed_value = value
@@ -2103,6 +2623,91 @@ def workflow_list(
     console.print(table)
     console.print()
     info(f"Total workflows: {len(all_workflows)}")
+
+
+@app.command(name="reset", help="Reset cerno to a fresh installation state (destructive)")
+def reset_installation() -> None:
+    """Purge all cerno data under ~/.cerno and return to a fresh installation state.
+
+    This permanently deletes:
+    - cerno.db (all scans, findings, sessions, tool executions)
+    - config.yaml (user configuration)
+    - cerno.log and rotated log files
+    - artifacts/ directory (generated tool output)
+    - scans/ directory (scan export files)
+
+    Shell completions (e.g. ~/.bashrc entries) are NOT affected.
+    """
+    import shutil
+
+    cerno_dir = Path.home() / ".cerno"
+
+    if not cerno_dir.exists():
+        info("~/.cerno does not exist — nothing to reset.")
+        raise typer.Exit(0)
+
+    # Enumerate what will be deleted
+    db_path = cerno_dir / "cerno.db"
+    config_path = cerno_dir / "config.yaml"
+    log_files = list(cerno_dir.glob("cerno.log*"))
+    artifacts_dir = cerno_dir / "artifacts"
+    scans_dir = cerno_dir / "scans"
+
+    warn("This will permanently delete the following from ~/.cerno/:")
+    if db_path.exists():
+        warn("  cerno.db       — entire database (scans, findings, sessions, tool executions)")
+    if config_path.exists():
+        warn("  config.yaml    — user configuration")
+    if log_files:
+        warn(f"  cerno.log*     — {len(log_files)} log file(s)")
+    if artifacts_dir.exists():
+        warn("  artifacts/     — generated tool output files")
+    if scans_dir.exists():
+        warn("  scans/         — scan export directories")
+    _console_global.print()
+    info("Shell completions (e.g. ~/.bashrc entries) are NOT affected.")
+    _console_global.print()
+
+    try:
+        response = Prompt.ask('Type "reset" to confirm').strip()
+    except KeyboardInterrupt:
+        _console_global.print()
+        info("Reset cancelled.")
+        raise typer.Exit(0)
+
+    if response != "reset":
+        info("Reset cancelled.")
+        raise typer.Exit(0)
+
+    # Delete each item, continuing past failures
+    had_error = False
+
+    for target in [db_path, config_path, *log_files]:
+        if target.exists():
+            try:
+                target.unlink()
+            except OSError as e:
+                err(f"Failed to delete {target}: {e}")
+                had_error = True
+
+    for directory in [artifacts_dir, scans_dir]:
+        if directory.exists():
+            try:
+                shutil.rmtree(directory)
+            except OSError as e:
+                err(f"Failed to delete {directory}: {e}")
+                had_error = True
+
+    # Remove the ~/.cerno directory itself if now empty
+    try:
+        cerno_dir.rmdir()  # Only succeeds if empty; ignore if non-empty
+    except OSError:
+        pass
+
+    if had_error:
+        warn("Reset completed with errors — some files may not have been deleted.")
+    else:
+        ok("cerno has been reset. Run any cerno command to reinitialize.")
 
 
 if __name__ == "__main__":

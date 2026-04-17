@@ -8,7 +8,7 @@ and generate scan statistics.
 import re
 from collections import defaultdict
 from pathlib import Path
-from typing import Union, TYPE_CHECKING, cast
+from typing import Optional, Union, TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from .models import Plugin, Finding
@@ -423,16 +423,18 @@ def natural_key(s: str) -> list[int | str]:
 
 def count_reviewed_in_scan(
     scan_dir: Path,
-    scan_id: int
+    scan_id: int,
+    scan_ids: Optional[list[int]] = None,
 ) -> tuple[int, int]:
     """Count total and reviewed files in a scan directory (database-only).
 
     Args:
         scan_dir: Path to the scan directory (unused, kept for API compatibility)
         scan_id: Scan ID for database queries (required)
+        scan_ids: Optional list of scan IDs for multi-scan queries (overrides scan_id)
 
     Returns:
         Tuple of (total_files, reviewed_files)
     """
     from .models import Finding
-    return Finding.count_by_scan(scan_id)
+    return Finding.count_by_scan(scan_id, scan_ids=scan_ids)

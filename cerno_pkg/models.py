@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Optional, cast
 
@@ -328,6 +328,9 @@ class Finding:
     reviewed_at: Optional[str] = None
     reviewed_by: Optional[str] = None
     review_notes: Optional[str] = None
+    # Transient (not stored in DB): extra finding_ids from other selected scans.
+    # Set by browse_file_list in multi-scan mode so all host/port queries cover all scans.
+    extra_finding_ids: list[int] = field(default_factory=list)
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> Finding:
@@ -455,7 +458,7 @@ class Finding:
                     f.review_state, f.reviewed_at, f.reviewed_by, f.review_notes,
                     p.plugin_id as p_plugin_id, p.plugin_name, p.severity_int, p.severity_label,
                     p.has_metasploit, p.cvss3_score, p.cvss2_score, p.cves,
-                    p.plugin_url, p.metadata_fetched_at
+                    p.plugin_url, p.metadata_fetched_at, p.metasploit_names
                 FROM findings f
                 INNER JOIN v_plugins_with_severity p ON f.plugin_id = p.plugin_id
                 WHERE f.scan_id = ?
@@ -520,9 +523,11 @@ class Finding:
                     review_notes=row[6]
                 )
 
-                # Create Plugin from row (columns 7-15, indices shifted down by 2)
+                # Create Plugin from row (columns 7-17)
                 cves_json = row[14]
                 cves = json.loads(cves_json) if cves_json else None
+                msf_names_json = row[17]
+                msf_names = json.loads(msf_names_json) if msf_names_json else None
 
                 plugin = Plugin(
                     plugin_id=row[7],
@@ -534,7 +539,8 @@ class Finding:
                     cvss2_score=row[13],
                     cves=cves,
                     plugin_url=row[15],
-                    metadata_fetched_at=row[16]
+                    metadata_fetched_at=row[16],
+                    metasploit_names=msf_names,
                 )
 
                 results.append((plugin_file, plugin))
@@ -542,20 +548,164 @@ class Finding:
             return results
 
     @classmethod
+    def get_by_scan_ids_merged(
+        cls,
+        scan_ids: list[int],
+        severity_dir: Optional[str] = None,
+        severity_dirs: Optional[list[str]] = None,
+        has_metasploit: Optional[bool] = None,
+        plugin_ids: Optional[list[int]] = None,
+        conn: Optional[sqlite3.Connection] = None,
+    ) -> tuple[list[tuple["Finding", "Plugin"]], dict[int, list["Finding"]]]:
+        """Retrieve findings across multiple scans, merged and deduplicated by plugin_id.
+
+        Queries findings for all provided scan IDs and groups results by plugin_id.
+        One representative Finding (from the scan with the lowest scan_id) is selected
+        per plugin_id for display purposes, while all Finding instances across scans
+        are returned for full cross-scan visibility.
+
+        Args:
+            scan_ids: List of scan IDs to query across.
+            severity_dir: Optional single severity directory filter (e.g., "3_High").
+            severity_dirs: Optional list of severity directories to filter by
+                (e.g., ["1_Critical", "2_High"]).
+            has_metasploit: Optional filter for plugins with Metasploit modules.
+            plugin_ids: Optional list of specific plugin IDs to include.
+            conn: Database connection.
+
+        Returns:
+            A tuple of:
+            - display_list: list of (Finding, Plugin) tuples — one representative
+              Finding per plugin_id (from the scan with the lowest scan_id).
+            - all_instances: dict mapping plugin_id → list of all Finding objects
+              across all selected scans, ordered by scan_id ascending.
+
+        Examples:
+            display_list, all_instances = Finding.get_by_scan_ids_merged(
+                scan_ids=[1, 2, 3],
+                severity_dirs=["4_Critical", "3_High"],
+            )
+            for finding, plugin in display_list:
+                other_scans = all_instances[plugin.plugin_id]
+        """
+        if not scan_ids:
+            return [], {}
+
+        with db_transaction(conn) as c:
+            placeholders = ",".join("?" * len(scan_ids))
+            query = f"""
+                SELECT
+                    f.finding_id, f.scan_id, f.plugin_id,
+                    f.review_state, f.reviewed_at, f.reviewed_by, f.review_notes,
+                    p.plugin_id as p_plugin_id, p.plugin_name, p.severity_int, p.severity_label,
+                    p.has_metasploit, p.cvss3_score, p.cvss2_score, p.cves,
+                    p.plugin_url, p.metadata_fetched_at, p.metasploit_names
+                FROM findings f
+                INNER JOIN v_plugins_with_severity p ON f.plugin_id = p.plugin_id
+                WHERE f.scan_id IN ({placeholders})
+            """
+            params: list[Any] = list(scan_ids)
+
+            # Add optional filters
+            if severity_dir is not None:
+                try:
+                    severity_int = int(severity_dir.split('_')[0])
+                    query += " AND p.severity_int = ?"
+                    params.append(severity_int)
+                except (ValueError, IndexError):
+                    pass  # Invalid format, skip filter
+            elif severity_dirs is not None and len(severity_dirs) > 0:
+                severity_ints = []
+                for sd in severity_dirs:
+                    try:
+                        severity_ints.append(int(sd.split('_')[0]))
+                    except (ValueError, IndexError):
+                        pass
+                if severity_ints:
+                    sev_placeholders = ",".join("?" * len(severity_ints))
+                    query += f" AND p.severity_int IN ({sev_placeholders})"
+                    params.extend(severity_ints)
+
+            if has_metasploit is not None:
+                query += " AND p.has_metasploit = ?"
+                params.append(1 if has_metasploit else 0)
+
+            if plugin_ids is not None and len(plugin_ids) > 0:
+                pid_placeholders = ",".join("?" * len(plugin_ids))
+                query += f" AND f.plugin_id IN ({pid_placeholders})"
+                params.extend(plugin_ids)
+
+            # Order by plugin_id then scan_id so grouping logic finds lowest scan_id first
+            query += " ORDER BY p.plugin_id ASC, f.scan_id ASC"
+
+            rows = query_all(c, query, tuple(params))
+
+            # Group rows by plugin_id; track all Finding instances and one Plugin per plugin_id
+            all_instances: dict[int, list[Finding]] = {}
+            plugin_map: dict[int, Plugin] = {}
+
+            for row in rows:
+                finding = cls(
+                    finding_id=row[0],
+                    scan_id=row[1],
+                    plugin_id=row[2],
+                    review_state=row[3],
+                    reviewed_at=row[4],
+                    reviewed_by=row[5],
+                    review_notes=row[6],
+                )
+
+                pid = row[2]
+
+                if pid not in all_instances:
+                    all_instances[pid] = []
+                    # First row for this plugin_id has the lowest scan_id (due to ORDER BY)
+                    cves_json = row[14]
+                    cves = json.loads(cves_json) if cves_json else None
+                    msf_names_json = row[17]
+                    msf_names = json.loads(msf_names_json) if msf_names_json else None
+                    plugin_map[pid] = Plugin(
+                        plugin_id=row[7],
+                        plugin_name=row[8],
+                        severity_int=row[9],
+                        severity_label=row[10],
+                        has_metasploit=bool(row[11]),
+                        cvss3_score=row[12],
+                        cvss2_score=row[13],
+                        cves=cves,
+                        plugin_url=row[15],
+                        metadata_fetched_at=row[16],
+                        metasploit_names=msf_names,
+                    )
+
+                all_instances[pid].append(finding)
+
+            # Build display_list: representative Finding (lowest scan_id) paired with Plugin
+            display_list: list[tuple[Finding, Plugin]] = [
+                (all_instances[pid][0], plugin_map[pid])
+                for pid in all_instances
+            ]
+
+            return display_list, all_instances
+
+    @classmethod
     def count_by_scan_severity(
         cls,
         scan_id: int,
         severity_dir: str,
         plugin_ids: Optional[list[int]] = None,
-        conn: Optional[sqlite3.Connection] = None
+        conn: Optional[sqlite3.Connection] = None,
+        *,
+        scan_ids: Optional[list[int]] = None,
     ) -> tuple[int, int, int]:
         """Count files in a severity directory by review state.
 
         Args:
-            scan_id: Scan ID to count files for
+            scan_id: Scan ID to count files for (ignored when scan_ids is provided)
             severity_dir: Severity directory (e.g., "3_High")
             plugin_ids: Optional list of plugin IDs to filter by (for host filtering)
             conn: Database connection
+            scan_ids: Optional list of scan IDs for multi-scan queries (overrides scan_id)
 
         Returns:
             Tuple of (unreviewed_count, reviewed_count, total_count)
@@ -570,10 +720,17 @@ class Finding:
                 return (0, 0, 0)
 
             # Build base query and params
-            base_query = """SELECT COUNT(*) FROM findings pf
-                   JOIN plugins p ON pf.plugin_id = p.plugin_id
-                   WHERE pf.scan_id = ? AND p.severity_int = ?"""
-            base_params: list[Any] = [scan_id, severity_int]
+            if scan_ids and len(scan_ids) > 1:
+                id_placeholders = ",".join("?" * len(scan_ids))
+                base_query = f"""SELECT COUNT(DISTINCT pf.plugin_id) FROM findings pf
+                       JOIN plugins p ON pf.plugin_id = p.plugin_id
+                       WHERE pf.scan_id IN ({id_placeholders}) AND p.severity_int = ?"""
+                base_params: list[Any] = list(scan_ids) + [severity_int]
+            else:
+                base_query = """SELECT COUNT(*) FROM findings pf
+                       JOIN plugins p ON pf.plugin_id = p.plugin_id
+                       WHERE pf.scan_id = ? AND p.severity_int = ?"""
+                base_params = [scan_id, severity_int]
 
             # Add plugin_ids filter if provided
             plugin_filter = ""
@@ -608,34 +765,50 @@ class Finding:
     def count_by_scan(
         cls,
         scan_id: int,
-        conn: Optional[sqlite3.Connection] = None
+        conn: Optional[sqlite3.Connection] = None,
+        *,
+        scan_ids: Optional[list[int]] = None,
     ) -> tuple[int, int]:
         """Count total and reviewed files across all severities for a scan.
 
         Args:
-            scan_id: Scan ID to count files for
+            scan_id: Scan ID to count files for (ignored when scan_ids is provided)
             conn: Database connection
+            scan_ids: Optional list of scan IDs for multi-scan queries (overrides scan_id);
+                uses COUNT(DISTINCT plugin_id) to deduplicate across scans
 
         Returns:
             Tuple of (total_files, reviewed_files)
             where reviewed means review_state == 'completed'
         """
         with db_transaction(conn) as c:
-            # Count total files
-            total_row = query_one(
-                c,
-                "SELECT COUNT(*) FROM findings WHERE scan_id = ?",
-                (scan_id,)
-            )
-            total_count = total_row[0] if total_row else 0
-
-            # Count reviewed files (review_state = 'completed')
-            reviewed_row = query_one(
-                c,
-                "SELECT COUNT(*) FROM findings WHERE scan_id = ? AND review_state = 'completed'",
-                (scan_id,)
-            )
-            reviewed_count = reviewed_row[0] if reviewed_row else 0
+            if scan_ids and len(scan_ids) > 1:
+                placeholders = ",".join("?" * len(scan_ids))
+                total_row = query_one(
+                    c,
+                    f"SELECT COUNT(DISTINCT plugin_id) FROM findings WHERE scan_id IN ({placeholders})",
+                    tuple(scan_ids)
+                )
+                total_count = total_row[0] if total_row else 0
+                reviewed_row = query_one(
+                    c,
+                    f"SELECT COUNT(DISTINCT plugin_id) FROM findings WHERE scan_id IN ({placeholders}) AND review_state = 'completed'",
+                    tuple(scan_ids)
+                )
+                reviewed_count = reviewed_row[0] if reviewed_row else 0
+            else:
+                total_row = query_one(
+                    c,
+                    "SELECT COUNT(*) FROM findings WHERE scan_id = ?",
+                    (scan_id,)
+                )
+                total_count = total_row[0] if total_row else 0
+                reviewed_row = query_one(
+                    c,
+                    "SELECT COUNT(*) FROM findings WHERE scan_id = ? AND review_state = 'completed'",
+                    (scan_id,)
+                )
+                reviewed_count = reviewed_row[0] if reviewed_row else 0
 
             return total_count, reviewed_count
 
@@ -645,7 +818,8 @@ class Finding:
         scan_id: int,
         conn: Optional[sqlite3.Connection] = None,
         *,
-        plugin_ids: Optional[list[int]] = None
+        plugin_ids: Optional[list[int]] = None,
+        scan_ids: Optional[list[int]] = None,
     ) -> list[str]:
         """Get distinct severity directories for a scan, sorted by severity level.
 
@@ -653,21 +827,32 @@ class Finding:
         Returns names like ["4_Critical", "3_High", "2_Medium", "1_Low", "0_Info"].
 
         Args:
-            scan_id: Scan ID to query
+            scan_id: Scan ID to query (ignored when scan_ids is provided)
             conn: Database connection
             plugin_ids: Optional list of plugin IDs to filter by (for host filtering)
+            scan_ids: Optional list of scan IDs for multi-scan queries (overrides scan_id)
 
         Returns:
             List of severity directory names sorted by severity (highest first)
         """
         with db_transaction(conn) as c:
-            query = """
-                SELECT DISTINCT p.severity_int, p.severity_label
-                FROM findings pf
-                JOIN v_plugins_with_severity p ON pf.plugin_id = p.plugin_id
-                WHERE pf.scan_id = ?
-            """
-            params: list[Any] = [scan_id]
+            if scan_ids and len(scan_ids) > 1:
+                id_placeholders = ",".join("?" * len(scan_ids))
+                query = f"""
+                    SELECT DISTINCT p.severity_int, p.severity_label
+                    FROM findings pf
+                    JOIN v_plugins_with_severity p ON pf.plugin_id = p.plugin_id
+                    WHERE pf.scan_id IN ({id_placeholders})
+                """
+                params: list[Any] = list(scan_ids)
+            else:
+                query = """
+                    SELECT DISTINCT p.severity_int, p.severity_label
+                    FROM findings pf
+                    JOIN v_plugins_with_severity p ON pf.plugin_id = p.plugin_id
+                    WHERE pf.scan_id = ?
+                """
+                params = [scan_id]
 
             if plugin_ids is not None and len(plugin_ids) > 0:
                 placeholders = ",".join("?" * len(plugin_ids))
@@ -702,24 +887,25 @@ class Finding:
             return [], ""
 
         with db_transaction(conn) as c:
-            # Query all host:port combinations for this file
+            all_ids = [self.finding_id] + self.extra_finding_ids
+            placeholders = ",".join("?" * len(all_ids))
             rows = query_all(
                 c,
-                """
-                SELECT
+                f"""
+                SELECT DISTINCT
                     h.scan_target,
                     fah.port_number,
                     h.scan_target_type
                 FROM finding_affected_hosts fah
                 JOIN hosts h ON fah.host_id = h.host_id
-                WHERE fah.finding_id = ?
+                WHERE fah.finding_id IN ({placeholders})
                 ORDER BY
                     CASE WHEN h.scan_target_type = 'ipv4' THEN 0
                          WHEN h.scan_target_type = 'ipv6' THEN 1
                          ELSE 2 END,
                     h.scan_target ASC
                 """,
-                (self.finding_id,)
+                tuple(all_ids)
             )
 
             if not rows:
@@ -763,18 +949,20 @@ class Finding:
             return {}
 
         with db_transaction(conn) as c:
+            all_ids = [self.finding_id] + self.extra_finding_ids
+            placeholders = ",".join("?" * len(all_ids))
             rows = query_all(
                 c,
-                """
+                f"""
                 SELECT
                     fah.port_number,
                     COUNT(DISTINCT fah.host_id) as host_count
                 FROM finding_affected_hosts fah
-                WHERE fah.finding_id = ?
+                WHERE fah.finding_id IN ({placeholders})
                 GROUP BY fah.port_number
                 ORDER BY fah.port_number ASC
                 """,
-                (self.finding_id,)
+                tuple(all_ids)
             )
 
             if not rows:
@@ -808,17 +996,18 @@ class Finding:
             return []
 
         with db_transaction(conn) as c:
-            # Query all host:port combinations for this file
+            all_ids = [self.finding_id] + self.extra_finding_ids
+            placeholders = ",".join("?" * len(all_ids))
             rows = query_all(
                 c,
-                """
-                SELECT
+                f"""
+                SELECT DISTINCT
                     h.scan_target,
                     fah.port_number,
                     h.scan_target_type
                 FROM finding_affected_hosts fah
                 JOIN hosts h ON fah.host_id = h.host_id
-                WHERE fah.finding_id = ?
+                WHERE fah.finding_id IN ({placeholders})
                 ORDER BY
                     CASE WHEN h.scan_target_type = 'ipv4' THEN 0
                          WHEN h.scan_target_type = 'ipv6' THEN 1
@@ -826,7 +1015,7 @@ class Finding:
                     h.scan_target ASC,
                     fah.port_number ASC
                 """,
-                (self.finding_id,)
+                tuple(all_ids)
             )
 
             if not rows:
@@ -877,17 +1066,18 @@ class Finding:
             return []
 
         with db_transaction(conn) as c:
-            # Query all host:port:plugin_output combinations for this file
+            all_ids = [self.finding_id] + self.extra_finding_ids
+            placeholders = ",".join("?" * len(all_ids))
             rows = query_all(
                 c,
-                """
-                SELECT
+                f"""
+                SELECT DISTINCT
                     h.scan_target,
                     fah.port_number,
                     fah.plugin_output
                 FROM finding_affected_hosts fah
                 JOIN hosts h ON fah.host_id = h.host_id
-                WHERE fah.finding_id = ?
+                WHERE fah.finding_id IN ({placeholders})
                 ORDER BY
                     CASE WHEN h.scan_target_type = 'ipv4' THEN 0
                          WHEN h.scan_target_type = 'ipv6' THEN 1
@@ -895,7 +1085,7 @@ class Finding:
                     h.scan_target ASC,
                     fah.port_number ASC
                 """,
-                (self.finding_id,)
+                tuple(all_ids)
             )
 
             if not rows:
@@ -1665,3 +1855,196 @@ def get_http_urls_for_scan(
             urls.append(f"{scheme}://{host}:{port}")
 
         return urls
+
+
+# ========== Model: ClaudeConversationTurn ==========
+
+@dataclass
+class ClaudeConversationTurn:
+    """Represents a single turn in a Claude Assistant conversation for a finding (BETA)."""
+
+    id: Optional[int] = None
+    finding_id: int = 0
+    role: str = "user"  # 'user' | 'assistant'
+    content: str = ""
+    created_at: Optional[str] = None
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> ClaudeConversationTurn:
+        """Create ClaudeConversationTurn from database row."""
+        return cls(
+            id=row["id"],
+            finding_id=row["finding_id"],
+            role=row["role"],
+            content=row["content"],
+            created_at=row["created_at"],
+        )
+
+    @classmethod
+    def get_by_finding(
+        cls,
+        conn: sqlite3.Connection,
+        finding_id: int,
+    ) -> list[ClaudeConversationTurn]:
+        """Return all turns for a finding, ordered by creation time.
+
+        Args:
+            conn: Database connection
+            finding_id: Finding ID to query
+
+        Returns:
+            List of ClaudeConversationTurn instances (may be empty)
+        """
+        rows = query_all(
+            conn,
+            "SELECT * FROM claude_conversations WHERE finding_id = ? ORDER BY id ASC",
+            (finding_id,),
+        )
+        return [cls.from_row(row) for row in rows]
+
+    @classmethod
+    def add(
+        cls,
+        conn: sqlite3.Connection,
+        finding_id: int,
+        role: str,
+        content: str,
+    ) -> int:
+        """Insert a new conversation turn.
+
+        Args:
+            conn: Database connection
+            finding_id: Finding ID this turn belongs to
+            role: 'user' or 'assistant'
+            content: Text content of the turn
+
+        Returns:
+            Row ID of the inserted turn
+        """
+        with db_transaction(conn) as c:
+            cursor = c.execute(
+                "INSERT INTO claude_conversations (finding_id, role, content) VALUES (?, ?, ?)",
+                (finding_id, role, content),
+            )
+            return cursor.lastrowid or 0
+
+    @classmethod
+    def clear(cls, conn: sqlite3.Connection, finding_id: int) -> int:
+        """Delete all conversation turns for a finding.
+
+        Args:
+            conn: Database connection
+            finding_id: Finding ID to clear history for
+
+        Returns:
+            Number of rows deleted
+        """
+        with db_transaction(conn) as c:
+            cursor = c.execute(
+                "DELETE FROM claude_conversations WHERE finding_id = ?",
+                (finding_id,),
+            )
+            return cursor.rowcount
+
+    @classmethod
+    def finding_has_history(
+        cls,
+        conn: sqlite3.Connection,
+        finding_ids: list[int],
+    ) -> set[int]:
+        """Return the subset of finding_ids that have at least one conversation turn.
+
+        Args:
+            conn: Database connection
+            finding_ids: List of finding IDs to check
+
+        Returns:
+            Set of finding_ids that have conversation history
+        """
+        if not finding_ids:
+            return set()
+        placeholders = ",".join("?" * len(finding_ids))
+        rows = query_all(
+            conn,
+            f"SELECT DISTINCT finding_id FROM claude_conversations WHERE finding_id IN ({placeholders})",
+            tuple(finding_ids),
+        )
+        return {row["finding_id"] for row in rows}
+
+
+# ========== Model: ClaudeAggregateConversationTurn ==========
+
+@dataclass
+class ClaudeAggregateConversationTurn:
+    """A single turn in a Claude Assistant aggregate conversation (BETA).
+
+    Used for severity-menu and findings-list scope conversations.
+    Keyed by a context_key string (not a finding FK) since scope spans many findings.
+    """
+
+    id: Optional[int] = None
+    context_key: str = ""
+    role: str = "user"  # 'user' | 'assistant'
+    content: str = ""
+    created_at: Optional[str] = None
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> "ClaudeAggregateConversationTurn":
+        """Create instance from database row."""
+        return cls(
+            id=row["id"],
+            context_key=row["context_key"],
+            role=row["role"],
+            content=row["content"],
+            created_at=row["created_at"],
+        )
+
+    @classmethod
+    def get_by_context(
+        cls,
+        conn: sqlite3.Connection,
+        context_key: str,
+    ) -> "list[ClaudeAggregateConversationTurn]":
+        """Return all turns for a context key, ordered by creation time."""
+        rows = query_all(
+            conn,
+            "SELECT * FROM claude_aggregate_conversations WHERE context_key = ? ORDER BY id ASC",
+            (context_key,),
+        )
+        return [cls.from_row(row) for row in rows]
+
+    @classmethod
+    def add(
+        cls,
+        conn: sqlite3.Connection,
+        context_key: str,
+        role: str,
+        content: str,
+    ) -> int:
+        """Insert a new conversation turn. Returns the inserted row ID."""
+        with db_transaction(conn) as c:
+            cursor = c.execute(
+                "INSERT INTO claude_aggregate_conversations (context_key, role, content) VALUES (?, ?, ?)",
+                (context_key, role, content),
+            )
+            return cursor.lastrowid or 0
+
+    @classmethod
+    def clear(cls, conn: sqlite3.Connection, context_key: str) -> int:
+        """Delete all turns for a context key. Returns number of rows deleted."""
+        with db_transaction(conn) as c:
+            cursor = c.execute(
+                "DELETE FROM claude_aggregate_conversations WHERE context_key = ?",
+                (context_key,),
+            )
+            return cursor.rowcount
+
+    @classmethod
+    def has_history(cls, conn: sqlite3.Connection, context_key: str) -> bool:
+        """Return True if any turns exist for this context key."""
+        row = query_one(
+            conn,
+            "SELECT 1 FROM claude_aggregate_conversations WHERE context_key = ? LIMIT 1",
+            (context_key,),
+        )
+        return row is not None

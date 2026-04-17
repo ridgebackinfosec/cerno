@@ -3,7 +3,7 @@
 Database-only mode: all session state stored in SQLite database.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -27,6 +27,7 @@ class SessionState:
         skipped_count: Count of skipped (empty) files
         tool_executions: Count of tool executions
         cve_extractions: Count of CVE extractions performed
+        additional_scan_ids: List of additional scan IDs included in a multi-scan session
     """
 
     scan_name: str
@@ -36,6 +37,7 @@ class SessionState:
     skipped_count: int
     tool_executions: int
     cve_extractions: int
+    additional_scan_ids: list[int] = field(default_factory=list)
 
 
 def save_session(
@@ -46,6 +48,7 @@ def save_session(
     skipped_count: int = 0,
     tool_executions: int = 0,
     cve_extractions: int = 0,
+    additional_scan_ids: Optional[list[int]] = None,
 ) -> Optional[int]:
     """
     Save session state to database.
@@ -58,6 +61,7 @@ def save_session(
         skipped_count: Count of skipped files
         tool_executions: Count of tool executions
         cve_extractions: Count of CVE extractions
+        additional_scan_ids: Additional scan IDs for multi-scan sessions
 
     Returns:
         session_id if successful, None otherwise
@@ -69,6 +73,8 @@ def save_session(
 
     if session_id:
         log_info(f"Session saved to database (ID: {session_id})")
+        if additional_scan_ids:
+            _db_save_session_scans(session_id, scan_id, additional_scan_ids)
 
     return session_id
 
@@ -87,7 +93,7 @@ def load_session(scan_id: int) -> Optional[SessionState]:
         SessionState object with counts from database, or None if no active session
     """
     try:
-        from .database import db_transaction, query_one
+        from .database import db_transaction, query_one, query_all
 
         with db_transaction() as conn:
             # Query active session using v_session_stats view
@@ -116,6 +122,14 @@ def load_session(scan_id: int) -> Optional[SessionState]:
             if not row:
                 return None
 
+            # Load additional scan IDs for multi-scan sessions
+            additional_ids_rows = query_all(
+                conn,
+                "SELECT scan_id FROM session_scans WHERE session_id = ? AND scan_id != ?",
+                (row["session_id"], scan_id)
+            )
+            additional_scan_ids = [r["scan_id"] for r in additional_ids_rows]
+
             return SessionState(
                 scan_name=row["scan_name"],
                 session_start=row["session_start"],
@@ -124,6 +138,7 @@ def load_session(scan_id: int) -> Optional[SessionState]:
                 skipped_count=row["skipped_count"],
                 tool_executions=row["tools_executed"],
                 cve_extractions=row["cves_extracted"],
+                additional_scan_ids=additional_scan_ids,
             )
 
     except Exception as e:
@@ -208,6 +223,35 @@ def _db_save_session(
         return None
 
 
+def _db_save_session_scans(
+    session_id: int,
+    primary_scan_id: int,
+    additional_scan_ids: list[int],
+) -> None:
+    """Upsert scan associations for a multi-scan session.
+
+    Stores all scan_ids (primary + additional) in session_scans table.
+    Uses INSERT OR IGNORE to be idempotent (safe to call multiple times).
+
+    Args:
+        session_id: Session ID to associate scans with
+        primary_scan_id: Primary scan ID for the session
+        additional_scan_ids: Additional scan IDs included in the session
+    """
+    try:
+        from .database import db_transaction
+
+        all_scan_ids = [primary_scan_id] + additional_scan_ids
+        with db_transaction() as conn:
+            for sid in all_scan_ids:
+                conn.execute(
+                    "INSERT OR IGNORE INTO session_scans (session_id, scan_id) VALUES (?, ?)",
+                    (session_id, sid)
+                )
+    except Exception as e:
+        log_error(f"Failed to save session_scans: {e}")
+
+
 def _db_end_session(scan_id: int) -> None:
     """Mark active session as ended in database (internal helper).
 
@@ -241,7 +285,9 @@ def _db_end_session(scan_id: int) -> None:
 def show_scan_summary(
     scan_dir: Path,
     top_ports_n: int = 25,
-    scan_id: Optional[int] = None
+    scan_id: Optional[int] = None,
+    scan_ids: Optional[list[int]] = None,
+    scan_names: Optional[list[str]] = None,
 ) -> None:
     """
     Display comprehensive scan overview with host/port statistics.
@@ -249,9 +295,11 @@ def show_scan_summary(
     Database-only mode: queries all statistics from database.
 
     Args:
-        scan_dir: Scan directory (used for display name only)
+        scan_dir: Scan directory (used for display name only in single-scan mode)
         top_ports_n: Number of top ports to display
-        scan_id: Scan ID (required for database queries)
+        scan_id: Scan ID (required for database queries in single-scan mode)
+        scan_ids: Optional list of scan IDs for multi-scan queries (overrides scan_id)
+        scan_names: Optional list of scan names for multi-scan header display
     """
     from collections import Counter
     from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
@@ -261,14 +309,28 @@ def show_scan_summary(
     from .analysis import count_reviewed_in_scan
     from .database import db_transaction, query_all
 
-    if scan_id is None:
+    if scan_id is None and not scan_ids:
         err("Database scan_id is required for scan summary")
         return
 
     _console_global = get_console()
-    header(f"Scan Overview — {scan_dir.name}")
 
-    total_files, reviewed_files = count_reviewed_in_scan(scan_dir, scan_id=scan_id)
+    # Build title: single scan uses scan_dir.name, multi-scan lists all names
+    is_multi = scan_ids and len(scan_ids) > 1
+    if is_multi and scan_names:
+        if len(scan_names) == 2:
+            title_names = f"{scan_names[0]} + {scan_names[1]}"
+        else:
+            title_names = ", ".join(scan_names)
+        header(f"Scan Overview — {title_names}")
+    else:
+        header(f"Scan Overview — {scan_dir.name}")
+
+    effective_scan_id = scan_id or (scan_ids[0] if scan_ids else 0)
+    total_files, reviewed_files = count_reviewed_in_scan(
+        scan_dir, scan_id=effective_scan_id,
+        scan_ids=scan_ids if is_multi else None
+    )
 
     # Query all host/port data from database
     unique_hosts = set()
@@ -287,30 +349,52 @@ def show_scan_summary(
         task = progress.add_task("Querying database for overview...", total=None)
 
         with db_transaction() as conn:
-            # Get all host/port combinations for this scan
-            rows = query_all(
-                conn,
-                """
-                SELECT DISTINCT h.ip_address, fah.port_number, h.scan_target_type, fah.finding_id
-                FROM finding_affected_hosts fah
-                JOIN findings f ON fah.finding_id = f.finding_id
-                JOIN hosts h ON fah.host_id = h.host_id
-                WHERE f.scan_id = ?
-                """,
-                (scan_id,)
-            )
-
-            # Count findings with no hosts (empty findings)
-            empty_files = query_all(
-                conn,
-                """
-                SELECT f.finding_id
-                FROM findings f
-                LEFT JOIN finding_affected_hosts fah ON f.finding_id = fah.finding_id
-                WHERE f.scan_id = ? AND fah.finding_id IS NULL
-                """,
-                (scan_id,)
-            )
+            # Get all host/port combinations for this scan (or all selected scans)
+            if is_multi and scan_ids:
+                id_placeholders = ",".join("?" * len(scan_ids))
+                rows = query_all(
+                    conn,
+                    f"""
+                    SELECT DISTINCT h.ip_address, fah.port_number, h.scan_target_type, fah.finding_id
+                    FROM finding_affected_hosts fah
+                    JOIN findings f ON fah.finding_id = f.finding_id
+                    JOIN hosts h ON fah.host_id = h.host_id
+                    WHERE f.scan_id IN ({id_placeholders})
+                    """,
+                    tuple(scan_ids)
+                )
+                empty_files = query_all(
+                    conn,
+                    f"""
+                    SELECT DISTINCT f.plugin_id
+                    FROM findings f
+                    LEFT JOIN finding_affected_hosts fah ON f.finding_id = fah.finding_id
+                    WHERE f.scan_id IN ({id_placeholders}) AND fah.finding_id IS NULL
+                    """,
+                    tuple(scan_ids)
+                )
+            else:
+                rows = query_all(
+                    conn,
+                    """
+                    SELECT DISTINCT h.ip_address, fah.port_number, h.scan_target_type, fah.finding_id
+                    FROM finding_affected_hosts fah
+                    JOIN findings f ON fah.finding_id = f.finding_id
+                    JOIN hosts h ON fah.host_id = h.host_id
+                    WHERE f.scan_id = ?
+                    """,
+                    (effective_scan_id,)
+                )
+                empty_files = query_all(
+                    conn,
+                    """
+                    SELECT f.finding_id
+                    FROM findings f
+                    LEFT JOIN finding_affected_hosts fah ON f.finding_id = fah.finding_id
+                    WHERE f.scan_id = ? AND fah.finding_id IS NULL
+                    """,
+                    (effective_scan_id,)
+                )
             empties = len(empty_files)
 
         # Track unique host:port combinations to avoid counting duplicates

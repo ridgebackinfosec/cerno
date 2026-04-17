@@ -117,7 +117,7 @@ def choose_nse_profile(config: Optional["CernoConfig"] = None) -> tuple[list[str
         warn("Invalid choice.")
 
 
-def configure_nmap_options(config: Optional["CernoConfig"] = None) -> Optional[tuple[list[str], bool]]:
+def configure_nmap_options(config: Optional["CernoConfig"] = None) -> Optional[tuple[list[str], bool, bool]]:
     """
     Consolidated nmap configuration screen.
 
@@ -128,7 +128,7 @@ def configure_nmap_options(config: Optional["CernoConfig"] = None) -> Optional[t
         config: Optional configuration object. If None, loads config.
 
     Returns:
-        Tuple of (script_list, needs_udp) or None if user cancels
+        Tuple of (script_list, needs_udp, remote_mode) or None if user cancels
     """
     from rich.panel import Panel
     from rich.text import Text
@@ -142,6 +142,7 @@ def configure_nmap_options(config: Optional["CernoConfig"] = None) -> Optional[t
     selected_profile_index: Optional[int] = None
     custom_scripts: list[str] = []
     force_udp: bool = False
+    remote_mode: bool = False
 
     # Set default profile from config
     if config.nmap_default_profile:
@@ -196,14 +197,25 @@ def configure_nmap_options(config: Optional["CernoConfig"] = None) -> Optional[t
         else:
             summary.append("No\n", style="dim")
 
+        # Remote mode section
+        summary.append("\nRemote Mode: ", style="cyan")
+        if remote_mode:
+            from .ops import get_interface_ip
+            iface = config.pivot_interface or "?"
+            ip = get_interface_ip(iface) if config.pivot_interface else None
+            addr = f"{iface} → {ip}" if ip else iface
+            summary.append(f"ON  ({addr})\n", style="bold magenta")
+        else:
+            summary.append("OFF\n", style="dim")
+
         panel = Panel(summary, border_style="cyan")
         _console.print(panel)
 
         # Show menu options with responsive layout
         render_responsive_action_menu([
             [("P", "Select NSE Profile"), ("S", "Add/Edit Custom Scripts")],
-            [("U", f"Toggle UDP ({'ON' if force_udp else 'OFF'})"), ("Enter", "Continue")],
-            [("B", "Back/Cancel")],
+            [("U", f"Toggle UDP ({'ON' if force_udp else 'OFF'})"), ("R", f"Toggle Remote Mode ({'ON' if remote_mode else 'OFF'})")],
+            [("Enter", "Continue"), ("B", "Back/Cancel")],
         ])
 
         try:
@@ -241,7 +253,7 @@ def configure_nmap_options(config: Optional["CernoConfig"] = None) -> Optional[t
             else:
                 ok("Configuration saved: No NSE scripts selected")
 
-            return final_scripts, final_needs_udp
+            return final_scripts, final_needs_udp, remote_mode
 
         elif answer in ("b", "back", "q"):
             return None
@@ -297,6 +309,60 @@ def configure_nmap_options(config: Optional["CernoConfig"] = None) -> Optional[t
             force_udp = not force_udp
             ok(f"UDP scan: {'ON' if force_udp else 'OFF'}")
 
+        elif answer == "r":
+            if remote_mode:
+                remote_mode = False
+            elif config.pivot_interface:
+                remote_mode = True
+            else:
+                # No interface configured — show picker
+                from .ops import list_interfaces, get_interface_ip
+                from .config import save_config
+                ifaces = list_interfaces()
+                if not ifaces:
+                    warn("No network interfaces with IPv4 addresses found.")
+                    continue
+
+                print()
+                print("No pivot interface configured. Available interfaces:\n")
+                for idx, (name, ip) in enumerate(ifaces, start=1):
+                    print(f"  [{idx}] {name}   ({ip})")
+                print("  [I] Enter manually")
+                print("  [B] Cancel")
+                print()
+
+                try:
+                    iface_answer = Prompt.ask("Choose", default="").strip().lower()
+                except KeyboardInterrupt:
+                    continue
+
+                chosen_interface = None
+                if iface_answer == "b":
+                    pass
+                elif iface_answer == "i":
+                    try:
+                        manual = Prompt.ask("Interface name").strip()
+                    except KeyboardInterrupt:
+                        continue
+                    if manual:
+                        detected = get_interface_ip(manual)
+                        if detected:
+                            chosen_interface = manual
+                        else:
+                            warn(f"Could not detect IP for interface '{manual}'. Try another.")
+                elif iface_answer.isdigit():
+                    pick = int(iface_answer) - 1
+                    if 0 <= pick < len(ifaces):
+                        chosen_interface = ifaces[pick][0]
+                    else:
+                        warn("Invalid selection.")
+
+                if chosen_interface:
+                    config.pivot_interface = chosen_interface
+                    save_config(config)
+                    ok(f"Saved pivot_interface = '{chosen_interface}' to config.")
+                    remote_mode = True
+
 
 # ========== Command Builders ==========
 
@@ -307,41 +373,49 @@ def build_nmap_cmd(
     ports_str: str,
     use_sudo: bool,
     output_base: Path,
+    use_proxy: bool = False,
 ) -> list[str]:
     """
     Build an nmap command with the specified options.
-    
+
     Args:
         udp: Whether to perform UDP scanning
         nse_option: NSE script option string (e.g., "--script=...")
         ips_file: Path to file containing IP addresses
         ports_str: Port specification string
-        use_sudo: Whether to run with sudo
+        use_sudo: Whether to run with sudo (ignored when use_proxy=True)
         output_base: Base path for output files
-        
+        use_proxy: When True, adds -Pn (ICMP won't traverse SOCKS) and
+                   omits sudo (raw socket scanning unavailable through proxy)
+
     Returns:
         Command as list of strings ready for subprocess execution
     """
     cmd = []
-    
-    if use_sudo:
+
+    # sudo is not useful through a SOCKS proxy (raw sockets don't traverse)
+    if use_sudo and not use_proxy:
         cmd.append("sudo")
-    
+
     cmd.extend(["nmap", "-A"])
-    
+
+    # -Pn required when proxying: ICMP host discovery doesn't work through SOCKS
+    if use_proxy:
+        cmd.append("-Pn")
+
     if nse_option:
         cmd.append(nse_option)
-    
+
     cmd.extend(["-iL", str(ips_file)])
-    
+
     if udp:
         cmd.append("-sU")
-    
+
     if ports_str:
         cmd.extend(["-p", ports_str])
-    
+
     cmd.extend(["-oA", str(output_base)])
-    
+
     return cmd
 
 
@@ -595,6 +669,11 @@ def command_review_menu(
             summary.append("Tool: ", style="cyan")
             summary.append(f"{tool_name}\n", style="yellow")
 
+        # Proxy status
+        if ctx.use_proxy:
+            summary.append("Proxy: ", style="cyan")
+            summary.append("proxychains4 ACTIVE\n", style="bold magenta")
+
         # Target information
         target_count = 0
         if ctx.tcp_ips and Path(ctx.tcp_ips).exists():
@@ -799,7 +878,7 @@ def build_nmap_workflow(ctx: "ToolContext") -> Optional["CommandResult"]:
     if nmap_config is None:
         return None
 
-    nse_scripts, udp_ports = nmap_config
+    nse_scripts, udp_ports, remote_mode = nmap_config
 
     if nse_scripts:
         info(f"{C.BOLD}NSE scripts to run:{C.RESET} {','.join(nse_scripts)}")
@@ -808,7 +887,52 @@ def build_nmap_workflow(ctx: "ToolContext") -> Optional["CommandResult"]:
 
     ips_file = ctx.udp_ips if udp_ports else ctx.tcp_ips
     require_cmd("nmap")
-    cmd = build_nmap_cmd(udp_ports, nse_option, ips_file, ctx.ports_str, ctx.use_sudo, ctx.oabase)
+
+    # --- Remote scan mode ---
+    if remote_mode:
+        from .ops import get_interface_ip, start_ips_server, build_nmap_remote_oneliner
+        from .ansi import warn
+        from datetime import datetime
+
+        ip = get_interface_ip(config.pivot_interface or "")
+        if not ip:
+            warn(
+                f"[!] Could not detect IP for interface '{config.pivot_interface}'. "
+                "Check with `cerno config set pivot_interface <iface>`."
+            )
+            return None
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        one_liner = build_nmap_remote_oneliner(
+            server_ip=ip,
+            server_port=config.pivot_http_port,
+            ports_str=ctx.ports_str,
+            nse_option=nse_option,
+            timestamp=timestamp,
+            udp=bool(udp_ports),
+        )
+        output_path = f"/tmp/cerno_{timestamp}"
+
+        server, _thread, server_cleanup = start_ips_server(
+            ips_file, config.pivot_http_port, bind_ip=ip
+        )
+
+        return CommandResult(
+            display_command=one_liner,
+            is_remote=True,
+            cleanup=server_cleanup,
+            remote_output_path=output_path,
+        )
+    # --- End remote scan mode ---
+
+    if ctx.use_proxy:
+        from .ansi import warn as _proxy_warn
+        _proxy_warn("[!] Proxy mode: nmap adjustments applied")
+        print("    \u2022 -Pn added (ICMP does not traverse SOCKS)")
+        print("    \u2022 SYN scan (-sS) unavailable \u2014 proxychains4 forces TCP connect")
+        print("    \u2022 UDP scanning not supported through SOCKS proxy")
+
+    cmd = build_nmap_cmd(udp_ports, nse_option, ips_file, ctx.ports_str, ctx.use_sudo, ctx.oabase, use_proxy=ctx.use_proxy)
 
     return CommandResult(
         command=cmd,
@@ -1007,6 +1131,22 @@ def run_tool_workflow(
     # Create synthetic path for ToolContext and logging (matches original chosen parameter)
     synthetic_path = Path(f"{synthetic_filename}.txt")
 
+    # Build proxy config once — proxy state is determined at session start,
+    # not re-evaluated per tool dispatch.
+    from .ops import ProxyConfig
+    from .config import load_config as _load_config_for_proxy
+    _initial_config = _load_config_for_proxy()
+    _proxy_enabled = _initial_config.proxychains_enabled
+    if getattr(args, 'proxy', False):
+        _proxy_enabled = True
+    elif getattr(args, 'no_proxy', False):
+        _proxy_enabled = False
+    proxy_config = ProxyConfig(
+        enabled=_proxy_enabled,
+        host=_initial_config.proxychains_host,
+        port=_initial_config.proxychains_port,
+    )
+
     while True:
 
         from .config import load_config
@@ -1093,7 +1233,8 @@ def run_tool_workflow(
                                             run_command_with_progress(
                                                 selected_cmd,
                                                 shell=True,
-                                                executable=shell_exec
+                                                executable=shell_exec,
+                                                proxy_config=proxy_config,
                                             )
                                             ok("\nCommand completed.")
 
@@ -1120,7 +1261,8 @@ def run_tool_workflow(
                                                         run_command_with_progress(
                                                             info_cmd,
                                                             shell=True,
-                                                            executable=shell_exec
+                                                            executable=shell_exec,
+                                                            proxy_config=proxy_config,
                                                         )
                                                         ok("\nInfo command completed.")
                                                     else:
@@ -1160,6 +1302,7 @@ def run_tool_workflow(
             tcp_sockets=tcp_sockets,
             ports_str=ports_str,
             use_sudo=use_sudo,
+            use_proxy=proxy_config.enabled,
             workdir=workdir,
             results_dir=results_dir,
             oabase=oabase,
@@ -1179,6 +1322,43 @@ def run_tool_workflow(
                 break
             else:
                 continue
+
+        # ── Remote scan mode ─────────────────────────────────────
+        if result.is_remote:
+            from .ansi import warn as _warn, ok as _ok
+            print()
+            _warn("[!] Remote scan mode — HTTPS server running (serving target list)")
+            print()
+            print("Command to run on pivot:")
+            print("─" * 70)
+            print(result.display_command)
+            print("─" * 70)
+            print()
+            print_action_menu([
+                ("C", "Copy to clipboard"),
+                ("Enter", "Done (stops server)"),
+            ])
+            while True:
+                try:
+                    remote_answer = Prompt.ask("Choose", default="").strip().lower()
+                except KeyboardInterrupt:
+                    break
+                if remote_answer in ("c", "copy"):
+                    copy_to_clipboard(str(result.display_command))
+                    _ok("Copied to clipboard.")
+                elif remote_answer in ("", "done"):
+                    break
+            if result.cleanup:
+                result.cleanup()
+            if result.remote_output_path:
+                fname = result.remote_output_path.split("/")[-1]
+                print()
+                _ok("When complete, retrieve and import results:")
+                print(f"  scp pivot:{result.remote_output_path}.xml ~/.cerno/artifacts/")
+                print(f"  cerno import nmap ~/.cerno/artifacts/{fname}.xml")
+                print()
+            continue  # back to tool menu — no execution, no artifact logging
+        # ── End remote scan mode ──────────────────────────────────
 
         # Extract results from unified CommandResult
         cmd = result.command
@@ -1220,10 +1400,10 @@ def run_tool_workflow(
 
                 # Execute command and capture metadata
                 if isinstance(cmd, list):
-                    exec_metadata = run_command_with_progress(cmd, shell=False)
+                    exec_metadata = run_command_with_progress(cmd, shell=False, proxy_config=proxy_config)
                 else:
                     shell_exec = shutil.which("bash") or shutil.which("sh")
-                    exec_metadata = run_command_with_progress(cmd, shell=True, executable=shell_exec)
+                    exec_metadata = run_command_with_progress(cmd, shell=True, executable=shell_exec, proxy_config=proxy_config)
 
                 # Log execution to database
                 cmd_str = display_cmd if isinstance(display_cmd, str) else " ".join(str(x) for x in display_cmd)

@@ -133,6 +133,16 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 CREATE INDEX IF NOT EXISTS idx_sessions_scan ON sessions(scan_id);
 
+CREATE TABLE IF NOT EXISTS session_scans (
+    session_id INTEGER NOT NULL,
+    scan_id    INTEGER NOT NULL,
+    PRIMARY KEY (session_id, scan_id),
+    FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE,
+    FOREIGN KEY (scan_id)    REFERENCES scans(scan_id)    ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_scans_scan_id ON session_scans(scan_id);
+
 CREATE TABLE IF NOT EXISTS tool_executions (
     execution_id INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id INTEGER,
@@ -269,6 +279,33 @@ CREATE TABLE IF NOT EXISTS host_services (
 CREATE INDEX IF NOT EXISTS idx_host_services_scan ON host_services(scan_id);
 CREATE INDEX IF NOT EXISTS idx_host_services_host ON host_services(host_id);
 CREATE INDEX IF NOT EXISTS idx_host_services_svc ON host_services(svc_name);
+
+-- Claude Assistant conversation history (BETA)
+-- Stores per-finding chat turns; cascades on finding delete
+CREATE TABLE IF NOT EXISTS claude_conversations (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    finding_id  INTEGER NOT NULL REFERENCES findings(finding_id) ON DELETE CASCADE,
+    role        TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+    content     TEXT NOT NULL,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_claude_conversations_finding
+    ON claude_conversations(finding_id);
+
+-- Claude Assistant aggregate conversations (BETA)
+-- Stores chat turns for severity-menu and findings-list scope conversations.
+-- Keyed by a context_key string (not a FK) since scope spans multiple findings.
+CREATE TABLE IF NOT EXISTS claude_aggregate_conversations (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    context_key TEXT NOT NULL,
+    role        TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+    content     TEXT NOT NULL,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_claude_aggregate_context
+    ON claude_aggregate_conversations(context_key);
 """
 
 SCHEMA_SQL_VIEWS = """

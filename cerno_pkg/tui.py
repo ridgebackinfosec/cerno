@@ -1,7 +1,7 @@
 """Terminal User Interface (TUI) components for cerno.
 
 This module handles interactive navigation, menus, and action handling:
-- Generic menu selectors (choose_from_list, parse_severity_selection)
+- Generic menu selectors (choose_from_list, parse_severity_selection, parse_scan_selection)
 - File list browser with filtering, sorting, pagination
 - Workflow group browser
 - Action handlers for file operations
@@ -129,6 +129,66 @@ def parse_severity_selection(
         msf_selected=msf_selected,
         workflow_selected=workflow_selected,
     )
+
+
+def parse_scan_selection(selection: str, max_index: int) -> Optional[list[int]]:
+    """Parse user scan selection into a list of 1-based indices.
+
+    Supports:
+        - Single number: "1" -> [1]
+        - Range: "1-3" -> [1, 2, 3]
+        - Comma-separated: "1,3" -> [1, 3]
+        - Mixed: "1-3,5" -> [1, 2, 3, 5]
+
+    Args:
+        selection: User input string
+        max_index: Maximum valid scan index (number of available scans)
+
+    Returns:
+        Sorted list of 1-based indices, or None if input is invalid
+    """
+    indices: set[int] = set()
+
+    # Split by comma first
+    parts = [p.strip() for p in selection.split(",")]
+
+    for part in parts:
+        if not part:
+            continue
+
+        # Check if it's a range (e.g., "1-3")
+        if "-" in part:
+            range_parts = part.split("-", 1)
+            if len(range_parts) != 2:
+                return None
+
+            start_str, end_str = range_parts
+            if not start_str.isdigit() or not end_str.isdigit():
+                return None
+
+            start = int(start_str)
+            end = int(end_str)
+
+            if start < 1 or end > max_index or start > end:
+                return None
+
+            indices.update(range(start, end + 1))
+        else:
+            # Single number
+            if not part.isdigit():
+                return None
+
+            num = int(part)
+            if num < 1 or num > max_index:
+                return None
+
+            indices.add(num)
+
+    # Must have at least one selection
+    if not indices:
+        return None
+
+    return sorted(list(indices))
 
 
 def choose_from_list(

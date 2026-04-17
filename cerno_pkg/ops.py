@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import shutil
 import sqlite3
 import subprocess
@@ -16,7 +17,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from rich.progress import (
     Progress,
@@ -47,12 +48,60 @@ class ExecutionMetadata:
     used_sudo: bool
 
 
+@dataclass
+class ProxyConfig:
+    """Configuration for proxychains4 SOCKS proxy routing.
+
+    Attributes:
+        enabled: Whether proxy routing is active
+        host: SOCKS5 proxy host (e.g., "127.0.0.1")
+        port: SOCKS5 proxy port (e.g., 9000)
+    """
+    enabled: bool
+    host: str
+    port: int
+
+
+def write_proxychains_config(proxy: ProxyConfig, config_path: Path) -> None:
+    """Write a proxychains4 configuration file from ProxyConfig settings.
+
+    No-op if proxy.enabled is False.
+
+    Overwrites any existing file at config_path when enabled. Creates parent
+    directories if they do not exist.
+
+    Args:
+        proxy: Proxy configuration with host and port
+        config_path: Destination path for the proxychains4.conf file
+
+    Raises:
+        ValueError: If host or port values are malformed.
+    """
+    if not proxy.enabled:
+        return
+    if "\n" in proxy.host or " " in proxy.host:
+        raise ValueError(f"Invalid proxychains host: {proxy.host!r}")
+    if not (0 < proxy.port < 65536):
+        raise ValueError(f"Invalid proxychains port: {proxy.port}")
+    content = (
+        "strict_chain\n"
+        "proxy_dns\n"
+        "tcp_read_time_out 15000\n"
+        "tcp_connect_time_out 8000\n"
+        "[ProxyList]\n"
+        f"socks5 {proxy.host} {proxy.port}\n"
+    )
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(content, encoding="utf-8")
+
+
 @log_timing
 def run_command_with_progress(
     cmd: list[str] | str,
     *,
     shell: bool = False,
     executable: Optional[str] = None,
+    proxy_config: Optional[ProxyConfig] = None,
 ) -> ExecutionMetadata:
     """Execute a command with a Rich progress spinner.
 
@@ -63,6 +112,8 @@ def run_command_with_progress(
         cmd: Command to execute (list of args or shell string)
         shell: Whether to execute via shell
         executable: Shell executable to use (if shell=True)
+        proxy_config: Optional proxy configuration. When enabled, wraps command
+            with proxychains4 and writes a proxychains4.conf to ~/.cerno/.
 
     Returns:
         ExecutionMetadata with exit code, duration, and sudo usage
@@ -117,6 +168,26 @@ def run_command_with_progress(
     except Exception:
         # Non-fatal: even if pre-validation fails, fallback to normal behavior
         pass
+
+    # Apply proxychains4 wrapping if proxy is enabled.
+    # Must happen AFTER sudo detection (used_sudo checks original cmd)
+    # and BEFORE Popen (so the wrapped command is what actually runs).
+    if proxy_config is not None and proxy_config.enabled:
+        cerno_dir = Path.home() / ".cerno"
+        pc4_conf = cerno_dir / "proxychains4.conf"
+        write_proxychains_config(proxy_config, pc4_conf)
+        if isinstance(cmd, list):
+            cmd = ["proxychains4", "-f", str(pc4_conf)] + list(cmd)
+        else:
+            cmd = f"proxychains4 -f {shlex.quote(str(pc4_conf))} {cmd}"
+        log_info(
+            f"Proxy: routing through SOCKS5 "
+            f"{proxy_config.host}:{proxy_config.port} via proxychains4"
+        )
+        get_console().print(
+            f"[proxy] Routing through SOCKS5 "
+            f"{proxy_config.host}:{proxy_config.port} via proxychains4"
+        )
 
     if isinstance(cmd, list):
         proc = subprocess.Popen(
@@ -548,3 +619,182 @@ def log_artifacts_for_nmap(
                 artifact_ids.append(artifact_id)
 
     return artifact_ids
+
+
+def get_interface_ip(interface: str) -> Optional[str]:
+    """Return the IPv4 address of a network interface, or None if unavailable.
+
+    Args:
+        interface: Interface name (e.g. 'tun0', 'eth0')
+
+    Returns:
+        IPv4 address string in dotted-quad format, or None
+    """
+    import socket
+    import struct
+    import fcntl
+    SIOCGIFADDR = 0x8915
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            result = fcntl.ioctl(
+                s.fileno(),
+                SIOCGIFADDR,
+                struct.pack("256s", interface[:15].encode()),
+            )
+        return socket.inet_ntoa(result[20:24])
+    except OSError:
+        return None
+
+
+def list_interfaces() -> list[tuple[str, str]]:
+    """Return all network interfaces that have an IPv4 address.
+
+    Returns:
+        List of (interface_name, ip_address) tuples, loopback last.
+    """
+    import os
+    try:
+        names = os.listdir("/sys/class/net/")
+    except OSError:
+        return []
+
+    interfaces = []
+    for name in sorted(names):
+        ip = get_interface_ip(name)
+        if ip:
+            interfaces.append((name, ip))
+
+    # Move loopback to end so it doesn't dominate the picker
+    interfaces.sort(key=lambda x: x[0] == "lo")
+    return interfaces
+
+
+def start_ips_server(
+    ips_path: Path,
+    port: int,
+    bind_ip: str,
+) -> tuple["http.server.HTTPServer", "threading.Thread", Callable[[], None]]:
+    """Start a temporary HTTPS server serving the IP list at /ips.txt.
+
+    Binds to the specified interface IP only (not 0.0.0.0) to limit
+    exposure. Uses a self-signed certificate generated at startup.
+    Serves ONLY GET /ips.txt — all other paths return 404.
+
+    Args:
+        ips_path: Path to the tcp_ips.list file to serve
+        port: Port to listen on
+        bind_ip: IP address of the interface to bind to (e.g. '10.10.14.5')
+
+    Returns:
+        (server, thread, cleanup_fn) — call cleanup_fn() to stop the server
+        and remove the temporary certificate files.
+    """
+    import http.server
+    import threading
+    import ssl
+    import subprocess
+    import tempfile
+
+    _ips_path = ips_path  # capture for closure
+
+    class _IpsHandler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            if self.path == "/targets.txt":
+                try:
+                    content = _ips_path.read_bytes()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/plain; charset=utf-8")
+                    self.send_header("Content-Length", str(len(content)))
+                    self.end_headers()
+                    self.wfile.write(content)
+                except OSError:
+                    self.send_error(500, "Could not read IP list")
+            else:
+                self.send_error(404, "Not found")
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass  # Suppress request logging to terminal
+
+    class _ReuseAddrHTTPServer(http.server.HTTPServer):
+        allow_reuse_address = True
+
+    # Generate self-signed cert
+    tmpdir = tempfile.mkdtemp()
+    cert_file = os.path.join(tmpdir, "cert.pem")
+    key_file = os.path.join(tmpdir, "key.pem")
+    try:
+        subprocess.run(
+            [
+                "openssl", "req", "-x509", "-newkey", "rsa:2048",
+                "-keyout", key_file,
+                "-out", cert_file,
+                "-days", "1", "-nodes",
+                "-subj", "/CN=cerno",
+            ],
+            check=True,
+            capture_output=True,
+        )
+    except FileNotFoundError:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+        raise RuntimeError(
+            "openssl not found — install openssl to use remote scan mode"
+        )
+    except subprocess.CalledProcessError as e:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+        raise RuntimeError(
+            f"openssl failed to generate certificate: {e.stderr.decode(errors='replace').strip()}"
+        )
+
+    # Wrap with TLS
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    ctx.load_cert_chain(cert_file, key_file)
+
+    server = _ReuseAddrHTTPServer((bind_ip, port), _IpsHandler)
+    server.socket = ctx.wrap_socket(server.socket, server_side=True)
+    server._cert_tmpdir = tmpdir  # type: ignore[attr-defined]
+
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    def _cleanup() -> None:
+        server.shutdown()
+        server.server_close()
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    return server, thread, _cleanup
+
+
+def build_nmap_remote_oneliner(
+    server_ip: str,
+    server_port: int,
+    ports_str: str,
+    nse_option: str,
+    timestamp: str,
+    udp: bool = False,
+) -> str:
+    """Build the curl+nmap one-liner for remote scan mode.
+
+    The operator pastes this into a shell on the pivot host.
+    Requires root (sudo) on the pivot for -sS / -sU.
+
+    Args:
+        server_ip: IP address of the cerno HTTPS server (from pivot_interface)
+        server_port: Port of the cerno HTTPS server
+        ports_str: Comma-separated ports string (e.g. '445,139') or empty string
+        nse_option: NSE option string (e.g. '--script=smb-vuln-ms17-010') or empty string
+        timestamp: Timestamp string for output filename (e.g. '20260416_143022')
+        udp: If True, use -sU (UDP scan) instead of -sS (TCP SYN scan)
+
+    Returns:
+        Complete one-liner command string
+    """
+    output_path = f"/tmp/cerno_{timestamp}"
+    scan_flag = "-sU" if udp else "-sS"
+    nmap_parts = ["sudo", "nmap", scan_flag, "-A", "-iL", "-"]
+    if ports_str:
+        nmap_parts += ["-p", ports_str]
+    if nse_option:
+        nmap_parts.append(nse_option)
+    nmap_parts += ["-oA", output_path]
+    return f"curl -sk https://{server_ip}:{server_port}/targets.txt | " + " ".join(nmap_parts)

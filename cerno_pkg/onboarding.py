@@ -8,7 +8,7 @@ This module provides:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from rich.panel import Panel
 from rich.prompt import Prompt
@@ -143,21 +143,31 @@ def show_tour_step(step: int) -> None:
         info("")
 
 
-def show_workflow_guidance(scan_name: str, scan_id: int) -> None:
+def show_workflow_guidance(
+    scan_name: str,
+    scan_id: int,
+    scan_ids: Optional[list[int]] = None,
+    scan_names: Optional[list[str]] = None,
+) -> None:
     """Show workflow guidance with context-aware tips.
 
     Only displays for first-time users of a scan. Skips if any session
     exists for the scan (indicating previous review activity).
 
     Args:
-        scan_name: Name of selected scan
-        scan_id: Database scan ID
+        scan_name: Name of the primary selected scan
+        scan_id: Database scan ID of the primary scan
+        scan_ids: All selected scan IDs (multi-scan mode); if None, single-scan
+        scan_names: All selected scan names (multi-scan mode)
     """
     from .database import get_connection
 
+    is_multi = scan_ids is not None and len(scan_ids) > 1
+    effective_scan_ids = scan_ids if is_multi else [scan_id]
+
     # Query scan statistics
     with get_connection() as conn:
-        # Check if user has reviewed this scan before
+        # Check if user has reviewed this scan before (use primary scan_id)
         cursor = conn.execute(
             "SELECT session_id FROM sessions WHERE scan_id = ? LIMIT 1",
             (scan_id,)
@@ -168,17 +178,18 @@ def show_workflow_guidance(scan_name: str, scan_id: int) -> None:
         if existing_session:
             return
 
+        placeholders = ",".join("?" * len(effective_scan_ids))
         cursor = conn.execute(
-            """
+            f"""
             SELECT
                 COUNT(*) as total,
                 SUM(CASE WHEN review_state = 'pending' THEN 1 ELSE 0 END) as unreviewed,
                 SUM(CASE WHEN review_state = 'reviewed' THEN 1 ELSE 0 END) as reviewed,
                 SUM(CASE WHEN review_state = 'completed' THEN 1 ELSE 0 END) as completed
             FROM findings
-            WHERE scan_id = ?
-        """,
-            (scan_id,),
+            WHERE scan_id IN ({placeholders})
+            """,
+            effective_scan_ids,
         )
         stats = cursor.fetchone()
 
@@ -188,12 +199,21 @@ def show_workflow_guidance(scan_name: str, scan_id: int) -> None:
     if total == 0 or unreviewed == 0:
         return
 
+    # Build display name
+    if is_multi and scan_names:
+        if len(scan_names) == 2:
+            display_name = f"{scan_names[0]} + {scan_names[1]}"
+        else:
+            display_name = f"{len(scan_names)} scans"
+    else:
+        display_name = scan_name
+
     # Build main content as Text object
     content = Text()
 
     # Scan info section with styled labels
     content.append("Scan: ", style="bold")
-    content.append(f"{scan_name}\n\n")
+    content.append(f"{display_name}\n\n")
 
     # Statistics with colored labels
     content.append("Findings: ", style="bold cyan")
@@ -242,7 +262,7 @@ def show_workflow_guidance(scan_name: str, scan_id: int) -> None:
     console.print(panel)
 
     # Context-aware tips
-    tips_panel = _show_context_aware_tips(scan_id, total, unreviewed, completed)
+    tips_panel = _show_context_aware_tips(scan_id, total, unreviewed, completed, scan_ids=scan_ids)
     if tips_panel:
         console.print(tips_panel)
 
@@ -259,49 +279,61 @@ def show_workflow_guidance(scan_name: str, scan_id: int) -> None:
         show_additional_tips()
 
 
-def _show_context_aware_tips(scan_id: int, total: int, unreviewed: int, completed: int) -> Panel | None:
+def _show_context_aware_tips(
+    scan_id: int,
+    total: int,
+    unreviewed: int,
+    completed: int,
+    scan_ids: Optional[list[int]] = None,
+) -> Panel | None:
     """Build context-aware tips panel based on scan state.
 
     Args:
-        scan_id: Database scan ID
-        total: Total finding count
+        scan_id: Database scan ID of the primary scan
+        total: Total finding count (already aggregated across scan_ids if multi)
         unreviewed: Unreviewed finding count
         completed: Completed finding count
+        scan_ids: All selected scan IDs (multi-scan mode); if None, single-scan
 
     Returns:
         Panel with tips, or None if no tips to show
     """
     from .database import get_connection
 
+    is_multi = scan_ids is not None and len(scan_ids) > 1
+    effective_scan_ids = scan_ids if is_multi else [scan_id]
+    placeholders = ",".join("?" * len(effective_scan_ids))
+
     tips = []  # Collect tips as Text objects
 
     # Check for Critical findings
     with get_connection() as conn:
         cursor = conn.execute(
-            """
+            f"""
             SELECT COUNT(*) FROM findings f
             JOIN plugins p ON f.plugin_id = p.plugin_id
-            WHERE f.scan_id = ? AND p.severity_int = 4
-        """,
-            (scan_id,),
+            WHERE f.scan_id IN ({placeholders}) AND p.severity_int = 4
+            """,
+            effective_scan_ids,
         )
         critical_count = cursor.fetchone()[0]
 
     if critical_count > 0:
         tip = Text()
-        tip.append(f"This scan has {critical_count} Critical finding(s) - prioritize these first!")
+        scan_label = "These scans have" if is_multi else "This scan has"
+        tip.append(f"{scan_label} {critical_count} Critical finding(s) - prioritize these first!")
         tips.append(tip)
 
     # Check for Metasploit modules
     with get_connection() as conn:
         cursor = conn.execute(
-            """
+            f"""
             SELECT COUNT(DISTINCT f.finding_id)
             FROM findings f
             JOIN plugins p ON f.plugin_id = p.plugin_id
-            WHERE f.scan_id = ? AND p.metasploit_names IS NOT NULL AND p.metasploit_names != '[]'
-        """,
-            (scan_id,),
+            WHERE f.scan_id IN ({placeholders}) AND p.metasploit_names IS NOT NULL AND p.metasploit_names != '[]'
+            """,
+            effective_scan_ids,
         )
         msf_count = cursor.fetchone()[0]
 

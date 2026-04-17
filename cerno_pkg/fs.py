@@ -278,6 +278,7 @@ def handle_finding_view(
     ports_str: Optional[str] = None,
     args: Any = None,
     use_sudo: bool = False,
+    use_proxy: bool = False,
 ) -> Optional[str]:
     """
     Interactive file viewing menu (raw/grouped/hosts-only/copy/CVE info/workflow/tool/mark).
@@ -323,6 +324,13 @@ def handle_finding_view(
     if workflow_mapper and plugin:
         has_workflow = workflow_mapper.has_workflow(str(plugin.plugin_id))
 
+    # Check Claude Assistant availability (cheap: shutil.which + config load)
+    from .claude_assistant import check_claude_available
+    from .config import load_config as _load_config
+    _cfg = _load_config()
+    claude_installed = check_claude_available()
+    has_claude = claude_installed and _cfg.claude_assistant_enabled
+
     # Loop to allow multiple actions on the same file
     while True:
         # Check if NetExec data is available for these hosts (refreshed each iteration)
@@ -337,6 +345,9 @@ def handle_finding_view(
         render_finding_actions_footer(
             has_workflow=has_workflow,
             has_nxc_data=has_nxc_data,
+            has_claude=has_claude,
+            claude_installed=claude_installed,
+            use_proxy=use_proxy,
         )
         try:
             action_choice = Prompt.ask("Choose action").strip().lower()
@@ -382,6 +393,29 @@ def handle_finding_view(
                 display_nxc_per_host_detail(hosts)
             else:
                 warn("No NetExec data available for these hosts.")
+            continue
+
+        # Handle Claude Assistant action
+        if action_choice in ("a", "ask", "claude"):
+            if not has_claude:
+                if not claude_installed:
+                    warn("Claude CLI not found on PATH. Install claude to use this feature.")
+                else:
+                    warn("Claude Assistant is disabled. Enable with: cerno config set claude_assistant_enabled true")
+                continue
+            if finding is None or plugin is None:
+                warn("Finding/Plugin information not available for Claude Assistant.")
+                continue
+            # Deferred import to avoid circular dependency (cerno.py imports fs.py)
+            try:
+                from cerno import browse_claude_chat  # type: ignore[import]
+                browse_claude_chat(
+                    finding=finding,
+                    plugin=plugin,
+                    hosts=hosts or [],
+                )
+            except ImportError:
+                warn("Claude Assistant not available in this context.")
             continue
 
         # Enter/skip keys treated as back navigation
@@ -536,6 +570,7 @@ def process_single_finding(
     completed_total: List[str],
     show_severity: bool = False,
     workflow_mapper: Optional["WorkflowMapper"] = None,
+    use_proxy: bool = False,
 ) -> None:
     """
     Process a single plugin file: preview, view, run tools, mark complete (database-only).
@@ -589,6 +624,7 @@ def process_single_finding(
         ports_str=ports_str,
         args=args,
         use_sudo=use_sudo,
+        use_proxy=use_proxy,
     )
 
     # Handle result from file view

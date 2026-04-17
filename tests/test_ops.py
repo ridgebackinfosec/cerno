@@ -7,10 +7,13 @@ import pytest
 
 from cerno_pkg.ops import (
     ExecutionMetadata,
+    ProxyConfig,
+    write_proxychains_config,
     log_tool_execution,
     log_artifact,
     log_artifacts_for_nmap,
 )
+from cerno_pkg.tools import build_nmap_cmd
 
 
 class TestExecutionMetadata:
@@ -39,6 +42,58 @@ class TestExecutionMetadata:
         assert metadata.exit_code == 1
         assert metadata.duration_seconds == 5.2
         assert metadata.used_sudo is False
+
+
+class TestProxyConfig:
+    """Tests for ProxyConfig dataclass and write_proxychains_config helper."""
+
+    @pytest.mark.unit
+    def test_proxy_config_defaults(self):
+        proxy = ProxyConfig(enabled=False, host="127.0.0.1", port=9000)
+        assert proxy.enabled is False
+        assert proxy.host == "127.0.0.1"
+        assert proxy.port == 9000
+
+    @pytest.mark.unit
+    def test_proxy_config_custom_values(self):
+        proxy = ProxyConfig(enabled=True, host="10.10.0.1", port=1080)
+        assert proxy.enabled is True
+        assert proxy.host == "10.10.0.1"
+        assert proxy.port == 1080
+
+    @pytest.mark.unit
+    def test_write_proxychains_config_content(self, tmp_path):
+        proxy = ProxyConfig(enabled=True, host="10.10.0.1", port=1080)
+        config_path = tmp_path / "proxychains4.conf"
+        write_proxychains_config(proxy, config_path)
+        content = config_path.read_text()
+        assert "strict_chain" in content
+        assert "proxy_dns" in content
+        assert "socks5 10.10.0.1 1080" in content
+        assert "[ProxyList]" in content
+
+    @pytest.mark.unit
+    def test_write_proxychains_config_creates_parent_dirs(self, tmp_path):
+        proxy = ProxyConfig(enabled=True, host="127.0.0.1", port=9000)
+        config_path = tmp_path / "nested" / "dir" / "proxychains4.conf"
+        write_proxychains_config(proxy, config_path)
+        assert config_path.exists()
+
+    @pytest.mark.unit
+    def test_write_proxychains_config_is_idempotent(self, tmp_path):
+        proxy = ProxyConfig(enabled=True, host="127.0.0.1", port=9000)
+        config_path = tmp_path / "proxychains4.conf"
+        write_proxychains_config(proxy, config_path)
+        write_proxychains_config(proxy, config_path)
+        content = config_path.read_text()
+        assert "socks5 127.0.0.1 9000" in content
+
+    @pytest.mark.unit
+    def test_write_proxychains_config_no_op_when_disabled(self, tmp_path):
+        proxy = ProxyConfig(enabled=False, host="127.0.0.1", port=9000)
+        config_path = tmp_path / "proxychains4.conf"
+        write_proxychains_config(proxy, config_path)
+        assert not config_path.exists()
 
 
 class TestLogToolExecution:
@@ -626,38 +681,505 @@ class TestCommandAvailability:
 
         assert version == "4.5.6"
 
-    def test_render_tool_availability_table_basic(self):
-        """Test rendering tool availability table (smoke test)."""
+
+class TestGetInterfaceIp:
+    """Tests for get_interface_ip()."""
+
+    @pytest.mark.unit
+    def test_returns_none_for_nonexistent_interface(self):
+        from cerno_pkg.ops import get_interface_ip
+        result = get_interface_ip("does_not_exist_xyz")
+        assert result is None
+
+    @pytest.mark.unit
+    def test_returns_string_for_loopback(self):
+        from cerno_pkg.ops import get_interface_ip
+        result = get_interface_ip("lo")
+        # lo always exists on Linux; may return None on some CI envs — just check type
+        assert result is None or isinstance(result, str)
+
+    @pytest.mark.unit
+    def test_returns_dotted_quad_format(self, monkeypatch):
+        from cerno_pkg.ops import get_interface_ip
+        import socket
+        # Fake fcntl.ioctl to return a packed result with 10.10.14.5 at bytes 20-24
+        fake_result = b'\x00' * 20 + socket.inet_aton("10.10.14.5") + b'\x00' * 232
+        import fcntl
+        monkeypatch.setattr(fcntl, "ioctl", lambda fd, req, buf: fake_result)
+        result = get_interface_ip("tun0")
+        assert result == "10.10.14.5"
+
+
+class TestListInterfaces:
+    """Tests for list_interfaces()."""
+
+    @pytest.mark.unit
+    def test_returns_list_of_tuples(self, monkeypatch):
+        from cerno_pkg.ops import list_interfaces
+        monkeypatch.setattr("os.listdir", lambda p: ["eth0", "lo", "tun0"])
+        monkeypatch.setattr("cerno_pkg.ops.get_interface_ip", lambda iface: {
+            "eth0": "192.168.1.50",
+            "lo": "127.0.0.1",
+            "tun0": "10.10.14.5",
+        }.get(iface))
+        result = list_interfaces()
+        names = [name for name, _ in result]
+        assert "eth0" in names
+        assert "tun0" in names
+
+    @pytest.mark.unit
+    def test_excludes_interfaces_without_ip(self, monkeypatch):
+        from cerno_pkg.ops import list_interfaces
+        monkeypatch.setattr("os.listdir", lambda p: ["eth0", "dummy0"])
+        monkeypatch.setattr("cerno_pkg.ops.get_interface_ip", lambda iface: {
+            "eth0": "192.168.1.50",
+            "dummy0": None,
+        }.get(iface))
+        result = list_interfaces()
+        names = [name for name, _ in result]
+        assert "eth0" in names
+        assert "dummy0" not in names
+
+    @pytest.mark.unit
+    def test_loopback_appears_last(self, monkeypatch):
+        from cerno_pkg.ops import list_interfaces
+        monkeypatch.setattr("os.listdir", lambda p: ["lo", "tun0", "eth0"])
+        monkeypatch.setattr("cerno_pkg.ops.get_interface_ip", lambda iface: {
+            "lo": "127.0.0.1",
+            "tun0": "10.10.14.5",
+            "eth0": "192.168.1.50",
+        }.get(iface))
+        result = list_interfaces()
+        assert result[-1][0] == "lo"
+
+
+class TestStartIpsServer:
+    """Tests for start_ips_server() — HTTPS, interface-bound."""
+
+    @pytest.mark.unit
+    def test_serves_ips_file_over_https(self, tmp_path):
+        from cerno_pkg.ops import start_ips_server
+        import urllib.request, ssl as _ssl
+        ips_file = tmp_path / "tcp_ips.list"
+        ips_file.write_text("10.10.10.1\n10.10.10.2\n")
+        server, thread, cleanup = start_ips_server(ips_file, port=18877, bind_ip="127.0.0.1")
+        try:
+            ctx = _ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = _ssl.CERT_NONE
+            response = urllib.request.urlopen("https://127.0.0.1:18877/targets.txt", context=ctx)
+            content = response.read().decode()
+            assert "10.10.10.1" in content
+            assert "10.10.10.2" in content
+        finally:
+            cleanup()
+
+    @pytest.mark.unit
+    def test_returns_404_for_other_paths(self, tmp_path):
+        from cerno_pkg.ops import start_ips_server
+        import urllib.request, urllib.error, ssl as _ssl
+        ips_file = tmp_path / "tcp_ips.list"
+        ips_file.write_text("10.0.0.1\n")
+        server, thread, cleanup = start_ips_server(ips_file, port=18878, bind_ip="127.0.0.1")
+        try:
+            ctx = _ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = _ssl.CERT_NONE
+            with pytest.raises(urllib.error.HTTPError) as exc_info:
+                urllib.request.urlopen("https://127.0.0.1:18878/other.txt", context=ctx)
+            assert exc_info.value.code == 404
+        finally:
+            cleanup()
+
+    @pytest.mark.unit
+    def test_server_stops_after_cleanup(self, tmp_path):
+        from cerno_pkg.ops import start_ips_server
+        import urllib.request, urllib.error, ssl as _ssl
+        ips_file = tmp_path / "tcp_ips.list"
+        ips_file.write_text("10.0.0.1\n")
+        server, thread, cleanup = start_ips_server(ips_file, port=18879, bind_ip="127.0.0.1")
+        cleanup()
+        thread.join(timeout=2)
+        ctx = _ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = _ssl.CERT_NONE
+        with pytest.raises((urllib.error.URLError, ConnectionRefusedError, OSError)):
+            urllib.request.urlopen("https://127.0.0.1:18879/targets.txt", context=ctx, timeout=2)
+
+    @pytest.mark.unit
+    def test_cleanup_removes_cert_tempdir(self, tmp_path):
+        from cerno_pkg.ops import start_ips_server
+        import os
+        ips_file = tmp_path / "tcp_ips.list"
+        ips_file.write_text("10.0.0.1\n")
+        server, thread, cleanup = start_ips_server(ips_file, port=18880, bind_ip="127.0.0.1")
+        tmpdir = server._cert_tmpdir
+        assert os.path.isdir(tmpdir)
+        cleanup()
+        assert not os.path.exists(tmpdir)
+
+
+class TestBuildNmapCmd:
+    """Tests for build_nmap_cmd command builder."""
+
+    @pytest.mark.unit
+    def test_basic_tcp_no_sudo(self, tmp_path):
+        ips = tmp_path / "ips.txt"
+        out = tmp_path / "output"
+        cmd = build_nmap_cmd(False, None, ips, "80,443", False, out)
+        assert cmd == ["nmap", "-A", "-iL", str(ips), "-p", "80,443", "-oA", str(out)]
+
+    @pytest.mark.unit
+    def test_sudo_without_proxy(self, tmp_path):
+        ips = tmp_path / "ips.txt"
+        out = tmp_path / "output"
+        cmd = build_nmap_cmd(False, None, ips, "", True, out)
+        assert cmd[0] == "sudo"
+        assert "nmap" in cmd
+        assert "-Pn" not in cmd
+
+    @pytest.mark.unit
+    def test_proxy_adds_pn_and_drops_sudo(self, tmp_path):
+        ips = tmp_path / "ips.txt"
+        out = tmp_path / "output"
+        # use_sudo=True but use_proxy=True → sudo must be dropped, -Pn must be added
+        cmd = build_nmap_cmd(False, None, ips, "80", True, out, use_proxy=True)
+        assert "sudo" not in cmd
+        assert "-Pn" in cmd
+        assert cmd[0] == "nmap"
+
+    @pytest.mark.unit
+    def test_proxy_pn_position(self, tmp_path):
+        """Verify -Pn appears immediately after 'nmap -A'."""
+        ips = tmp_path / "ips.txt"
+        out = tmp_path / "output"
+        cmd = build_nmap_cmd(False, None, ips, "443", False, out, use_proxy=True)
+        nmap_idx = cmd.index("nmap")
+        pn_idx = cmd.index("-Pn")
+        assert pn_idx == nmap_idx + 2  # nmap, -A, -Pn
+
+    @pytest.mark.unit
+    def test_nse_option_included(self, tmp_path):
+        ips = tmp_path / "ips.txt"
+        out = tmp_path / "output"
+        cmd = build_nmap_cmd(False, "--script=smb-vuln-ms17-010", ips, "445", False, out)
+        assert "--script=smb-vuln-ms17-010" in cmd
+
+    @pytest.mark.unit
+    def test_udp_flag(self, tmp_path):
+        ips = tmp_path / "ips.txt"
+        out = tmp_path / "output"
+        cmd = build_nmap_cmd(True, None, ips, "161", False, out)
+        assert "-sU" in cmd
+
+    @pytest.mark.unit
+    def test_no_ports_str(self, tmp_path):
+        ips = tmp_path / "ips.txt"
+        out = tmp_path / "output"
+        cmd = build_nmap_cmd(False, None, ips, "", False, out)
+        assert "-p" not in cmd
+
+
+class TestRunCommandWithProgressProxy:
+    """Tests for proxy wrapping in run_command_with_progress."""
+
+    @pytest.mark.unit
+    def test_proxy_config_wraps_list_command(self, tmp_path, monkeypatch):
+        """Verify proxychains4 is prepended to list commands when proxy is enabled."""
+        from cerno_pkg.ops import ProxyConfig, run_command_with_progress
+        import subprocess
+
+        captured = {}
+
+        def fake_popen(cmd, **kwargs):
+            captured["cmd"] = cmd
+            class FakeProc:
+                returncode = 0
+                stdout = iter([])
+                def wait(self): pass
+                def terminate(self): pass
+            return FakeProc()
+
+        monkeypatch.setattr(subprocess, "Popen", fake_popen)
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+
+        proxy = ProxyConfig(enabled=True, host="127.0.0.1", port=9000)
+        try:
+            run_command_with_progress(["echo", "hello"], proxy_config=proxy)
+        except Exception:
+            pass
+
+        assert captured.get("cmd", [])[:2] == ["proxychains4", "-f"]
+        assert captured["cmd"][3:] == ["echo", "hello"]
+
+    @pytest.mark.unit
+    def test_no_proxy_leaves_command_unchanged(self, tmp_path, monkeypatch):
+        """Verify command is not wrapped when proxy is disabled."""
+        from cerno_pkg.ops import ProxyConfig, run_command_with_progress
+        import subprocess
+
+        captured = {}
+
+        def fake_popen(cmd, **kwargs):
+            captured["cmd"] = cmd
+            class FakeProc:
+                returncode = 0
+                stdout = iter([])
+                def wait(self): pass
+            return FakeProc()
+
+        monkeypatch.setattr(subprocess, "Popen", fake_popen)
+
+        proxy = ProxyConfig(enabled=False, host="127.0.0.1", port=9000)
+        try:
+            run_command_with_progress(["echo", "hello"], proxy_config=proxy)
+        except Exception:
+            pass
+
+        assert captured.get("cmd") == ["echo", "hello"]
+
+    @pytest.mark.unit
+    def test_none_proxy_config_leaves_command_unchanged(self, tmp_path, monkeypatch):
+        """Verify proxy_config=None does not wrap command (backward compat)."""
+        from cerno_pkg.ops import run_command_with_progress
+        import subprocess
+
+        captured = {}
+
+        def fake_popen(cmd, **kwargs):
+            captured["cmd"] = cmd
+            class FakeProc:
+                returncode = 0
+                stdout = iter([])
+                def wait(self): pass
+            return FakeProc()
+
+        monkeypatch.setattr(subprocess, "Popen", fake_popen)
+
+        try:
+            run_command_with_progress(["echo", "hello"])
+        except Exception:
+            pass
+
+        assert captured.get("cmd") == ["echo", "hello"]
+
+
+class TestPivotConfig:
+    """Tests for pivot/remote scan config fields."""
+
+    @pytest.mark.unit
+    def test_pivot_interface_defaults_to_none(self):
+        from cerno_pkg.config import CernoConfig
+        config = CernoConfig()
+        assert config.pivot_interface is None
+
+    @pytest.mark.unit
+    def test_pivot_http_port_defaults_to_8877(self):
+        from cerno_pkg.config import CernoConfig
+        config = CernoConfig()
+        assert config.pivot_http_port == 8877
+
+    @pytest.mark.unit
+    def test_pivot_interface_roundtrips_through_save_load(self, tmp_path, monkeypatch):
+        from cerno_pkg.config import CernoConfig, save_config, load_config
+        monkeypatch.setattr("cerno_pkg.config.get_config_path", lambda: tmp_path / "config.yaml")
+        config = CernoConfig(pivot_interface="tun0")
+        save_config(config)
+        loaded = load_config()
+        assert loaded.pivot_interface == "tun0"
+
+    @pytest.mark.unit
+    def test_pivot_http_port_roundtrips_through_save_load(self, tmp_path, monkeypatch):
+        from cerno_pkg.config import CernoConfig, save_config, load_config
+        monkeypatch.setattr("cerno_pkg.config.get_config_path", lambda: tmp_path / "config.yaml")
+        config = CernoConfig(pivot_http_port=9999)
+        save_config(config)
+        loaded = load_config()
+        assert loaded.pivot_http_port == 9999
+
+
+class TestProxychainsRenderRow:
+    """Tests for proxychains4 row in render_tool_availability_table."""
+
+    @pytest.mark.unit
+    def test_proxychains4_row_appears_when_disabled(self, monkeypatch, capsys):
+        """proxychains4 row always appears (proxy disabled in config)."""
         from cerno_pkg.render import render_tool_availability_table
-        from unittest.mock import patch
+        from cerno_pkg.config import CernoConfig
 
-        # Mock the console output to capture what would be printed
-        with patch('cerno_pkg.render._console_global') as mock_console:
-            with patch('shutil.which', return_value='/usr/bin/nmap'):
-                with patch('cerno_pkg.ops.get_tool_version', return_value="7.92"):
-                    render_tool_availability_table(include_unavailable=True)
+        monkeypatch.setattr("cerno_pkg.render.load_config", lambda: CernoConfig(proxychains_enabled=False))
+        # Don't need proxychains4 on PATH — just verify row name is rendered
+        render_tool_availability_table(include_unavailable=True)
+        captured = capsys.readouterr()
+        assert "proxychains4" in captured.out
 
-        # Verify console.print was called (table was rendered)
-        assert mock_console.print.called
-
-    def test_render_tool_availability_respects_config(self):
-        """Test that render_tool_availability_table respects configuration."""
+    @pytest.mark.unit
+    def test_proxychains4_row_shows_active_when_enabled_and_found(self, monkeypatch, capsys):
+        """When proxy enabled and binary found, show 'active' details."""
         from cerno_pkg.render import render_tool_availability_table
-        from unittest.mock import patch, Mock
+        from cerno_pkg.config import CernoConfig
 
-        # Mock the tool registry to return a predictable set of tools
-        mock_tool = Mock()
-        mock_tool.id = "nmap"
-        mock_tool.name = "nmap"
-        mock_tool.requires = ["nmap"]
+        import shutil as _shutil
 
-        with patch('cerno_pkg.tool_registry.get_available_tools', return_value=[mock_tool]):
-            with patch('shutil.which', return_value='/usr/bin/nmap'):
-                with patch('cerno_pkg.ops.get_tool_version', return_value="7.92"):
-                    # Should not raise exception
-                    try:
-                        # Just test that it doesn't crash
-                        # Full output testing would require capturing Rich console output
-                        render_tool_availability_table(include_unavailable=True)
-                    except Exception as e:
-                        pytest.fail(f"render_tool_availability_table() raised unexpected exception: {e}")
+        config = CernoConfig(proxychains_enabled=True, proxychains_host="127.0.0.1", proxychains_port=9000)
+        monkeypatch.setattr("cerno_pkg.render.load_config", lambda: config)
+        monkeypatch.setattr(_shutil, "which", lambda name: "/usr/bin/proxychains4" if name == "proxychains4" else None)
+
+        render_tool_availability_table(include_unavailable=True)
+        captured = capsys.readouterr()
+        assert "SOCKS5 127.0.0.1:9000 (active)" in captured.out
+
+    @pytest.mark.unit
+    def test_proxychains4_row_warns_when_enabled_but_missing(self, monkeypatch, capsys):
+        """When proxy enabled but binary missing, show warning in details."""
+        from cerno_pkg.render import render_tool_availability_table
+        from cerno_pkg.config import CernoConfig
+
+        import shutil as _shutil
+
+        config = CernoConfig(proxychains_enabled=True)
+        monkeypatch.setattr("cerno_pkg.render.load_config", lambda: config)
+        monkeypatch.setattr(_shutil, "which", lambda name: None)
+
+        render_tool_availability_table(include_unavailable=True)
+        captured = capsys.readouterr()
+        assert "proxychains4" in captured.out
+        assert "proxy mode will not work" in captured.out
+
+    @pytest.mark.unit
+    def test_proxychains4_row_shows_version_when_available_and_disabled(self, monkeypatch, capsys):
+        """When proxy disabled and binary found, show version (no SOCKS5/active marker)."""
+        from cerno_pkg.render import render_tool_availability_table
+        from cerno_pkg.config import CernoConfig
+        import shutil as _shutil
+
+        config = CernoConfig(proxychains_enabled=False)
+        monkeypatch.setattr("cerno_pkg.render.load_config", lambda: config)
+        monkeypatch.setattr(_shutil, "which", lambda name: "/usr/bin/proxychains4" if name == "proxychains4" else None)
+
+        render_tool_availability_table(include_unavailable=True)
+        captured = capsys.readouterr()
+        assert "proxychains4" in captured.out
+        assert "active" not in captured.out
+        assert "SOCKS5" not in captured.out
+
+
+class TestCommandResultRemote:
+    """Tests for remote-mode fields on CommandResult."""
+
+    @pytest.mark.unit
+    def test_is_remote_defaults_to_false(self):
+        from cerno_pkg.tool_context import CommandResult
+        result = CommandResult(display_command="nmap ...")
+        assert result.is_remote is False
+
+    @pytest.mark.unit
+    def test_cleanup_defaults_to_none(self):
+        from cerno_pkg.tool_context import CommandResult
+        result = CommandResult(display_command="nmap ...")
+        assert result.cleanup is None
+
+    @pytest.mark.unit
+    def test_remote_output_path_defaults_to_none(self):
+        from cerno_pkg.tool_context import CommandResult
+        result = CommandResult(display_command="nmap ...")
+        assert result.remote_output_path is None
+
+    @pytest.mark.unit
+    def test_can_construct_remote_result(self):
+        from cerno_pkg.tool_context import CommandResult
+        called = []
+        cleanup = lambda: called.append(True)
+        result = CommandResult(
+            display_command="curl ... | sudo nmap ...",
+            is_remote=True,
+            cleanup=cleanup,
+            remote_output_path="/tmp/cerno_20260416_143022",
+        )
+        assert result.is_remote is True
+        assert result.remote_output_path == "/tmp/cerno_20260416_143022"
+        result.cleanup()
+        assert called == [True]
+
+    @pytest.mark.unit
+    def test_existing_non_remote_construction_still_works(self):
+        """Ensure existing callers (command, display_command, artifact_note) are unaffected."""
+        from cerno_pkg.tool_context import CommandResult
+        result = CommandResult(
+            command=["nmap", "-sV"],
+            display_command=["nmap", "-sV"],
+            artifact_note="Results at /tmp/scan",
+        )
+        assert result.command == ["nmap", "-sV"]
+        assert result.is_remote is False
+
+
+class TestBuildNmapRemoteCmd:
+    """Tests for remote one-liner generation."""
+
+    @pytest.mark.unit
+    def test_remote_oneliner_contains_curl_and_nmap(self):
+        from cerno_pkg.ops import build_nmap_remote_oneliner
+        result = build_nmap_remote_oneliner(
+            server_ip="10.10.14.5",
+            server_port=8877,
+            ports_str="445,139",
+            nse_option="",
+            timestamp="20260416_143022",
+        )
+        assert result.startswith("curl -sk https://10.10.14.5:8877/targets.txt |")
+        assert "sudo nmap -sS -A -iL -" in result
+        assert "-p 445,139" in result
+        assert "-oA /tmp/cerno_20260416_143022" in result
+
+    @pytest.mark.unit
+    def test_remote_oneliner_omits_port_flag_when_no_ports(self):
+        from cerno_pkg.ops import build_nmap_remote_oneliner
+        result = build_nmap_remote_oneliner(
+            server_ip="10.10.14.5",
+            server_port=8877,
+            ports_str="",
+            nse_option="",
+            timestamp="20260416_143022",
+        )
+        assert "-p" not in result
+        assert "https://" in result
+
+    @pytest.mark.unit
+    def test_remote_oneliner_includes_nse_option(self):
+        from cerno_pkg.ops import build_nmap_remote_oneliner
+        result = build_nmap_remote_oneliner(
+            server_ip="10.10.14.5",
+            server_port=8877,
+            ports_str="445",
+            nse_option="--script=smb-vuln-ms17-010",
+            timestamp="20260416_143022",
+        )
+        assert "--script=smb-vuln-ms17-010" in result
+
+    @pytest.mark.unit
+    def test_remote_oneliner_udp_uses_sU_not_sS(self):
+        from cerno_pkg.ops import build_nmap_remote_oneliner
+        result = build_nmap_remote_oneliner(
+            server_ip="10.10.14.5",
+            server_port=8877,
+            ports_str="161",
+            nse_option="",
+            timestamp="20260416_143022",
+            udp=True,
+        )
+        assert "-sU" in result
+        assert "-sS" not in result
+
+    @pytest.mark.unit
+    def test_remote_oneliner_no_pn_flag(self):
+        from cerno_pkg.ops import build_nmap_remote_oneliner
+        result = build_nmap_remote_oneliner(
+            server_ip="10.10.14.5",
+            server_port=8877,
+            ports_str="80",
+            nse_option="",
+            timestamp="20260416_143022",
+        )
+        assert "-Pn" not in result
+        assert "curl -sk" in result
