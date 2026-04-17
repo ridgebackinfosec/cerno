@@ -2296,7 +2296,7 @@ def display_bulk_cve_results(results: dict[str, list[str]]) -> None:
             # Combined list: all unique CVEs across all findings
             info(f"\nAll unique CVEs ({total_unique_cves}):\n")
             for cve in sorted(all_cves):
-                info(f"  {cve}")
+                info(cve)
         else:
             # Separated by file (default)
             info(f"\nCVEs by finding ({total_findings}):\n")
