@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.22] - 2026-04-17
+
+### Fixed
+- `render.py`: Remove leading spaces from CVEs in separated-by-finding bulk CVE list output
+
 ## [1.3.21] - 2026-04-17
 
 ### Fixed

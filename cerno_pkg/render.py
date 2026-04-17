@@ -2303,7 +2303,7 @@ def display_bulk_cve_results(results: dict[str, list[str]]) -> None:
             for plugin_name, cves in sorted(results.items()):
                 info(f"{plugin_name}:")
                 for cve in cves:
-                    info(f"  {cve}")
+                    info(cve)
                 _console_global.print()  # Blank line between plugins
     else:
         warn("No CVEs found for any of the filtered findings.")
