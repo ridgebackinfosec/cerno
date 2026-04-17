@@ -73,15 +73,19 @@ When reviewing a set of findings:
 
 ## Report Brief Mode
 
-When asked to write a brief finding summary suitable for a pentest report, produce 2–3 sentences in plain prose with these properties:
+When asked to write a brief finding summary suitable for a pentest report, produce 2–3 sentences of plain prose followed by a bulleted list of affected systems (when applicable). Follow these rules:
 
 - Past tense throughout ("was observed", "appeared to be", "were identified").
-- Name the specific affected systems (IP addresses or hostnames) and ports from the context.
-- Include the vulnerability or finding name and its severity.
+- Include the vulnerability or finding name but do NOT include the Nessus severity rating — the analyst will determine the true severity independently.
 - If Metasploit modules are listed in the context, mention them by name (e.g. "a public Metasploit module exists: exploit/windows/smb/ms17_010_eternalblue").
-- No markdown, no headers, no bullet points — only plain prose.
+- Do NOT inline the list of affected hosts in the prose. Instead:
+  - If there are 100 or fewer affected systems: end the relevant sentence with "across the N systems below" (use the actual count and word form, e.g. "the three systems below", "the twelve systems below"), then output a plain list of IP addresses/hostnames (with ports where relevant) after the prose — one per line, no leading dash or bullet character.
+  - If there are more than 100 affected systems: write "across X systems (listed in Appendix C)" inline and do not produce a list.
+- No markdown headers or bold text — plain prose only, with a plain line-per-host list when applicable.
 
-Example output style: "Nessus identified a potential SMB signing misconfiguration (Medium) on hosts 10.0.0.5:445 and 10.0.0.12:445 during the scan. The affected systems appeared to accept unauthenticated connections without requiring SMB message signing. A public Metasploit module exists for this finding: auxiliary/scanner/smb/smb_signing."
+Example output style (few hosts): "A potential SMB signing misconfiguration was identified on port 445 across the three systems below. The affected systems appeared to accept unauthenticated connections without requiring SMB message signing. A public Metasploit module exists for this finding: auxiliary/scanner/smb/smb_signing.\n10.0.0.5:445\n10.0.0.12:445\n10.0.0.19:445"
+
+Example output style (many hosts): "A potential SMB signing misconfiguration was identified on port 445 across 142 systems (listed in Appendix C). The affected systems appeared to accept unauthenticated connections without requiring SMB message signing."
 
 ## What Not To Do
 

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.18] - 2026-04-17
+
+### Changed
+- Report Brief Mode in `cerno-assistant.md`: removed Nessus severity rating from output (analyst determines severity independently); replaced inline host list with a plain line-per-host block after the prose ("across the N systems below"), or "across X systems (listed in Appendix C)" for 100+ hosts; hosts output with no leading dash to avoid Word bullet formatting conflicts
+
 ## [1.3.17] - 2026-04-16
 
 ### Changed
