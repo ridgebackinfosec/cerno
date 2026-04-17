@@ -228,7 +228,7 @@ def format_prompt(
     return prompt
 
 
-def ask_claude(prompt: str, timeout: int = 30) -> tuple[str, int]:
+def ask_claude(prompt: str, timeout: int = 120) -> tuple[str, int]:
     """Invoke `claude -p '<prompt>'` and return the response.
 
     Uses subprocess with a timeout. Captures stdout only; stderr is discarded
@@ -236,7 +236,7 @@ def ask_claude(prompt: str, timeout: int = 30) -> tuple[str, int]:
 
     Args:
         prompt: Full prompt string to pass to claude -p
-        timeout: Subprocess timeout in seconds (default: 30)
+        timeout: Subprocess timeout in seconds (default: 120)
 
     Returns:
         Tuple of (response_text, exit_code). response_text is empty string on error.
@@ -255,7 +255,7 @@ def ask_claude(prompt: str, timeout: int = 30) -> tuple[str, int]:
         )
         return response, result.returncode
     except subprocess.TimeoutExpired:
-        log_error("claude_assistant: subprocess timed out after %ds", timeout)
+        log_error(f"claude_assistant: subprocess timed out after {timeout}s")
         return "(Claude did not respond in time. Try again.)", 1
     except FileNotFoundError:
         log_error("claude_assistant: 'claude' binary not found")

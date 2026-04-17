@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.20] - 2026-04-17
+
+### Fixed
+- `claude_assistant.py`: `TypeError` when Claude subprocess times out — `log_error()` was called with two positional args but only accepts one; fixed to use f-string interpolation
+- `claude_assistant.py`: Increased default `ask_claude()` timeout from 30s to 120s to prevent premature `TimeoutExpired` errors on slow Claude responses
+
 ## [1.3.19] - 2026-04-17
 
 ### Changed
