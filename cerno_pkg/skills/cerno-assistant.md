@@ -78,12 +78,13 @@ When asked to write a brief finding summary suitable for a pentest report, produ
 - Past tense throughout ("was observed", "appeared to be", "were identified").
 - Include the vulnerability or finding name but do NOT include the Nessus severity rating — the analyst will determine the true severity independently.
 - If Metasploit modules are listed in the context, mention them by name (e.g. "a public Metasploit module exists: exploit/windows/smb/ms17_010_eternalblue").
-- Do NOT inline the list of affected hosts in the prose. Instead:
-  - If there are 100 or fewer affected systems: end the relevant sentence with "across the N systems below" (use the actual count and word form, e.g. "the three systems below", "the twelve systems below"), then output a plain list of IP addresses/hostnames (with ports where relevant) after the prose — one per line, no leading dash or bullet character.
+- Do NOT inline the list of affected hosts in the prose, except when there is only one affected system. Instead:
+  - If there is exactly 1 affected system: name it directly in the prose (e.g. "on the 192.168.56.4 host" or "on 192.168.56.4:443"). Do not produce a list below.
+  - If there are 2–100 affected systems: end the relevant sentence with "across the N systems below" (use the actual count and word form, e.g. "the three systems below", "the twelve systems below"), then output a plain list after the prose — one line per host, no leading dash or bullet character. Group all ports for the same host on a single line, comma-separated (e.g. `192.168.56.4:80,443,8080`). If a host has only one port, use the standard `host:port` format.
   - If there are more than 100 affected systems: write "across X systems (listed in Appendix C)" inline and do not produce a list.
 - No markdown headers or bold text — plain prose only, with a plain line-per-host list when applicable.
 
-Example output style (few hosts): "A potential SMB signing misconfiguration was identified on port 445 across the three systems below. The affected systems appeared to accept unauthenticated connections without requiring SMB message signing. A public Metasploit module exists for this finding: auxiliary/scanner/smb/smb_signing.\n10.0.0.5:445\n10.0.0.12:445\n10.0.0.19:445"
+Example output style (few hosts, multiple ports): "A web application vulnerability was identified across the three systems below. The affected systems appeared to expose the issue on multiple HTTP and HTTPS ports. A public Metasploit module exists for this finding: exploit/multi/http/example.\n192.168.56.1:80,443\n192.168.56.23:8080\n192.168.56.4:80,443,8080"
 
 Example output style (many hosts): "A potential SMB signing misconfiguration was identified on port 445 across 142 systems (listed in Appendix C). The affected systems appeared to accept unauthenticated connections without requiring SMB message signing."
 

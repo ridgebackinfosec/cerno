@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.19] - 2026-04-17
+
+### Changed
+- Report Brief Mode in `cerno-assistant.md`: ports for the same host are now grouped on a single line, comma-separated (e.g. `192.168.56.4:80,443,8080`) rather than one line per host:port combination
+- Report Brief Mode in `cerno-assistant.md`: single-host findings now name the host inline in the prose rather than listing it below
+
 ## [1.3.18] - 2026-04-17
 
 ### Changed
