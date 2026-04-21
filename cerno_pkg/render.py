@@ -1599,6 +1599,82 @@ def hosts_only_paged_text(finding: "Finding", plugin: "Plugin") -> str:
     return f"Hosts-only view: {display_name}\n{body}"
 
 
+# ---------------------------------------------------------------------------
+# Aggregate host view helpers (used by [V] in the findings list)
+# These operate across multiple (Finding, Plugin) tuples rather than one finding.
+# ---------------------------------------------------------------------------
+
+def _collect_aggregate_host_ports(
+    findings_with_plugins: list,
+    conn: Any,
+) -> tuple[dict, list]:
+    """Collect deduplicated host→ports across all findings in scope.
+
+    Returns:
+        (host_ports dict mapping host → set[int], sorted_hosts list)
+    """
+    from collections import defaultdict
+    host_ports: dict = defaultdict(set)
+    for finding, _plugin in findings_with_plugins:
+        for hp in finding.get_all_host_port_lines(conn):
+            if hp.startswith("["):
+                host, port_str = hp.rsplit(":", 1)
+            else:
+                parts = hp.rsplit(":", 1)
+                host, port_str = (parts[0], parts[1]) if len(parts) == 2 else (hp, "")
+            if port_str.isdigit():
+                host_ports[host].add(int(port_str))
+            else:
+                host_ports.setdefault(host, set())
+    sorted_hosts = sorted(host_ports.keys())
+    return dict(host_ports), sorted_hosts
+
+
+def aggregate_grouped_payload_text(host_ports: dict, sorted_hosts: list) -> str:
+    """Grouped host:port1,port2,... lines across all findings — payload for clipboard."""
+    out = []
+    for host in sorted_hosts:
+        ports = sorted(host_ports[host])
+        if ports:
+            out.append(f"{host}:{','.join(str(p) for p in ports)}")
+        else:
+            out.append(host)
+    return "\n".join(out) + ("\n" if out else "")
+
+
+def aggregate_grouped_paged_text(host_ports: dict, sorted_hosts: list, scope_label: str) -> str:
+    """Grouped view with header for paged display."""
+    return f"Grouped view: {scope_label}\n{aggregate_grouped_payload_text(host_ports, sorted_hosts)}"
+
+
+def aggregate_hosts_only_payload_text(sorted_hosts: list) -> str:
+    """Unique hosts only, one per line — payload for clipboard."""
+    return "\n".join(sorted_hosts) + ("\n" if sorted_hosts else "")
+
+
+def aggregate_hosts_only_paged_text(sorted_hosts: list, scope_label: str) -> str:
+    """Hosts-only view with header for paged display."""
+    return f"Hosts-only view: {scope_label}\n{aggregate_hosts_only_payload_text(sorted_hosts)}"
+
+
+def aggregate_raw_payload_text(host_ports: dict, sorted_hosts: list) -> str:
+    """One host:port per line across all findings — payload for clipboard."""
+    out = []
+    for host in sorted_hosts:
+        ports = sorted(host_ports[host])
+        if ports:
+            for p in ports:
+                out.append(f"{host}:{p}")
+        else:
+            out.append(host)
+    return "\n".join(out) + ("\n" if out else "")
+
+
+def aggregate_raw_paged_text(host_ports: dict, sorted_hosts: list, scope_label: str) -> str:
+    """Raw view with header for paged display."""
+    return f"Raw view: {scope_label}\n{aggregate_raw_payload_text(host_ports, sorted_hosts)}"
+
+
 def build_plugin_output_details(
     finding: "Finding",
     plugin: "Plugin"

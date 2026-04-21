@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `[V]` host view in findings list now matches single-finding host view UX: grouped format by default, Copy/Change format/Back post-view menu, Raw/Hosts-only/Grouped format options with clipboard support
+
 ## [1.3.28] - 2026-04-21
 
 ### Added

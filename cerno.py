@@ -791,26 +791,16 @@ def browse_file_list(
             if not candidates:
                 warn("No findings match the current filter.")
                 continue
-            from collections import defaultdict
             from cerno_pkg.database import get_connection
-            from cerno_pkg.render import menu_pager
-            host_ports: dict = defaultdict(set)
-            with get_connection() as _v_conn:
-                for _finding, _plugin in candidates:
-                    for hp in _finding.get_all_host_port_lines(_v_conn):
-                        if hp.startswith("["):
-                            host, port_str = hp.rsplit(":", 1)
-                        else:
-                            parts = hp.rsplit(":", 1)
-                            host, port_str = (parts[0], parts[1]) if len(parts) == 2 else (hp, "")
-                        if port_str.isdigit():
-                            host_ports[host].add(int(port_str))
-                        else:
-                            host_ports.setdefault(host, set())
-            if not host_ports:
-                warn("No host data available for current findings.")
-                continue
-            sorted_hosts = sorted(host_ports.keys())
+            from cerno_pkg.render import (
+                _collect_aggregate_host_ports,
+                aggregate_grouped_payload_text, aggregate_grouped_paged_text,
+                aggregate_hosts_only_payload_text, aggregate_hosts_only_paged_text,
+                aggregate_raw_payload_text, aggregate_raw_paged_text,
+                menu_pager, print_action_menu, copy_to_clipboard,
+            )
+            from rich.prompt import Confirm
+
             scope_parts = [f"Severity: {severity_label}"]
             if file_filter:
                 scope_parts.append(f"filter: {file_filter}")
@@ -818,12 +808,68 @@ def browse_file_list(
                 _, _, group_desc = group_filter
                 scope_parts.append(f"group: {group_desc}")
             scope_label = " | ".join(scope_parts)
-            view_lines = [f"Affected Hosts — {scope_label} ({len(sorted_hosts)} unique hosts)\n"]
-            for host in sorted_hosts:
-                ports = sorted(host_ports[host])
-                port_str = ", ".join(str(p) for p in ports) if ports else "—"
-                view_lines.append(f"  {host:<45} {port_str}")
-            menu_pager("\n".join(view_lines))
+
+            with get_connection() as _v_conn:
+                host_ports, sorted_hosts = _collect_aggregate_host_ports(candidates, _v_conn)
+
+            if not sorted_hosts:
+                warn("No host data available for current findings.")
+                continue
+
+            text = aggregate_grouped_paged_text(host_ports, sorted_hosts, scope_label)
+            payload = aggregate_grouped_payload_text(host_ports, sorted_hosts)
+            menu_pager(text)
+
+            print_action_menu([
+                ("C", "Copy to clipboard"),
+                ("F", "Change format"),
+                ("B", "Back"),
+            ])
+            try:
+                post_choice = Prompt.ask("Action", default="b").strip().lower()
+            except KeyboardInterrupt:
+                continue
+
+            if post_choice in ("c", "copy"):
+                ok_flag, detail = copy_to_clipboard(payload)
+                if ok_flag:
+                    ok("Copied to clipboard.")
+                else:
+                    warn(f"{detail} Printing below for manual copy:")
+                    console.print(payload)
+
+            elif post_choice in ("f", "format"):
+                print_action_menu([
+                    ("R", "Raw"),
+                    ("H", "Hosts only"),
+                    ("G", "Grouped (current)"),
+                ])
+                try:
+                    fmt = Prompt.ask("Choose format", default="g").strip().lower()
+                except KeyboardInterrupt:
+                    continue
+
+                if fmt in ("r", "raw"):
+                    text = aggregate_raw_paged_text(host_ports, sorted_hosts, scope_label)
+                    payload = aggregate_raw_payload_text(host_ports, sorted_hosts)
+                elif fmt in ("h", "hosts", "hosts-only"):
+                    text = aggregate_hosts_only_paged_text(sorted_hosts, scope_label)
+                    payload = aggregate_hosts_only_payload_text(sorted_hosts)
+                else:
+                    continue
+
+                if text and payload:
+                    menu_pager(text)
+                    try:
+                        if Confirm.ask("Copy to clipboard?", default=True):
+                            ok_flag, detail = copy_to_clipboard(payload)
+                            if ok_flag:
+                                ok("Copied to clipboard.")
+                            else:
+                                warn(f"{detail}")
+                    except KeyboardInterrupt:
+                        pass
+
             continue
 
         # Handle Claude aggregate chat (intercept before generic action handler)
