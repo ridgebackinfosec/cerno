@@ -1030,13 +1030,12 @@ def render_claude_panel(
                 renderables.append(Rule(style="dim"))
                 renderables.append(Text(""))
 
+            body_style = "white" if is_latest else "dim"
             if turn.role == "user":
                 label_style = "bold cyan" if is_latest else "dim cyan"
-                body_style = "white" if is_latest else "dim"
                 label = Text("You: ", style=label_style)
             else:
                 label_style = "bold magenta" if is_latest else "dim magenta"
-                body_style = "white" if is_latest else "dim"
                 label = Text("Claude: ", style=label_style)
 
             line = Text()
