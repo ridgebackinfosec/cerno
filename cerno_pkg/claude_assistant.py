@@ -312,7 +312,6 @@ def build_aggregate_context(
     scan_names: list[str],
     scope_description: str,
     findings_with_plugins: list[tuple[Any, Any]],
-    conn: Any = None,
 ) -> str:
     """Assemble a context block summarising a collection of findings.
 
@@ -323,7 +322,6 @@ def build_aggregate_context(
         scan_names: Display names of the selected scan(s)
         scope_description: Human-readable description of what's in scope
         findings_with_plugins: List of (Finding, Plugin) tuples in scope
-        conn: SQLite connection — when provided, host:port data and group analysis are included
 
     Returns:
         Formatted context string to prepend to the prompt
@@ -360,83 +358,42 @@ def build_aggregate_context(
     # MSF summary
     msf_count = sum(1 for _f, p in findings_with_plugins if p.has_metasploit)
     if msf_count:
-        lines.append(f"Findings with Metasploit modules: {msf_count}")
+        lines.append(f"MSF-exploitable: {msf_count}")
 
-    # Findings list (capped at 50 to keep prompts manageable, sorted Critical→Info)
+    # Total unique CVE count
+    all_cves: set[str] = set()
+    for _f, plugin in findings_with_plugins:
+        if plugin.cves:
+            cve_list = plugin.cves if isinstance(plugin.cves, list) else [plugin.cves]
+            all_cves.update(str(c) for c in cve_list)
+    if all_cves:
+        lines.append(f"Unique CVEs: {len(all_cves)}")
+
+    # Findings list (capped at 50, sorted Critical→Info, one line per finding)
     cap = 50
-    host_cap = 20  # max host:port entries shown per finding
     sorted_findings = sorted(
         findings_with_plugins, key=lambda fp: fp[1].severity_int, reverse=True
     )
-    lines.append(f"Findings (showing {min(total, cap)} of {total}, highest severity first):")
-    for finding, plugin in sorted_findings[:cap]:
+    lines.append(f"Findings ({min(total, cap)} of {total}, highest severity first):")
+    for i, (finding, plugin) in enumerate(sorted_findings[:cap], 1):
         sev_label = severity_labels.get(plugin.severity_int, str(plugin.severity_int))
-        msf_flag = " [MSF]" if plugin.has_metasploit else ""
-        cve_str = ""
+        host_count = finding.host_count or 0
+        msf_flag = "yes" if plugin.has_metasploit else "no"
+        cve_str = "none"
         if plugin.cves:
             cve_list = plugin.cves if isinstance(plugin.cves, list) else [plugin.cves]
             shown = [str(c) for c in cve_list[:3]]
-            cve_str = f" CVEs: {', '.join(shown)}"
+            cve_str = ", ".join(shown)
             if len(cve_list) > 3:
                 cve_str += f" +{len(cve_list) - 3} more"
         lines.append(
-            f"  [{sev_label}] {plugin.plugin_name} (ID:{plugin.plugin_id}){msf_flag}{cve_str}"
+            f"[{i}] {sev_label:<8} | {plugin.plugin_name} (ID:{plugin.plugin_id})"
+            f" | {host_count} hosts | CVEs: {cve_str} | MSF: {msf_flag}"
         )
-        if conn is not None:
-            try:
-                host_ports = finding.get_all_host_port_lines(conn)
-                hp_total = len(host_ports)
-                shown_hp = host_ports[:host_cap]
-                hp_str = ", ".join(shown_hp)
-                if hp_total > host_cap:
-                    hp_str += f" +{hp_total - host_cap} more"
-                lines.append(f"    Hosts ({hp_total} total): {hp_str}")
-            except Exception:
-                pass
     if total > cap:
         lowest_shown = sorted_findings[cap - 1][1].severity_int
         lowest_label = severity_labels.get(lowest_shown, str(lowest_shown))
-        lines.append(f"  ... and {total - cap} more not shown (below {lowest_label} severity)")
-
-    # Identical host:port groups (requires conn, needs ≥2 findings)
-    if conn is not None and total >= 2:
-        try:
-            from .analysis import analyze_inclusions, compare_filtered
-
-            identical_groups = compare_filtered(findings_with_plugins)
-            multi_groups = [g for g in identical_groups if len(g) >= 2]
-            if multi_groups:
-                singleton_count = sum(1 for g in identical_groups if len(g) == 1)
-                lines.append("=== Identical Host:Port Groups ===")
-                for idx, group in enumerate(multi_groups, 1):
-                    lines.append(f"Group {idx} ({len(group)} findings share the exact same host:port set):")
-                    for entry in group:
-                        # entry format: "Plugin NNNN: Name" — strip prefix for readability
-                        name = entry.split(": ", 1)[1] if ": " in entry else entry
-                        pid = entry.split(":")[0].replace("Plugin ", "").strip() if entry.startswith("Plugin ") else ""
-                        suffix = f" (ID:{pid})" if pid else ""
-                        lines.append(f"  - {name}{suffix}")
-                if singleton_count:
-                    lines.append(f"({singleton_count} finding(s) have unique host:port sets not shared with any other.)")
-
-            overlapping_groups = analyze_inclusions(findings_with_plugins)
-            covering_groups = [g for g in overlapping_groups if len(g) >= 2]
-            if covering_groups:
-                lines.append("=== Overlapping Host:Port Groups (superset relationships) ===")
-                for idx, group in enumerate(covering_groups, 1):
-                    superset_entry = group[0]
-                    covered = group[1:]
-                    sup_name = superset_entry.split(": ", 1)[1] if ": " in superset_entry else superset_entry
-                    sup_pid = superset_entry.split(":")[0].replace("Plugin ", "").strip() if superset_entry.startswith("Plugin ") else ""
-                    sup_suffix = f" (ID:{sup_pid})" if sup_pid else ""
-                    lines.append(f"Group {idx} — {sup_name}{sup_suffix} covers {len(covered)} finding(s):")
-                    for entry in covered:
-                        name = entry.split(": ", 1)[1] if ": " in entry else entry
-                        pid = entry.split(":")[0].replace("Plugin ", "").strip() if entry.startswith("Plugin ") else ""
-                        suffix = f" (ID:{pid})" if pid else ""
-                        lines.append(f"  - {name}{suffix}")
-        except Exception:
-            pass
+        lines.append(f"[Excluded: {total - cap} findings below {lowest_label} severity not shown]")
 
     lines.append("=== End Context ===")
     return "\n".join(lines)
@@ -471,7 +428,7 @@ def run_aggregate_exchange(
 
     turns = ClaudeAggregateConversationTurn.get_by_context(conn, context_key)
     skill = load_skill_prompt()
-    context = build_aggregate_context(scan_names, scope_description, findings_with_plugins, conn)
+    context = build_aggregate_context(scan_names, scope_description, findings_with_plugins)
     prompt = format_prompt(skill, context, turns, question)
 
     response, exit_code = ask_claude(prompt)

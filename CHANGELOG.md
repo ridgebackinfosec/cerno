@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.28] - 2026-04-21
+
+### Added
+- `[V]` action in findings list shows a deduplicated host→ports view across all current candidates (respects severity, name, and group filters)
+
+### Changed
+- Aggregate Claude context trimmed to a concise signal-only format: numbered one-line-per-finding entries with severity, host count, CVEs, and MSF flag — raw host:port lists and pre-computed group analysis removed
+- Skill prompt updated with `[H]`/`[O]`/`[V]` guidance so Claude redirects host-overlap questions to the appropriate actions
+
 ## [1.3.27] - 2026-04-21
 
 ### Added

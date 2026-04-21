@@ -786,6 +786,46 @@ def browse_file_list(
             warn("\nInterrupted — returning to severity menu.")
             break
 
+        # Handle host view (intercept before generic action handler)
+        if ans == "v":
+            if not candidates:
+                warn("No findings match the current filter.")
+                continue
+            from collections import defaultdict
+            from cerno_pkg.database import get_connection
+            from cerno_pkg.render import menu_pager
+            host_ports: dict = defaultdict(set)
+            with get_connection() as _v_conn:
+                for _finding, _plugin in candidates:
+                    for hp in _finding.get_all_host_port_lines(_v_conn):
+                        if hp.startswith("["):
+                            host, port_str = hp.rsplit(":", 1)
+                        else:
+                            parts = hp.rsplit(":", 1)
+                            host, port_str = (parts[0], parts[1]) if len(parts) == 2 else (hp, "")
+                        if port_str.isdigit():
+                            host_ports[host].add(int(port_str))
+                        else:
+                            host_ports.setdefault(host, set())
+            if not host_ports:
+                warn("No host data available for current findings.")
+                continue
+            sorted_hosts = sorted(host_ports.keys())
+            scope_parts = [f"Severity: {severity_label}"]
+            if file_filter:
+                scope_parts.append(f"filter: {file_filter}")
+            if group_filter:
+                _, _, group_desc = group_filter
+                scope_parts.append(f"group: {group_desc}")
+            scope_label = " | ".join(scope_parts)
+            view_lines = [f"Affected Hosts — {scope_label} ({len(sorted_hosts)} unique hosts)\n"]
+            for host in sorted_hosts:
+                ports = sorted(host_ports[host])
+                port_str = ", ".join(str(p) for p in ports) if ports else "—"
+                view_lines.append(f"  {host:<45} {port_str}")
+            menu_pager("\n".join(view_lines))
+            continue
+
         # Handle Claude aggregate chat (intercept before generic action handler)
         if ans == "a":
             if has_claude:

@@ -819,6 +819,7 @@ def render_actions_footer(
             key_text("R", "Reviewed"),
             key_text("H", "Compare"),
             key_text("O", "Overlapping"),
+            key_text("V", "View hosts"),
         ]
     )
     right_items_row2 = [
