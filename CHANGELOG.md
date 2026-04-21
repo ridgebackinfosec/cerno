@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.24] - 2026-04-21
+
+### Changed
+- `workflow_mappings.yaml`: Renamed "Deprecated SSL/TLS Encryption" workflow to "Weak SSL/TLS Configurations"; added 9 plugins (26928, 31705, 42873, 65821, 78479, 81606, 83738, 83875, 89058) bringing total to 12; updated description and notes to cover weak/anonymous/export cipher suites and specific vulnerabilities (POODLE, FREAK, Logjam) in addition to deprecated protocol versions
+
 ## [1.3.23] - 2026-04-21
 
 ### Added
