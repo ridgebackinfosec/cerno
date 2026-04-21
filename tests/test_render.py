@@ -33,12 +33,14 @@ def test_render_claude_panel_prints_with_soft_wrap(monkeypatch):
 
 
 @pytest.mark.unit
-def test_render_claude_panel_handles_multiple_exchanges(monkeypatch):
-    """Multi-exchange conversations render correctly with dim/bright styles.
+def test_render_claude_panel_latest_exchange_is_bright(monkeypatch):
+    """Latest exchange uses bright styles; prior exchanges use dim styles.
 
-    Verifies that 'bold cyan'/'bold magenta' labels appear for the latest exchange
-    and 'dim cyan'/'dim magenta' labels appear for prior exchanges.
+    Verifies the core brightness contract: bold cyan/magenta for latest,
+    dim cyan/magenta for prior. Uses _spans which is stable Rich internals.
     """
+    from rich.panel import Panel
+    from rich.text import Text
     from cerno_pkg import render as render_module
 
     def make_turn(role, content):
@@ -58,8 +60,32 @@ def test_render_claude_panel_handles_multiple_exchanges(monkeypatch):
     mock_console = MagicMock()
     monkeypatch.setattr(render_module, "_console_global", mock_console)
 
-    # Should not raise
     render_module.render_claude_panel(turns, is_resumed=True)
 
-    # Should have printed output
-    assert mock_console.print.call_count > 0, "Expected print to be called"
+    # Find the Panel printed to the console
+    panels = [
+        c.args[0] for c in mock_console.print.call_args_list
+        if c.args and isinstance(c.args[0], Panel)
+    ]
+    assert len(panels) >= 1, "Expected a Rich Panel to be printed"
+    panel = panels[0]
+
+    # Collect all span styles from Text objects in the Group
+    group = panel.renderable
+    all_span_styles = []
+    for item in group._renderables:
+        if isinstance(item, Text):
+            for span in item._spans:
+                all_span_styles.append(str(span.style))
+
+    dim_labels = [s for s in all_span_styles if s in ("dim cyan", "dim magenta")]
+    bright_labels = [s for s in all_span_styles if s in ("bold cyan", "bold magenta")]
+
+    assert len(dim_labels) >= 1, (
+        f"Expected dim label span(s) for prior exchange, found none. "
+        f"All span styles: {all_span_styles}"
+    )
+    assert len(bright_labels) >= 1, (
+        f"Expected bright label span(s) for latest exchange, found none. "
+        f"All span styles: {all_span_styles}"
+    )
