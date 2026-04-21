@@ -1016,7 +1016,7 @@ def render_claude_panel(
             line = Text()
             line.append_text(label)
             line.append_text(body)
-            _console_global.print(line)
+            _console_global.print(line, soft_wrap=True)
         _console_global.print()
     else:
         _console_global.print("[dim]No chat history for this finding.[/dim]")

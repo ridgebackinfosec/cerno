@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Claude Assistant responses now render with `soft_wrap=True` so terminal-selected text copies without spurious newlines (`render.py:render_claude_panel()`)
+
 ## [1.3.25] - 2026-04-21
 
 ### Fixed
