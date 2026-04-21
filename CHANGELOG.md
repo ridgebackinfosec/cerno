@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.30] - 2026-04-21
+
+### Fixed
+- `ImportError: cannot import name 'copy_to_clipboard' from 'cerno_pkg.render'` in `[V]` host view — moved import to `cerno_pkg.tools` (`cerno.py`)
+
 ## [1.3.29] - 2026-04-21
 
 ### Fixed

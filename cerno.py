@@ -797,8 +797,9 @@ def browse_file_list(
                 aggregate_grouped_payload_text, aggregate_grouped_paged_text,
                 aggregate_hosts_only_payload_text, aggregate_hosts_only_paged_text,
                 aggregate_raw_payload_text, aggregate_raw_paged_text,
-                menu_pager, print_action_menu, copy_to_clipboard,
+                menu_pager, print_action_menu,
             )
+            from cerno_pkg.tools import copy_to_clipboard
             from rich.prompt import Confirm
 
             scope_parts = [f"Severity: {severity_label}"]
