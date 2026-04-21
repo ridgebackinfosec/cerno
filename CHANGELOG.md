@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.23] - 2026-04-21
+
+### Added
+- `workflow_mappings.yaml`: New "SSH Service Verification" workflow grouping plugins 90317 (password auth accepted), 70658 (CBC ciphers enabled), 153953 (weak KEX algorithms), and 71049 (weak MACs) — steps cover nmap with `ssh2-enum-algos,ssh-hostkey,sshv1,ssh-auth-methods`, ssh-audit, password auth verification, and Metasploit user enumeration
+
 ## [1.3.22] - 2026-04-17
 
 ### Fixed
