@@ -959,6 +959,55 @@ def render_finding_actions_footer(
             _console_global.print(claude_row)
 
 
+def _build_claude_panel_renderables(
+    turns: list[Any],
+    latest_exchange_start: int | None,
+    pending_input: str = "",
+) -> list[Any]:
+    """Build the renderables list for the Claude chat panel content.
+
+    Pure function — no console I/O. Extracted for testability.
+    """
+    renderables: list[Any] = []
+
+    if not turns:
+        renderables.append(Text("No chat history for this finding.", style="dim"))
+        renderables.append(Text(""))
+    else:
+        for i, turn in enumerate(turns):
+            is_latest = latest_exchange_start is not None and i >= latest_exchange_start
+
+            if turn.role == "user" and i > 0:
+                renderables.append(Text(""))
+                renderables.append(Rule(style="dim"))
+                renderables.append(Text(""))
+
+            body_style = "white" if is_latest else "dim"
+            if turn.role == "user":
+                label_style = "bold cyan" if is_latest else "dim cyan"
+                label_text = "You: "
+            else:
+                label_style = "bold magenta" if is_latest else "dim magenta"
+                label_text = "Claude: "
+
+            line = Text()
+            line.append(label_text, style=label_style)
+            line.append(turn.content, style=body_style)
+            renderables.append(line)
+
+        renderables.append(Text(""))
+
+    prompt_line = Text()
+    prompt_line.append("Ask Claude", style="bold cyan")
+    prompt_line.append(": ", style="bold cyan")
+    if pending_input:
+        prompt_line.append(pending_input, style="white")
+    prompt_line.append("_", style="dim")
+    renderables.append(prompt_line)
+
+    return renderables
+
+
 def render_claude_panel(
     turns: list[Any],
     is_resumed: bool,
@@ -1015,44 +1064,7 @@ def render_claude_panel(
                 break
 
     # --- Build panel content ---
-    renderables: list[Any] = []
-
-    if not turns:
-        renderables.append(Text("No chat history for this finding.", style="dim"))
-        renderables.append(Text(""))
-    else:
-        for i, turn in enumerate(turns):
-            is_latest = latest_exchange_start is not None and i >= latest_exchange_start
-
-            # Rule separator before each exchange (not before the first)
-            if turn.role == "user" and i > 0:
-                renderables.append(Text(""))
-                renderables.append(Rule(style="dim"))
-                renderables.append(Text(""))
-
-            body_style = "white" if is_latest else "dim"
-            if turn.role == "user":
-                label_style = "bold cyan" if is_latest else "dim cyan"
-                label_text = "You: "
-            else:
-                label_style = "bold magenta" if is_latest else "dim magenta"
-                label_text = "Claude: "
-
-            line = Text()
-            line.append(label_text, style=label_style)
-            line.append(turn.content, style=body_style)
-            renderables.append(line)
-
-        renderables.append(Text(""))
-
-    # --- Input prompt ---
-    prompt_line = Text()
-    prompt_line.append("Ask Claude", style="bold cyan")
-    prompt_line.append(": ", style="bold cyan")
-    if pending_input:
-        prompt_line.append(pending_input, style="white")
-    prompt_line.append("_", style="dim")
-    renderables.append(prompt_line)
+    renderables = _build_claude_panel_renderables(turns, latest_exchange_start, pending_input)
 
     # --- Render as bordered panel ---
     panel = Panel(

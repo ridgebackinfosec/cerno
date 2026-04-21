@@ -7,8 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.32] - 2026-04-21
+
 ### Changed
 - `render_claude_panel()` in `render.py` now renders conversation history inside a Rich bordered Panel with `bold magenta` border; prior exchanges are dimmed and the latest user+assistant exchange renders at full brightness; Rule separators appear between exchanges
+- Claude Assistant waiting spinner upgraded from `_console_global.status()` to `Progress` with `SpinnerColumn` + `TimeElapsedColumn` in `browse_claude_chat()` and `browse_claude_chat_aggregate()` (`cerno.py`); spinner appears below the panel and disappears when the response arrives
 
 ## [1.3.31] - 2026-04-21
 
