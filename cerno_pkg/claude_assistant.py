@@ -377,7 +377,8 @@ def build_aggregate_context(
     lines.append(f"Findings ({min(total, cap)} of {total}, highest severity first):")
     for i, (finding, plugin) in enumerate(sorted_findings[:cap], 1):
         sev_label = severity_labels.get(plugin.severity_int, str(plugin.severity_int))
-        host_count = finding.host_count or 0
+        hosts, _ = finding.get_hosts_and_ports()
+        host_count = len(hosts)
         msf_flag = "yes" if plugin.has_metasploit else "no"
         cve_str = "none"
         if plugin.cves:
