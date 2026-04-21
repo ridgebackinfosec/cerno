@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Claude assistant panel now uses plain `cyan`/`magenta` labels and unstyled body text; removes brightness-based contrast (dim/white) that was unreadable on light terminals (`render.py:_build_claude_panel_renderables()`)
+- Removed duplicate "Ask Claude:" prompt from inside the panel — input prompt from `Prompt.ask()` below the panel is sufficient
+
 ## [1.3.32] - 2026-04-21
 
 ### Changed

@@ -961,12 +961,12 @@ def render_finding_actions_footer(
 
 def _build_claude_panel_renderables(
     turns: list[Any],
-    latest_exchange_start: int | None,
-    pending_input: str = "",
 ) -> list[Any]:
     """Build the renderables list for the Claude chat panel content.
 
     Pure function — no console I/O. Extracted for testability.
+    Uses plain cyan/magenta labels and unstyled body text for compatibility
+    with both light and dark terminals.
     """
     renderables: list[Any] = []
 
@@ -975,35 +975,24 @@ def _build_claude_panel_renderables(
         renderables.append(Text(""))
     else:
         for i, turn in enumerate(turns):
-            is_latest = latest_exchange_start is not None and i >= latest_exchange_start
-
             if turn.role == "user" and i > 0:
                 renderables.append(Text(""))
                 renderables.append(Rule(style="dim"))
                 renderables.append(Text(""))
 
-            body_style = "white" if is_latest else "dim"
             if turn.role == "user":
-                label_style = "bold cyan" if is_latest else "dim cyan"
+                label_style = "cyan"
                 label_text = "You: "
             else:
-                label_style = "bold magenta" if is_latest else "dim magenta"
+                label_style = "magenta"
                 label_text = "Claude: "
 
             line = Text()
             line.append(label_text, style=label_style)
-            line.append(turn.content, style=body_style)
+            line.append(turn.content)
             renderables.append(line)
 
         renderables.append(Text(""))
-
-    prompt_line = Text()
-    prompt_line.append("Ask Claude", style="bold cyan")
-    prompt_line.append(": ", style="bold cyan")
-    if pending_input:
-        prompt_line.append(pending_input, style="white")
-    prompt_line.append("_", style="dim")
-    renderables.append(prompt_line)
 
     return renderables
 
@@ -1011,18 +1000,16 @@ def _build_claude_panel_renderables(
 def render_claude_panel(
     turns: list[Any],
     is_resumed: bool,
-    pending_input: str = "",
 ) -> None:
     """Render the Claude Assistant chat panel.
 
-    Displays conversation history inside a Rich bordered panel. Prior exchanges
-    are dimmed; the latest complete exchange (last user+assistant pair) renders
-    at full brightness. A Rule separator appears between exchanges.
+    Displays conversation history inside a Rich bordered panel with Rule
+    separators between exchanges. All text uses plain terminal colors for
+    readability on both light and dark terminal backgrounds.
 
     Args:
         turns: List of ClaudeConversationTurn objects (may be empty)
         is_resumed: True if this finding has prior conversation history
-        pending_input: Current text the user is typing (shown at input prompt)
     """
     from datetime import datetime, timezone
 
@@ -1054,17 +1041,8 @@ def render_claude_panel(
     else:
         title = Text("✦ Claude Assistant (BETA)", style="bold magenta")
 
-    # --- Find start index of the latest complete exchange ---
-    # Latest complete exchange = last user+assistant pair where assistant is final turn
-    latest_exchange_start: int | None = None
-    if len(turns) >= 2 and turns[-1].role == "assistant":
-        for i in range(len(turns) - 2, -1, -1):
-            if turns[i].role == "user":
-                latest_exchange_start = i
-                break
-
     # --- Build panel content ---
-    renderables = _build_claude_panel_renderables(turns, latest_exchange_start, pending_input)
+    renderables = _build_claude_panel_renderables(turns)
 
     # --- Render as bordered panel ---
     panel = Panel(

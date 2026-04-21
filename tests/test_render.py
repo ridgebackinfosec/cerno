@@ -33,11 +33,11 @@ def test_render_claude_panel_prints_with_soft_wrap(monkeypatch):
 
 
 @pytest.mark.unit
-def test_render_claude_panel_latest_exchange_is_bright():
-    """Latest exchange uses bright styles; prior exchanges use dim styles.
+def test_render_claude_panel_labels_use_plain_styles():
+    """Labels use plain cyan/magenta — no bold or dim — for light+dark terminal compat.
 
-    Tests the pure _build_claude_panel_renderables() helper directly to avoid
-    coverage-plugin interference when inspecting Rich internals via _spans.
+    Verifies that no brightness-dependent styles are applied so the panel is
+    readable on both light (dark-on-white) and dark (light-on-black) terminals.
     """
     from rich.text import Text
     from cerno_pkg.render import _build_claude_panel_renderables
@@ -55,30 +55,15 @@ def test_render_claude_panel_latest_exchange_is_bright():
         make_turn("assistant", "Use meterpreter/reverse_tcp."),
     ]
 
-    # Replicate the latest_exchange_start logic from render_claude_panel()
-    latest_exchange_start = None
-    if len(turns) >= 2 and turns[-1].role == "assistant":
-        for i in range(len(turns) - 2, -1, -1):
-            if turns[i].role == "user":
-                latest_exchange_start = i
-                break
+    renderables = _build_claude_panel_renderables(turns)
 
-    renderables = _build_claude_panel_renderables(turns, latest_exchange_start)
-
-    all_span_styles = []
+    label_styles = []
     for item in renderables:
-        if isinstance(item, Text):
-            for span in item._spans:
-                all_span_styles.append(str(span.style))
+        if isinstance(item, Text) and item._spans:
+            label_styles.append(str(item._spans[0].style))
 
-    dim_labels = [s for s in all_span_styles if s in ("dim cyan", "dim magenta")]
-    bright_labels = [s for s in all_span_styles if s in ("bold cyan", "bold magenta")]
-
-    assert len(dim_labels) >= 1, (
-        f"Expected dim label span(s) for prior exchange, found none. "
-        f"All span styles: {all_span_styles}"
-    )
-    assert len(bright_labels) >= 1, (
-        f"Expected bright label span(s) for latest exchange, found none. "
-        f"All span styles: {all_span_styles}"
+    assert "cyan" in label_styles, f"Expected 'cyan' user label. Got: {label_styles}"
+    assert "magenta" in label_styles, f"Expected 'magenta' Claude label. Got: {label_styles}"
+    assert not any(s in label_styles for s in ("dim cyan", "dim magenta", "bold cyan", "bold magenta")), (
+        f"Found bold/dim label styles — should be plain. Got: {label_styles}"
     )
