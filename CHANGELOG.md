@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.25] - 2026-04-21
+
+### Fixed
+- `tui.py`: Remove redundant confirmation prompt when bulk-marking findings as review complete — one confirmation now instead of two
+
 ## [1.3.24] - 2026-04-21
 
 ### Changed

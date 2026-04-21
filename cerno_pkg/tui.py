@@ -539,25 +539,6 @@ def handle_finding_list_actions(
                 page_idx,
             )
 
-        from rich.prompt import Confirm
-
-        # Show warning message
-        warn(f"You are about to mark {len(candidates)} items as review completed.")
-
-        # Use standard Confirm.ask pattern
-        confirmed = Confirm.ask("Mark all filtered findings as completed?", default=False)
-
-        if not confirmed:
-            info("Canceled.")
-            return (
-                None,
-                file_filter,
-                reviewed_filter,
-                group_filter,
-                sort_mode,
-                page_idx,
-            )
-
         # Return special action to handle in browse_file_list where we have
         # access to completed_total
         return (
