@@ -558,6 +558,42 @@ def browse_file_list(
             and (group_filter is None or f"Plugin {p.plugin_id}: {p.plugin_name}" in group_filter[1])
         ]
 
+        # Unique CVE count across all filtered candidates
+        unique_cve_count = len({
+            cve
+            for _, p in candidates
+            if p.cves
+            for cve in p.cves
+        })
+
+        # Unique host count across all filtered candidates (single DB query)
+        if candidates:
+            if is_multi_scan and all_instances:
+                all_fids = [
+                    f.finding_id
+                    for pf, _ in candidates
+                    for f in all_instances.get(pf.plugin_id, [])
+                    if f.finding_id is not None
+                ]
+            else:
+                all_fids = [pf.finding_id for pf, _ in candidates if pf.finding_id is not None]
+
+            if all_fids:
+                from cerno_pkg.database import query_one, get_connection
+                placeholders = ",".join("?" * len(all_fids))
+                with get_connection() as conn:
+                    row = query_one(
+                        conn,
+                        f"SELECT COUNT(DISTINCT host_id) FROM finding_affected_hosts WHERE finding_id IN ({placeholders})",
+                        tuple(all_fids),
+                    )
+                unique_host_count = row[0] if row else 0
+            else:
+                unique_host_count = 0
+        else:
+            unique_cve_count = 0
+            unique_host_count = 0
+
         # Apply sorting
         if sort_mode == "severity":
             # Sort by severity descending (Critical first), then by plugin name
@@ -775,6 +811,8 @@ def browse_file_list(
             render_actions_footer(
                 group_applied=bool(group_filter),
                 candidates_count=len(candidates),
+                unique_cve_count=unique_cve_count,
+                unique_host_count=unique_host_count,
                 sort_mode=sort_mode,
                 can_next=can_next,
                 can_prev=can_prev,
@@ -912,6 +950,8 @@ def browse_file_list(
             reviewed,
             None,  # sev_map no longer used
             get_counts_for,
+            unique_cve_count=unique_cve_count,
+            unique_host_count=unique_host_count,
         )
 
         (

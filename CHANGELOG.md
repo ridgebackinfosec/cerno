@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.31] - 2026-04-21
+
+### Fixed
+- `[E] CVEs (N)` in findings list footer was showing the filtered finding count instead of unique CVE count (`cerno.py`, `render.py:render_actions_footer()`)
+
+### Added
+- `[V] View hosts (N)` in findings list footer now shows unique host count across all filtered findings (`cerno.py`, `render.py:render_actions_footer()`)
+
 ## [1.3.30] - 2026-04-21
 
 ### Fixed

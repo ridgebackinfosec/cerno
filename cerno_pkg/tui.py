@@ -267,6 +267,8 @@ def handle_finding_list_actions(
     reviewed: List[Any],  # List of (Finding, Plugin) tuples
     sev_map: Optional[Dict[Path, Path]] = None,
     get_counts_for: Optional[Callable[["Finding"], Tuple[int, str]]] = None,
+    unique_cve_count: int = 0,
+    unique_host_count: int = 0,
 ) -> ActionResult:
     """
     Handle file list actions (filter, sort, navigate, group, etc.).
@@ -295,6 +297,8 @@ def handle_finding_list_actions(
         show_actions_help(
             group_applied=bool(group_filter),
             candidates_count=len(candidates),
+            unique_cve_count=unique_cve_count,
+            unique_host_count=unique_host_count,
             sort_mode=sort_mode,
             can_next=(page_idx + 1 < total_pages),
             can_prev=(page_idx > 0),

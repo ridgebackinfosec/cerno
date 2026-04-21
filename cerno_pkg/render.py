@@ -769,6 +769,8 @@ def render_actions_footer(
     *,
     group_applied: bool,
     candidates_count: int,
+    unique_cve_count: int = 0,
+    unique_host_count: int = 0,
     sort_mode: str,
     can_next: bool,
     can_prev: bool,
@@ -819,7 +821,7 @@ def render_actions_footer(
             key_text("R", "Reviewed"),
             key_text("H", "Compare"),
             key_text("O", "Overlapping"),
-            key_text("V", "View hosts"),
+            key_text("V", f"View hosts ({unique_host_count})"),
         ]
     )
     right_items_row2 = [
@@ -833,7 +835,7 @@ def render_actions_footer(
     # Row 3: Bulk operations
     left_row3 = join_actions_texts(
         [
-            key_text("E", f"CVEs ({candidates_count})"),
+            key_text("E", f"CVEs ({unique_cve_count})"),
             key_text("M", f"Mark reviewed ({candidates_count})"),
         ]
     )
@@ -1164,6 +1166,8 @@ def show_actions_help(
     *,
     group_applied: bool,
     candidates_count: int,
+    unique_cve_count: int = 0,
+    unique_host_count: int = 0,
     sort_mode: str,
     can_next: bool,
     can_prev: bool,
@@ -1208,7 +1212,8 @@ def show_actions_help(
         Text("Analysis", style="bold"),
         key_text("H", "Compare - Find files with identical host:port combinations"),
         key_text("O", "Overlapping - Find findings that cover all affected systems of another finding"),
-        key_text("E", f"CVEs ({candidates_count}) - Extract CVEs for all filtered files"),
+        key_text("V", f"View hosts ({unique_host_count}) - Show all unique hosts across filtered findings"),
+        key_text("E", f"CVEs ({unique_cve_count}) - Extract CVEs for all filtered files"),
     )
     if group_applied:
         table.add_row(
