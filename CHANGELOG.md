@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.31] - 2026-04-21
+
+### Fixed
+- `[E] CVEs (N)` in findings list footer was showing the filtered finding count instead of unique CVE count (`cerno.py`, `render.py:render_actions_footer()`)
+
+### Added
+- `[V] View hosts (N)` in findings list footer now shows unique host count across all filtered findings (`cerno.py`, `render.py:render_actions_footer()`)
+
+## [1.3.30] - 2026-04-21
+
+### Fixed
+- `ImportError: cannot import name 'copy_to_clipboard' from 'cerno_pkg.render'` in `[V]` host view — moved import to `cerno_pkg.tools` (`cerno.py`)
+
+## [1.3.29] - 2026-04-21
+
+### Fixed
+- `AttributeError: 'Finding' object has no attribute 'host_count'` when sending a message to Claude from the findings selection menu (`claude_assistant.py:build_aggregate_context()`)
+
+### Changed
+- `[V]` host view in findings list now matches single-finding host view UX: grouped format by default, Copy/Change format/Back post-view menu, Raw/Hosts-only/Grouped format options with clipboard support
+
+## [1.3.28] - 2026-04-21
+
+### Added
+- `[V]` action in findings list shows a deduplicated host→ports view across all current candidates (respects severity, name, and group filters)
+
+### Changed
+- Aggregate Claude context trimmed to a concise signal-only format: numbered one-line-per-finding entries with severity, host count, CVEs, and MSF flag — raw host:port lists and pre-computed group analysis removed
+- Skill prompt updated with `[H]`/`[O]`/`[V]` guidance so Claude redirects host-overlap questions to the appropriate actions
+
+## [1.3.27] - 2026-04-21
+
+### Added
+- Aggregate Claude context now includes per-finding host:port lists (capped at 20 entries each) and pre-computed identical/overlapping host:port group analysis, enabling Claude to answer H/O-style questions conversationally (`claude_assistant.py:build_aggregate_context()`)
+
+## [1.3.26] - 2026-04-21
+
+### Changed
+- Claude Assistant responses now render with `soft_wrap=True` so terminal-selected text copies without spurious newlines (`render.py:render_claude_panel()`)
+
+## [1.3.25] - 2026-04-21
+
+### Fixed
+- `tui.py`: Remove redundant confirmation prompt when bulk-marking findings as review complete — one confirmation now instead of two
+
+## [1.3.24] - 2026-04-21
+
+### Changed
+- `workflow_mappings.yaml`: Renamed "Deprecated SSL/TLS Encryption" workflow to "Weak SSL/TLS Configurations"; added 9 plugins (26928, 31705, 42873, 65821, 78479, 81606, 83738, 83875, 89058) bringing total to 12; updated description and notes to cover weak/anonymous/export cipher suites and specific vulnerabilities (POODLE, FREAK, Logjam) in addition to deprecated protocol versions
+
+## [1.3.23] - 2026-04-21
+
+### Added
+- `workflow_mappings.yaml`: New "SSH Service Verification" workflow grouping plugins 90317 (password auth accepted), 70658 (CBC ciphers enabled), 153953 (weak KEX algorithms), and 71049 (weak MACs) — steps cover nmap with `ssh2-enum-algos,ssh-hostkey,sshv1,ssh-auth-methods`, ssh-audit, password auth verification, and Metasploit user enumeration
+
 ## [1.3.22] - 2026-04-17
 
 ### Fixed

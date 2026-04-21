@@ -558,6 +558,42 @@ def browse_file_list(
             and (group_filter is None or f"Plugin {p.plugin_id}: {p.plugin_name}" in group_filter[1])
         ]
 
+        # Unique CVE count across all filtered candidates
+        unique_cve_count = len({
+            cve
+            for _, p in candidates
+            if p.cves
+            for cve in p.cves
+        })
+
+        # Unique host count across all filtered candidates (single DB query)
+        if candidates:
+            if is_multi_scan and all_instances:
+                all_fids = [
+                    f.finding_id
+                    for pf, _ in candidates
+                    for f in all_instances.get(pf.plugin_id, [])
+                    if f.finding_id is not None
+                ]
+            else:
+                all_fids = [pf.finding_id for pf, _ in candidates if pf.finding_id is not None]
+
+            if all_fids:
+                from cerno_pkg.database import query_one, get_connection
+                placeholders = ",".join("?" * len(all_fids))
+                with get_connection() as conn:
+                    row = query_one(
+                        conn,
+                        f"SELECT COUNT(DISTINCT host_id) FROM finding_affected_hosts WHERE finding_id IN ({placeholders})",
+                        tuple(all_fids),
+                    )
+                unique_host_count = row[0] if row else 0
+            else:
+                unique_host_count = 0
+        else:
+            unique_cve_count = 0
+            unique_host_count = 0
+
         # Apply sorting
         if sort_mode == "severity":
             # Sort by severity descending (Critical first), then by plugin name
@@ -775,6 +811,8 @@ def browse_file_list(
             render_actions_footer(
                 group_applied=bool(group_filter),
                 candidates_count=len(candidates),
+                unique_cve_count=unique_cve_count,
+                unique_host_count=unique_host_count,
                 sort_mode=sort_mode,
                 can_next=can_next,
                 can_prev=can_prev,
@@ -785,6 +823,93 @@ def browse_file_list(
         except KeyboardInterrupt:
             warn("\nInterrupted — returning to severity menu.")
             break
+
+        # Handle host view (intercept before generic action handler)
+        if ans == "v":
+            if not candidates:
+                warn("No findings match the current filter.")
+                continue
+            from cerno_pkg.database import get_connection
+            from cerno_pkg.render import (
+                _collect_aggregate_host_ports,
+                aggregate_grouped_payload_text, aggregate_grouped_paged_text,
+                aggregate_hosts_only_payload_text, aggregate_hosts_only_paged_text,
+                aggregate_raw_payload_text, aggregate_raw_paged_text,
+                menu_pager, print_action_menu,
+            )
+            from cerno_pkg.tools import copy_to_clipboard
+            from rich.prompt import Confirm
+
+            scope_parts = [f"Severity: {severity_label}"]
+            if file_filter:
+                scope_parts.append(f"filter: {file_filter}")
+            if group_filter:
+                _, _, group_desc = group_filter
+                scope_parts.append(f"group: {group_desc}")
+            scope_label = " | ".join(scope_parts)
+
+            with get_connection() as _v_conn:
+                host_ports, sorted_hosts = _collect_aggregate_host_ports(candidates, _v_conn)
+
+            if not sorted_hosts:
+                warn("No host data available for current findings.")
+                continue
+
+            text = aggregate_grouped_paged_text(host_ports, sorted_hosts, scope_label)
+            payload = aggregate_grouped_payload_text(host_ports, sorted_hosts)
+            menu_pager(text)
+
+            print_action_menu([
+                ("C", "Copy to clipboard"),
+                ("F", "Change format"),
+                ("B", "Back"),
+            ])
+            try:
+                post_choice = Prompt.ask("Action", default="b").strip().lower()
+            except KeyboardInterrupt:
+                continue
+
+            if post_choice in ("c", "copy"):
+                ok_flag, detail = copy_to_clipboard(payload)
+                if ok_flag:
+                    ok("Copied to clipboard.")
+                else:
+                    warn(f"{detail} Printing below for manual copy:")
+                    console.print(payload)
+
+            elif post_choice in ("f", "format"):
+                print_action_menu([
+                    ("R", "Raw"),
+                    ("H", "Hosts only"),
+                    ("G", "Grouped (current)"),
+                ])
+                try:
+                    fmt = Prompt.ask("Choose format", default="g").strip().lower()
+                except KeyboardInterrupt:
+                    continue
+
+                if fmt in ("r", "raw"):
+                    text = aggregate_raw_paged_text(host_ports, sorted_hosts, scope_label)
+                    payload = aggregate_raw_payload_text(host_ports, sorted_hosts)
+                elif fmt in ("h", "hosts", "hosts-only"):
+                    text = aggregate_hosts_only_paged_text(sorted_hosts, scope_label)
+                    payload = aggregate_hosts_only_payload_text(sorted_hosts)
+                else:
+                    continue
+
+                if text and payload:
+                    menu_pager(text)
+                    try:
+                        if Confirm.ask("Copy to clipboard?", default=True):
+                            ok_flag, detail = copy_to_clipboard(payload)
+                            if ok_flag:
+                                ok("Copied to clipboard.")
+                            else:
+                                warn(f"{detail}")
+                    except KeyboardInterrupt:
+                        pass
+
+            continue
 
         # Handle Claude aggregate chat (intercept before generic action handler)
         if ans == "a":
@@ -825,6 +950,8 @@ def browse_file_list(
             reviewed,
             None,  # sev_map no longer used
             get_counts_for,
+            unique_cve_count=unique_cve_count,
+            unique_host_count=unique_host_count,
         )
 
         (

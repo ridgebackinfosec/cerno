@@ -126,17 +126,26 @@ workflows:
       - "https://github.com/trailofbits/onesixtyone"
       - "https://github.com/net-snmp/net-snmp"
 
-  - plugin_id: "20007,104743,157288"
-    workflow_name: "Deprecated SSL/TLS Encryption"
-    description: "Deprecated encryption protocol versions should be removed from support unless absolutely necessary."
+  - plugin_id: "20007,26928,31705,42873,65821,78479,81606,83738,83875,89058,104743,157288"
+    workflow_name: "Weak SSL/TLS Configurations"
+    description: "Weak or deprecated SSL/TLS configurations — including outdated protocol versions, weak/anonymous/export cipher suites, and exploitable vulnerabilities — should be remediated."
     steps:
-      - title: "Enumerate the supported encryption protocol versions and alogorithims."
+      - title: "Enumerate the supported encryption protocol versions and cipher suites."
         commands:
           - "sudo nmap -A --script=ssl-enum-ciphers,ssl-cert,ssl-date IP_address"
-        notes: "SSLv2, SSLv3, and TLSv1.0 are all considered deprecated and should not be supported anymore. TLSv1.1 is also outdated but not of terrible concern."
+        notes: "SSLv2, SSLv3, TLSv1.0, and TLSv1.1 are deprecated and should be disabled. Weak/medium-strength, anonymous, and EXPORT cipher suites must be removed. Check for specific vulnerabilities: POODLE (plugin 78479) exploits SSLv3 CBC padding; FREAK (65821, 83875) and Logjam (81606, 83738, 89058) exploit weak EXPORT key exchange. Prefer TLSv1.2+ with strong cipher suites only."
 
     references:
       - "https://www.tenable.com/plugins/nessus/20007"
+      - "https://www.tenable.com/plugins/nessus/26928"
+      - "https://www.tenable.com/plugins/nessus/31705"
+      - "https://www.tenable.com/plugins/nessus/42873"
+      - "https://www.tenable.com/plugins/nessus/65821"
+      - "https://www.tenable.com/plugins/nessus/78479"
+      - "https://www.tenable.com/plugins/nessus/81606"
+      - "https://www.tenable.com/plugins/nessus/83738"
+      - "https://www.tenable.com/plugins/nessus/83875"
+      - "https://www.tenable.com/plugins/nessus/89058"
       - "https://www.tenable.com/plugins/nessus/104743"
       - "https://www.tenable.com/plugins/nessus/157288"
       - "https://www.blackhillsinfosec.com/testing-tls-and-certificates/"
@@ -181,3 +190,37 @@ workflows:
       - "https://github.com/ronf/asyncssh/security/advisories/GHSA-hfmc-7525-mj55"
       - "https://nvd.nist.gov/vuln/detail/CVE-2023-48795"
       - "https://terrapin-attack.com/"
+
+  - plugin_id: "90317,70658,153953,71049"
+    workflow_name: "SSH Service Verification"
+    description: "SSH service is accepting weak ciphers, key exchange algorithms, or MAC algorithms, and/or accepts password authentication. These misconfigurations can expose the service to brute force, MITM, or cryptographic downgrade attacks."
+    steps:
+      - title: "Enumerate SSH service version, supported algorithms, and accepted auth methods"
+        commands:
+          - "sudo nmap -p 22 --script ssh2-enum-algos,ssh-hostkey,sshv1,ssh-auth-methods <target>"
+        notes: "Look for CBC ciphers, weak KEX algorithms (diffie-hellman-group1-sha1, diffie-hellman-group14-sha1), weak MACs (hmac-md5, hmac-sha1-96), SSHv1 support, and accepted authentication methods (password, publickey, keyboard-interactive)."
+
+      - title: "Run ssh-audit for a comprehensive algorithm audit"
+        commands:
+          - "ssh-audit <target>"
+          - "ssh-audit <target> -p <port>"
+        notes: "ssh-audit provides color-coded output for deprecated/weak algorithms. Available at https://github.com/jtesta/ssh-audit"
+
+      - title: "Verify password authentication is accepted"
+        commands:
+          - "ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no <user>@<target>"
+          - "sudo nmap -p 22 --script ssh-brute --script-args userdb=users.txt,passdb=passwords.txt <target>"
+        notes: "Confirm that password auth is accepted (relevant to plugin 90317). Brute force only with explicit authorization."
+
+      - title: "Check for additional weak configurations with Metasploit"
+        commands:
+          - "msfconsole -q -x 'use auxiliary/scanner/ssh/ssh_enumusers; set RHOSTS <target>; run'"
+        notes: "Optional: enumerate valid usernames if the service is vulnerable to user enumeration."
+
+    references:
+      - "https://www.tenable.com/plugins/nessus/90317"
+      - "https://www.tenable.com/plugins/nessus/70658"
+      - "https://www.tenable.com/plugins/nessus/153953"
+      - "https://www.tenable.com/plugins/nessus/71049"
+      - "https://github.com/jtesta/ssh-audit"
+      - "https://attack.mitre.org/techniques/T1110/001/"

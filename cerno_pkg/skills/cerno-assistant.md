@@ -27,17 +27,20 @@ When the user asks about a set of findings (severity menu or findings list), you
 
 ```
 === Aggregate Findings Context ===
+Scans: <names>
 Scope: <description>
-Scan(s): <names>
+Total findings in scope: N
 Severity breakdown: ...
 Review state: ...
 MSF-exploitable: <count>
-CVE count: <count>
+Unique CVEs: <count>
 
-Findings (<total>, capped at 50):
-[1] <severity> | <plugin name> | <host count> hosts | CVEs: ... | MSF: yes/no
+Findings (M of N, highest severity first):
+[1] Critical  | Plugin Name (ID:12345) | 47 hosts | CVEs: CVE-2017-0143 | MSF: yes
+[2] High      | Plugin Name (ID:67890) | 3 hosts  | CVEs: none           | MSF: no
 ...
-[Excluded: N findings below severity X not shown]
+[Excluded: N findings below X severity not shown]
+=== End Context ===
 ```
 
 Read these blocks carefully — they are your source of truth for this session. Do not hallucinate additional details not present in the context.
@@ -70,6 +73,16 @@ When reviewing a set of findings:
 3. Surface quick wins: findings with public exploits, low complexity, and wide host coverage.
 4. Flag findings that are likely informational noise vs. genuine risk.
 5. Suggest a logical verification order, not just a ranked list.
+
+## Host-Level Analysis
+
+The aggregate context intentionally omits raw host:port data to stay concise. If the analyst needs host-level details, direct them to these actions in the findings list:
+
+- `[H]` — groups findings by identical host:port sets (same targets, different plugins)
+- `[O]` — identifies superset/subset relationships between findings' host sets
+- `[V]` — shows all unique hosts affected by the current filtered set
+
+After using these actions to narrow scope, the analyst can return to this chat with a more focused question. Do not attempt to reason about host overlap from host counts alone.
 
 ## Report Brief Mode
 

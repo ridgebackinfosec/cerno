@@ -358,31 +358,43 @@ def build_aggregate_context(
     # MSF summary
     msf_count = sum(1 for _f, p in findings_with_plugins if p.has_metasploit)
     if msf_count:
-        lines.append(f"Findings with Metasploit modules: {msf_count}")
+        lines.append(f"MSF-exploitable: {msf_count}")
 
-    # Findings list (capped at 50 to keep prompts manageable, sorted Critical→Info)
+    # Total unique CVE count
+    all_cves: set[str] = set()
+    for _f, plugin in findings_with_plugins:
+        if plugin.cves:
+            cve_list = plugin.cves if isinstance(plugin.cves, list) else [plugin.cves]
+            all_cves.update(str(c) for c in cve_list)
+    if all_cves:
+        lines.append(f"Unique CVEs: {len(all_cves)}")
+
+    # Findings list (capped at 50, sorted Critical→Info, one line per finding)
     cap = 50
     sorted_findings = sorted(
         findings_with_plugins, key=lambda fp: fp[1].severity_int, reverse=True
     )
-    lines.append(f"Findings (showing {min(total, cap)} of {total}, highest severity first):")
-    for finding, plugin in sorted_findings[:cap]:
+    lines.append(f"Findings ({min(total, cap)} of {total}, highest severity first):")
+    for i, (finding, plugin) in enumerate(sorted_findings[:cap], 1):
         sev_label = severity_labels.get(plugin.severity_int, str(plugin.severity_int))
-        msf_flag = " [MSF]" if plugin.has_metasploit else ""
-        cve_str = ""
+        hosts, _ = finding.get_hosts_and_ports()
+        host_count = len(hosts)
+        msf_flag = "yes" if plugin.has_metasploit else "no"
+        cve_str = "none"
         if plugin.cves:
             cve_list = plugin.cves if isinstance(plugin.cves, list) else [plugin.cves]
             shown = [str(c) for c in cve_list[:3]]
-            cve_str = f" CVEs: {', '.join(shown)}"
+            cve_str = ", ".join(shown)
             if len(cve_list) > 3:
                 cve_str += f" +{len(cve_list) - 3} more"
         lines.append(
-            f"  [{sev_label}] {plugin.plugin_name} (ID:{plugin.plugin_id}){msf_flag}{cve_str}"
+            f"[{i}] {sev_label:<8} | {plugin.plugin_name} (ID:{plugin.plugin_id})"
+            f" | {host_count} hosts | CVEs: {cve_str} | MSF: {msf_flag}"
         )
     if total > cap:
         lowest_shown = sorted_findings[cap - 1][1].severity_int
         lowest_label = severity_labels.get(lowest_shown, str(lowest_shown))
-        lines.append(f"  ... and {total - cap} more not shown (below {lowest_label} severity)")
+        lines.append(f"[Excluded: {total - cap} findings below {lowest_label} severity not shown]")
 
     lines.append("=== End Context ===")
     return "\n".join(lines)
