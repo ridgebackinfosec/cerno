@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.27] - 2026-04-21
+
+### Added
+- Aggregate Claude context now includes per-finding host:port lists (capped at 20 entries each) and pre-computed identical/overlapping host:port group analysis, enabling Claude to answer H/O-style questions conversationally (`claude_assistant.py:build_aggregate_context()`)
+
 ## [1.3.26] - 2026-04-21
 
 ### Changed
