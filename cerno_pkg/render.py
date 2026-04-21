@@ -14,6 +14,7 @@ from rich import box
 from rich.console import RenderableType, Group
 from rich.panel import Panel
 from rich.prompt import Prompt
+from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
 from contextlib import contextmanager
@@ -963,13 +964,14 @@ def render_claude_panel(
     is_resumed: bool,
     pending_input: str = "",
 ) -> None:
-    """Render the Claude Assistant chat overlay panel.
+    """Render the Claude Assistant chat panel.
 
-    Displays prior conversation history (dimmed) and the current input prompt.
-    When the conversation is resumed, shows a header indicating prior exchange count.
+    Displays conversation history inside a Rich bordered panel. Prior exchanges
+    are dimmed; the latest complete exchange (last user+assistant pair) renders
+    at full brightness. A Rule separator appears between exchanges.
 
     Args:
-        turns: List of ClaudeConversationTurn objects (may be empty for new conversations)
+        turns: List of ClaudeConversationTurn objects (may be empty)
         is_resumed: True if this finding has prior conversation history
         pending_input: Current text the user is typing (shown at input prompt)
     """
@@ -977,10 +979,9 @@ def render_claude_panel(
 
     _console_global.print()
 
-    # Header
+    # --- Build panel title ---
     if is_resumed and turns:
         exchange_count = len(turns) // 2
-        # Timestamp of last turn
         last_turn = turns[-1]
         age_str = ""
         try:
@@ -995,49 +996,76 @@ def render_claude_panel(
                 age_str = f"{delta_secs // 86400}d ago"
         except Exception:
             pass
-
         summary = f"resumed · {exchange_count} exchange{'s' if exchange_count != 1 else ''}"
         if age_str:
             summary += f" · {age_str}"
-        header_text = Text()
-        header_text.append("── ✦ Claude (BETA) ── ", style="bold magenta")
-        header_text.append(summary, style="dim")
-        header_text.append(" ──", style="bold magenta")
-        _console_global.print(header_text)
+        title = Text()
+        title.append("✦ Claude (BETA)", style="bold magenta")
+        title.append(f"  {summary}", style="dim")
     else:
-        _console_global.print("[bold magenta]── ✦ Claude Assistant (BETA) ──[/bold magenta]")
+        title = Text("✦ Claude Assistant (BETA)", style="bold magenta")
 
-    # Conversation history
-    if turns:
-        for turn in turns:
+    # --- Find start index of the latest complete exchange ---
+    # Latest complete exchange = last user+assistant pair where assistant is final turn
+    latest_exchange_start: int | None = None
+    if len(turns) >= 2 and turns[-1].role == "assistant":
+        for i in range(len(turns) - 2, -1, -1):
+            if turns[i].role == "user":
+                latest_exchange_start = i
+                break
+
+    # --- Build panel content ---
+    renderables: list[Any] = []
+
+    if not turns:
+        renderables.append(Text("No chat history for this finding.", style="dim"))
+        renderables.append(Text(""))
+    else:
+        for i, turn in enumerate(turns):
+            is_latest = latest_exchange_start is not None and i >= latest_exchange_start
+
+            # Rule separator before each exchange (not before the first)
+            if turn.role == "user" and i > 0:
+                renderables.append(Text(""))
+                renderables.append(Rule(style="dim"))
+                renderables.append(Text(""))
+
             if turn.role == "user":
-                label = Text("You: ", style="dim cyan")
-                body = Text(turn.content, style="dim")
+                label_style = "bold cyan" if is_latest else "dim cyan"
+                body_style = "white" if is_latest else "dim"
+                label = Text("You: ", style=label_style)
             else:
-                label = Text("Claude: ", style="dim magenta")
-                body = Text(turn.content, style="dim")
+                label_style = "bold magenta" if is_latest else "dim magenta"
+                body_style = "white" if is_latest else "dim"
+                label = Text("Claude: ", style=label_style)
+
             line = Text()
             line.append_text(label)
-            line.append_text(body)
-            _console_global.print(line, soft_wrap=True)
-        _console_global.print()
-    else:
-        _console_global.print("[dim]No chat history for this finding.[/dim]")
-        _console_global.print()
+            line.append(turn.content, style=body_style)
+            renderables.append(line)
 
-    # Input prompt
+        renderables.append(Text(""))
+
+    # --- Input prompt ---
     prompt_line = Text()
-    prompt_line.append("Ask Claude", style="cyan")
-    prompt_line.append(": ", style="cyan")
+    prompt_line.append("Ask Claude", style="bold cyan")
+    prompt_line.append(": ", style="bold cyan")
     if pending_input:
         prompt_line.append(pending_input, style="white")
     prompt_line.append("_", style="dim")
-    _console_global.print(prompt_line)
+    renderables.append(prompt_line)
 
-    # Controls hint
-    _console_global.print(
-        "[dim]  [Enter] send  [C] clear history  [Esc/Q] back[/dim]"
+    # --- Render as bordered panel ---
+    panel = Panel(
+        Group(*renderables),
+        title=title,
+        border_style="bold magenta",
+        padding=(0, 1),
     )
+    _console_global.print(panel, soft_wrap=True)
+
+    # Controls hint below the panel
+    _console_global.print("[dim]  [Enter] send  [C] clear history  [Esc/Q] back[/dim]")
 
 
 def render_tool_availability_table(include_unavailable: bool = True) -> None:

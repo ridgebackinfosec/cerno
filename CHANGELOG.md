@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `render_claude_panel()` in `render.py` now renders conversation history inside a Rich bordered Panel with `bold magenta` border; prior exchanges are dimmed and the latest user+assistant exchange renders at full brightness; Rule separators appear between exchanges
+
 ## [1.3.31] - 2026-04-21
 
 ### Fixed
