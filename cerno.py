@@ -175,7 +175,14 @@ def browse_claude_chat(
                 raw = claude_assistant.REPORT_BRIEF_QUERY
 
             # Send to Claude
-            with _console_global.status("[cyan]Asking Claude...[/cyan]"):
+            with Progress(
+                SpinnerColumn(style="cyan"),
+                TextColumn("[cyan]Asking Claude...[/cyan]"),
+                TimeElapsedColumn(),
+                console=_console_global,
+                transient=True,
+            ) as progress:
+                progress.add_task("", total=None)
                 response = claude_assistant.run_exchange(
                     conn=conn,
                     finding_id=finding_id,
@@ -249,7 +256,14 @@ def browse_claude_chat_aggregate(
             if raw.lower() in claude_assistant.REPORT_BRIEF_TRIGGERS:
                 raw = claude_assistant.REPORT_BRIEF_QUERY
 
-            with _console_global.status("[cyan]Asking Claude...[/cyan]"):
+            with Progress(
+                SpinnerColumn(style="cyan"),
+                TextColumn("[cyan]Asking Claude...[/cyan]"),
+                TimeElapsedColumn(),
+                console=_console_global,
+                transient=True,
+            ) as progress:
+                progress.add_task("", total=None)
                 response = claude_assistant.run_aggregate_exchange(
                     conn=conn,
                     context_key=context_key,

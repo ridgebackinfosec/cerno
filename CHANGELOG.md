@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.34] - 2026-04-22
+
+### Changed
+- Claude assistant panel replaced the Rich bordered Panel with a "soft panel": thick magenta Rules (`━`) at top and bottom, content printed line-by-line with `soft_wrap=True` — terminal handles visual wrapping so Ctrl+Shift+C copy-paste to Word produces no spurious newlines (`render.py:render_claude_panel()`)
+
+## [1.3.33] - 2026-04-21
+
+### Changed
+- Claude assistant panel now uses plain `cyan`/`magenta` labels and unstyled body text; removes brightness-based contrast (dim/white) that was unreadable on light terminals (`render.py:_build_claude_panel_renderables()`)
+- Removed duplicate "Ask Claude:" prompt from inside the panel — input prompt from `Prompt.ask()` below the panel is sufficient
+
+## [1.3.32] - 2026-04-21
+
+### Changed
+- `render_claude_panel()` in `render.py` now renders conversation history inside a Rich bordered Panel with `bold magenta` border; prior exchanges are dimmed and the latest user+assistant exchange renders at full brightness; Rule separators appear between exchanges
+- Claude Assistant waiting spinner upgraded from `_console_global.status()` to `Progress` with `SpinnerColumn` + `TimeElapsedColumn` in `browse_claude_chat()` and `browse_claude_chat_aggregate()` (`cerno.py`); spinner appears below the panel and disappears when the response arrives
+
 ## [1.3.31] - 2026-04-21
 
 ### Fixed
