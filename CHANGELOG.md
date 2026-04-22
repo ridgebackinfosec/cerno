@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.34] - 2026-04-22
+
+### Changed
+- Claude assistant panel replaced the Rich bordered Panel with a "soft panel": thick magenta Rules (`━`) at top and bottom, content printed line-by-line with `soft_wrap=True` — terminal handles visual wrapping so Ctrl+Shift+C copy-paste to Word produces no spurious newlines (`render.py:render_claude_panel()`)
+
 ## [1.3.33] - 2026-04-21
 
 ### Changed

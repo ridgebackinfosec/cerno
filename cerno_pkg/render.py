@@ -1003,9 +1003,9 @@ def render_claude_panel(
 ) -> None:
     """Render the Claude Assistant chat panel.
 
-    Displays conversation history inside a Rich bordered panel with Rule
-    separators between exchanges. All text uses plain terminal colors for
-    readability on both light and dark terminal backgrounds.
+    Displays conversation history between two thick magenta Rules. Each line
+    is printed with soft_wrap=True so the terminal handles wrapping — no hard
+    newlines are inserted, keeping Ctrl+Shift+C copy-paste clean for reports.
 
     Args:
         turns: List of ClaudeConversationTurn objects (may be empty)
@@ -1015,7 +1015,7 @@ def render_claude_panel(
 
     _console_global.print()
 
-    # --- Build panel title ---
+    # --- Build title for top Rule ---
     if is_resumed and turns:
         exchange_count = len(turns) // 2
         last_turn = turns[-1]
@@ -1037,23 +1037,17 @@ def render_claude_panel(
             summary += f" · {age_str}"
         title = Text()
         title.append("✦ Claude (BETA)", style="bold magenta")
-        title.append(f"  {summary}", style="dim")
+        title.append(f"  ·  {summary}", style="magenta")
     else:
         title = Text("✦ Claude Assistant (BETA)", style="bold magenta")
 
-    # --- Build panel content ---
-    renderables = _build_claude_panel_renderables(turns)
+    # --- Render: top Rule, content lines (soft-wrapped), bottom Rule ---
+    _console_global.print(Rule(title, style="bold magenta", characters="━"))
+    for renderable in _build_claude_panel_renderables(turns):
+        _console_global.print(renderable, soft_wrap=True)
+    _console_global.print(Rule(style="bold magenta", characters="━"))
 
-    # --- Render as bordered panel ---
-    panel = Panel(
-        Group(*renderables),
-        title=title,
-        border_style="bold magenta",
-        padding=(0, 1),
-    )
-    _console_global.print(panel, soft_wrap=True)
-
-    # Controls hint below the panel
+    # Controls hint below the bottom Rule
     _console_global.print("[dim]  [Enter] send  [C] clear history  [Esc/Q] back[/dim]")
 
 
