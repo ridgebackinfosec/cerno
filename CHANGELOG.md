@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.35] - 2026-04-22
+
+### Changed
+- Claude assistant prompt now supports multi-line input; `Enter` inserts a newline, `Ctrl+Enter` submits (`cerno.py`, `cerno_pkg/tui.py`)
+- Added `prompt_toolkit>=3.0` dependency to support multi-line input
+
 ## [1.3.34] - 2026-04-22
 
 ### Changed

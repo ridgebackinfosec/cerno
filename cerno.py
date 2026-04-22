@@ -54,6 +54,7 @@ from cerno_pkg import (
     # tui
     parse_severity_selection,
     handle_finding_list_actions,
+    ask_claude_multiline,
     # banner
     display_banner,
 )
@@ -148,10 +149,7 @@ def browse_claude_chat(
             # Render the full panel (clears and redraws on each iteration)
             render_claude_panel(turns, is_resumed=is_resumed)
 
-            try:
-                raw = Prompt.ask("Ask Claude").strip()
-            except KeyboardInterrupt:
-                break
+            raw = ask_claude_multiline()
 
             if not raw:
                 continue
@@ -232,10 +230,7 @@ def browse_claude_chat_aggregate(
         while True:
             render_claude_panel(turns, is_resumed=is_resumed)
 
-            try:
-                raw = Prompt.ask("Ask Claude").strip()
-            except KeyboardInterrupt:
-                break
+            raw = ask_claude_multiline()
 
             if not raw:
                 continue
