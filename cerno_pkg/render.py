@@ -1048,7 +1048,9 @@ def render_claude_panel(
     _console_global.print(Rule(style="bold magenta", characters="━"))
 
     # Controls hint below the bottom Rule
-    _console_global.print("[dim]  [Enter] send  [C] clear history  [Esc/Q] back[/dim]")
+    _console_global.print(
+        "[dim]  [Enter] new line  [Alt+Enter] submit  [C] clear history  [Q] back[/dim]"
+    )
 
 
 def render_tool_availability_table(include_unavailable: bool = True) -> None:

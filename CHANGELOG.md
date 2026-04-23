@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.37] - 2026-04-23
+
+### Changed
+- Claude assistant controls hint updated to accurately reflect multi-line input: `[Enter] new line  [Alt+Enter] submit  [C] clear history  [Q] back` (`render.py:render_claude_panel()`)
+
 ## [1.3.36] - 2026-04-23
 
 ### Fixed
