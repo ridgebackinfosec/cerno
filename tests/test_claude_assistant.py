@@ -4,8 +4,9 @@ from unittest.mock import patch
 
 import pytest
 
-from cerno_pkg.claude_assistant import build_aggregate_context
+from cerno_pkg.claude_assistant import build_aggregate_context, build_finding_context
 from cerno_pkg.models import Finding, Plugin
+from cerno_pkg.workflow_mapper import Workflow, WorkflowStep
 
 
 @pytest.mark.unit
@@ -63,3 +64,65 @@ class TestBuildAggregateContext:
         assert "MS17-010 EternalBlue" in result
         assert "Critical" in result
         assert "2 hosts" in result
+
+
+@pytest.mark.unit
+class TestBuildFindingContextWorkflow:
+    """Tests for workflow section in build_finding_context()."""
+
+    def _make_plugin(self) -> Plugin:
+        return Plugin(plugin_id=11011, plugin_name="MS17-010", severity_int=4)
+
+    def _make_finding(self) -> Finding:
+        f = Finding(scan_id=1, plugin_id=11011)
+        f.finding_id = 1
+        return f
+
+    def _make_workflow(self) -> Workflow:
+        return Workflow(
+            plugin_id="11011",
+            workflow_name="EternalBlue Check",
+            description="Verify MS17-010 exploitability on affected hosts.",
+            steps=[
+                WorkflowStep(
+                    title="Scan with Nmap NSE",
+                    commands=["nmap -p 445 --script smb-vuln-ms17-010 {hosts}"],
+                    notes="Look for 'VULNERABLE' in output.",
+                ),
+                WorkflowStep(
+                    title="Attempt exploitation",
+                    commands=["use exploit/windows/smb/ms17_010_eternalblue", "set RHOSTS {hosts}", "run"],
+                    notes="",
+                ),
+            ],
+            references=["https://nvd.nist.gov/vuln/detail/CVE-2017-0144"],
+        )
+
+    def test_workflow_section_included_when_present(self):
+        """When a Workflow is passed, context includes the full workflow section."""
+        plugin = self._make_plugin()
+        finding = self._make_finding()
+        workflow = self._make_workflow()
+
+        result = build_finding_context(plugin, finding, hosts=[], workflow=workflow)
+
+        assert "=== Verification Workflow ===" in result
+        assert "EternalBlue Check" in result
+        assert "Verify MS17-010 exploitability" in result
+        assert "Scan with Nmap NSE" in result
+        assert "nmap -p 445 --script smb-vuln-ms17-010 {hosts}" in result
+        assert "Look for 'VULNERABLE'" in result
+        assert "Attempt exploitation" in result
+        assert "use exploit/windows/smb/ms17_010_eternalblue" in result
+        assert "https://nvd.nist.gov/vuln/detail/CVE-2017-0144" in result
+        assert "=== End Workflow ===" in result
+
+    def test_no_workflow_section_when_none(self):
+        """When workflow=None, no workflow section appears in context."""
+        plugin = self._make_plugin()
+        finding = self._make_finding()
+
+        result = build_finding_context(plugin, finding, hosts=[], workflow=None)
+
+        assert "=== Verification Workflow ===" not in result
+        assert "=== End Workflow ===" not in result
