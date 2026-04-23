@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Shorthand Commands
+
+- **bcp** — bump the version, commit, and push to the current branch
+
 ## General Development Principles
 
 Follow Python best practices (PEP 8, type hints, docstrings, SOLID, DRY, parameterized queries, proper error handling). The following are project-specific mandates:

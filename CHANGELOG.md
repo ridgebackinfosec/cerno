@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.39] - 2026-04-23
+
+### Changed
+- Claude assistant exit changed from `Q` to `Ctrl+C` (`tui.py`, `cerno.py`)
+- Claude assistant history clear changed from `C` to `/clear` command (`cerno.py`, `render.py`)
+
+## [1.3.38] - 2026-04-23
+
+### Changed
+- Claude assistant controls hint keys styled cyan to match Cerno UI conventions (`render.py:render_claude_panel()`)
+
+## [1.3.37] - 2026-04-23
+
+### Changed
+- Claude assistant controls hint updated to accurately reflect multi-line input: `[Enter] new line  [Alt+Enter] submit  [C] clear history  [Q] back` (`render.py:render_claude_panel()`)
+
+## [1.3.36] - 2026-04-23
+
+### Fixed
+- Restored `handle_finding_list_actions` logic truncated by misplaced `ask_claude_multiline` definition — finding selection returned `None`, causing `TypeError: cannot unpack non-iterable NoneType object` (`cerno_pkg/tui.py`)
+
+## [1.3.35] - 2026-04-22
+
+### Changed
+- Claude assistant prompt now supports multi-line input; `Enter` inserts a newline, `Ctrl+Enter` submits (`cerno.py`, `cerno_pkg/tui.py`)
+- Added `prompt_toolkit>=3.0` dependency to support multi-line input
+
 ## [1.3.34] - 2026-04-22
 
 ### Changed
