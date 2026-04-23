@@ -70,12 +70,12 @@ class TestBuildAggregateContext:
 class TestBuildFindingContextWorkflow:
     """Tests for workflow section in build_finding_context()."""
 
-    def _make_plugin(self) -> Plugin:
-        return Plugin(plugin_id=11011, plugin_name="MS17-010", severity_int=4)
+    def _make_plugin(self, plugin_id: int = 11011, plugin_name: str = "MS17-010", severity_int: int = 4) -> Plugin:
+        return Plugin(plugin_id=plugin_id, plugin_name=plugin_name, severity_int=severity_int)
 
-    def _make_finding(self) -> Finding:
-        f = Finding(scan_id=1, plugin_id=11011)
-        f.finding_id = 1
+    def _make_finding(self, finding_id: int = 1, scan_id: int = 1, plugin_id: int = 11011) -> Finding:
+        f = Finding(scan_id=scan_id, plugin_id=plugin_id)
+        f.finding_id = finding_id
         return f
 
     def _make_workflow(self) -> Workflow:
@@ -114,6 +114,8 @@ class TestBuildFindingContextWorkflow:
         assert "Look for 'VULNERABLE'" in result
         assert "Attempt exploitation" in result
         assert "use exploit/windows/smb/ms17_010_eternalblue" in result
+        assert "set RHOSTS {hosts}" in result
+        assert "References:" in result
         assert "https://nvd.nist.gov/vuln/detail/CVE-2017-0144" in result
         assert "=== End Workflow ===" in result
 
@@ -126,3 +128,12 @@ class TestBuildFindingContextWorkflow:
 
         assert "=== Verification Workflow ===" not in result
         assert "=== End Workflow ===" not in result
+
+    def test_no_workflow_section_when_omitted(self):
+        """Omitting workflow= defaults to no workflow section (backward compat)."""
+        plugin = self._make_plugin()
+        finding = self._make_finding()
+
+        result = build_finding_context(plugin, finding, hosts=[])
+
+        assert "=== Verification Workflow ===" not in result
