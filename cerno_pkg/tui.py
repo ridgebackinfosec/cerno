@@ -692,7 +692,9 @@ def ask_claude_multiline() -> str:
     session = PromptSession(key_bindings=kb, multiline=True)
     try:
         return session.prompt("Ask Claude: ").strip()
-    except (KeyboardInterrupt, EOFError):
+    except KeyboardInterrupt:
+        raise
+    except EOFError:
         return ""
 
 

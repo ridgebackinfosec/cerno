@@ -1052,8 +1052,8 @@ def render_claude_panel(
     for i, (key, label) in enumerate([
         ("Enter", "new line"),
         ("Alt+Enter", "submit"),
-        ("C", "clear history"),
-        ("Q", "back"),
+        ("/clear", "clear history"),
+        ("Ctrl+C", "back"),
     ]):
         if i > 0:
             hint.append("  ", style=None)

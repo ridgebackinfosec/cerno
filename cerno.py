@@ -149,13 +149,16 @@ def browse_claude_chat(
             # Render the full panel (clears and redraws on each iteration)
             render_claude_panel(turns, is_resumed=is_resumed)
 
-            raw = ask_claude_multiline()
+            try:
+                raw = ask_claude_multiline()
+            except KeyboardInterrupt:
+                break
 
             if not raw:
                 continue
 
             # Clear history
-            if raw.lower() in ("c", "clear"):
+            if raw.strip() == "/clear":
                 from rich.prompt import Confirm
                 if Confirm.ask("Clear conversation history for this finding?", default=False):
                     cleared = ClaudeConversationTurn.clear(conn, finding_id)
@@ -163,10 +166,6 @@ def browse_claude_chat(
                     is_resumed = False
                     ok(f"Cleared {cleared} turn(s).")
                 continue
-
-            # Exit keys
-            if raw.lower() in ("q", "quit", "exit", "esc"):
-                break
 
             # Report brief shortcut
             if raw.lower() in claude_assistant.REPORT_BRIEF_TRIGGERS:
@@ -230,12 +229,15 @@ def browse_claude_chat_aggregate(
         while True:
             render_claude_panel(turns, is_resumed=is_resumed)
 
-            raw = ask_claude_multiline()
+            try:
+                raw = ask_claude_multiline()
+            except KeyboardInterrupt:
+                break
 
             if not raw:
                 continue
 
-            if raw.lower() in ("c", "clear"):
+            if raw.strip() == "/clear":
                 from rich.prompt import Confirm
                 if Confirm.ask("Clear conversation history for this scope?", default=False):
                     cleared = ClaudeAggregateConversationTurn.clear(conn, context_key)
@@ -243,9 +245,6 @@ def browse_claude_chat_aggregate(
                     is_resumed = False
                     ok(f"Cleared {cleared} turn(s).")
                 continue
-
-            if raw.lower() in ("q", "quit", "exit", "esc"):
-                break
 
             # Report brief shortcut
             if raw.lower() in claude_assistant.REPORT_BRIEF_TRIGGERS:

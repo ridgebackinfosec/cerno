@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.39] - 2026-04-23
+
+### Changed
+- Claude assistant exit changed from `Q` to `Ctrl+C` (`tui.py`, `cerno.py`)
+- Claude assistant history clear changed from `C` to `/clear` command (`cerno.py`, `render.py`)
+
 ## [1.3.38] - 2026-04-23
 
 ### Changed
