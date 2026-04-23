@@ -1048,9 +1048,18 @@ def render_claude_panel(
     _console_global.print(Rule(style="bold magenta", characters="━"))
 
     # Controls hint below the bottom Rule
-    _console_global.print(
-        "[dim]  [Enter] new line  [Alt+Enter] submit  [C] clear history  [Q] back[/dim]"
-    )
+    hint = Text("  ")
+    for i, (key, label) in enumerate([
+        ("Enter", "new line"),
+        ("Alt+Enter", "submit"),
+        ("C", "clear history"),
+        ("Q", "back"),
+    ]):
+        if i > 0:
+            hint.append("  ", style=None)
+        hint.append(f"[{key}]", style=style_if_enabled("cyan"))
+        hint.append(f" {label}", style=None)
+    _console_global.print(hint)
 
 
 def render_tool_availability_table(include_unavailable: bool = True) -> None:
