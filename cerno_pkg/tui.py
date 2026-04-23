@@ -589,28 +589,6 @@ def handle_finding_list_actions(
 
         return None, file_filter, reviewed_filter, group_filter, sort_mode, page_idx
 
-
-def ask_claude_multiline() -> str:
-    """Prompt for Claude assistant input with multi-line support.
-
-    Enter inserts a newline; Ctrl+Enter (c-j) submits.
-    Returns "" on Ctrl+C or Ctrl+D so callers can continue their loop.
-    """
-    from prompt_toolkit import PromptSession
-    from prompt_toolkit.key_binding import KeyBindings
-
-    kb = KeyBindings()
-
-    @kb.add("c-j")
-    def _submit(event):
-        event.current_buffer.validate_and_handle()
-
-    session = PromptSession(key_bindings=kb, multiline=True)
-    try:
-        return session.prompt("Ask Claude: ").strip()
-    except (KeyboardInterrupt, EOFError):
-        return ""
-
     if ans == "o":
         if not candidates:
             warn("No findings match the current filter.")
@@ -694,6 +672,28 @@ def ask_claude_multiline() -> str:
         sort_mode,
         page_idx,
     )
+
+
+def ask_claude_multiline() -> str:
+    """Prompt for Claude assistant input with multi-line support.
+
+    Enter inserts a newline; Ctrl+Enter (c-j) submits.
+    Returns "" on Ctrl+C or Ctrl+D so callers can continue their loop.
+    """
+    from prompt_toolkit import PromptSession
+    from prompt_toolkit.key_binding import KeyBindings
+
+    kb = KeyBindings()
+
+    @kb.add("c-j")
+    def _submit(event):
+        event.current_buffer.validate_and_handle()
+
+    session = PromptSession(key_bindings=kb, multiline=True)
+    try:
+        return session.prompt("Ask Claude: ").strip()
+    except (KeyboardInterrupt, EOFError):
+        return ""
 
 
 # Note: browse_file_list and browse_workflow_groups are complex, large functions

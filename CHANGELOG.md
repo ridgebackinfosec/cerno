@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.36] - 2026-04-23
+
+### Fixed
+- Restored `handle_finding_list_actions` logic truncated by misplaced `ask_claude_multiline` definition — finding selection returned `None`, causing `TypeError: cannot unpack non-iterable NoneType object` (`cerno_pkg/tui.py`)
+
 ## [1.3.35] - 2026-04-22
 
 ### Changed
