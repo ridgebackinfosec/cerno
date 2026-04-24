@@ -118,6 +118,7 @@ class TestBuildFindingContextWorkflow:
         assert "References:" in result
         assert "https://nvd.nist.gov/vuln/detail/CVE-2017-0144" in result
         assert "=== End Workflow ===" in result
+        assert result.count("Notes:") == 1
 
     def test_no_workflow_section_when_none(self):
         """When workflow=None, no workflow section appears in context."""

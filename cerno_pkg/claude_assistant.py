@@ -30,6 +30,7 @@ from .logging_setup import log_debug, log_error
 
 if TYPE_CHECKING:
     from .models import ClaudeAggregateConversationTurn, ClaudeConversationTurn, Finding, Plugin
+    from .workflow_mapper import Workflow
 
 
 BETA_NOTICE = (
@@ -104,7 +105,7 @@ def build_finding_context(
     finding: Finding,
     hosts: list[str],
     plugin_outputs: list[tuple[str, int | None, str | None]] | None = None,
-    workflow: Any | None = None,
+    workflow: "Workflow | None" = None,
 ) -> str:
     """Assemble a structured context block describing the finding.
 
@@ -187,8 +188,6 @@ def build_finding_context(
         if len(plugin_outputs) > MAX_HOSTS:
             lines.append(f"... and {len(plugin_outputs) - MAX_HOSTS} more host(s) omitted")
 
-    lines.append("=== End Context ===")
-
     if workflow is not None:
         lines.append("")
         lines.append("=== Verification Workflow ===")
@@ -211,6 +210,7 @@ def build_finding_context(
                 lines.append(f"  {ref}")
         lines.append("=== End Workflow ===")
 
+    lines.append("=== End Context ===")
     return "\n".join(lines)
 
 
