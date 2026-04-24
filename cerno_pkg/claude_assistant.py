@@ -118,7 +118,7 @@ def build_finding_context(
             is appended to the context so Claude can reference specific banners,
             version strings, and paths discovered during the scan.
         workflow: Optional Workflow object containing verification steps and references
-            to include in the context.
+            to include in the context. Steps with empty ``notes`` string omit the Notes line.
 
     Returns:
         Formatted context string to prepend to the prompt
