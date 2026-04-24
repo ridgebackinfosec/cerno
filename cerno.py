@@ -110,6 +110,7 @@ def browse_claude_chat(
     finding: Any,
     plugin: Any,
     hosts: list[str],
+    workflow: Any | None = None,
 ) -> None:
     """Interactive Claude Assistant chat panel for a finding (BETA).
 
@@ -120,6 +121,7 @@ def browse_claude_chat(
         finding: Finding database object
         plugin: Plugin database object
         hosts: List of affected host strings for context
+        workflow: Optional Workflow object containing verification steps and references
     """
     from cerno_pkg.database import get_connection
     from cerno_pkg import claude_assistant
@@ -187,6 +189,7 @@ def browse_claude_chat(
                     finding=finding,
                     hosts=hosts,
                     question=raw,
+                    workflow=workflow,
                 )
 
             # Reload turns after exchange (includes new user+assistant turn)

@@ -298,6 +298,7 @@ def run_exchange(
     finding: Finding,
     hosts: list[str],
     question: str,
+    workflow: "Workflow | None" = None,
 ) -> str:
     """Perform a full Claude exchange: load history, build prompt, call claude, persist.
 
@@ -308,6 +309,7 @@ def run_exchange(
         finding: Finding database object
         hosts: Affected host strings
         question: User question text
+        workflow: Optional Workflow object containing verification steps and references
 
     Returns:
         Claude's response text (or an error message)
@@ -321,7 +323,7 @@ def run_exchange(
     turns = ClaudeConversationTurn.get_by_finding(conn, finding_id)
     skill = load_skill_prompt()
     plugin_outputs = finding.get_plugin_outputs_by_host(conn)
-    context = build_finding_context(plugin, finding, hosts, plugin_outputs)
+    context = build_finding_context(plugin, finding, hosts, plugin_outputs, workflow=workflow)
     prompt = format_prompt(skill, context, turns, question)
 
     response, exit_code = ask_claude(prompt)
