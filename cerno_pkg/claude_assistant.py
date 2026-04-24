@@ -30,6 +30,7 @@ from .logging_setup import log_debug, log_error
 
 if TYPE_CHECKING:
     from .models import ClaudeAggregateConversationTurn, ClaudeConversationTurn, Finding, Plugin
+    from .workflow_mapper import Workflow
 
 
 BETA_NOTICE = (
@@ -104,6 +105,7 @@ def build_finding_context(
     finding: Finding,
     hosts: list[str],
     plugin_outputs: list[tuple[str, int | None, str | None]] | None = None,
+    workflow: "Workflow | None" = None,
 ) -> str:
     """Assemble a structured context block describing the finding.
 
@@ -115,6 +117,8 @@ def build_finding_context(
             finding_affected_hosts. When provided, the raw Nessus scanner output
             is appended to the context so Claude can reference specific banners,
             version strings, and paths discovered during the scan.
+        workflow: Optional Workflow object containing verification steps and references
+            to include in the context. Steps with empty ``notes`` string omit the Notes line.
 
     Returns:
         Formatted context string to prepend to the prompt
@@ -183,6 +187,28 @@ def build_finding_context(
                 lines.append("(no plugin output recorded)")
         if len(plugin_outputs) > MAX_HOSTS:
             lines.append(f"... and {len(plugin_outputs) - MAX_HOSTS} more host(s) omitted")
+
+    if workflow is not None:
+        lines.append("")
+        lines.append("=== Verification Workflow ===")
+        lines.append(f"Workflow: {workflow.workflow_name}")
+        if workflow.description:
+            lines.append(f"Description: {workflow.description}")
+        for i, step in enumerate(workflow.steps, start=1):
+            lines.append("")
+            lines.append(f"Step {i}: {step.title}")
+            if step.commands:
+                lines.append("Commands:")
+                for cmd in step.commands:
+                    lines.append(f"  {cmd}")
+            if step.notes:
+                lines.append(f"Notes: {step.notes}")
+        if workflow.references:
+            lines.append("")
+            lines.append("References:")
+            for ref in workflow.references:
+                lines.append(f"  {ref}")
+        lines.append("=== End Workflow ===")
 
     lines.append("=== End Context ===")
     return "\n".join(lines)
@@ -272,6 +298,7 @@ def run_exchange(
     finding: Finding,
     hosts: list[str],
     question: str,
+    workflow: "Workflow | None" = None,
 ) -> str:
     """Perform a full Claude exchange: load history, build prompt, call claude, persist.
 
@@ -282,6 +309,7 @@ def run_exchange(
         finding: Finding database object
         hosts: Affected host strings
         question: User question text
+        workflow: Optional Workflow object containing verification steps and references
 
     Returns:
         Claude's response text (or an error message)
@@ -295,7 +323,7 @@ def run_exchange(
     turns = ClaudeConversationTurn.get_by_finding(conn, finding_id)
     skill = load_skill_prompt()
     plugin_outputs = finding.get_plugin_outputs_by_host(conn)
-    context = build_finding_context(plugin, finding, hosts, plugin_outputs)
+    context = build_finding_context(plugin, finding, hosts, plugin_outputs, workflow=workflow)
     prompt = format_prompt(skill, context, turns, question)
 
     response, exit_code = ask_claude(prompt)

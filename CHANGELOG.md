@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.40] - 2026-04-23
+
+### Added
+- Workflow verification context now included in per-finding Claude assistant conversations (if available from workflow mappings) — displays workflow name, description, steps with commands/notes, and references (`cerno_pkg/claude_assistant.py:build_finding_context()`)
+
 ## [1.3.39] - 2026-04-23
 
 ### Changed
