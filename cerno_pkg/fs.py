@@ -409,10 +409,16 @@ def handle_finding_view(
             # Deferred import to avoid circular dependency (cerno.py imports fs.py)
             try:
                 from cerno import browse_claude_chat  # type: ignore[import]
+                _workflow = (
+                    workflow_mapper.get_workflow(str(plugin.plugin_id))
+                    if workflow_mapper and plugin
+                    else None
+                )
                 browse_claude_chat(
                     finding=finding,
                     plugin=plugin,
                     hosts=hosts or [],
+                    workflow=_workflow,
                 )
             except ImportError:
                 warn("Claude Assistant not available in this context.")
