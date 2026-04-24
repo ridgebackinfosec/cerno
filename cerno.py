@@ -66,6 +66,7 @@ from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from cerno_pkg.config import CernoConfig
+    from cerno_pkg.workflow_mapper import Workflow
 
 # === Third-party imports ===
 import typer
@@ -110,7 +111,7 @@ def browse_claude_chat(
     finding: Any,
     plugin: Any,
     hosts: list[str],
-    workflow: Any | None = None,
+    workflow: Optional["Workflow"] = None,
 ) -> None:
     """Interactive Claude Assistant chat panel for a finding (BETA).
 
