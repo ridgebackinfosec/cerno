@@ -104,6 +104,7 @@ def build_finding_context(
     finding: Finding,
     hosts: list[str],
     plugin_outputs: list[tuple[str, int | None, str | None]] | None = None,
+    workflow: Any | None = None,
 ) -> str:
     """Assemble a structured context block describing the finding.
 
@@ -115,6 +116,8 @@ def build_finding_context(
             finding_affected_hosts. When provided, the raw Nessus scanner output
             is appended to the context so Claude can reference specific banners,
             version strings, and paths discovered during the scan.
+        workflow: Optional Workflow object containing verification steps and references
+            to include in the context.
 
     Returns:
         Formatted context string to prepend to the prompt
@@ -185,6 +188,29 @@ def build_finding_context(
             lines.append(f"... and {len(plugin_outputs) - MAX_HOSTS} more host(s) omitted")
 
     lines.append("=== End Context ===")
+
+    if workflow is not None:
+        lines.append("")
+        lines.append("=== Verification Workflow ===")
+        lines.append(f"Workflow: {workflow.workflow_name}")
+        if workflow.description:
+            lines.append(f"Description: {workflow.description}")
+        for i, step in enumerate(workflow.steps, start=1):
+            lines.append("")
+            lines.append(f"Step {i}: {step.title}")
+            if step.commands:
+                lines.append("Commands:")
+                for cmd in step.commands:
+                    lines.append(f"  {cmd}")
+            if step.notes:
+                lines.append(f"Notes: {step.notes}")
+        if workflow.references:
+            lines.append("")
+            lines.append("References:")
+            for ref in workflow.references:
+                lines.append(f"  {ref}")
+        lines.append("=== End Workflow ===")
+
     return "\n".join(lines)
 
 
