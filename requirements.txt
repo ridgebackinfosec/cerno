@@ -1,6 +1,6 @@
 rich>=13.7,<15
 typer>=0.12,<1
-shellingham>=1.5,<2
+shellingham>=1.5.4,<2
 colorama>=0.4.6,<1
 pyperclip>=1.8,<2
 loguru>=0.7.3
