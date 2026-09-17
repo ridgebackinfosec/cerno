@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/images/cerno-banner.png" alt="Cerno banner" width="100%">
+</p>
+
 # Cerno
 
 A **TUI tool** for reviewing Nessus scan findings and orchestrating security tools (**nmap**, **NetExec**, custom commands). Import `.nessus` files into a SQLite database for organized, persistent vulnerability verification and exploitation.
