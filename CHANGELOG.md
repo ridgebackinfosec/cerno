@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.42] - 2026-09-17
+
+### Added
+- Added a banner image to the top of README.md.
+
 ## [1.3.41] - 2026-06-10
 
 ### Added
