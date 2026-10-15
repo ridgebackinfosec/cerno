@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-10-15
+
+### Added
+- MCP server: **resources** — operator-pinnable context under `cerno://` URIs: `cerno://scans`, `cerno://scan/{id}/hosts`, `cerno://scan/{id}/cves`, `cerno://finding/{id}/output` (raw per-host plugin output), `cerno://finding/{id}/workflow`. Read-only, always available.
+- MCP server: **prompt templates** — `triage_finding`, `exploit_plan`, and `triage_scope`, reusing the same context builders and report-brief wording as the in-TUI `[A]` assistant. (Both features only appear in MCP clients that render resources/prompts; the read tools remain the fallback.)
+
+### Changed
+- `cerno mcp` now logs its active execution/mutation gating state at startup (to `~/.cerno/cerno.log`, never stdout), and `cerno mcp --help` plus the README document that gating flags are read once at startup — reconnect/restart the server to apply changes (`cerno_pkg/mcp_server/server.py:gating_summary()`).
+
 ## [1.4.2] - 2026-10-15
 
 ### Changed

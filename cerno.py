@@ -1996,7 +1996,7 @@ def _import_demo_nessus(nessus_file: Path, overwrite: bool = False) -> tuple[str
     return scan_name, True
 
 
-@app.command(name="mcp", help="Run the Cerno MCP server over stdio (for MCP clients)")
+@app.command(name="mcp")
 def mcp_cmd() -> None:
     """Serve Cerno's scan database and tooling over the Model Context Protocol.
 
@@ -2011,6 +2011,10 @@ def mcp_cmd() -> None:
 
         cerno config set mcp_allow_execution true
         cerno config set mcp_allow_mutations true
+
+    Gating flags are read once at startup. After changing them, reconnect or
+    restart the server (e.g. via your MCP client) for the change to take effect.
+    The active gating state is logged to the Cerno log on startup.
     """
     from cerno_pkg.mcp_server import main as mcp_main
 

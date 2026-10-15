@@ -635,6 +635,146 @@ def tool_import_nessus(nessus_path: str) -> dict:
     }
 
 
+# ========== Resources (read-only, operator-pinnable context) ==========
+# Resources re-expose existing read data under cerno:// URIs so an MCP client
+# can attach it to context. They return text/JSON strings and never print.
+
+
+def resource_scans(conn: Optional[sqlite3.Connection] = None) -> str:
+    """`cerno://scans` — JSON index of all scans with stats."""
+    import json as _json
+
+    return _json.dumps(tool_list_scans(conn=conn), indent=2)
+
+
+def resource_scan_hosts(scan_id: int, conn: Optional[sqlite3.Connection] = None) -> str:
+    """`cerno://scan/{scan_id}/hosts` — discovered host:port lines, one per line."""
+    services = tool_list_services(scan_id, conn=conn)
+    return "\n".join(f"{s['host']}:{s['port']}" for s in services)
+
+
+def resource_scan_cves(scan_id: int, conn: Optional[sqlite3.Connection] = None) -> str:
+    """`cerno://scan/{scan_id}/cves` — JSON of unique CVEs mapped to plugins."""
+    import json as _json
+
+    return _json.dumps(tool_list_cves([scan_id], conn=conn), indent=2)
+
+
+def resource_finding_output(
+    finding_id: int, conn: Optional[sqlite3.Connection] = None
+) -> str:
+    """`cerno://finding/{finding_id}/output` — raw per-host plugin output."""
+    detail = tool_get_finding_detail(finding_id, conn=conn)
+    header = f"# {detail['plugin_name']} (plugin {detail['plugin_id']})"
+    blocks = [header]
+    for a in detail["affected"]:
+        host = a["host"]
+        port = a["port"]
+        loc = f"{host}:{port}" if port is not None else str(host)
+        output = a["plugin_output"] or "(no plugin output)"
+        blocks.append(f"[{loc}]\n{output}")
+    return "\n\n".join(blocks)
+
+
+def resource_finding_workflow(
+    finding_id: int, conn: Optional[sqlite3.Connection] = None
+) -> str:
+    """`cerno://finding/{finding_id}/workflow` — verification workflow, or a notice."""
+    from ..models import Finding
+
+    with _db(conn) as c:
+        finding = Finding.get_by_id(finding_id, c)
+        if finding is None:
+            raise ValueError(f"No finding with id {finding_id}")
+        plugin_id = finding.plugin_id
+    workflow = tool_get_workflow(plugin_id)
+    if workflow is None:
+        return f"No verification workflow mapped for plugin {plugin_id}."
+
+    lines = [f"# {workflow['workflow_name']}", workflow["description"], ""]
+    for i, step in enumerate(workflow["steps"], 1):
+        lines.append(f"## Step {i}: {step['title']}")
+        for cmd in step["commands"]:
+            lines.append(f"    {cmd}")
+        if step.get("notes"):
+            lines.append(f"Notes: {step['notes']}")
+        lines.append("")
+    if workflow.get("references"):
+        lines.append("References:")
+        lines.extend(f"  - {ref}" for ref in workflow["references"])
+    return "\n".join(lines).rstrip()
+
+
+# ========== Prompts (read-only triage/report templates) ==========
+# Prompts reuse the same context builders as the in-TUI [A] assistant so the
+# TUI and MCP produce consistent briefs.
+
+
+def _finding_context(finding_id: int, conn: Optional[sqlite3.Connection]) -> str:
+    """Assemble the shared finding context block (plugin + hosts + output + workflow)."""
+    from ..claude_assistant import build_finding_context
+    from ..models import Finding, Plugin
+    from ..workflow_mapper import WorkflowMapper
+
+    with _db(conn) as c:
+        finding = Finding.get_by_id(finding_id, c)
+        if finding is None:
+            raise ValueError(f"No finding with id {finding_id}")
+        plugin = Plugin.get_by_id(finding.plugin_id, c)
+        if plugin is None:
+            raise ValueError(f"No plugin with id {finding.plugin_id}")
+        hosts, _ = finding.get_hosts_and_ports(c)
+        outputs = finding.get_plugin_outputs_by_host(c)
+    workflow = WorkflowMapper().get_workflow(str(finding.plugin_id))
+    return build_finding_context(plugin, finding, hosts, outputs, workflow)
+
+
+def prompt_triage_finding(
+    finding_id: int, conn: Optional[sqlite3.Connection] = None
+) -> str:
+    """Report-brief prompt for a single finding."""
+    from ..claude_assistant import REPORT_BRIEF_QUERY
+
+    return f"{_finding_context(finding_id, conn)}\n\n{REPORT_BRIEF_QUERY}"
+
+
+def prompt_exploit_plan(
+    finding_id: int, conn: Optional[sqlite3.Connection] = None
+) -> str:
+    """Exploitation-planning prompt for a single finding."""
+    instruction = (
+        "Based on the context above, outline the fastest viable path to exploit or "
+        "verify this finding. Name any Metasploit modules listed; identify which "
+        "affected hosts are most promising and why; and give the concrete next "
+        "verification step (an nmap, netexec, or msfconsole command). Be concise and "
+        "flag uncertainty. Always verify before acting."
+    )
+    return f"{_finding_context(finding_id, conn)}\n\n{instruction}"
+
+
+def prompt_triage_scope(
+    scan_id: int,
+    severity_int: Optional[int] = None,
+    conn: Optional[sqlite3.Connection] = None,
+) -> str:
+    """Report-brief prompt for a scan scope (optionally one severity)."""
+    from ..claude_assistant import REPORT_BRIEF_QUERY, build_aggregate_context
+    from ..models import Finding, Scan
+
+    severity_dir = None if severity_int is None else f"{severity_int}_"
+    with _db(conn) as c:
+        scan = Scan.get_by_id(scan_id, c)
+        if scan is None:
+            raise ValueError(f"No scan with id {scan_id}")
+        pairs = Finding.get_by_scan_with_plugin(
+            scan_id, severity_dir=severity_dir, conn=c
+        )
+    sev_note = "" if severity_int is None else f" (severity {severity_int})"
+    scope_description = f"{scan.scan_name}{sev_note}: {len(pairs)} finding(s)"
+    context = build_aggregate_context([scan.scan_name], scope_description, pairs)
+    return f"{context}\n\n{REPORT_BRIEF_QUERY}"
+
+
 # ========== Server assembly ==========
 
 
@@ -761,6 +901,48 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         """Build an msfconsole search command for a finding's Metasploit modules."""
         return tool_generate_msf_search(finding_id)
 
+    # --- Resources (always on; operator-pinnable context) ---
+    @mcp.resource("cerno://scans", mime_type="application/json")
+    def scans_resource() -> str:
+        """Index of all imported scans with statistics."""
+        return resource_scans()
+
+    @mcp.resource("cerno://scan/{scan_id}/hosts", mime_type="text/plain")
+    def scan_hosts_resource(scan_id: int) -> str:
+        """Discovered host:port lines for a scan."""
+        return resource_scan_hosts(scan_id)
+
+    @mcp.resource("cerno://scan/{scan_id}/cves", mime_type="application/json")
+    def scan_cves_resource(scan_id: int) -> str:
+        """Unique CVEs across a scan, mapped to their plugins."""
+        return resource_scan_cves(scan_id)
+
+    @mcp.resource("cerno://finding/{finding_id}/output", mime_type="text/plain")
+    def finding_output_resource(finding_id: int) -> str:
+        """Raw per-host plugin output for a finding."""
+        return resource_finding_output(finding_id)
+
+    @mcp.resource("cerno://finding/{finding_id}/workflow", mime_type="text/plain")
+    def finding_workflow_resource(finding_id: int) -> str:
+        """Verification workflow for a finding's plugin, if one is mapped."""
+        return resource_finding_workflow(finding_id)
+
+    # --- Prompts (always on; triage/report templates) ---
+    @mcp.prompt()
+    def triage_finding(finding_id: int) -> str:
+        """Draft a pentest-report brief for a single finding."""
+        return prompt_triage_finding(finding_id)
+
+    @mcp.prompt()
+    def exploit_plan(finding_id: int) -> str:
+        """Outline the fastest viable exploitation/verification path for a finding."""
+        return prompt_exploit_plan(finding_id)
+
+    @mcp.prompt()
+    def triage_scope(scan_id: int, severity_int: Optional[int] = None) -> str:
+        """Draft a report brief across a scan scope (optionally one severity)."""
+        return prompt_triage_scope(scan_id, severity_int)
+
     # --- Execution (gated) ---
     if cfg.mcp_allow_execution:
 
@@ -806,6 +988,22 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
     return mcp
 
 
+def gating_summary(config: CernoConfig) -> str:
+    """One-line description of the server's active execution/mutation gating.
+
+    Logged at startup so operators can see which capabilities are live. Because
+    the flags are read only when the server boots, it also reminds the operator
+    to reconnect after changing them.
+    """
+    execution = "on" if config.mcp_allow_execution else "off"
+    mutations = "on" if config.mcp_allow_mutations else "off"
+    return (
+        f"mcp: serving over stdio (execution={execution}, mutations={mutations}); "
+        "edit with 'cerno config set mcp_allow_execution/mcp_allow_mutations ...' "
+        "then reconnect to apply"
+    )
+
+
 def main() -> None:
     """Entry point for ``cerno mcp``: build the server and serve over stdio."""
     config = load_config()
@@ -814,4 +1012,6 @@ def main() -> None:
     except Exception as exc:  # pragma: no cover - startup failure
         log_error(f"mcp: failed to build server: {exc}")
         raise
+    # Safe: log_info writes to the log file / stderr, never stdout (the JSON-RPC channel).
+    log_info(gating_summary(config))
     server.run(transport="stdio")

@@ -87,6 +87,17 @@ def test_execution_flag_is_independent_of_mutation_flag():
     assert "set_review_state" not in exec_only
 
 
+@pytest.mark.unit
+def test_gating_summary_reflects_flags():
+    off = mcp.gating_summary(CernoConfig())
+    assert "execution=off" in off and "mutations=off" in off
+    assert "reconnect" in off.lower()
+    on = mcp.gating_summary(
+        CernoConfig(mcp_allow_execution=True, mcp_allow_mutations=True)
+    )
+    assert "execution=on" in on and "mutations=on" in on
+
+
 # ---------------------------------------------------------------------------
 # Read tools
 # ---------------------------------------------------------------------------
@@ -363,3 +374,106 @@ def test_generate_msf_search_falls_back_to_plugin_name(temp_db):
 
     out = mcp.tool_generate_msf_search(fid, conn=temp_db)
     assert out["search_term"] == "SomePlugin"
+
+
+# ---------------------------------------------------------------------------
+# Resources
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_resource_scans_is_json(seeded):
+    import json
+
+    data = json.loads(mcp.resource_scans(conn=seeded["conn"]))
+    assert data[0]["scan_name"] == "engagement"
+
+
+@pytest.mark.integration
+def test_resource_finding_output(seeded):
+    text = mcp.resource_finding_output(seeded["f1"], conn=seeded["conn"])
+    assert "Plugin 100" in text
+    assert "10.0.0.1:445" in text
+    assert "out" in text  # the seeded plugin_output value
+
+
+@pytest.mark.integration
+def test_resource_finding_workflow_none(seeded):
+    # No workflow mapped for plugin 100 in the bundled YAML -> notice string.
+    text = mcp.resource_finding_workflow(seeded["f1"], conn=seeded["conn"])
+    assert "No verification workflow" in text
+
+
+@pytest.mark.integration
+def test_resource_finding_output_unknown_raises(seeded):
+    with pytest.raises(ValueError):
+        mcp.resource_finding_output(999999, conn=seeded["conn"])
+
+
+@pytest.mark.integration
+def test_resource_scan_cves(temp_db):
+    import json
+
+    scan_id = Scan(scan_name="s", export_root="/tmp").save(temp_db)
+    Plugin(plugin_id=1, plugin_name="A", severity_int=4, cves=["CVE-2021-1"]).save(
+        temp_db
+    )
+    Finding(scan_id=scan_id, plugin_id=1).save(temp_db)
+    temp_db.commit()
+    data = json.loads(mcp.resource_scan_cves(scan_id, conn=temp_db))
+    assert data[0]["cve"] == "CVE-2021-1"
+
+
+# ---------------------------------------------------------------------------
+# Prompts
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_prompt_triage_finding(seeded):
+    text = mcp.prompt_triage_finding(seeded["f1"], conn=seeded["conn"])
+    assert "Plugin 100" in text  # finding context
+    assert "10.0.0.1" in text  # affected host
+    assert "past tense" in text  # REPORT_BRIEF_QUERY snippet
+
+
+@pytest.mark.integration
+def test_prompt_exploit_plan(seeded):
+    text = mcp.prompt_exploit_plan(seeded["f1"], conn=seeded["conn"])
+    assert "Plugin 100" in text
+    assert "fastest viable path" in text
+
+
+@pytest.mark.integration
+def test_prompt_triage_scope(seeded):
+    text = mcp.prompt_triage_scope(seeded["scan_id"], conn=seeded["conn"])
+    assert "engagement" in text  # scope description names the scan
+    assert "past tense" in text
+
+
+@pytest.mark.integration
+def test_prompt_unknown_finding_raises(seeded):
+    with pytest.raises(ValueError):
+        mcp.prompt_triage_finding(999999, conn=seeded["conn"])
+
+
+# ---------------------------------------------------------------------------
+# Resource / prompt registration
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_resources_and_prompts_registered():
+    import asyncio
+
+    s = build_server(CernoConfig())
+    loop = asyncio.new_event_loop()
+    static = {str(r.uri) for r in loop.run_until_complete(s.list_resources())}
+    templates = {
+        t.uriTemplate for t in loop.run_until_complete(s.list_resource_templates())
+    }
+    prompts = {p.name for p in loop.run_until_complete(s.list_prompts())}
+
+    assert "cerno://scans" in static
+    assert "cerno://finding/{finding_id}/output" in templates
+    assert {"triage_finding", "exploit_plan", "triage_scope"} <= prompts

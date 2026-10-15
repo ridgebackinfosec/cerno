@@ -380,6 +380,14 @@ cerno config set mcp_allow_mutations true   # permit set_review_state / import_n
 
 When a flag is off, the corresponding tools are not registered and never appear in the client.
 
+> **Note:** Gating flags are read once at server startup. After changing them, reconnect or restart the server (via your MCP client) for the change to take effect — the active gating state is logged to `~/.cerno/cerno.log` on startup.
+
+**Resources** (operator-pinnable context, read-only): `cerno://scans`, `cerno://scan/{id}/hosts`, `cerno://scan/{id}/cves`, `cerno://finding/{id}/output` (raw per-host plugin output), `cerno://finding/{id}/workflow`.
+
+**Prompts** (one-click templates): `triage_finding`, `exploit_plan`, `triage_scope`.
+
+> **Note:** Resources and prompts only appear in MCP clients that render them (e.g. Claude Desktop). Tool-only clients ignore them; the read tools provide the same data.
+
 ---
 
 ## Keyboard Shortcuts

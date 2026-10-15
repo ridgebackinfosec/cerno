@@ -225,8 +225,10 @@ cerno_pkg/
   │                        # load_skill_prompt() (loads .claude/skills/cerno-assistant.md or fallback)
   ├── mcp_server/          # MCP server (BETA) — `cerno mcp` command, stdio transport
   │   ├── __init__.py      #   build_server(), main()
-  │   └── server.py        #   Pure tool_* adapters (testable w/ conn) + FastMCP registration
-  │                        #   Read/generate tools always on; execute_command gated by
+  │   └── server.py        #   Pure tool_*/resource_*/prompt_* adapters (testable w/ conn)
+  │                        #   + FastMCP registration. Read/generate tools, resources
+  │                        #   (cerno:// URIs), and prompts (triage_finding/exploit_plan/
+  │                        #   triage_scope) always on; execute_command gated by
   │                        #   mcp_allow_execution; set_review_state/import_nessus gated by
   │                        #   mcp_allow_mutations. stdout is the JSON-RPC channel, so adapters
   │                        #   never print (execution uses ops.run_command_captured)
