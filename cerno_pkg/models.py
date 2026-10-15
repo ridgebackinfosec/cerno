@@ -1714,41 +1714,46 @@ class Host:
         ip_address: str,
         scan_id: int,
         partial_match: bool = False,
-        conn: Optional[sqlite3.Connection] = None
+        conn: Optional[sqlite3.Connection] = None,
+        *,
+        scan_ids: Optional[list[int]] = None,
     ) -> list[int]:
-        """Get plugin IDs for findings affecting a specific host in a scan.
+        """Get plugin IDs for findings affecting a specific host in one or more scans.
 
         Args:
             ip_address: IP address to search
-            scan_id: Scan ID to filter by
+            scan_id: Scan ID to filter by (ignored when scan_ids has more than one entry)
             partial_match: If True, use LIKE for substring matching
             conn: Database connection (optional)
+            scan_ids: Optional list of scan IDs for multi-scan queries (overrides scan_id)
 
         Returns:
             List of distinct plugin_id values for findings affecting this host
         """
-        with db_transaction(conn) as c:
-            if partial_match:
-                query = """
-                    SELECT DISTINCT f.plugin_id
-                    FROM finding_affected_hosts fah
-                    JOIN findings f ON fah.finding_id = f.finding_id
-                    JOIN hosts h ON fah.host_id = h.host_id
-                    WHERE f.scan_id = ? AND h.ip_address LIKE ?
-                    ORDER BY f.plugin_id ASC
-                """
-                rows = query_all(c, query, (scan_id, f"%{ip_address}%"))
-            else:
-                query = """
-                    SELECT DISTINCT f.plugin_id
-                    FROM finding_affected_hosts fah
-                    JOIN findings f ON fah.finding_id = f.finding_id
-                    JOIN hosts h ON fah.host_id = h.host_id
-                    WHERE f.scan_id = ? AND h.ip_address = ?
-                    ORDER BY f.plugin_id ASC
-                """
-                rows = query_all(c, query, (scan_id, ip_address))
+        if scan_ids and len(scan_ids) > 1:
+            scan_clause = f"f.scan_id IN ({','.join('?' * len(scan_ids))})"
+            params: list[Any] = list(scan_ids)
+        else:
+            scan_clause = "f.scan_id = ?"
+            params = [scan_id]
 
+        if partial_match:
+            host_clause = "h.ip_address LIKE ?"
+            params.append(f"%{ip_address}%")
+        else:
+            host_clause = "h.ip_address = ?"
+            params.append(ip_address)
+
+        query = f"""
+            SELECT DISTINCT f.plugin_id
+            FROM finding_affected_hosts fah
+            JOIN findings f ON fah.finding_id = f.finding_id
+            JOIN hosts h ON fah.host_id = h.host_id
+            WHERE {scan_clause} AND {host_clause}
+            ORDER BY f.plugin_id ASC
+        """
+        with db_transaction(conn) as c:
+            rows = query_all(c, query, tuple(params))
             return [row["plugin_id"] for row in rows]
 
 

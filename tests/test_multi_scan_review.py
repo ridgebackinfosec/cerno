@@ -9,7 +9,7 @@ Covers:
 
 import pytest
 
-from cerno_pkg.models import Finding, Plugin, Scan
+from cerno_pkg.models import Finding, Host, Plugin, Scan
 from cerno_pkg.tui import parse_scan_selection
 from cerno_pkg.database import query_all
 
@@ -221,3 +221,62 @@ class TestReviewStateBroadcast:
         rows = query_all(temp_db, "SELECT review_state FROM findings WHERE plugin_id = ?", (44444,))
         states = [r["review_state"] for r in rows]
         assert all(s == "completed" for s in states)
+
+
+# ========== TestHostPluginIdsMultiScan ==========
+
+
+@pytest.mark.integration
+class TestHostPluginIdsMultiScan:
+    """Integration tests for Host.get_plugin_ids_for_scan() across multiple scans."""
+
+    def _link(self, conn, scan_id, plugin_id, host_ip):
+        """Helper: create finding for plugin in scan and link host to it."""
+        Plugin(plugin_id=plugin_id, plugin_name=f"Plugin {plugin_id}", severity_int=2).save(conn)
+        finding_id = Finding(scan_id=scan_id, plugin_id=plugin_id).save(conn)
+        host_id = Host.get_or_create(
+            ip_address=host_ip, scan_target=host_ip, scan_target_type="ipv4", conn=conn
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO finding_affected_hosts "
+            "(finding_id, host_id, port_number, plugin_output) VALUES (?, ?, NULL, 'x')",
+            (finding_id, host_id),
+        )
+
+    def _setup(self, conn):
+        """Two scans: 10.0.0.5 has plugin 100 in A, 200 in B, 300 in both; 10.0.0.9 only in B."""
+        scan_a_id = Scan(scan_name="scan_a", export_root="/tmp").save(conn)
+        scan_b_id = Scan(scan_name="scan_b", export_root="/tmp").save(conn)
+        self._link(conn, scan_a_id, 100, "10.0.0.5")
+        self._link(conn, scan_b_id, 200, "10.0.0.5")
+        self._link(conn, scan_a_id, 300, "10.0.0.5")
+        self._link(conn, scan_b_id, 300, "10.0.0.5")
+        self._link(conn, scan_b_id, 400, "10.0.0.9")
+        conn.commit()
+        return scan_a_id, scan_b_id
+
+    def test_returns_union_across_scans(self, temp_db):
+        a, b = self._setup(temp_db)
+        result = Host.get_plugin_ids_for_scan(
+            ip_address="10.0.0.5", scan_id=a, scan_ids=[a, b], conn=temp_db
+        )
+        assert result == [100, 200, 300]
+
+    def test_host_only_in_secondary_scan(self, temp_db):
+        a, b = self._setup(temp_db)
+        result = Host.get_plugin_ids_for_scan(
+            ip_address="10.0.0.9", scan_id=a, scan_ids=[a, b], conn=temp_db
+        )
+        assert result == [400]
+
+    def test_single_scan_unchanged(self, temp_db):
+        a, _b = self._setup(temp_db)
+        result = Host.get_plugin_ids_for_scan(ip_address="10.0.0.5", scan_id=a, conn=temp_db)
+        assert result == [100, 300]
+
+    def test_partial_match_across_scans(self, temp_db):
+        a, b = self._setup(temp_db)
+        result = Host.get_plugin_ids_for_scan(
+            ip_address="10.0.0", scan_id=a, scan_ids=[a, b], partial_match=True, conn=temp_db
+        )
+        assert result == [100, 200, 300, 400]
