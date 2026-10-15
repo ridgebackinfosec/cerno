@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.46] - 2026-10-15
+
+### Changed
+- Proxy mode now runs tools via `proxychains4 -q`, hiding proxychains4's per-connection output. A magenta `[PROXY] proxychains4 → SOCKS5 host:port` line and a `Running via proxychains4` spinner make routing explicit; enabling `debug_logging` restores full proxychains4 output for troubleshooting (`ops.py:run_command_with_progress()`, `ProxyConfig.quiet`).
+
 ## [1.3.45] - 2026-10-15
 
 ### Fixed

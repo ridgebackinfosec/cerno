@@ -918,8 +918,65 @@ class TestRunCommandWithProgressProxy:
         except Exception:
             pass
 
-        assert captured.get("cmd", [])[:2] == ["proxychains4", "-f"]
-        assert captured["cmd"][3:] == ["echo", "hello"]
+        assert captured.get("cmd", [])[:3] == ["proxychains4", "-q", "-f"]
+        assert captured["cmd"][4:] == ["echo", "hello"]
+
+    @staticmethod
+    def _run_capturing(monkeypatch, tmp_path, cmd, proxy, **kwargs):
+        """Run run_command_with_progress with Popen faked; return the executed cmd."""
+        from cerno_pkg.ops import run_command_with_progress
+        import subprocess
+
+        captured = {}
+
+        def fake_popen(c, **_kw):
+            captured["cmd"] = c
+            class FakeProc:
+                returncode = 0
+                stdout = iter([])
+                def wait(self): pass
+                def terminate(self): pass
+            return FakeProc()
+
+        monkeypatch.setattr(subprocess, "Popen", fake_popen)
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+        try:
+            run_command_with_progress(cmd, proxy_config=proxy, **kwargs)
+        except Exception:
+            pass
+        return captured.get("cmd")
+
+    @pytest.mark.unit
+    def test_proxy_wraps_shell_command_quietly(self, tmp_path, monkeypatch):
+        """Shell-string commands are wrapped with proxychains4 -q."""
+        from cerno_pkg.ops import ProxyConfig
+
+        proxy = ProxyConfig(enabled=True, host="127.0.0.1", port=9000)
+        cmd = self._run_capturing(monkeypatch, tmp_path, "echo hello", proxy, shell=True)
+        conf = tmp_path / ".cerno" / "proxychains4.conf"
+        assert cmd == f"proxychains4 -q -f {conf} echo hello"
+
+    @pytest.mark.unit
+    def test_proxy_quiet_false_omits_q_flag(self, tmp_path, monkeypatch):
+        """quiet=False (debug logging) keeps full proxychains4 output."""
+        from cerno_pkg.ops import ProxyConfig
+
+        proxy = ProxyConfig(enabled=True, host="127.0.0.1", port=9000, quiet=False)
+        cmd = self._run_capturing(monkeypatch, tmp_path, ["echo", "hello"], proxy)
+        assert cmd[:2] == ["proxychains4", "-f"]
+        assert "-q" not in cmd
+
+    @pytest.mark.unit
+    def test_proxy_indicator_printed(self, tmp_path, monkeypatch, capsys):
+        """A visible indicator confirms routing through proxychains4."""
+        from cerno_pkg.ops import ProxyConfig
+
+        proxy = ProxyConfig(enabled=True, host="127.0.0.1", port=9000)
+        self._run_capturing(monkeypatch, tmp_path, ["echo", "hello"], proxy)
+        out = capsys.readouterr().out
+        assert "[PROXY]" in out
+        assert "proxychains4" in out
+        assert "SOCKS5 127.0.0.1:9000" in out
 
     @pytest.mark.unit
     def test_no_proxy_leaves_command_unchanged(self, tmp_path, monkeypatch):

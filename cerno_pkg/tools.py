@@ -1150,6 +1150,8 @@ def run_tool_workflow(
         enabled=_proxy_enabled,
         host=_initial_config.proxychains_host,
         port=_initial_config.proxychains_port,
+        # Full proxychains4 output is useful when diagnosing a dead tunnel
+        quiet=not _initial_config.debug_logging,
     )
 
     while True:
