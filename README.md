@@ -365,9 +365,10 @@ claude mcp add cerno -- cerno mcp
 
 | Category | Tools | Gated by |
 | --- | --- | --- |
-| Read | `list_scans`, `list_findings`, `get_finding_detail`, `get_finding_hosts`, `list_hosts`, `list_services`, `get_web_targets`, `list_cves`, `host_history`, `compare_scans`, `get_workflow`, `check_tools`, `list_executions`, `list_artifacts` | always available |
+| Read | `list_scans`, `list_findings`, `get_finding_detail`, `get_finding_hosts`, `list_hosts`, `list_services`, `get_web_targets`, `list_cves`, `find_affected_by_cve`, `host_history`, `compare_scans`, `get_workflow`, `check_tools`, `list_executions`, `list_artifacts`, `read_artifact`, `get_config` | always available |
+| NetExec | `get_host_nxc`, `list_nxc_credentials` (credentials, shares, security flags; needs a configured NetExec workspace) | always available |
 | Generate | `generate_nmap_cmd`, `generate_netexec_cmd`, `generate_msf_search` (return commands, do not run them) | always available |
-| Execute | `execute_command` (runs a command, captures output, logs it) | `mcp_allow_execution` |
+| Execute | `execute_command` (runs a command, captures output, logs it; reports progress) | `mcp_allow_execution` |
 | Mutate | `set_review_state`, `import_nessus` | `mcp_allow_mutations` |
 
 Both gating flags default to `false`, so the server is **read-only** out of the box. Enable the
@@ -382,7 +383,7 @@ When a flag is off, the corresponding tools are not registered and never appear 
 
 > **Note:** Gating flags are read once at server startup. After changing them, reconnect or restart the server (via your MCP client) for the change to take effect — the active gating state is logged to `~/.cerno/cerno.log` on startup.
 
-**Resources** (operator-pinnable context, read-only): `cerno://scans`, `cerno://scan/{id}/hosts`, `cerno://scan/{id}/cves`, `cerno://finding/{id}/output` (raw per-host plugin output), `cerno://finding/{id}/workflow`.
+**Resources** (operator-pinnable context, read-only): `cerno://scans`, `cerno://scan/{id}/hosts`, `cerno://scan/{id}/cves`, `cerno://finding/{id}/output` (raw per-host plugin output), `cerno://finding/{id}/workflow`, `cerno://config`, `cerno://host/{ip}/nxc` (NetExec enrichment).
 
 **Prompts** (one-click templates): `triage_finding`, `exploit_plan`, `triage_scope`.
 

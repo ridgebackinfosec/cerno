@@ -19,17 +19,86 @@ console-printing helpers in ``analysis``.
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
+import json
 import sqlite3
+import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Generator, Optional
+from typing import Any, Generator, Optional, TypedDict, cast
+
+from mcp.server.fastmcp import Context, FastMCP
 
 from ..config import CernoConfig, load_config
 from ..logging_setup import log_error, log_info
 
 # Valid review states (mirrors Finding.update_review_state docstring).
 _VALID_REVIEW_STATES = {"pending", "reviewed", "completed", "skipped"}
+
+
+# Result shapes for the core read tools. total=False keeps FastMCP's generated
+# output schema lenient (no key is required), so structured output never fails
+# validation when an optional column is absent.
+class ScanInfo(TypedDict, total=False):
+    scan_id: int
+    scan_name: str
+    created_at: str
+    last_reviewed_at: Optional[str]
+    unique_hosts: int
+    total_findings: int
+    critical_count: int
+    high_count: int
+    medium_count: int
+    low_count: int
+    info_count: int
+    reviewed_count: int
+
+
+class FindingSummary(TypedDict, total=False):
+    finding_id: int
+    scan_id: int
+    plugin_id: int
+    review_state: str
+    plugin_name: str
+    severity_int: int
+    severity_label: str
+    has_metasploit: bool
+    cvss3_score: Optional[float]
+    cvss2_score: Optional[float]
+    cves: list[str]
+    plugin_url: Optional[str]
+
+
+class FindingDetail(FindingSummary, total=False):
+    metasploit_names: list[str]
+    affected: list[dict]
+
+
+class HostInfo(TypedDict, total=False):
+    host_id: int
+    ip_address: str
+    scan_target: str
+    scan_target_type: str
+    netbios_name: Optional[str]
+    fqdn: Optional[str]
+    first_seen: str
+    last_seen: str
+    finding_count: int
+    scan_count: int
+    max_severity: Optional[int]
+
+
+class ServiceInfo(TypedDict, total=False):
+    host: str
+    port: int
+    protocol: str
+    svc_name: str
+
+
+class CveEntry(TypedDict, total=False):
+    cve: str
+    plugins: list[dict]
 
 
 @contextmanager
@@ -425,6 +494,172 @@ def tool_list_services(
         return [dict(row) for row in rows]
 
 
+def tool_find_affected_by_cve(
+    cve: str,
+    scan_ids: Optional[list[int]] = None,
+    conn: Optional[sqlite3.Connection] = None,
+) -> list[dict]:
+    """Find findings/hosts affected by a specific CVE, across scans.
+
+    The reverse of ``list_cves``: given a CVE, return every plugin whose cached
+    ``cves`` list contains it (exact element match, case-insensitive) plus the
+    scan and affected host:port lines. Optional ``scan_ids`` narrows the search.
+    """
+    from ..database import query_all
+    from ..models import Finding
+
+    target = cve.strip().lower()
+    results: list[dict] = []
+    with _db(conn) as c:
+        rows = query_all(
+            c,
+            """
+            SELECT f.finding_id, f.scan_id, p.plugin_id, p.plugin_name,
+                   p.severity_int, p.cves
+            FROM findings f
+            JOIN plugins p ON f.plugin_id = p.plugin_id
+            WHERE p.cves IS NOT NULL
+            """,
+        )
+        for row in rows:
+            if scan_ids is not None and row["scan_id"] not in scan_ids:
+                continue
+            try:
+                cves = json.loads(row["cves"]) or []
+            except (ValueError, TypeError):
+                continue
+            if not any(str(x).strip().lower() == target for x in cves):
+                continue
+            finding = Finding(
+                finding_id=row["finding_id"],
+                scan_id=row["scan_id"],
+                plugin_id=row["plugin_id"],
+            )
+            hosts = finding.get_all_host_port_lines(c)
+            results.append(
+                {
+                    "finding_id": row["finding_id"],
+                    "scan_id": row["scan_id"],
+                    "plugin_id": row["plugin_id"],
+                    "plugin_name": row["plugin_name"],
+                    "severity_int": row["severity_int"],
+                    "hosts": hosts,
+                }
+            )
+    return results
+
+
+def tool_read_artifact(
+    artifact_id: int,
+    max_bytes: int = 100_000,
+    conn: Optional[sqlite3.Connection] = None,
+) -> dict:
+    """Read the contents of a generated artifact file by its id.
+
+    Only reads paths recorded in the artifacts table (never arbitrary paths).
+    Text is capped at ``max_bytes`` with a ``truncated`` flag.
+    """
+    from ..database import query_one
+
+    with _db(conn) as c:
+        row = query_one(
+            c,
+            """
+            SELECT artifact_id, artifact_path, artifact_type, file_size_bytes
+            FROM v_artifacts_with_types
+            WHERE artifact_id = ?
+            """,
+            (artifact_id,),
+        )
+    if row is None:
+        raise ValueError(f"No artifact with id {artifact_id}")
+
+    path = Path(row["artifact_path"])
+    meta = {
+        "artifact_id": row["artifact_id"],
+        "artifact_path": str(path),
+        "artifact_type": row["artifact_type"],
+        "file_size_bytes": row["file_size_bytes"],
+    }
+    if not path.exists():
+        return {**meta, "exists": False, "content": None, "truncated": False}
+
+    raw = path.read_bytes()
+    truncated = len(raw) > max_bytes
+    text = raw[:max_bytes].decode("utf-8", errors="replace")
+    return {**meta, "exists": True, "content": text, "truncated": truncated}
+
+
+def tool_get_config() -> dict:
+    """Return all current Cerno config settings (read-only), with resolved paths."""
+    from ..constants import get_results_root
+
+    config = load_config()
+    data = dataclasses.asdict(config)
+    data["results_root_resolved"] = str(get_results_root(config))
+    data["log_path_resolved"] = config.log_path or str(
+        Path.home() / ".cerno" / "cerno.log"
+    )
+    return data
+
+
+# ========== NetExec enrichment (read-only; needs a configured workspace) ==========
+# Availability follows nxc_db.get_nxc_manager(), which already honors the
+# nxc_enrichment_enabled flag and workspace existence. When no workspace is
+# available the tools return {"available": False, ...} rather than erroring.
+
+
+def tool_get_host_nxc(host_ip: str) -> dict:
+    """Return NetExec enrichment for one host: credentials, shares, security flags."""
+    from ..nxc_db import get_nxc_manager
+
+    mgr = get_nxc_manager()
+    if mgr is None:
+        return {
+            "available": False,
+            "reason": "No NetExec workspace configured/available "
+            "(see nxc_workspace_path / nxc_enrichment_enabled).",
+            "host": host_ip,
+        }
+    data = mgr.get_host_enrichment(host_ip)
+    if data is None:
+        return {"available": True, "host": host_ip, "found": False}
+    return {"available": True, "found": True, **dataclasses.asdict(data)}
+
+
+def tool_list_nxc_credentials(
+    host_ips: Optional[list[str]] = None,
+    conn: Optional[sqlite3.Connection] = None,
+) -> dict:
+    """Return deduplicated NetExec credentials. Defaults to all known hosts."""
+    from ..models import Host
+    from ..nxc_db import get_nxc_manager
+
+    mgr = get_nxc_manager()
+    if mgr is None:
+        return {
+            "available": False,
+            "reason": "No NetExec workspace configured/available.",
+            "credentials": [],
+        }
+    if host_ips is None:
+        with _db(conn) as c:
+            host_ips = [h["ip_address"] for h in Host.get_all_with_stats(c)]
+    summary = mgr.get_hosts_enrichment(host_ips)
+    credentials = [
+        {**dataclasses.asdict(cred), "host_count": count}
+        for cred, count in summary.unique_credentials
+    ]
+    return {
+        "available": True,
+        "hosts_queried": summary.total_hosts_queried,
+        "hosts_with_data": summary.hosts_with_data,
+        "protocols_seen": summary.protocols_seen,
+        "security_flag_counts": summary.security_flag_counts,
+        "credentials": credentials,
+    }
+
+
 # ========== Command generation ==========
 
 
@@ -642,9 +877,17 @@ def tool_import_nessus(nessus_path: str) -> dict:
 
 def resource_scans(conn: Optional[sqlite3.Connection] = None) -> str:
     """`cerno://scans` — JSON index of all scans with stats."""
-    import json as _json
+    return json.dumps(tool_list_scans(conn=conn), indent=2)
 
-    return _json.dumps(tool_list_scans(conn=conn), indent=2)
+
+def resource_config() -> str:
+    """`cerno://config` — JSON of all current (read-only) config settings."""
+    return json.dumps(tool_get_config(), indent=2)
+
+
+def resource_host_nxc(host_ip: str) -> str:
+    """`cerno://host/{host_ip}/nxc` — JSON NetExec enrichment for a host."""
+    return json.dumps(tool_get_host_nxc(host_ip), indent=2)
 
 
 def resource_scan_hosts(scan_id: int, conn: Optional[sqlite3.Connection] = None) -> str:
@@ -784,16 +1027,14 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
     Read and command-generation tools are always registered. Execution and
     mutation tools are registered only when their config flag is enabled.
     """
-    from mcp.server.fastmcp import FastMCP
-
     cfg = config or load_config()
     mcp = FastMCP("cerno")
 
     # --- Read tools (always on) ---
     @mcp.tool()
-    def list_scans() -> list[dict]:
+    def list_scans() -> list[ScanInfo]:
         """List all imported scans with severity counts and review progress."""
-        return tool_list_scans()
+        return cast("list[ScanInfo]", tool_list_scans())
 
     @mcp.tool()
     def list_findings(
@@ -802,14 +1043,17 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         review_state: Optional[str] = None,
         has_metasploit: Optional[bool] = None,
         plugin_name: Optional[str] = None,
-    ) -> list[dict]:
+    ) -> list[FindingSummary]:
         """List findings across scans, filtered by severity/state/metasploit/name."""
-        return tool_list_findings(
-            scan_ids,
-            severity_int=severity_int,
-            review_state=review_state,
-            has_metasploit=has_metasploit,
-            plugin_name=plugin_name,
+        return cast(
+            "list[FindingSummary]",
+            tool_list_findings(
+                scan_ids,
+                severity_int=severity_int,
+                review_state=review_state,
+                has_metasploit=has_metasploit,
+                plugin_name=plugin_name,
+            ),
         )
 
     @mcp.tool()
@@ -840,14 +1084,14 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         return tool_get_workflow(plugin_id)
 
     @mcp.tool()
-    def get_finding_detail(finding_id: int) -> dict:
+    def get_finding_detail(finding_id: int) -> FindingDetail:
         """Get full detail for a finding: plugin metadata + per-host plugin output."""
-        return tool_get_finding_detail(finding_id)
+        return cast("FindingDetail", tool_get_finding_detail(finding_id))
 
     @mcp.tool()
-    def list_hosts(scan_id: Optional[int] = None) -> list[dict]:
+    def list_hosts(scan_id: Optional[int] = None) -> list[HostInfo]:
         """List hosts with finding counts and worst severity (all scans, or one scan)."""
-        return tool_list_hosts(scan_id)
+        return cast("list[HostInfo]", tool_list_hosts(scan_id))
 
     @mcp.tool()
     def check_tools() -> dict:
@@ -869,14 +1113,43 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
     @mcp.tool()
     def list_cves(
         scan_ids: list[int], severity_int: Optional[int] = None
-    ) -> list[dict]:
+    ) -> list[CveEntry]:
         """List unique CVEs across scans, each mapped to its plugins."""
-        return tool_list_cves(scan_ids, severity_int=severity_int)
+        return cast(
+            "list[CveEntry]", tool_list_cves(scan_ids, severity_int=severity_int)
+        )
 
     @mcp.tool()
-    def list_services(scan_id: int) -> list[dict]:
+    def list_services(scan_id: int) -> list[ServiceInfo]:
         """List discovered host/port/protocol/service-name tuples for a scan."""
-        return tool_list_services(scan_id)
+        return cast("list[ServiceInfo]", tool_list_services(scan_id))
+
+    @mcp.tool()
+    def find_affected_by_cve(
+        cve: str, scan_ids: Optional[list[int]] = None
+    ) -> list[dict]:
+        """Find findings/hosts affected by a CVE across scans (reverse of list_cves)."""
+        return tool_find_affected_by_cve(cve, scan_ids=scan_ids)
+
+    @mcp.tool()
+    def read_artifact(artifact_id: int, max_bytes: int = 100_000) -> dict:
+        """Read the contents of a generated artifact file by id (capped)."""
+        return tool_read_artifact(artifact_id, max_bytes=max_bytes)
+
+    @mcp.tool()
+    def get_config() -> dict:
+        """Return all current Cerno config settings (read-only)."""
+        return tool_get_config()
+
+    @mcp.tool()
+    def get_host_nxc(host_ip: str) -> dict:
+        """NetExec enrichment for a host: credentials, shares, security flags."""
+        return tool_get_host_nxc(host_ip)
+
+    @mcp.tool()
+    def list_nxc_credentials(host_ips: Optional[list[str]] = None) -> dict:
+        """Deduplicated NetExec credentials across hosts (default: all known hosts)."""
+        return tool_list_nxc_credentials(host_ips)
 
     # --- Command generation (always on; no execution) ---
     @mcp.tool()
@@ -927,6 +1200,16 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         """Verification workflow for a finding's plugin, if one is mapped."""
         return resource_finding_workflow(finding_id)
 
+    @mcp.resource("cerno://config", mime_type="application/json")
+    def config_resource() -> str:
+        """All current Cerno config settings (read-only)."""
+        return resource_config()
+
+    @mcp.resource("cerno://host/{host_ip}/nxc", mime_type="application/json")
+    def host_nxc_resource(host_ip: str) -> str:
+        """NetExec enrichment for a host (credentials, shares, security flags)."""
+        return resource_host_nxc(host_ip)
+
     # --- Prompts (always on; triage/report templates) ---
     @mcp.prompt()
     def triage_finding(finding_id: int) -> str:
@@ -947,20 +1230,42 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
     if cfg.mcp_allow_execution:
 
         @mcp.tool()
-        def execute_command(
+        async def execute_command(
             command: list[str],
             tool_name: str = "mcp",
             use_proxy: bool = False,
             timeout: int = 300,
+            ctx: Optional[Context] = None,
         ) -> dict:
-            """Execute a command (argv list), capture output, and log the run."""
-            return tool_execute_command(
-                command,
-                tool_name=tool_name,
-                use_proxy=use_proxy,
-                timeout=timeout,
-                config=cfg,
+            """Execute a command (argv list), capture output, and log the run.
+
+            Runs the blocking command in a worker thread and emits periodic
+            progress heartbeats so long scans (e.g. nmap) show liveness in
+            progress-capable clients.
+            """
+            task = asyncio.create_task(
+                asyncio.to_thread(
+                    tool_execute_command,
+                    command,
+                    tool_name=tool_name,
+                    use_proxy=use_proxy,
+                    timeout=timeout,
+                    config=cfg,
+                )
             )
+            start = time.time()
+            while not task.done():
+                done, _ = await asyncio.wait({task}, timeout=2.0)
+                if not done and ctx is not None:
+                    elapsed = time.time() - start
+                    try:
+                        await ctx.report_progress(
+                            progress=elapsed,
+                            message=f"running {tool_name}… {elapsed:.0f}s",
+                        )
+                    except Exception:  # progress is best-effort
+                        pass
+            return task.result()
 
     else:
         log_info("mcp: execute_command not registered (mcp_allow_execution=false)")

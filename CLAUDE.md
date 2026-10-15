@@ -227,11 +227,15 @@ cerno_pkg/
   │   ├── __init__.py      #   build_server(), main()
   │   └── server.py        #   Pure tool_*/resource_*/prompt_* adapters (testable w/ conn)
   │                        #   + FastMCP registration. Read/generate tools, resources
-  │                        #   (cerno:// URIs), and prompts (triage_finding/exploit_plan/
-  │                        #   triage_scope) always on; execute_command gated by
-  │                        #   mcp_allow_execution; set_review_state/import_nessus gated by
-  │                        #   mcp_allow_mutations. stdout is the JSON-RPC channel, so adapters
-  │                        #   never print (execution uses ops.run_command_captured)
+  │                        #   (cerno:// URIs incl. config + host/{ip}/nxc), and prompts
+  │                        #   always on; NetExec enrichment (get_host_nxc/
+  │                        #   list_nxc_credentials) + find_affected_by_cve + read_artifact +
+  │                        #   get_config also always on. execute_command gated by
+  │                        #   mcp_allow_execution (async w/ progress heartbeats);
+  │                        #   set_review_state/import_nessus gated by mcp_allow_mutations.
+  │                        #   Core read tools declare TypedDict output schemas. stdout is the
+  │                        #   JSON-RPC channel, so adapters never print (exec uses
+  │                        #   ops.run_command_captured)
   ├── session.py           # Review session state management (396 lines)
   │                        # Includes: scan summary, session statistics
   ├── tool_context.py      # Context dataclasses for review operations (137 lines)

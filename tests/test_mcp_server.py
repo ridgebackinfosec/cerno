@@ -477,3 +477,187 @@ def test_resources_and_prompts_registered():
     assert "cerno://scans" in static
     assert "cerno://finding/{finding_id}/output" in templates
     assert {"triage_finding", "exploit_plan", "triage_scope"} <= prompts
+
+
+# ---------------------------------------------------------------------------
+# CVE reverse lookup
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_find_affected_by_cve_exact_match(temp_db):
+    scan_id = Scan(scan_name="s", export_root="/tmp").save(temp_db)
+    Plugin(plugin_id=1, plugin_name="A", severity_int=4, cves=["CVE-2021-1"]).save(
+        temp_db
+    )
+    Plugin(plugin_id=2, plugin_name="B", severity_int=2, cves=["CVE-2021-10"]).save(
+        temp_db
+    )
+    f1 = Finding(scan_id=scan_id, plugin_id=1).save(temp_db)
+    Finding(scan_id=scan_id, plugin_id=2).save(temp_db)
+    host_id = Host.get_or_create("10.0.0.9", "10.0.0.9", "ipv4", conn=temp_db)
+    Port.get_or_create(443, conn=temp_db)
+    temp_db.execute(
+        "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, plugin_output) "
+        "VALUES (?, ?, 443, 'x')",
+        (f1, host_id),
+    )
+    temp_db.commit()
+
+    # Case-insensitive, and must NOT match CVE-2021-10
+    res = mcp.tool_find_affected_by_cve("cve-2021-1", conn=temp_db)
+    assert [r["plugin_id"] for r in res] == [1]
+    assert "10.0.0.9:443" in res[0]["hosts"]
+
+
+@pytest.mark.integration
+def test_find_affected_by_cve_scan_filter(temp_db):
+    s1 = Scan(scan_name="s1", export_root="/tmp").save(temp_db)
+    s2 = Scan(scan_name="s2", export_root="/tmp").save(temp_db)
+    Plugin(plugin_id=1, plugin_name="A", severity_int=4, cves=["CVE-2021-1"]).save(
+        temp_db
+    )
+    Finding(scan_id=s1, plugin_id=1).save(temp_db)
+    Finding(scan_id=s2, plugin_id=1).save(temp_db)
+    temp_db.commit()
+    res = mcp.tool_find_affected_by_cve("CVE-2021-1", scan_ids=[s2], conn=temp_db)
+    assert [r["scan_id"] for r in res] == [s2]
+
+
+# ---------------------------------------------------------------------------
+# read_artifact
+# ---------------------------------------------------------------------------
+
+
+def _seed_artifact(conn, path, artifact_type_id=1):
+    cur = conn.execute(
+        "INSERT INTO tool_executions (tool_name, command_text, executed_at, exit_code) "
+        "VALUES ('nmap', 'nmap -A', 't', 0)"
+    )
+    exec_id = cur.lastrowid
+    cur = conn.execute(
+        "INSERT INTO artifacts (execution_id, artifact_path, artifact_type_id, created_at) "
+        "VALUES (?, ?, ?, 't')",
+        (exec_id, str(path), artifact_type_id),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+@pytest.mark.integration
+def test_read_artifact_returns_content(temp_db, tmp_path):
+    f = tmp_path / "scan.nmap"
+    f.write_text("Nmap scan report for 10.0.0.1\n80/tcp open http\n")
+    aid = _seed_artifact(temp_db, f)
+    out = mcp.tool_read_artifact(aid, conn=temp_db)
+    assert out["exists"] is True
+    assert "80/tcp open http" in out["content"]
+    assert out["truncated"] is False
+
+
+@pytest.mark.integration
+def test_read_artifact_truncates(temp_db, tmp_path):
+    f = tmp_path / "big.txt"
+    f.write_text("A" * 5000)
+    aid = _seed_artifact(temp_db, f)
+    out = mcp.tool_read_artifact(aid, max_bytes=1000, conn=temp_db)
+    assert out["truncated"] is True
+    assert len(out["content"]) == 1000
+
+
+@pytest.mark.integration
+def test_read_artifact_missing_file(temp_db, tmp_path):
+    aid = _seed_artifact(temp_db, tmp_path / "gone.txt")
+    out = mcp.tool_read_artifact(aid, conn=temp_db)
+    assert out["exists"] is False
+
+
+@pytest.mark.integration
+def test_read_artifact_unknown_raises(temp_db):
+    with pytest.raises(ValueError):
+        mcp.tool_read_artifact(999999, conn=temp_db)
+
+
+# ---------------------------------------------------------------------------
+# get_config
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_get_config_exposes_settings():
+    cfg = mcp.tool_get_config()
+    assert "mcp_allow_execution" in cfg
+    assert "mcp_allow_mutations" in cfg
+    assert "results_root_resolved" in cfg
+
+
+# ---------------------------------------------------------------------------
+# NetExec enrichment
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_get_host_nxc_unavailable(monkeypatch):
+    import cerno_pkg.nxc_db as nxc_db
+
+    monkeypatch.setattr(nxc_db, "get_nxc_manager", lambda: None)
+    out = mcp.tool_get_host_nxc("10.0.0.1")
+    assert out["available"] is False
+
+
+@pytest.mark.integration
+def test_get_host_nxc_with_data(monkeypatch):
+    import cerno_pkg.nxc_db as nxc_db
+    from cerno_pkg.nxc_db import NxcCredential, NxcHostData, NxcSecurityFlags, NxcShare
+
+    data = NxcHostData(
+        host_address="10.0.0.5",
+        hostname="DC01",
+        protocols_seen=["smb"],
+        credentials=[NxcCredential(protocol="smb", username="admin", has_admin=True)],
+        shares=[NxcShare(name="C$", read_access=True, write_access=True)],
+        security_flags=NxcSecurityFlags(signing_required=False),
+    )
+
+    class FakeMgr:
+        def get_host_enrichment(self, ip):
+            return data if ip == "10.0.0.5" else None
+
+    monkeypatch.setattr(nxc_db, "get_nxc_manager", lambda: FakeMgr())
+    out = mcp.tool_get_host_nxc("10.0.0.5")
+    assert out["available"] is True and out["found"] is True
+    assert out["credentials"][0]["username"] == "admin"
+    assert out["shares"][0]["name"] == "C$"
+    assert out["security_flags"]["signing_required"] is False
+
+
+# ---------------------------------------------------------------------------
+# New resources / output schema registration
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_new_resources_registered():
+    s = build_server(CernoConfig())
+    loop = asyncio.new_event_loop()
+    static = {str(r.uri) for r in loop.run_until_complete(s.list_resources())}
+    templates = {
+        t.uriTemplate for t in loop.run_until_complete(s.list_resource_templates())
+    }
+    assert "cerno://config" in static
+    assert "cerno://host/{host_ip}/nxc" in templates
+
+
+@pytest.mark.integration
+def test_core_read_tools_have_output_schema():
+    s = build_server(CernoConfig())
+    loop = asyncio.new_event_loop()
+    tools = {t.name: t for t in loop.run_until_complete(s.list_tools())}
+    for name in [
+        "list_scans",
+        "list_findings",
+        "get_finding_detail",
+        "list_services",
+        "list_cves",
+    ]:
+        assert tools[name].outputSchema is not None

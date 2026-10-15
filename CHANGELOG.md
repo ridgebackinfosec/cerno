@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-10-15
+
+### Added
+- MCP server: **NetExec enrichment** tools/resource — `get_host_nxc` (credentials, shares, security flags for a host), `list_nxc_credentials` (deduplicated creds across hosts), and resource `cerno://host/{ip}/nxc`. Available when a NetExec workspace is configured (honors `nxc_enrichment_enabled`).
+- MCP server: `find_affected_by_cve` — reverse CVE lookup returning affected findings/hosts across scans (exact, case-insensitive match).
+- MCP server: `read_artifact` — read back the contents of a generated artifact file (e.g. nmap output) by id, capped with a `truncated` flag.
+- MCP server: read-only config awareness — `get_config` tool and `cerno://config` resource expose all current settings with resolved paths.
+
+### Changed
+- MCP server: `execute_command` now emits progress heartbeats while a command runs, so long scans show liveness in progress-capable clients.
+- MCP server: core read tools (`list_scans`, `list_findings`, `get_finding_detail`, `list_hosts`, `list_services`, `list_cves`) now declare structured output schemas for cleaner client-side parsing.
+- Docs: clarified that enabling `mcp_allow_mutations` unlocks `import_nessus` and `set_review_state` (import remains gated as a DB-writing operation).
+
 ## [1.5.0] - 2026-10-15
 
 ### Added
