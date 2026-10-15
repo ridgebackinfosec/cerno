@@ -139,6 +139,16 @@ class TestGetByScanIdsMerged:
                 assert finding.scan_id == scan_a_id
                 break
 
+    def test_representative_has_extra_finding_ids(self, temp_db):
+        scan_a_id, scan_b_id = self._setup_two_scans(temp_db)
+        display_list, all_instances = Finding.get_by_scan_ids_merged(
+            scan_ids=[scan_a_id, scan_b_id], conn=temp_db
+        )
+        reps = {f.plugin_id: f for f, _p in display_list}
+        assert reps[11111].extra_finding_ids == [all_instances[11111][1].finding_id]
+        assert reps[22222].extra_finding_ids == []
+        assert reps[33333].extra_finding_ids == []
+
     def test_single_scan_id_works(self, temp_db):
         scan_a_id, scan_b_id = self._setup_two_scans(temp_db)
         display_list, _ = Finding.get_by_scan_ids_merged(
