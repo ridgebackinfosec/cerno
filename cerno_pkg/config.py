@@ -71,6 +71,16 @@ class CernoConfig:
     claude_assistant_enabled: bool = True
     """Enable Claude Assistant (BETA) interactive chat panel in review TUI (default: True)."""
 
+    # MCP server (BETA)
+    mcp_allow_execution: bool = False
+    """Allow the `cerno mcp` server to EXECUTE tool commands (nmap/netexec/etc.) (default: False).
+    When False, the execute_command tool is not registered and only read + command-generation
+    tools are exposed."""
+
+    mcp_allow_mutations: bool = False
+    """Allow the `cerno mcp` server to MUTATE state — update review state, import scans (default: False).
+    When False, those tools are not registered and the server is effectively read-only."""
+
     # Proxy settings
     proxychains_enabled: bool = False
     """Route all tool executions through proxychains4 SOCKS5 proxy (default: False)."""
@@ -140,6 +150,8 @@ def load_config() -> CernoConfig:
             nxc_workspace_path=data.get("nxc_workspace_path"),
             nxc_enrichment_enabled=data.get("nxc_enrichment_enabled", True),
             claude_assistant_enabled=data.get("claude_assistant_enabled", True),
+            mcp_allow_execution=data.get("mcp_allow_execution", False),
+            mcp_allow_mutations=data.get("mcp_allow_mutations", False),
             proxychains_enabled=data.get("proxychains_enabled", False),
             proxychains_host=data.get("proxychains_host", "127.0.0.1"),
             proxychains_port=data.get("proxychains_port", 9000),
@@ -173,7 +185,8 @@ def save_config(config: CernoConfig) -> bool:
     try:
         # Convert to dict, excluding None values for cleaner YAML
         data = {
-            k: v for k, v in {
+            k: v
+            for k, v in {
                 "results_root": config.results_root,
                 "default_page_size": config.default_page_size,
                 "top_ports_count": config.top_ports_count,
@@ -188,6 +201,8 @@ def save_config(config: CernoConfig) -> bool:
                 "nxc_workspace_path": config.nxc_workspace_path,
                 "nxc_enrichment_enabled": config.nxc_enrichment_enabled,
                 "claude_assistant_enabled": config.claude_assistant_enabled,
+                "mcp_allow_execution": config.mcp_allow_execution,
+                "mcp_allow_mutations": config.mcp_allow_mutations,
                 "proxychains_enabled": config.proxychains_enabled,
                 "proxychains_host": config.proxychains_host,
                 "proxychains_port": config.proxychains_port,
@@ -231,6 +246,8 @@ def create_example_config() -> bool:
         nxc_workspace_path=None,  # Uses ~/.nxc/workspaces/default/ by default
         nxc_enrichment_enabled=True,
         claude_assistant_enabled=True,
+        mcp_allow_execution=False,
+        mcp_allow_mutations=False,
         proxychains_enabled=False,
         proxychains_host="127.0.0.1",
         proxychains_port=9000,

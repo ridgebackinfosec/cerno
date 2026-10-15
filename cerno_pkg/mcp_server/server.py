@@ -1,0 +1,699 @@
+"""Cerno MCP server implementation.
+
+This module is intentionally structured in two layers:
+
+1. **Pure adapter functions** (``tool_*``) that take an optional sqlite3
+   connection plus plain arguments and return JSON-serializable dicts/lists.
+   These contain no MCP-specific code and are unit-testable with the
+   ``temp_db`` fixture by passing ``conn`` explicitly.
+2. **``build_server``**, which wraps the adapters as ``FastMCP`` tools,
+   opening a real database connection per call and registering the
+   execution/mutation tools only when the corresponding config flag is on.
+
+IMPORTANT: stdio transport uses stdout as the JSON-RPC channel. Nothing in the
+adapter path may write to stdout. That is why execution goes through
+``ops.run_command_captured`` (no Rich spinner, no interactive sudo) and scan
+comparison/history use the pure-data ``cross_scan`` functions rather than the
+console-printing helpers in ``analysis``.
+"""
+
+from __future__ import annotations
+
+import dataclasses
+import sqlite3
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any, Generator, Optional
+
+from ..config import CernoConfig, load_config
+from ..logging_setup import log_error, log_info
+
+# Valid review states (mirrors Finding.update_review_state docstring).
+_VALID_REVIEW_STATES = {"pending", "reviewed", "completed", "skipped"}
+
+
+@contextmanager
+def _db(
+    conn: Optional[sqlite3.Connection],
+) -> Generator[sqlite3.Connection, None, None]:
+    """Yield a connection, opening a fresh one only when none was supplied.
+
+    A caller-supplied connection (tests, or an enclosing transaction) is never
+    closed here; a connection opened here is always closed on exit.
+    """
+    from ..database import get_connection
+
+    if conn is not None:
+        yield conn
+        return
+
+    own = get_connection()
+    try:
+        yield own
+    finally:
+        own.close()
+
+
+# ========== Serialization helpers ==========
+
+
+def _finding_plugin_to_dict(finding: Any, plugin: Any) -> dict:
+    """Flatten a (Finding, Plugin) tuple into a JSON-serializable dict."""
+    return {
+        "finding_id": finding.finding_id,
+        "scan_id": finding.scan_id,
+        "plugin_id": finding.plugin_id,
+        "review_state": finding.review_state,
+        "plugin_name": plugin.plugin_name,
+        "severity_int": plugin.severity_int,
+        "severity_label": plugin.severity_label,
+        "has_metasploit": plugin.has_metasploit,
+        "cvss3_score": plugin.cvss3_score,
+        "cvss2_score": plugin.cvss2_score,
+        "cves": plugin.cves or [],
+        "plugin_url": plugin.plugin_url,
+    }
+
+
+# ========== Read tools ==========
+
+
+def tool_list_scans(conn: Optional[sqlite3.Connection] = None) -> list[dict]:
+    """List all imported scans with per-severity finding counts and progress."""
+    from ..models import Scan
+
+    with _db(conn) as c:
+        return Scan.get_all_with_stats(c)
+
+
+def tool_list_findings(
+    scan_ids: list[int],
+    *,
+    severity_int: Optional[int] = None,
+    review_state: Optional[str] = None,
+    has_metasploit: Optional[bool] = None,
+    plugin_name: Optional[str] = None,
+    conn: Optional[sqlite3.Connection] = None,
+) -> list[dict]:
+    """List findings across one or more scans, optionally filtered.
+
+    Args:
+        scan_ids: Scan IDs to include. Findings from all are concatenated.
+        severity_int: Optional severity filter (0=Info .. 4=Critical).
+        review_state: Optional review-state filter.
+        has_metasploit: If set, keep only findings whose plugin has a MSF module.
+        plugin_name: Optional case-insensitive substring match on plugin name.
+    """
+    from ..models import Finding
+
+    severity_dir = None if severity_int is None else f"{severity_int}_"
+    results: list[dict] = []
+    seen: set[int] = set()
+    with _db(conn) as c:
+        for scan_id in scan_ids:
+            pairs = Finding.get_by_scan_with_plugin(
+                scan_id,
+                severity_dir=severity_dir,
+                review_state=review_state,
+                plugin_name_filter=plugin_name,
+                has_metasploit=has_metasploit,
+                conn=c,
+            )
+            for finding, plugin in pairs:
+                fid = finding.finding_id
+                if fid is None or fid in seen:
+                    continue
+                seen.add(fid)
+                results.append(_finding_plugin_to_dict(finding, plugin))
+    return results
+
+
+def tool_get_finding_hosts(
+    finding_id: int, conn: Optional[sqlite3.Connection] = None
+) -> dict:
+    """Return the host list, port string, and ready-to-use target lines for a finding."""
+    from ..models import Finding
+
+    with _db(conn) as c:
+        finding = Finding.get_by_id(finding_id, c)
+        if finding is None:
+            raise ValueError(f"No finding with id {finding_id}")
+        hosts, ports_str = finding.get_hosts_and_ports(c)
+        target_lines = finding.get_all_host_port_lines(c)
+    return {
+        "finding_id": finding_id,
+        "hosts": hosts,
+        "ports": ports_str,
+        "target_lines": target_lines,
+    }
+
+
+def tool_get_web_targets(
+    scan_id: int, conn: Optional[sqlite3.Connection] = None
+) -> list[str]:
+    """Return HTTP/HTTPS URLs discovered in a scan (ready for web testing)."""
+    from ..models import get_http_urls_for_scan
+
+    with _db(conn) as c:
+        return get_http_urls_for_scan(scan_id, c)
+
+
+def tool_host_history(
+    host_ip: str, conn: Optional[sqlite3.Connection] = None
+) -> Optional[dict]:
+    """Return a host's vulnerability timeline across all scans, or None if unknown."""
+    from ..cross_scan import get_host_vulnerability_history
+
+    with _db(conn) as c:
+        history = get_host_vulnerability_history(host_ip, conn=c)
+    return dataclasses.asdict(history) if history is not None else None
+
+
+def tool_compare_scans(
+    scan1_name: str,
+    scan2_name: str,
+    *,
+    min_severity: int = 0,
+    conn: Optional[sqlite3.Connection] = None,
+) -> Optional[dict]:
+    """Compare two scans by name; returns new/resolved/persistent findings and hosts."""
+    from ..cross_scan import compare_scans, get_scan_by_name
+
+    with _db(conn) as c:
+        s1 = get_scan_by_name(scan1_name, conn=c)
+        s2 = get_scan_by_name(scan2_name, conn=c)
+        if s1 is None:
+            raise ValueError(f"Scan not found: {scan1_name}")
+        if s2 is None:
+            raise ValueError(f"Scan not found: {scan2_name}")
+        result = compare_scans(
+            scan_id_1=s1["scan_id"],
+            scan_id_2=s2["scan_id"],
+            min_severity=min_severity,
+            conn=c,
+        )
+    return dataclasses.asdict(result) if result is not None else None
+
+
+def tool_get_workflow(plugin_id: int) -> Optional[dict]:
+    """Return the verification workflow mapped to a plugin, or None if none exists."""
+    from ..workflow_mapper import WorkflowMapper
+
+    workflow = WorkflowMapper().get_workflow(str(plugin_id))
+    return dataclasses.asdict(workflow) if workflow is not None else None
+
+
+def tool_get_finding_detail(
+    finding_id: int, conn: Optional[sqlite3.Connection] = None
+) -> dict:
+    """Return full detail for one finding: plugin metadata + per-host plugin output.
+
+    Note: Cerno does not store Nessus description/solution/synopsis text. The
+    authoritative evidence is the per-host ``plugin_output`` plus the CVE list,
+    Metasploit module names, and the Tenable ``plugin_url`` for further reading.
+    """
+    from ..models import Finding, Plugin, SeverityLevel
+
+    with _db(conn) as c:
+        finding = Finding.get_by_id(finding_id, c)
+        if finding is None:
+            raise ValueError(f"No finding with id {finding_id}")
+        plugin = Plugin.get_by_id(finding.plugin_id, c)
+        if plugin is None:
+            raise ValueError(f"No plugin with id {finding.plugin_id}")
+        sev = SeverityLevel.get_by_int(plugin.severity_int, c)
+        outputs = finding.get_plugin_outputs_by_host(c)
+
+    return {
+        "finding_id": finding_id,
+        "scan_id": finding.scan_id,
+        "plugin_id": plugin.plugin_id,
+        "plugin_name": plugin.plugin_name,
+        "severity_int": plugin.severity_int,
+        "severity_label": sev.severity_label if sev is not None else None,
+        "review_state": finding.review_state,
+        "has_metasploit": plugin.has_metasploit,
+        "metasploit_names": plugin.metasploit_names or [],
+        "cvss3_score": plugin.cvss3_score,
+        "cvss2_score": plugin.cvss2_score,
+        "cves": plugin.cves or [],
+        "plugin_url": plugin.plugin_url,
+        "affected": [
+            {"host": host, "port": port, "plugin_output": output}
+            for host, port, output in outputs
+        ],
+    }
+
+
+def tool_list_hosts(
+    scan_id: Optional[int] = None, conn: Optional[sqlite3.Connection] = None
+) -> list[dict]:
+    """List hosts with finding counts and worst severity.
+
+    With no ``scan_id``, returns the cross-scan host inventory. With a
+    ``scan_id``, returns only hosts affected by findings in that scan.
+    """
+    from ..database import query_all
+    from ..models import Host
+
+    with _db(conn) as c:
+        if scan_id is None:
+            return Host.get_all_with_stats(c)
+        rows = query_all(
+            c,
+            """
+            SELECT
+                h.host_id, h.ip_address, h.scan_target, h.scan_target_type,
+                h.netbios_name, h.fqdn,
+                COUNT(DISTINCT fah.finding_id) AS finding_count,
+                MAX(p.severity_int) AS max_severity
+            FROM hosts h
+            JOIN finding_affected_hosts fah ON h.host_id = fah.host_id
+            JOIN findings f ON fah.finding_id = f.finding_id
+            JOIN plugins p ON f.plugin_id = p.plugin_id
+            WHERE f.scan_id = ?
+            GROUP BY h.host_id
+            ORDER BY finding_count DESC
+            """,
+            (scan_id,),
+        )
+        return [dict(row) for row in rows]
+
+
+def tool_check_tools() -> dict:
+    """Report which security tools are installed and their detected versions."""
+    from ..ops import get_tool_version
+
+    specs = {
+        "nmap": ["nmap"],
+        "netexec": ["nxc", "netexec"],
+        "msfconsole": ["msfconsole"],
+        "proxychains4": ["proxychains4"],
+    }
+    result: dict[str, dict] = {}
+    for name, candidates in specs.items():
+        version = get_tool_version(name, candidates)
+        result[name] = {"installed": version is not None, "version": version}
+    return result
+
+
+def tool_list_executions(
+    limit: int = 50, conn: Optional[sqlite3.Connection] = None
+) -> list[dict]:
+    """List recent tool executions (command, exit code, duration), newest first."""
+    from ..database import query_all
+
+    with _db(conn) as c:
+        rows = query_all(
+            c,
+            """
+            SELECT execution_id, tool_name, tool_protocol, command_text,
+                   executed_at, exit_code, duration_seconds, host_count,
+                   ports, used_sudo
+            FROM tool_executions
+            ORDER BY executed_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        return [dict(row) for row in rows]
+
+
+def tool_list_artifacts(
+    execution_id: Optional[int] = None,
+    limit: int = 50,
+    conn: Optional[sqlite3.Connection] = None,
+) -> list[dict]:
+    """List generated artifact files, optionally scoped to one execution."""
+    from ..database import query_all
+
+    with _db(conn) as c:
+        if execution_id is not None:
+            rows = query_all(
+                c,
+                """
+                SELECT artifact_id, execution_id, artifact_path, artifact_type,
+                       file_extension, file_size_bytes, file_hash, created_at
+                FROM v_artifacts_with_types
+                WHERE execution_id = ?
+                ORDER BY created_at DESC
+                """,
+                (execution_id,),
+            )
+        else:
+            rows = query_all(
+                c,
+                """
+                SELECT artifact_id, execution_id, artifact_path, artifact_type,
+                       file_extension, file_size_bytes, file_hash, created_at
+                FROM v_artifacts_with_types
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+        return [dict(row) for row in rows]
+
+
+# ========== Command generation ==========
+
+
+def _targets_dir(finding_id: int, config: Optional[CernoConfig]) -> Path:
+    """Directory under results_root where a finding's target/output files live."""
+    from ..constants import get_results_root
+
+    d = get_results_root(config) / "_mcp" / str(finding_id)
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _write_targets_file(
+    finding_id: int, hosts: list[str], config: Optional[CernoConfig]
+) -> tuple[Path, Path]:
+    """Write a finding's hosts to an IPs file; return (ips_file, output_base)."""
+    d = _targets_dir(finding_id, config)
+    ips_file = d / "targets.txt"
+    ips_file.write_text("\n".join(hosts) + ("\n" if hosts else ""), encoding="utf-8")
+    return ips_file, d / "scan"
+
+
+def tool_generate_nmap_cmd(
+    finding_id: int,
+    *,
+    udp: bool = False,
+    nse_option: Optional[str] = None,
+    use_sudo: bool = False,
+    config: Optional[CernoConfig] = None,
+    conn: Optional[sqlite3.Connection] = None,
+) -> dict:
+    """Build (but do not run) an nmap command targeting a finding's hosts/ports."""
+    from ..models import Finding
+    from ..tools import build_nmap_cmd
+
+    with _db(conn) as c:
+        finding = Finding.get_by_id(finding_id, c)
+        if finding is None:
+            raise ValueError(f"No finding with id {finding_id}")
+        hosts, ports_str = finding.get_hosts_and_ports(c)
+
+    ips_file, output_base = _write_targets_file(finding_id, hosts, config)
+    cmd = build_nmap_cmd(udp, nse_option, ips_file, ports_str, use_sudo, output_base)
+    return {"command": cmd, "ips_file": str(ips_file), "output_base": str(output_base)}
+
+
+def tool_generate_netexec_cmd(
+    finding_id: int,
+    protocol: str,
+    *,
+    config: Optional[CernoConfig] = None,
+    conn: Optional[sqlite3.Connection] = None,
+) -> dict:
+    """Build (but do not run) a netexec command targeting a finding's hosts."""
+    from ..models import Finding
+    from ..ops import resolve_cmd
+    from ..tools import build_netexec_cmd
+
+    with _db(conn) as c:
+        finding = Finding.get_by_id(finding_id, c)
+        if finding is None:
+            raise ValueError(f"No finding with id {finding_id}")
+        hosts, _ = finding.get_hosts_and_ports(c)
+
+    exec_bin = resolve_cmd(["nxc", "netexec"]) or "nxc"
+    ips_file, output_base = _write_targets_file(finding_id, hosts, config)
+    cmd, log_path, relay_path = build_netexec_cmd(
+        exec_bin, protocol, ips_file, output_base
+    )
+    return {
+        "command": cmd,
+        "ips_file": str(ips_file),
+        "log_path": log_path,
+        "relay_path": relay_path,
+    }
+
+
+# ========== Execution (gated by mcp_allow_execution) ==========
+
+
+def tool_execute_command(
+    command: list[str],
+    *,
+    tool_name: str = "mcp",
+    use_proxy: bool = False,
+    timeout: int = 300,
+    config: Optional[CernoConfig] = None,
+    conn: Optional[sqlite3.Connection] = None,
+) -> dict:
+    """Execute a command non-interactively, capture output, and log the run.
+
+    The command is run with ``shell=False`` (argv list). Output is captured and
+    returned; nothing is written to stdout. The run is recorded in
+    ``tool_executions`` via ``ops.log_tool_execution``.
+    """
+    from ..ops import ProxyConfig, log_tool_execution, run_command_captured
+
+    if not command:
+        raise ValueError("command must be a non-empty list of arguments")
+
+    cfg = config or load_config()
+    proxy = None
+    if use_proxy and cfg.proxychains_enabled:
+        proxy = ProxyConfig(
+            enabled=True,
+            host=cfg.proxychains_host,
+            port=cfg.proxychains_port,
+            quiet=True,
+        )
+
+    meta, stdout, stderr = run_command_captured(
+        command, timeout=timeout, proxy_config=proxy
+    )
+
+    command_text = " ".join(str(x) for x in command)
+    with _db(conn) as c:
+        execution_id = log_tool_execution(
+            tool_name,
+            command_text,
+            meta,
+            conn=c,
+        )
+
+    return {
+        "exit_code": meta.exit_code,
+        "duration_seconds": round(meta.duration_seconds, 3),
+        "used_sudo": meta.used_sudo,
+        "execution_id": execution_id,
+        "stdout": stdout,
+        "stderr": stderr,
+    }
+
+
+# ========== Mutations (gated by mcp_allow_mutations) ==========
+
+
+def tool_set_review_state(
+    finding_id: int,
+    new_state: str,
+    *,
+    notes: Optional[str] = None,
+    conn: Optional[sqlite3.Connection] = None,
+) -> dict:
+    """Update a finding's review state (pending/reviewed/completed/skipped)."""
+    from ..models import Finding
+
+    if new_state not in _VALID_REVIEW_STATES:
+        raise ValueError(
+            f"Invalid review state {new_state!r}; must be one of "
+            f"{sorted(_VALID_REVIEW_STATES)}"
+        )
+
+    with _db(conn) as c:
+        finding = Finding.get_by_id(finding_id, c)
+        if finding is None:
+            raise ValueError(f"No finding with id {finding_id}")
+        finding.update_review_state(new_state, notes=notes, conn=c)
+        c.commit()
+    return {"finding_id": finding_id, "review_state": new_state}
+
+
+def tool_import_nessus(nessus_path: str) -> dict:
+    """Import a .nessus file into the database. Returns import statistics."""
+    from ..constants import SCANS_ROOT
+    from ..nessus_import import import_nessus_file
+
+    path = Path(nessus_path).expanduser()
+    if not path.exists():
+        raise ValueError(f"No such file: {nessus_path}")
+
+    result = import_nessus_file(path, SCANS_ROOT)
+    return {
+        "scan_name": result.scan_name,
+        "plugins_exported": result.plugins_exported,
+        "total_hosts": result.total_hosts,
+        "severities": result.severities,
+    }
+
+
+# ========== Server assembly ==========
+
+
+def build_server(config: Optional[CernoConfig] = None) -> Any:
+    """Build and return a FastMCP server with tools registered per config flags.
+
+    Read and command-generation tools are always registered. Execution and
+    mutation tools are registered only when their config flag is enabled.
+    """
+    from mcp.server.fastmcp import FastMCP
+
+    cfg = config or load_config()
+    mcp = FastMCP("cerno")
+
+    # --- Read tools (always on) ---
+    @mcp.tool()
+    def list_scans() -> list[dict]:
+        """List all imported scans with severity counts and review progress."""
+        return tool_list_scans()
+
+    @mcp.tool()
+    def list_findings(
+        scan_ids: list[int],
+        severity_int: Optional[int] = None,
+        review_state: Optional[str] = None,
+        has_metasploit: Optional[bool] = None,
+        plugin_name: Optional[str] = None,
+    ) -> list[dict]:
+        """List findings across scans, filtered by severity/state/metasploit/name."""
+        return tool_list_findings(
+            scan_ids,
+            severity_int=severity_int,
+            review_state=review_state,
+            has_metasploit=has_metasploit,
+            plugin_name=plugin_name,
+        )
+
+    @mcp.tool()
+    def get_finding_hosts(finding_id: int) -> dict:
+        """Get host list, ports, and ready-to-use host:port target lines for a finding."""
+        return tool_get_finding_hosts(finding_id)
+
+    @mcp.tool()
+    def get_web_targets(scan_id: int) -> list[str]:
+        """Get HTTP/HTTPS URLs discovered in a scan."""
+        return tool_get_web_targets(scan_id)
+
+    @mcp.tool()
+    def host_history(host_ip: str) -> Optional[dict]:
+        """Get a host's vulnerability timeline across all scans."""
+        return tool_host_history(host_ip)
+
+    @mcp.tool()
+    def compare_scans(
+        scan1_name: str, scan2_name: str, min_severity: int = 0
+    ) -> Optional[dict]:
+        """Compare two scans by name (new/resolved/persistent findings and hosts)."""
+        return tool_compare_scans(scan1_name, scan2_name, min_severity=min_severity)
+
+    @mcp.tool()
+    def get_workflow(plugin_id: int) -> Optional[dict]:
+        """Get the verification workflow mapped to a plugin, if any."""
+        return tool_get_workflow(plugin_id)
+
+    @mcp.tool()
+    def get_finding_detail(finding_id: int) -> dict:
+        """Get full detail for a finding: plugin metadata + per-host plugin output."""
+        return tool_get_finding_detail(finding_id)
+
+    @mcp.tool()
+    def list_hosts(scan_id: Optional[int] = None) -> list[dict]:
+        """List hosts with finding counts and worst severity (all scans, or one scan)."""
+        return tool_list_hosts(scan_id)
+
+    @mcp.tool()
+    def check_tools() -> dict:
+        """Report which security tools (nmap/netexec/msf/proxychains4) are installed."""
+        return tool_check_tools()
+
+    @mcp.tool()
+    def list_executions(limit: int = 50) -> list[dict]:
+        """List recent tool executions recorded in the database."""
+        return tool_list_executions(limit)
+
+    @mcp.tool()
+    def list_artifacts(
+        execution_id: Optional[int] = None, limit: int = 50
+    ) -> list[dict]:
+        """List generated artifact files, optionally for one execution."""
+        return tool_list_artifacts(execution_id, limit)
+
+    # --- Command generation (always on; no execution) ---
+    @mcp.tool()
+    def generate_nmap_cmd(
+        finding_id: int,
+        udp: bool = False,
+        nse_option: Optional[str] = None,
+        use_sudo: bool = False,
+    ) -> dict:
+        """Build an nmap command for a finding's hosts/ports (does not run it)."""
+        return tool_generate_nmap_cmd(
+            finding_id, udp=udp, nse_option=nse_option, use_sudo=use_sudo, config=cfg
+        )
+
+    @mcp.tool()
+    def generate_netexec_cmd(finding_id: int, protocol: str) -> dict:
+        """Build a netexec command for a finding's hosts (does not run it)."""
+        return tool_generate_netexec_cmd(finding_id, protocol, config=cfg)
+
+    # --- Execution (gated) ---
+    if cfg.mcp_allow_execution:
+
+        @mcp.tool()
+        def execute_command(
+            command: list[str],
+            tool_name: str = "mcp",
+            use_proxy: bool = False,
+            timeout: int = 300,
+        ) -> dict:
+            """Execute a command (argv list), capture output, and log the run."""
+            return tool_execute_command(
+                command,
+                tool_name=tool_name,
+                use_proxy=use_proxy,
+                timeout=timeout,
+                config=cfg,
+            )
+
+    else:
+        log_info("mcp: execute_command not registered (mcp_allow_execution=false)")
+
+    # --- Mutations (gated) ---
+    if cfg.mcp_allow_mutations:
+
+        @mcp.tool()
+        def set_review_state(
+            finding_id: int, new_state: str, notes: Optional[str] = None
+        ) -> dict:
+            """Update a finding's review state (pending/reviewed/completed/skipped)."""
+            return tool_set_review_state(finding_id, new_state, notes=notes)
+
+        @mcp.tool()
+        def import_nessus(nessus_path: str) -> dict:
+            """Import a .nessus file into the database."""
+            return tool_import_nessus(nessus_path)
+
+    else:
+        log_info(
+            "mcp: set_review_state/import_nessus not registered (mcp_allow_mutations=false)"
+        )
+
+    return mcp
+
+
+def main() -> None:
+    """Entry point for ``cerno mcp``: build the server and serve over stdio."""
+    config = load_config()
+    try:
+        server = build_server(config)
+    except Exception as exc:  # pragma: no cover - startup failure
+        log_error(f"mcp: failed to build server: {exc}")
+        raise
+    server.run(transport="stdio")

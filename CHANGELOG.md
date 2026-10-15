@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-10-15
+
+### Added
+- **MCP server (BETA)**: new `cerno mcp` command exposes Cerno's scan database and tooling over the Model Context Protocol via local stdio transport, so any MCP client (Claude Code, Claude Desktop, etc.) can query findings and drive an engagement. Register it with `claude mcp add cerno -- cerno mcp` (`cerno_pkg/mcp_server/`).
+  - Read + command-generation tools (always available): `list_scans`, `list_findings`, `get_finding_detail`, `get_finding_hosts`, `list_hosts`, `get_web_targets`, `host_history`, `compare_scans`, `get_workflow`, `check_tools`, `list_executions`, `list_artifacts`, `generate_nmap_cmd`, `generate_netexec_cmd`.
+  - Execution tool `execute_command` (runs a command non-interactively, captures output, logs to `tool_executions`) gated behind new config flag `mcp_allow_execution` (default `false`).
+  - Mutation tools `set_review_state` and `import_nessus` gated behind new config flag `mcp_allow_mutations` (default `false`). When a flag is off, the corresponding tools are not registered.
+- New `ops.run_command_captured()` helper: non-interactive command execution that captures output without writing to stdout (used by the MCP server; keeps the stdio JSON-RPC channel clean).
+
 ## [1.3.46] - 2026-10-15
 
 ### Changed

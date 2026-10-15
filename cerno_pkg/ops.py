@@ -30,7 +30,6 @@ from .ansi import C, err, get_console
 from .constants import PROCESS_TERMINATE_TIMEOUT
 from .logging_setup import log_error, log_info, log_timing
 
-
 _console_global = get_console()
 
 
@@ -43,6 +42,7 @@ class ExecutionMetadata:
         duration_seconds: Execution time in seconds
         used_sudo: Whether command was run with sudo
     """
+
     exit_code: int
     duration_seconds: float
     used_sudo: bool
@@ -58,6 +58,7 @@ class ProxyConfig:
         port: SOCKS5 proxy port (e.g., 9000)
         quiet: Pass ``-q`` to proxychains4 to suppress its per-connection output
     """
+
     enabled: bool
     host: str
     port: int
@@ -125,9 +126,7 @@ def run_command_with_progress(
         KeyboardInterrupt: If user interrupts execution
     """
     start_time = time.time()
-    display_cmd = (
-        cmd if isinstance(cmd, str) else " ".join(str(x) for x in cmd)
-    )
+    display_cmd = cmd if isinstance(cmd, str) else " ".join(str(x) for x in cmd)
     log_info(f"Executing: {display_cmd}")
     if len(display_cmd) > 120:
         display_cmd = display_cmd[:117] + "..."
@@ -187,12 +186,17 @@ def run_command_with_progress(
             cmd = pc4_prefix + list(cmd)
         else:
             cmd = f"{shlex.join(pc4_prefix)} {cmd}"
-        log_info(f"Proxy: wrapped command: {cmd if isinstance(cmd, str) else shlex.join(cmd)}")
+        log_info(
+            f"Proxy: wrapped command: {cmd if isinstance(cmd, str) else shlex.join(cmd)}"
+        )
         # With -q, proxychains4 prints nothing itself, so this line (and the
         # spinner label) is the user's confirmation that routing is active.
-        quiet_note = " (quiet mode: per-connection output hidden)" if proxy_config.quiet else ""
+        quiet_note = (
+            " (quiet mode: per-connection output hidden)" if proxy_config.quiet else ""
+        )
         from rich.text import Text
         from .ansi import style_if_enabled as _style
+
         indicator = Text()
         indicator.append("[PROXY]", style=_style("bold magenta"))
         indicator.append(
@@ -223,6 +227,7 @@ def run_command_with_progress(
 
     try:
         from .ansi import style_if_enabled
+
         if proc.stdout is None:
             # This should never happen since we set stdout=PIPE, but satisfy type checker
             proc.wait()
@@ -260,9 +265,87 @@ def run_command_with_progress(
     log_info(f"Command succeeded with rc={return_code}")
 
     return ExecutionMetadata(
-        exit_code=return_code,
-        duration_seconds=duration,
-        used_sudo=used_sudo
+        exit_code=return_code, duration_seconds=duration, used_sudo=used_sudo
+    )
+
+
+@log_timing
+def run_command_captured(
+    cmd: list[str],
+    *,
+    timeout: int = 300,
+    proxy_config: Optional[ProxyConfig] = None,
+) -> tuple[ExecutionMetadata, str, str]:
+    """Execute a command non-interactively and capture its output.
+
+    Unlike :func:`run_command_with_progress`, this writes nothing to stdout
+    (no Rich spinner, no streamed output) and never prompts interactively. It
+    is intended for non-TTY contexts such as the MCP server, where stdout is a
+    machine protocol channel.
+
+    sudo is handled non-interactively: if ``cmd`` starts with ``sudo`` and the
+    sudo timestamp is not already valid, the command is refused rather than
+    hanging on a password prompt.
+
+    Args:
+        cmd: Command as a list of arguments (shell=False always).
+        timeout: Maximum seconds to allow the command to run.
+        proxy_config: Optional proxychains4 routing (same semantics as
+            run_command_with_progress).
+
+    Returns:
+        Tuple of (ExecutionMetadata, stdout_text, stderr_text).
+
+    Raises:
+        PermissionError: If the command needs an interactive sudo password.
+        subprocess.TimeoutExpired: If the command exceeds ``timeout``.
+    """
+    used_sudo = len(cmd) > 0 and os.path.basename(str(cmd[0])) == "sudo"
+
+    if used_sudo:
+        try:
+            check = subprocess.run(
+                ["sudo", "-vn"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            if check.returncode != 0:
+                raise PermissionError(
+                    "sudo requires a password; refusing to prompt in non-interactive "
+                    "mode. Pre-authenticate with `sudo -v` or run without sudo."
+                )
+        except FileNotFoundError:
+            raise PermissionError("sudo not found on PATH")
+
+    run_cmd: list[str] = cmd
+    if proxy_config is not None and proxy_config.enabled:
+        conf_path = Path.home() / ".cerno" / "proxychains4.conf"
+        write_proxychains_config(proxy_config, conf_path)
+        prefix = ["proxychains4"]
+        if proxy_config.quiet:
+            prefix.append("-q")
+        prefix.extend(["-f", str(conf_path)])
+        run_cmd = prefix + cmd
+
+    log_info(f"Executing (captured): {' '.join(str(x) for x in run_cmd)}")
+    start_time = time.time()
+    proc = subprocess.run(
+        run_cmd,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+    duration = time.time() - start_time
+    log_info(f"Captured command finished with rc={proc.returncode}")
+
+    return (
+        ExecutionMetadata(
+            exit_code=proc.returncode,
+            duration_seconds=duration,
+            used_sudo=used_sudo,
+        ),
+        proc.stdout or "",
+        proc.stderr or "",
     )
 
 
@@ -310,7 +393,9 @@ def resolve_cmd(candidates: list[str]) -> Optional[str]:
     return None
 
 
-def get_tool_version(tool_name: str, candidates: Optional[list[str]] = None) -> Optional[str]:
+def get_tool_version(
+    tool_name: str, candidates: Optional[list[str]] = None
+) -> Optional[str]:
     """Get version string for a tool by executing it with --version flag.
 
     Tries to detect the version of an installed tool by running it with the
@@ -362,7 +447,9 @@ def get_tool_version(tool_name: str, candidates: Optional[list[str]] = None) -> 
 
             # Parse version from output using regex patterns
             # Pattern 1: "Nmap version 7.92" or "version 1.2.1"
-            match = re.search(r"(?:version\s+)?(\d+\.\d+(?:\.\d+)?)", output, re.IGNORECASE)
+            match = re.search(
+                r"(?:version\s+)?(\d+\.\d+(?:\.\d+)?)", output, re.IGNORECASE
+            )
             if match:
                 version = match.group(1)
                 log_debug(f"Detected {binary} version: {version}")
@@ -414,17 +501,34 @@ def log_tool_execution(
     if conn is not None:
         # Use provided connection (testing or transaction)
         return _log_tool_execution_impl(
-            conn, tool_name, command_text, execution_metadata,
-            tool_protocol, host_count, sampled, ports, file_path, scan_dir
+            conn,
+            tool_name,
+            command_text,
+            execution_metadata,
+            tool_protocol,
+            host_count,
+            sampled,
+            ports,
+            file_path,
+            scan_dir,
         )
 
     # Production path: create new connection
     try:
         from .database import db_transaction
+
         with db_transaction() as new_conn:
             return _log_tool_execution_impl(
-                new_conn, tool_name, command_text, execution_metadata,
-                tool_protocol, host_count, sampled, ports, file_path, scan_dir
+                new_conn,
+                tool_name,
+                command_text,
+                execution_metadata,
+                tool_protocol,
+                host_count,
+                sampled,
+                ports,
+                file_path,
+                scan_dir,
             )
     except Exception as e:
         log_error(f"Failed to log tool execution to database: {e}")
@@ -472,7 +576,7 @@ def _log_tool_execution_impl(
                 WHERE sc.scan_name = ? AND s.session_end IS NULL
                 ORDER BY s.session_start DESC LIMIT 1
                 """,
-                (scan_name,)
+                (scan_name,),
             )
             if row:
                 session_id = row["session_id"]
@@ -494,7 +598,7 @@ def _log_tool_execution_impl(
             host_count=host_count,
             sampled=sampled,
             ports=ports,
-            used_sudo=execution_metadata.used_sudo
+            used_sudo=execution_metadata.used_sudo,
         )
 
         execution_id = tool_exec.save(conn)
@@ -528,13 +632,18 @@ def log_artifact(
     """
     if conn is not None:
         # Use provided connection (testing or transaction)
-        return _log_artifact_impl(conn, execution_id, artifact_path, artifact_type, metadata)
+        return _log_artifact_impl(
+            conn, execution_id, artifact_path, artifact_type, metadata
+        )
 
     # Production path: create new connection
     try:
         from .database import db_transaction
+
         with db_transaction() as new_conn:
-            return _log_artifact_impl(new_conn, execution_id, artifact_path, artifact_type, metadata)
+            return _log_artifact_impl(
+                new_conn, execution_id, artifact_path, artifact_type, metadata
+            )
     except Exception as e:
         log_error(f"Failed to log artifact to database: {e}")
         return None
@@ -564,7 +673,7 @@ def _log_artifact_impl(
         row = query_one(
             conn,
             "SELECT artifact_type_id FROM artifact_types WHERE type_name = ?",
-            (artifact_type,)
+            (artifact_type,),
         )
         if not row:
             log_error(f"Unknown artifact type: {artifact_type}")
@@ -585,11 +694,13 @@ def _log_artifact_impl(
             file_size_bytes=file_size,
             file_hash=file_hash,
             created_at=now_iso(),
-            metadata=metadata
+            metadata=metadata,
         )
 
         artifact_id = artifact.save(conn)
-        log_info(f"Logged artifact to database: {artifact_path.name} (ID: {artifact_id})")
+        log_info(
+            f"Logged artifact to database: {artifact_path.name} (ID: {artifact_id})"
+        )
         return artifact_id
 
     except Exception as e:
@@ -627,7 +738,9 @@ def log_artifacts_for_nmap(
     for ext, artifact_type in output_formats:
         artifact_path = Path(str(oabase) + ext)
         if artifact_path.exists():
-            artifact_id = log_artifact(execution_id, artifact_path, artifact_type, metadata, conn=conn)
+            artifact_id = log_artifact(
+                execution_id, artifact_path, artifact_type, metadata, conn=conn
+            )
             if artifact_id:
                 artifact_ids.append(artifact_id)
 
@@ -646,6 +759,7 @@ def get_interface_ip(interface: str) -> Optional[str]:
     import socket
     import struct
     import fcntl
+
     SIOCGIFADDR = 0x8915
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
@@ -666,6 +780,7 @@ def list_interfaces() -> list[tuple[str, str]]:
         List of (interface_name, ip_address) tuples, loopback last.
     """
     import os
+
     try:
         names = os.listdir("/sys/class/net/")
     except OSError:
@@ -738,11 +853,20 @@ def start_ips_server(
     try:
         subprocess.run(
             [
-                "openssl", "req", "-x509", "-newkey", "rsa:2048",
-                "-keyout", key_file,
-                "-out", cert_file,
-                "-days", "1", "-nodes",
-                "-subj", "/CN=cerno",
+                "openssl",
+                "req",
+                "-x509",
+                "-newkey",
+                "rsa:2048",
+                "-keyout",
+                key_file,
+                "-out",
+                cert_file,
+                "-days",
+                "1",
+                "-nodes",
+                "-subj",
+                "/CN=cerno",
             ],
             check=True,
             capture_output=True,
@@ -810,4 +934,6 @@ def build_nmap_remote_oneliner(
     if nse_option:
         nmap_parts.append(nse_option)
     nmap_parts += ["-oA", output_path]
-    return f"curl -sk https://{server_ip}:{server_port}/targets.txt | " + " ".join(nmap_parts)
+    return f"curl -sk https://{server_ip}:{server_port}/targets.txt | " + " ".join(
+        nmap_parts
+    )

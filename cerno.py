@@ -1996,6 +1996,27 @@ def _import_demo_nessus(nessus_file: Path, overwrite: bool = False) -> tuple[str
     return scan_name, True
 
 
+@app.command(name="mcp", help="Run the Cerno MCP server over stdio (for MCP clients)")
+def mcp_cmd() -> None:
+    """Serve Cerno's scan database and tooling over the Model Context Protocol.
+
+    Communicates over stdio (stdin/stdout), so this command is meant to be
+    launched by an MCP client rather than run directly in a terminal. Register
+    it with a client, e.g.:
+
+        claude mcp add cerno -- cerno mcp
+
+    Read and command-generation tools are always available. Execution and
+    mutation tools are exposed only when enabled in config:
+
+        cerno config set mcp_allow_execution true
+        cerno config set mcp_allow_mutations true
+    """
+    from cerno_pkg.mcp_server import main as mcp_main
+
+    mcp_main()
+
+
 @app.command(name="demo", help="Prepare bundled demo scans and NetExec enrichment")
 def demo_cmd(
     overwrite: bool = typer.Option(
@@ -2751,6 +2772,12 @@ def config_show() -> None:
     rows.append(("claude_assistant_enabled", config.claude_assistant_enabled,
                 config.claude_assistant_enabled == defaults.claude_assistant_enabled, "Enable Claude Assistant (BETA)"))
 
+    # MCP server
+    rows.append(("mcp_allow_execution", config.mcp_allow_execution,
+                config.mcp_allow_execution == defaults.mcp_allow_execution, "Allow MCP server to execute commands"))
+    rows.append(("mcp_allow_mutations", config.mcp_allow_mutations,
+                config.mcp_allow_mutations == defaults.mcp_allow_mutations, "Allow MCP server to mutate state"))
+
     # Proxychains
     rows.append(("proxychains_enabled", config.proxychains_enabled,
                 config.proxychains_enabled == defaults.proxychains_enabled, "Route tools through SOCKS5 proxy"))
@@ -2823,7 +2850,8 @@ def config_set(
         info("Available keys: results_root, default_page_size, top_ports_count, custom_workflows_path,")
         info("                default_tool, default_netexec_protocol, nmap_default_profile,")
         info("                log_path, debug_logging, no_color, term_override, nxc_workspace_path,")
-        info("                nxc_enrichment_enabled, claude_assistant_enabled, proxychains_enabled,")
+        info("                nxc_enrichment_enabled, claude_assistant_enabled, mcp_allow_execution,")
+        info("                mcp_allow_mutations, proxychains_enabled,")
         info("                proxychains_host, proxychains_port")
         raise typer.Exit(1)
 
@@ -2832,7 +2860,7 @@ def config_set(
         typed_value: int | bool | str
         if key in ["default_page_size", "top_ports_count", "proxychains_port"]:
             typed_value = int(value)
-        elif key in ["no_color", "debug_logging", "nxc_enrichment_enabled", "claude_assistant_enabled", "proxychains_enabled"]:
+        elif key in ["no_color", "debug_logging", "nxc_enrichment_enabled", "claude_assistant_enabled", "mcp_allow_execution", "mcp_allow_mutations", "proxychains_enabled"]:
             typed_value = value.lower() in ("true", "1", "yes", "on")
         else:
             typed_value = value

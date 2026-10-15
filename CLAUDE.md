@@ -95,7 +95,7 @@ Before implementing any schema change, verify:
 
 **Current `[tool.setuptools]` in pyproject.toml:**
 ```toml
-packages = ["cerno_pkg", "cerno_pkg.migrations"]
+packages = ["cerno_pkg", "cerno_pkg.mcp_server"]
 py-modules = ["cerno"]
 
 [tool.setuptools.package-data]
@@ -133,6 +133,7 @@ cerno scan list                   # List all scans
 cerno scan delete <scan_name>     # Delete scan from database
 cerno scan compare <s1> <s2>      # Compare findings between two scans
 cerno scan history <host_ip>      # Show vulnerability timeline for a host
+cerno mcp                         # Run the MCP server over stdio (launched by an MCP client)
 ```
 
 ### Testing
@@ -222,6 +223,13 @@ cerno_pkg/
   │                        # check_claude_available(), build_finding_context(), run_exchange()
   │                        # build_aggregate_context(), run_aggregate_exchange()
   │                        # load_skill_prompt() (loads .claude/skills/cerno-assistant.md or fallback)
+  ├── mcp_server/          # MCP server (BETA) — `cerno mcp` command, stdio transport
+  │   ├── __init__.py      #   build_server(), main()
+  │   └── server.py        #   Pure tool_* adapters (testable w/ conn) + FastMCP registration
+  │                        #   Read/generate tools always on; execute_command gated by
+  │                        #   mcp_allow_execution; set_review_state/import_nessus gated by
+  │                        #   mcp_allow_mutations. stdout is the JSON-RPC channel, so adapters
+  │                        #   never print (execution uses ops.run_command_captured)
   ├── session.py           # Review session state management (396 lines)
   │                        # Includes: scan summary, session statistics
   ├── tool_context.py      # Context dataclasses for review operations (137 lines)
@@ -495,6 +503,8 @@ Only after user confirms the changelog content:
 - `nmap_default_profile` - Default NSE profile name
 - `custom_workflows_path` - Path to custom workflows YAML file
 - `claude_assistant_enabled` - Enable/disable Claude Assistant (BETA) (default: `true`); set to `false` to hide `[A]` entirely
+- `mcp_allow_execution` - Allow the `cerno mcp` server to execute tool commands via `execute_command` (default: `false`)
+- `mcp_allow_mutations` - Allow the `cerno mcp` server to mutate state (`set_review_state`, `import_nessus`) (default: `false`)
 
 **NSE profiles** (`constants.py:NSE_PROFILES`): Pre-configured nmap script sets (SMB, SSL, HTTP, etc.)
 

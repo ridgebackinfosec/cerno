@@ -341,9 +341,44 @@ cerno config get <key>                         # Get a single config value
 cerno config set <key> <value>                 # Set a config value
 cerno config reset                             # Reset to defaults (creates backup)
 
+# MCP server (BETA)
+cerno mcp                                      # Serve scan data/tooling over MCP (stdio)
+
 # Maintenance
 cerno reset                                    # Purge ~/.cerno and return to fresh state
 ```
+
+---
+
+## MCP Server (BETA)
+
+`cerno mcp` exposes your scan database over the [Model Context Protocol](https://modelcontextprotocol.io),
+so any MCP client (Claude Code, Claude Desktop, etc.) can query findings, build target lists, generate
+tool commands, and — when explicitly enabled — execute tools and update review state. It speaks over
+**stdio**, so it is launched by the client rather than run directly in a terminal:
+
+```bash
+claude mcp add cerno -- cerno mcp
+```
+
+**Tool surface:**
+
+| Category | Tools | Gated by |
+| --- | --- | --- |
+| Read | `list_scans`, `list_findings`, `get_finding_detail`, `get_finding_hosts`, `list_hosts`, `get_web_targets`, `host_history`, `compare_scans`, `get_workflow`, `check_tools`, `list_executions`, `list_artifacts` | always available |
+| Generate | `generate_nmap_cmd`, `generate_netexec_cmd` (return commands, do not run them) | always available |
+| Execute | `execute_command` (runs a command, captures output, logs it) | `mcp_allow_execution` |
+| Mutate | `set_review_state`, `import_nessus` | `mcp_allow_mutations` |
+
+Both gating flags default to `false`, so the server is **read-only** out of the box. Enable the
+capabilities you want:
+
+```bash
+cerno config set mcp_allow_execution true   # permit execute_command
+cerno config set mcp_allow_mutations true   # permit set_review_state / import_nessus
+```
+
+When a flag is off, the corresponding tools are not registered and never appear in the client.
 
 ---
 
