@@ -188,6 +188,29 @@ class TestSaveSession:
         last_reviewed = cursor.fetchone()["last_reviewed_at"]
         assert last_reviewed is not None
 
+    def test_save_session_updates_last_reviewed_for_all_scans(self, temp_db):
+        """Test that multi-scan sessions stamp last_reviewed_at on every selected scan."""
+        from cerno_pkg.models import Scan
+
+        scan_a = Scan(scan_name="scan_a", export_root="/tmp").save(temp_db)
+        scan_b = Scan(scan_name="scan_b", export_root="/tmp").save(temp_db)
+        scan_c = Scan(scan_name="scan_c", export_root="/tmp").save(temp_db)
+        assert scan_a is not None and scan_b is not None and scan_c is not None
+
+        save_session(
+            scan_id=scan_a,
+            session_start=datetime(2024, 1, 15, 10, 0, 0),
+            additional_scan_ids=[scan_b],
+        )
+
+        rows = {
+            r["scan_id"]: r["last_reviewed_at"]
+            for r in temp_db.execute("SELECT scan_id, last_reviewed_at FROM scans")
+        }
+        assert rows[scan_a] is not None
+        assert rows[scan_b] == rows[scan_a]
+        assert rows[scan_c] is None
+
     def test_save_session_updates_existing_session(self, temp_db):
         """Test that save_session updates existing active session."""
         from cerno_pkg.models import Scan, Plugin, Finding
