@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -65,16 +66,27 @@ _claude_available: bool | None = None
 
 
 def check_claude_available() -> bool:
-    """Return True if the 'claude' CLI is on PATH.
-
+    """Return True if the 'claude' CLI is on PATH and the user is logged in.
     Result is cached for the lifetime of the process.
-
     Returns:
-        True if claude binary is found, False otherwise
+        True if claude binary is found and user is logged in, False otherwise
     """
     global _claude_available
     if _claude_available is None:
-        _claude_available = shutil.which("claude") is not None
+        if shutil.which("claude") is None:
+            _claude_available = False
+        else:
+            try:
+                result = subprocess.run(
+                    ["claude", "auth", "status"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                status = json.loads(result.stdout)
+                _claude_available = status.get("loggedIn", False)
+            except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError):
+                _claude_available = False
     return _claude_available
 
 

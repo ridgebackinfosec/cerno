@@ -1169,7 +1169,9 @@ def render_tool_availability_table(include_unavailable: bool = True) -> None:
         table.add_row("proxychains4", "✅" if pc4_available else "❌", pc4_details_text)
 
     # Claude Code (assistant — not a workflow tool, so not in the registry)
-    claude_available = bool(shutil.which("claude"))
+    from cerno_pkg.claude_assistant import check_claude_available
+    _claude_config = load_config()
+    claude_available = check_claude_available() and _claude_config.claude_assistant_enabled
     if include_unavailable or claude_available:
         if claude_available:
             claude_version = get_tool_version("claude")

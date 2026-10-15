@@ -222,16 +222,17 @@ Ask Claude questions about findings without leaving the TUI. Powered by the `cla
 
 **Setup:**
 ```bash
-# Install Claude Code CLI (required)
+# Install Claude Code CLI and authenticate (required)
 npm install -g @anthropic-ai/claude-code   # or follow https://claude.ai/code
+claude  # launches interactive setup — complete login before using this feature
 
 # Disable if not wanted
 cerno config set claude_assistant_enabled false
 ```
 
-**Tool availability:** `[A]` is hidden when `claude` is not on PATH or `claude_assistant_enabled` is `false`. It appears in the tool availability table on review startup alongside nmap/netexec/msfconsole.
+**Tool availability:** `[A]` is hidden when `claude` is not on PATH, you are not logged into Claude Code, or `claude_assistant_enabled` is `false`. It appears in the tool availability table on review startup alongside nmap/netexec/msfconsole.
 
-> **Note:** This feature is in beta. Responses may be inaccurate — always verify before acting on suggestions.
+> **Note:** This feature is in beta and requires an active Claude Code session on your machine. Responses may be inaccurate — always verify before acting on suggestions.
 
 ---
 
