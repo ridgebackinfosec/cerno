@@ -721,7 +721,7 @@ def command_review_menu(
 
     while True:
         try:
-            choice = Prompt.ask("Choose").strip()
+            choice = Prompt.ask("Choose").strip().lower()
         except KeyboardInterrupt:
             warn("\nInterrupted — returning to file menu.")
             return "cancel"

@@ -1412,7 +1412,7 @@ def main(args: types.SimpleNamespace) -> None:
                 print_action_menu([("Q", "Quit")])
 
                 try:
-                    ans = Prompt.ask("Choose scan(s) (e.g. 1  or  1-3  or  1,3,5)").strip()
+                    ans = Prompt.ask("Choose scan(s) (e.g. 1  or  1-3  or  1,3,5)").strip().lower()
                 except KeyboardInterrupt:
                     warn("\nInterrupted — exiting.")
                     return
