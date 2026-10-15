@@ -56,10 +56,12 @@ class ProxyConfig:
         enabled: Whether proxy routing is active
         host: SOCKS5 proxy host (e.g., "127.0.0.1")
         port: SOCKS5 proxy port (e.g., 9000)
+        quiet: Pass ``-q`` to proxychains4 to suppress its per-connection output
     """
     enabled: bool
     host: str
     port: int
+    quiet: bool = True
 
 
 def write_proxychains_config(proxy: ProxyConfig, config_path: Path) -> None:
@@ -172,22 +174,33 @@ def run_command_with_progress(
     # Apply proxychains4 wrapping if proxy is enabled.
     # Must happen AFTER sudo detection (used_sudo checks original cmd)
     # and BEFORE Popen (so the wrapped command is what actually runs).
+    spinner_label = "Running"
     if proxy_config is not None and proxy_config.enabled:
         cerno_dir = Path.home() / ".cerno"
         pc4_conf = cerno_dir / "proxychains4.conf"
         write_proxychains_config(proxy_config, pc4_conf)
+        pc4_prefix = ["proxychains4"]
+        if proxy_config.quiet:
+            pc4_prefix.append("-q")
+        pc4_prefix += ["-f", str(pc4_conf)]
         if isinstance(cmd, list):
-            cmd = ["proxychains4", "-f", str(pc4_conf)] + list(cmd)
+            cmd = pc4_prefix + list(cmd)
         else:
-            cmd = f"proxychains4 -f {shlex.quote(str(pc4_conf))} {cmd}"
-        log_info(
-            f"Proxy: routing through SOCKS5 "
-            f"{proxy_config.host}:{proxy_config.port} via proxychains4"
+            cmd = f"{shlex.join(pc4_prefix)} {cmd}"
+        log_info(f"Proxy: wrapped command: {cmd if isinstance(cmd, str) else shlex.join(cmd)}")
+        # With -q, proxychains4 prints nothing itself, so this line (and the
+        # spinner label) is the user's confirmation that routing is active.
+        quiet_note = " (quiet mode: per-connection output hidden)" if proxy_config.quiet else ""
+        from rich.text import Text
+        from .ansi import style_if_enabled as _style
+        indicator = Text()
+        indicator.append("[PROXY]", style=_style("bold magenta"))
+        indicator.append(
+            f" proxychains4 → SOCKS5 {proxy_config.host}:{proxy_config.port}{quiet_note}",
+            style=_style("magenta"),
         )
-        get_console().print(
-            f"[proxy] Routing through SOCKS5 "
-            f"{proxy_config.host}:{proxy_config.port} via proxychains4"
-        )
+        get_console().print(indicator)
+        spinner_label = "Running via proxychains4"
 
     if isinstance(cmd, list):
         proc = subprocess.Popen(
@@ -222,7 +235,7 @@ def run_command_with_progress(
                 console=_console_global,
                 transient=True,
             ) as progress:
-                progress.add_task(f"Running: {display_cmd}", start=True)
+                progress.add_task(f"{spinner_label}: {display_cmd}", start=True)
                 for line in iter(proc.stdout.readline, ""):
                     print(line, end="")
                     progress.refresh()

@@ -306,6 +306,8 @@ cerno review --no-proxy   # Force-disable for this session
 **Behavior when active:**
 - `[PROXY]` badge (magenta) shown in the review session status line
 - proxychains4 row appears in the startup tool availability table
+- Tools run as `proxychains4 -q` (quiet) so per-connection chatter doesn't clutter the terminal; a magenta `[PROXY] proxychains4 → SOCKS5 host:port` line and a `Running via proxychains4` spinner confirm routing
+- Set `cerno config set debug_logging true` to see full proxychains4 output when troubleshooting a tunnel
 - nmap automatically adds `-Pn` and drops `sudo` when proxied (ICMP and raw sockets don't traverse SOCKS)
 - Cerno manages its own `~/.cerno/proxychains4.conf` — system config is not touched
 
