@@ -355,6 +355,76 @@ def tool_list_artifacts(
         return [dict(row) for row in rows]
 
 
+def tool_list_cves(
+    scan_ids: list[int],
+    *,
+    severity_int: Optional[int] = None,
+    conn: Optional[sqlite3.Connection] = None,
+) -> list[dict]:
+    """List unique CVEs across one or more scans, each mapped to its plugins.
+
+    Uses the CVEs already cached in ``plugins.cves`` (no network calls). Useful
+    for building an exploitation plan from a scan's findings.
+    """
+    import json as _json
+
+    from ..database import query_all
+
+    cve_map: dict[str, list[dict]] = {}
+    with _db(conn) as c:
+        for scan_id in scan_ids:
+            params: list[Any] = [scan_id]
+            query = """
+                SELECT p.plugin_id, p.plugin_name, p.severity_int, p.cves
+                FROM findings f
+                JOIN plugins p ON f.plugin_id = p.plugin_id
+                WHERE f.scan_id = ? AND p.cves IS NOT NULL
+            """
+            if severity_int is not None:
+                query += " AND p.severity_int = ?"
+                params.append(severity_int)
+            for row in query_all(c, query, tuple(params)):
+                try:
+                    cves = _json.loads(row["cves"]) or []
+                except (ValueError, TypeError):
+                    continue
+                for cve in cves:
+                    entry = {
+                        "plugin_id": row["plugin_id"],
+                        "plugin_name": row["plugin_name"],
+                        "severity_int": row["severity_int"],
+                    }
+                    bucket = cve_map.setdefault(cve, [])
+                    if entry not in bucket:
+                        bucket.append(entry)
+
+    return [
+        {"cve": cve, "plugins": plugins} for cve, plugins in sorted(cve_map.items())
+    ]
+
+
+def tool_list_services(
+    scan_id: int, conn: Optional[sqlite3.Connection] = None
+) -> list[dict]:
+    """List discovered host/port/protocol/service-name tuples for a scan."""
+    from ..database import query_all
+
+    with _db(conn) as c:
+        rows = query_all(
+            c,
+            """
+            SELECT h.scan_target AS host, hs.port_number AS port,
+                   hs.protocol, hs.svc_name
+            FROM host_services hs
+            JOIN hosts h ON hs.host_id = h.host_id
+            WHERE hs.scan_id = ?
+            ORDER BY h.scan_target, hs.port_number
+            """,
+            (scan_id,),
+        )
+        return [dict(row) for row in rows]
+
+
 # ========== Command generation ==========
 
 
@@ -429,6 +499,37 @@ def tool_generate_netexec_cmd(
         "ips_file": str(ips_file),
         "log_path": log_path,
         "relay_path": relay_path,
+    }
+
+
+def tool_generate_msf_search(
+    finding_id: int, conn: Optional[sqlite3.Connection] = None
+) -> dict:
+    """Build an msfconsole search command for a finding's Metasploit modules.
+
+    Uses the plugin's cached Metasploit module names when available, otherwise
+    falls back to searching on the plugin name. Returns the command without
+    running it.
+    """
+    from ..models import Finding, Plugin
+    from ..tools import _build_msfconsole_commands
+
+    with _db(conn) as c:
+        finding = Finding.get_by_id(finding_id, c)
+        if finding is None:
+            raise ValueError(f"No finding with id {finding_id}")
+        plugin = Plugin.get_by_id(finding.plugin_id, c)
+        if plugin is None:
+            raise ValueError(f"No plugin with id {finding.plugin_id}")
+
+    names = plugin.metasploit_names or []
+    term = names[0] if names else plugin.plugin_name
+    commands = _build_msfconsole_commands(term)
+    return {
+        "command": commands[0] if commands else None,
+        "search_term": term,
+        "has_metasploit": plugin.has_metasploit,
+        "metasploit_names": names,
     }
 
 
@@ -625,6 +726,18 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         """List generated artifact files, optionally for one execution."""
         return tool_list_artifacts(execution_id, limit)
 
+    @mcp.tool()
+    def list_cves(
+        scan_ids: list[int], severity_int: Optional[int] = None
+    ) -> list[dict]:
+        """List unique CVEs across scans, each mapped to its plugins."""
+        return tool_list_cves(scan_ids, severity_int=severity_int)
+
+    @mcp.tool()
+    def list_services(scan_id: int) -> list[dict]:
+        """List discovered host/port/protocol/service-name tuples for a scan."""
+        return tool_list_services(scan_id)
+
     # --- Command generation (always on; no execution) ---
     @mcp.tool()
     def generate_nmap_cmd(
@@ -642,6 +755,11 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
     def generate_netexec_cmd(finding_id: int, protocol: str) -> dict:
         """Build a netexec command for a finding's hosts (does not run it)."""
         return tool_generate_netexec_cmd(finding_id, protocol, config=cfg)
+
+    @mcp.tool()
+    def generate_msf_search(finding_id: int) -> dict:
+        """Build an msfconsole search command for a finding's Metasploit modules."""
+        return tool_generate_msf_search(finding_id)
 
     # --- Execution (gated) ---
     if cfg.mcp_allow_execution:

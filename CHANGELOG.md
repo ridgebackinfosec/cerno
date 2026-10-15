@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-10-15
+
+### Added
+- MCP server: three more read/generate tools — `list_cves` (unique CVEs across a scan mapped to their plugins, from cached `plugins.cves`), `list_services` (host/port/protocol/service-name inventory from `host_services`), and `generate_msf_search` (msfconsole search command for a finding's Metasploit modules).
+
+### Changed
+- `cerno config show` now groups settings under category headers (Paths, Review & Display, Tools & Workflows, Logging, NetExec, Claude Assistant, MCP Server, Proxychains, Remote Scan Mode) instead of a flat alphabetical list, marks settings changed from their default with a `▶` and a "changed" status (defaults dimmed), reports a count of changed settings, and no longer truncates long path values (`cerno.py:config_show()`).
+
 ## [1.4.0] - 2026-10-15
 
 ### Added

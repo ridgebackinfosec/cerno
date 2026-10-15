@@ -286,3 +286,80 @@ def test_list_executions_and_artifacts(seeded):
         mcp.tool_list_artifacts(execution_id=out["execution_id"], conn=seeded["conn"])
         == []
     )
+
+
+# ---------------------------------------------------------------------------
+# CVEs / services / msf
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_list_cves(temp_db):
+    scan_id = Scan(scan_name="s", export_root="/tmp").save(temp_db)
+    Plugin(
+        plugin_id=1, plugin_name="A", severity_int=4, cves=["CVE-2021-1", "CVE-2021-2"]
+    ).save(temp_db)
+    Plugin(plugin_id=2, plugin_name="B", severity_int=2, cves=["CVE-2021-2"]).save(
+        temp_db
+    )
+    Finding(scan_id=scan_id, plugin_id=1).save(temp_db)
+    Finding(scan_id=scan_id, plugin_id=2).save(temp_db)
+    temp_db.commit()
+
+    cves = mcp.tool_list_cves([scan_id], conn=temp_db)
+    by_cve = {c["cve"]: c for c in cves}
+    assert set(by_cve) == {"CVE-2021-1", "CVE-2021-2"}
+    # CVE-2021-2 shared by both plugins
+    assert {p["plugin_id"] for p in by_cve["CVE-2021-2"]["plugins"]} == {1, 2}
+    # severity filter keeps only critical plugin's CVEs
+    crit = mcp.tool_list_cves([scan_id], severity_int=4, conn=temp_db)
+    assert {c["cve"] for c in crit} == {"CVE-2021-1", "CVE-2021-2"}
+    assert all(all(p["severity_int"] == 4 for p in c["plugins"]) for c in crit)
+
+
+@pytest.mark.integration
+def test_list_services(temp_db):
+    scan_id = Scan(scan_name="s", export_root="/tmp").save(temp_db)
+    host_id = Host.get_or_create("10.0.0.1", "10.0.0.1", "ipv4", conn=temp_db)
+    Port.get_or_create(445, conn=temp_db)
+    temp_db.execute(
+        "INSERT INTO host_services (scan_id, host_id, port_number, protocol, svc_name) "
+        "VALUES (?, ?, ?, 'tcp', 'cifs')",
+        (scan_id, host_id, 445),
+    )
+    temp_db.commit()
+
+    services = mcp.tool_list_services(scan_id, conn=temp_db)
+    assert services == [
+        {"host": "10.0.0.1", "port": 445, "protocol": "tcp", "svc_name": "cifs"}
+    ]
+
+
+@pytest.mark.integration
+def test_generate_msf_search_uses_module_name(temp_db):
+    scan_id = Scan(scan_name="s", export_root="/tmp").save(temp_db)
+    Plugin(
+        plugin_id=5,
+        plugin_name="EternalBlue",
+        severity_int=4,
+        has_metasploit=True,
+        metasploit_names=["ms17_010_eternalblue"],
+    ).save(temp_db)
+    fid = Finding(scan_id=scan_id, plugin_id=5).save(temp_db)
+    temp_db.commit()
+
+    out = mcp.tool_generate_msf_search(fid, conn=temp_db)
+    assert out["search_term"] == "ms17_010_eternalblue"
+    assert "ms17_010_eternalblue" in out["command"]
+    assert out["has_metasploit"] is True
+
+
+@pytest.mark.integration
+def test_generate_msf_search_falls_back_to_plugin_name(temp_db):
+    scan_id = Scan(scan_name="s", export_root="/tmp").save(temp_db)
+    Plugin(plugin_id=6, plugin_name="SomePlugin", severity_int=2).save(temp_db)
+    fid = Finding(scan_id=scan_id, plugin_id=6).save(temp_db)
+    temp_db.commit()
+
+    out = mcp.tool_generate_msf_search(fid, conn=temp_db)
+    assert out["search_term"] == "SomePlugin"

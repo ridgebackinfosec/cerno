@@ -2705,104 +2705,105 @@ def config_show() -> None:
     """Display current configuration (merged from file and defaults)."""
     from cerno_pkg import load_config, get_config_path, CernoConfig, DEFAULT_TOP_PORTS
     from rich.table import Table
+    from rich.text import Text
 
     config_path = get_config_path()
     config = load_config()
+    defaults = CernoConfig()
 
     header("Current Configuration")
     info(f"Config file: {config_path}")
     _console_global.print()
 
-    # Create table with Description column
-    table = Table(title="Configuration Values", show_header=True, header_style=style_if_enabled("bold cyan"))
-    table.add_column("Setting", style=style_if_enabled("cyan"), no_wrap=True)
-    table.add_column("Value", style=style_if_enabled("yellow"))
-    table.add_column("Description", style=style_if_enabled("dim white"))
-    table.add_column("Status", style=style_if_enabled("green"))
-
-    # Get defaults for comparison
-    defaults = CernoConfig()
-
-    # Collect all rows for sorting
-    rows: list[tuple[str, str | int | bool | None, bool, str]] = []
-
-    # Paths
-    rows.append(("results_root", config.results_root or str(get_results_root()),
-                config.results_root == defaults.results_root, "Directory for tool output"))
-
-    # Display preferences
-    rows.append(("default_page_size", config.default_page_size or "auto",
-                config.default_page_size == defaults.default_page_size, "Items per page in lists"))
-    rows.append(("top_ports_count", config.top_ports_count or DEFAULT_TOP_PORTS,
-                config.top_ports_count == defaults.top_ports_count, "Top ports to show"))
-
-    # Behavior
-    rows.append(("custom_workflows_path", config.custom_workflows_path or "(not set)",
-                config.custom_workflows_path == defaults.custom_workflows_path, "Path to custom workflows YAML"))
-
-    # Network
-
-    # Tool defaults
-    rows.append(("default_tool", config.default_tool or "(not set)",
-                config.default_tool == defaults.default_tool, "Pre-select: nmap/netexec/custom"))
-    rows.append(("default_netexec_protocol", config.default_netexec_protocol or "smb",
-                config.default_netexec_protocol == defaults.default_netexec_protocol, "Default: smb/ssh/ftp/etc"))
-    rows.append(("nmap_default_profile", config.nmap_default_profile or "(not set)",
-                config.nmap_default_profile == defaults.nmap_default_profile, "NSE profile name"))
-
-    # Logging
-    rows.append(("log_path", config.log_path or str(Path.home() / ".cerno" / "cerno.log"),
-                config.log_path == defaults.log_path, "Log file location"))
-    rows.append(("debug_logging", config.debug_logging,
-                config.debug_logging == defaults.debug_logging, "Enable DEBUG logs"))
-
-    # Display
-    rows.append(("no_color", config.no_color,
-                config.no_color == defaults.no_color, "Disable ANSI colors"))
-    rows.append(("term_override", config.term_override or "(not set)",
-                config.term_override == defaults.term_override, "Force terminal type"))
-
-    # NetExec integration
-    rows.append(("nxc_workspace_path", config.nxc_workspace_path or "~/.nxc/workspaces/default/",
-                config.nxc_workspace_path == defaults.nxc_workspace_path, "NetExec workspace directory"))
-    rows.append(("nxc_enrichment_enabled", config.nxc_enrichment_enabled,
-                config.nxc_enrichment_enabled == defaults.nxc_enrichment_enabled, "Show NetExec context in findings"))
-
-    # Claude Assistant
-    rows.append(("claude_assistant_enabled", config.claude_assistant_enabled,
-                config.claude_assistant_enabled == defaults.claude_assistant_enabled, "Enable Claude Assistant (BETA)"))
-
-    # MCP server
-    rows.append(("mcp_allow_execution", config.mcp_allow_execution,
-                config.mcp_allow_execution == defaults.mcp_allow_execution, "Allow MCP server to execute commands"))
-    rows.append(("mcp_allow_mutations", config.mcp_allow_mutations,
-                config.mcp_allow_mutations == defaults.mcp_allow_mutations, "Allow MCP server to mutate state"))
-
-    # Proxychains
-    rows.append(("proxychains_enabled", config.proxychains_enabled,
-                config.proxychains_enabled == defaults.proxychains_enabled, "Route tools through SOCKS5 proxy"))
-    rows.append(("proxychains_host", config.proxychains_host,
-                config.proxychains_host == defaults.proxychains_host, "SOCKS5 proxy host"))
-    rows.append(("proxychains_port", config.proxychains_port,
-                config.proxychains_port == defaults.proxychains_port, "SOCKS5 proxy port"))
-
-    # Remote scan mode
-    rows.append(("pivot_interface", config.pivot_interface or "(not set)",
-                config.pivot_interface == defaults.pivot_interface, "Interface for remote scan HTTP server"))
-    rows.append(("pivot_http_port", config.pivot_http_port,
-                config.pivot_http_port == defaults.pivot_http_port, "Port for remote scan HTTP server"))
-
-    # Sort rows alphabetically by setting name (first element of tuple)
-    rows.sort(key=lambda row: row[0])
-
-    # Add sorted rows to table
-    for key, value, is_default, description in rows:
-        status = "Default" if is_default else "Configured"
+    def _row(key: str, value, description: str) -> tuple[str, str, bool, str]:
+        """Build a display row; is_default compares against the default config."""
+        is_default = getattr(config, key) == getattr(defaults, key)
         value_str = str(value) if value is not None else "None"
-        table.add_row(key, value_str, description, status)
+        return (key, value_str, is_default, description)
+
+    # Settings grouped by category, in a logical (not alphabetical) order.
+    groups: list[tuple[str, list[tuple[str, str, bool, str]]]] = [
+        ("Paths", [
+            _row("results_root", config.results_root or str(get_results_root()), "Directory for tool output"),
+            _row("log_path", config.log_path or str(Path.home() / ".cerno" / "cerno.log"), "Log file location"),
+        ]),
+        ("Review & Display", [
+            _row("default_page_size", config.default_page_size or "auto", "Items per page in lists"),
+            _row("top_ports_count", config.top_ports_count or DEFAULT_TOP_PORTS, "Top ports to show"),
+            _row("no_color", config.no_color, "Disable ANSI colors"),
+            _row("term_override", config.term_override or "(not set)", "Force terminal type"),
+        ]),
+        ("Tools & Workflows", [
+            _row("default_tool", config.default_tool or "(not set)", "Pre-select: nmap/netexec/custom"),
+            _row("default_netexec_protocol", config.default_netexec_protocol or "smb", "Default: smb/ssh/ftp/etc"),
+            _row("nmap_default_profile", config.nmap_default_profile or "(not set)", "NSE profile name"),
+            _row("custom_workflows_path", config.custom_workflows_path or "(not set)", "Path to custom workflows YAML"),
+        ]),
+        ("Logging", [
+            _row("debug_logging", config.debug_logging, "Enable DEBUG logs"),
+        ]),
+        ("NetExec Integration", [
+            _row("nxc_workspace_path", config.nxc_workspace_path or "~/.nxc/workspaces/default/", "NetExec workspace directory"),
+            _row("nxc_enrichment_enabled", config.nxc_enrichment_enabled, "Show NetExec context in findings"),
+        ]),
+        ("Claude Assistant", [
+            _row("claude_assistant_enabled", config.claude_assistant_enabled, "Enable Claude Assistant (BETA)"),
+        ]),
+        ("MCP Server", [
+            _row("mcp_allow_execution", config.mcp_allow_execution, "Allow MCP server to execute commands"),
+            _row("mcp_allow_mutations", config.mcp_allow_mutations, "Allow MCP server to mutate state"),
+        ]),
+        ("Proxychains", [
+            _row("proxychains_enabled", config.proxychains_enabled, "Route tools through SOCKS5 proxy"),
+            _row("proxychains_host", config.proxychains_host, "SOCKS5 proxy host"),
+            _row("proxychains_port", config.proxychains_port, "SOCKS5 proxy port"),
+        ]),
+        ("Remote Scan Mode", [
+            _row("pivot_interface", config.pivot_interface or "(not set)", "Interface for remote scan HTTP server"),
+            _row("pivot_http_port", config.pivot_http_port, "Port for remote scan HTTP server"),
+        ]),
+    ]
+
+    # Build the grouped table. The marker column flags settings changed from
+    # their default with a ▶; changed rows are emphasized, defaults dimmed.
+    table = Table(title="Configuration Values", show_header=True, header_style=style_if_enabled("bold cyan"))
+    table.add_column("", width=1, no_wrap=True)  # change marker
+    table.add_column("Setting", no_wrap=True)
+    table.add_column("Value", overflow="fold")   # fold (wrap) instead of truncating paths
+    table.add_column("Description", style=style_if_enabled("dim white"))
+    table.add_column("Status")
+
+    changed_total = 0
+    for gi, (category, settings) in enumerate(groups):
+        if gi > 0:
+            table.add_section()
+        # Category header row
+        table.add_row("", Text(category, style=style_if_enabled("bold cyan")), "", "", "")
+        for key, value_str, is_default, description in settings:
+            if is_default:
+                table.add_row(
+                    "",
+                    Text(key, style=style_if_enabled("dim cyan")),
+                    Text(value_str, style=style_if_enabled("dim")),
+                    description,
+                    Text("default", style=style_if_enabled("dim")),
+                )
+            else:
+                changed_total += 1
+                table.add_row(
+                    Text("▶", style=style_if_enabled("bold yellow")),
+                    Text(key, style=style_if_enabled("cyan")),
+                    Text(value_str, style=style_if_enabled("bold yellow")),
+                    description,
+                    Text("changed", style=style_if_enabled("bold yellow")),
+                )
 
     _console.print(table)
     _console_global.print()
+    if changed_total:
+        info(f"{changed_total} setting(s) changed from default (marked ▶).")
+    else:
+        info("All settings are at their defaults.")
     info(f"Edit config: {config_path}")
     info("Change values: cerno config set <key> <value>")
     info("Reset to defaults: cerno config reset")

@@ -365,8 +365,8 @@ claude mcp add cerno -- cerno mcp
 
 | Category | Tools | Gated by |
 | --- | --- | --- |
-| Read | `list_scans`, `list_findings`, `get_finding_detail`, `get_finding_hosts`, `list_hosts`, `get_web_targets`, `host_history`, `compare_scans`, `get_workflow`, `check_tools`, `list_executions`, `list_artifacts` | always available |
-| Generate | `generate_nmap_cmd`, `generate_netexec_cmd` (return commands, do not run them) | always available |
+| Read | `list_scans`, `list_findings`, `get_finding_detail`, `get_finding_hosts`, `list_hosts`, `list_services`, `get_web_targets`, `list_cves`, `host_history`, `compare_scans`, `get_workflow`, `check_tools`, `list_executions`, `list_artifacts` | always available |
+| Generate | `generate_nmap_cmd`, `generate_netexec_cmd`, `generate_msf_search` (return commands, do not run them) | always available |
 | Execute | `execute_command` (runs a command, captures output, logs it) | `mcp_allow_execution` |
 | Mutate | `set_review_state`, `import_nessus` | `mcp_allow_mutations` |
 
