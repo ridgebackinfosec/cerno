@@ -842,7 +842,7 @@ def render_actions_footer(
     )
     right_row3_items = []
     if has_claude:
-        right_row3_items.append(key_text("A", "Ask Claude (BETA)"))
+        right_row3_items.append(key_text("A", "Ask Claude"))
     right_row3 = join_actions_texts(right_row3_items) if right_row3_items else Text()
 
     # Detect terminal width for responsive layout
@@ -917,7 +917,7 @@ def render_finding_actions_footer(
     # Row 4: Claude Assistant (conditional)
     claude_row: Optional[Text] = None
     if has_claude:
-        claude_row = join_actions_texts([key_text("A", "Ask Claude (BETA)")])
+        claude_row = join_actions_texts([key_text("A", "Ask Claude")])
     elif claude_installed:
         # Show grayed-out hint when claude is installed but assistant is disabled
         not_enabled = Text()
@@ -1036,10 +1036,10 @@ def render_claude_panel(
         if age_str:
             summary += f" · {age_str}"
         title = Text()
-        title.append("✦ Claude (BETA)", style="bold magenta")
+        title.append("✦ Claude", style="bold magenta")
         title.append(f"  ·  {summary}", style="magenta")
     else:
-        title = Text("✦ Claude Assistant (BETA)", style="bold magenta")
+        title = Text("✦ Claude Assistant", style="bold magenta")
 
     # --- Render: top Rule, content lines (soft-wrapped), bottom Rule ---
     _console_global.print(Rule(title, style="bold magenta", characters="━"))

@@ -1875,7 +1875,7 @@ def get_http_urls_for_scan(
 
 @dataclass
 class ClaudeConversationTurn:
-    """Represents a single turn in a Claude Assistant conversation for a finding (BETA)."""
+    """Represents a single turn in a Claude Assistant conversation for a finding."""
 
     id: Optional[int] = None
     finding_id: int = 0
@@ -1990,7 +1990,7 @@ class ClaudeConversationTurn:
 
 @dataclass
 class ClaudeAggregateConversationTurn:
-    """A single turn in a Claude Assistant aggregate conversation (BETA).
+    """A single turn in a Claude Assistant aggregate conversation.
 
     Used for severity-menu and findings-list scope conversations.
     Keyed by a context_key string (not a finding FK) since scope spans many findings.

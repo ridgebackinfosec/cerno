@@ -69,7 +69,7 @@ class CernoConfig:
     """Enable NetExec enrichment in finding displays (default: True)."""
 
     claude_assistant_enabled: bool = True
-    """Enable Claude Assistant (BETA) interactive chat panel in review TUI (default: True)."""
+    """Enable Claude Assistant interactive chat panel in review TUI (default: True)."""
 
     # MCP server (BETA)
     mcp_allow_execution: bool = False

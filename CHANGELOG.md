@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.2] - 2026-10-15
+
+### Changed
+- Claude Assistant is no longer marked BETA (the feature is now considered stable). Removed the BETA label from the `[A]` TUI action labels, the chat panel title, the `claude_assistant_enabled` config description, docstrings, and docs. (The MCP server remains BETA.)
+- NetExec Database Integration is no longer marked Beta (feature is now considered stable); removed the Beta label from the README section heading and note.
+
 ## [1.4.1] - 2026-10-15
 
 ### Added

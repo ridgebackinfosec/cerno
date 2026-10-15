@@ -113,7 +113,7 @@ def browse_claude_chat(
     hosts: list[str],
     workflow: Optional["Workflow"] = None,
 ) -> None:
-    """Interactive Claude Assistant chat panel for a finding (BETA).
+    """Interactive Claude Assistant chat panel for a finding.
 
     Opens a persistent chat overlay for the given finding. Loads prior conversation
     history from SQLite, displays it, and enters an input loop.
@@ -135,18 +135,18 @@ def browse_claude_chat(
         warn("Finding has no ID — cannot open Claude Assistant.")
         return
 
-    # Track whether BETA notice has been shown this session (per-call local state)
-    beta_notice_shown = False
+    # Track whether the assistant notice has been shown this session (per-call local state)
+    notice_shown = False
 
     with get_connection() as conn:
         turns = ClaudeConversationTurn.get_by_finding(conn, finding_id)
         is_resumed = bool(turns)
 
-        # Show BETA notice once per call (not stored in DB)
-        if not beta_notice_shown:
-            from cerno_pkg.claude_assistant import BETA_NOTICE
-            _console_global.print(BETA_NOTICE)
-            beta_notice_shown = True
+        # Show assistant notice once per call (not stored in DB)
+        if not notice_shown:
+            from cerno_pkg.claude_assistant import ASSISTANT_NOTICE
+            _console_global.print(ASSISTANT_NOTICE)
+            notice_shown = True
 
         while True:
             # Render the full panel (clears and redraws on each iteration)
@@ -204,7 +204,7 @@ def browse_claude_chat_aggregate(
     scan_names: list[str],
     findings_with_plugins: list[Any],
 ) -> None:
-    """Interactive Claude Assistant chat for an aggregate scope (BETA).
+    """Interactive Claude Assistant chat for an aggregate scope.
 
     Used at severity-menu level (all findings in scan) and findings-list level
     (all findings in current filter/severity selection). Conversation history is
@@ -226,8 +226,8 @@ def browse_claude_chat_aggregate(
         turns = ClaudeAggregateConversationTurn.get_by_context(conn, context_key)
         is_resumed = bool(turns)
 
-        from cerno_pkg.claude_assistant import BETA_NOTICE
-        _console_global.print(BETA_NOTICE)
+        from cerno_pkg.claude_assistant import ASSISTANT_NOTICE
+        _console_global.print(ASSISTANT_NOTICE)
         _console_global.print(f"[dim]Scope: {scope_description}[/dim]")
 
         while True:
@@ -1632,7 +1632,7 @@ def main(args: types.SimpleNamespace) -> None:
                     if host_filter:
                         _sev_menu_items.append(("C", "Clear filter"))
                     if _has_claude_sev:
-                        _sev_menu_items.append(("A", "Ask Claude (BETA)"))
+                        _sev_menu_items.append(("A", "Ask Claude"))
                     _sev_menu_items.append(("B", "Back"))
                     print_action_menu(_sev_menu_items)
 
@@ -2747,7 +2747,7 @@ def config_show() -> None:
             _row("nxc_enrichment_enabled", config.nxc_enrichment_enabled, "Show NetExec context in findings"),
         ]),
         ("Claude Assistant", [
-            _row("claude_assistant_enabled", config.claude_assistant_enabled, "Enable Claude Assistant (BETA)"),
+            _row("claude_assistant_enabled", config.claude_assistant_enabled, "Enable Claude Assistant"),
         ]),
         ("MCP Server", [
             _row("mcp_allow_execution", config.mcp_allow_execution, "Allow MCP server to execute commands"),

@@ -219,7 +219,7 @@ cerno_pkg/
   ├── nessus_import.py     # .nessus XML parsing and database import
   ├── parsing.py           # Host:port parsing (canonical parser, ParsedHostsPorts model)
   ├── analysis.py          # Cross-file comparison, superset analysis
-  ├── claude_assistant.py  # Claude Assistant integration (BETA)
+  ├── claude_assistant.py  # Claude Assistant integration
   │                        # check_claude_available(), build_finding_context(), run_exchange()
   │                        # build_aggregate_context(), run_aggregate_exchange()
   │                        # load_skill_prompt() (loads .claude/skills/cerno-assistant.md or fallback)
@@ -502,7 +502,7 @@ Only after user confirms the changelog content:
 - `default_netexec_protocol` - Default protocol for NetExec (e.g., `smb`, `ssh`)
 - `nmap_default_profile` - Default NSE profile name
 - `custom_workflows_path` - Path to custom workflows YAML file
-- `claude_assistant_enabled` - Enable/disable Claude Assistant (BETA) (default: `true`); set to `false` to hide `[A]` entirely
+- `claude_assistant_enabled` - Enable/disable Claude Assistant (default: `true`); set to `false` to hide `[A]` entirely
 - `mcp_allow_execution` - Allow the `cerno mcp` server to execute tool commands via `execute_command` (default: `false`)
 - `mcp_allow_mutations` - Allow the `cerno mcp` server to mutate state (`set_review_state`, `import_nessus`) (default: `false`)
 
