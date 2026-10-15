@@ -6,6 +6,7 @@ and generate scan statistics.
 """
 
 import re
+import sqlite3
 from collections import defaultdict
 from pathlib import Path
 from typing import Optional, Union, TYPE_CHECKING, cast
@@ -34,8 +35,68 @@ from .ansi import get_console
 
 _console_global = get_console()
 
+def _fetch_host_rows_by_finding(
+    findings: list['Finding'],
+    conn: Optional[sqlite3.Connection] = None,
+) -> dict[Optional[int], list[sqlite3.Row]]:
+    """Fetch affected host rows for findings, merging multi-scan siblings.
+
+    Each finding's own rows plus the rows of its ``extra_finding_ids`` (sibling
+    findings from other selected scans) are bucketed under the representative
+    finding's ID, so analyses see the cross-scan union of hosts.
+
+    Args:
+        findings: Representative Finding objects
+        conn: Database connection (optional)
+
+    Returns:
+        Mapping of representative finding_id → host rows (finding_id, ip_address,
+        port_number, scan_target_type), ordered IPv4, IPv6, then hostnames
+    """
+    from .database import db_transaction, query_all
+
+    rep_by_id: dict[int, Optional[int]] = {}
+    for pf in findings:
+        for fid in [pf.finding_id] + pf.extra_finding_ids:
+            if fid is not None:
+                rep_by_id[fid] = pf.finding_id
+
+    rows_by_rep: dict[Optional[int], list[sqlite3.Row]] = defaultdict(list)
+    if not rep_by_id:
+        return rows_by_rep
+
+    with db_transaction(conn) as c:
+        rows = query_all(
+            c,
+            """
+            SELECT
+                fah.finding_id,
+                h.ip_address,
+                fah.port_number,
+                h.scan_target_type
+            FROM finding_affected_hosts fah
+            JOIN hosts h ON fah.host_id = h.host_id
+            WHERE fah.finding_id IN ({})
+            ORDER BY
+                fah.finding_id,
+                CASE WHEN h.scan_target_type = 'ipv4' THEN 0
+                     WHEN h.scan_target_type = 'ipv6' THEN 1
+                     ELSE 2 END,
+                h.ip_address ASC
+            """.format(','.join('?' * len(rep_by_id))),
+            tuple(rep_by_id),
+        )
+
+    for row in rows:
+        rows_by_rep[rep_by_id[row['finding_id']]].append(row)
+    return rows_by_rep
+
+
 @log_timing
-def compare_filtered(files: Union[list['Finding'], list[tuple['Finding', 'Plugin']]]) -> list[list[str]]:
+def compare_filtered(
+    files: Union[list['Finding'], list[tuple['Finding', 'Plugin']]],
+    conn: Optional[sqlite3.Connection] = None,
+) -> list[list[str]]:
     """Compare host/port combinations across multiple findings (database-only).
 
     Queries database for host/port combinations, computes intersections and unions,
@@ -44,6 +105,7 @@ def compare_filtered(files: Union[list['Finding'], list[tuple['Finding', 'Plugin
 
     Args:
         files: List of Finding objects or (Finding, Plugin) tuples to compare
+        conn: Database connection (optional)
 
     Returns:
         List of groups where each group is a list of plugin identifiers with
@@ -81,36 +143,8 @@ def compare_filtered(files: Union[list['Finding'], list[tuple['Finding', 'Plugin
             "Querying findings for comparison...", total=len(files)
         )
 
-        # Database query: fetch all hosts/ports in a single batch
-        from .database import db_transaction, query_all
-
-        finding_ids = [pf.finding_id for pf in findings]
-        with db_transaction() as conn:
-            rows = query_all(
-                conn,
-                """
-                SELECT
-                        fah.finding_id,
-                        h.ip_address,
-                        fah.port_number,
-                        h.scan_target_type
-                    FROM finding_affected_hosts fah
-                    JOIN hosts h ON fah.host_id = h.host_id
-                    WHERE fah.finding_id IN ({})
-                    ORDER BY
-                        fah.finding_id,
-                        CASE WHEN h.scan_target_type = 'ipv4' THEN 0
-                             WHEN h.scan_target_type = 'ipv6' THEN 1
-                             ELSE 2 END,
-                        h.ip_address ASC
-                """.format(','.join('?' * len(finding_ids))),
-                tuple(finding_ids)
-            )
-
-        # Group results by finding_id
-        hosts_by_file = defaultdict(list)
-        for row in rows:
-            hosts_by_file[row['finding_id']].append(row)
+        # Database query: fetch all hosts/ports (incl. multi-scan siblings) in one batch
+        hosts_by_file = _fetch_host_rows_by_finding(findings, conn)
 
         # Process each Finding
         for pf in findings:
@@ -221,7 +255,10 @@ def compare_filtered(files: Union[list['Finding'], list[tuple['Finding', 'Plugin
 
 
 @log_timing
-def analyze_inclusions(files: Union[list['Finding'], list[tuple['Finding', 'Plugin']]]) -> list[list[str]]:
+def analyze_inclusions(
+    files: Union[list['Finding'], list[tuple['Finding', 'Plugin']]],
+    conn: Optional[sqlite3.Connection] = None,
+) -> list[list[str]]:
     """Analyze superset relationships across findings (database-only).
 
     Identifies which findings are supersets of others (contain all their
@@ -229,6 +266,7 @@ def analyze_inclusions(files: Union[list['Finding'], list[tuple['Finding', 'Plug
 
     Args:
         files: List of Finding objects or (Finding, Plugin) tuples to analyze
+        conn: Database connection (optional)
 
     Returns:
         List of groups where each group is [superset_name, *covered_names],
@@ -265,36 +303,8 @@ def analyze_inclusions(files: Union[list['Finding'], list[tuple['Finding', 'Plug
     ) as progress:
         task = progress.add_task("Querying findings...", total=len(files))
 
-        # Database query: fetch all hosts/ports in a single batch
-        from .database import db_transaction, query_all
-
-        finding_ids = [pf.finding_id for pf in findings]
-        with db_transaction() as conn:
-            rows = query_all(
-                conn,
-                """
-                SELECT
-                        fah.finding_id,
-                        h.ip_address,
-                        fah.port_number,
-                        h.scan_target_type
-                    FROM finding_affected_hosts fah
-                    JOIN hosts h ON fah.host_id = h.host_id
-                    WHERE fah.finding_id IN ({})
-                    ORDER BY
-                        fah.finding_id,
-                        CASE WHEN h.scan_target_type = 'ipv4' THEN 0
-                             WHEN h.scan_target_type = 'ipv6' THEN 1
-                             ELSE 2 END,
-                        h.ip_address ASC
-                    """.format(','.join('?' * len(finding_ids))),
-                tuple(finding_ids)
-            )
-
-        # Group results by finding_id
-        hosts_by_file = defaultdict(list)
-        for row in rows:
-            hosts_by_file[row['finding_id']].append(row)
+        # Database query: fetch all hosts/ports (incl. multi-scan siblings) in one batch
+        hosts_by_file = _fetch_host_rows_by_finding(findings, conn)
 
         # Process each Finding
         for pf in findings:

@@ -579,7 +579,9 @@ class Finding:
         Returns:
             A tuple of:
             - display_list: list of (Finding, Plugin) tuples — one representative
-              Finding per plugin_id (from the scan with the lowest scan_id).
+              Finding per plugin_id (from the scan with the lowest scan_id), with
+              ``extra_finding_ids`` set to the sibling finding IDs from the other
+              scans so host/port queries span all selected scans.
             - all_instances: dict mapping plugin_id → list of all Finding objects
               across all selected scans, ordered by scan_id ascending.
 
@@ -683,11 +685,15 @@ class Finding:
 
                 all_instances[pid].append(finding)
 
-            # Build display_list: representative Finding (lowest scan_id) paired with Plugin
-            display_list: list[tuple[Finding, Plugin]] = [
-                (all_instances[pid][0], plugin_map[pid])
-                for pid in all_instances
-            ]
+            # Build display_list: representative Finding (lowest scan_id) paired with Plugin.
+            # Attach sibling finding_ids so host/port queries cover all selected scans.
+            display_list: list[tuple[Finding, Plugin]] = []
+            for pid, instances in all_instances.items():
+                rep = instances[0]
+                rep.extra_finding_ids = [
+                    f.finding_id for f in instances[1:] if f.finding_id is not None
+                ]
+                display_list.append((rep, plugin_map[pid]))
 
             return display_list, all_instances
 

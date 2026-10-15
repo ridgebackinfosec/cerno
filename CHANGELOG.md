@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.44] - 2026-10-15
+
+### Fixed
+- Compare hosts (`[H]`), overlapping analysis (`[O]`), the aggregate host view (`[V]`) and Claude aggregate context now include hosts from all selected scans in multi-scan review instead of only the first scan, so comparison and overlap groups reflect the true cross-scan host set (`models.py:Finding.get_by_scan_ids_merged()`, `analysis.py`).
+
 ## [1.3.43] - 2026-10-15
 
 ### Fixed

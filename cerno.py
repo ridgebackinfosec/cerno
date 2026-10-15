@@ -1044,14 +1044,6 @@ def browse_file_list(
             else:
                 chosen_sev_dir = sev_dir
 
-            # In multi-scan mode, attach all sibling finding_ids so host/port
-            # queries inside process_single_finding cover all selected scans.
-            if is_multi_scan and all_instances:
-                finding.extra_finding_ids = [
-                    f.finding_id for f in all_instances.get(finding.plugin_id, [])
-                    if f.finding_id is not None and f.finding_id != finding.finding_id
-                ]
-
             # Process the file
             process_single_finding(
                 chosen_path,
