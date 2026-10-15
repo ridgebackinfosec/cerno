@@ -68,7 +68,8 @@ def save_session(
     """
     session_id = _db_save_session(
         scan_id, session_start, reviewed_count, completed_count,
-        skipped_count, tool_executions, cve_extractions
+        skipped_count, tool_executions, cve_extractions,
+        additional_scan_ids=additional_scan_ids,
     )
 
     if session_id:
@@ -167,6 +168,7 @@ def _db_save_session(
     skipped_count: int,
     tool_executions: int,
     cve_extractions: int,
+    additional_scan_ids: Optional[list[int]] = None,
 ) -> Optional[int]:
     """Save session to database (internal helper).
 
@@ -178,6 +180,8 @@ def _db_save_session(
         skipped_count: Count of skipped files
         tool_executions: Tool execution count
         cve_extractions: CVE extraction count
+        additional_scan_ids: Additional scan IDs in a multi-scan session; their
+            last_reviewed_at is stamped alongside the primary scan
 
     Returns:
         session_id if successful, None otherwise
@@ -187,10 +191,12 @@ def _db_save_session(
         from .models import now_iso
 
         with db_transaction() as conn:
-            # Update last_reviewed_at for scan
+            # Update last_reviewed_at for every scan in the session
+            stamp_ids = [scan_id] + (additional_scan_ids or [])
+            placeholders = ",".join("?" * len(stamp_ids))
             conn.execute(
-                "UPDATE scans SET last_reviewed_at = ? WHERE scan_id = ?",
-                (now_iso(), scan_id)
+                f"UPDATE scans SET last_reviewed_at = ? WHERE scan_id IN ({placeholders})",
+                (now_iso(), *stamp_ids)
             )
 
             # Check for active session

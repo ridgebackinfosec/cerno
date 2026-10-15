@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.45] - 2026-10-15
+
+### Fixed
+- Reviewing multiple scans together now updates "Last Reviewed" for every selected scan instead of only the first, and returning to the scan list now records all selected scans in the session (`session.py:save_session()`).
+
 ## [1.3.44] - 2026-10-15
 
 ### Fixed

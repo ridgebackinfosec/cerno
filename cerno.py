@@ -1308,6 +1308,13 @@ def main(args: types.SimpleNamespace) -> None:
         from cerno_pkg.models import Scan, Finding
         from datetime import datetime
 
+        def _additional_scan_ids(scans: list[Scan]) -> Optional[list[int]]:
+            """Return secondary scan IDs for a multi-scan selection (None for single scan)."""
+            ids = [s.scan_id for s in scans[1:] if s.scan_id is not None]
+            return ids or None
+
+        selected_scans: list[Scan] = []
+
         # Outer loop for scan selection
         # Wrapped in try/finally to ensure session is saved on ALL exit paths
         try:
@@ -1321,6 +1328,7 @@ def main(args: types.SimpleNamespace) -> None:
                         reviewed_count=len(reviewed_total),
                         completed_count=len(completed_total),
                         skipped_count=len(skipped_total),
+                        additional_scan_ids=_additional_scan_ids(selected_scans),
                     )
 
                     # Show statistics if work was done
@@ -1856,14 +1864,13 @@ def main(args: types.SimpleNamespace) -> None:
             # Always save session on exit (handles early exits via q, Ctrl+C, or errors)
             # Only save if scan was actually selected (scan_id != 0)
             if scan_id != 0:
-                additional_ids = [s.scan_id for s in selected_scans[1:]] if len(selected_scans) > 1 else None
                 save_session(
                     scan_id,
                     session_start_time,
                     reviewed_count=len(reviewed_total),
                     completed_count=len(completed_total),
                     skipped_count=len(skipped_total),
-                    additional_scan_ids=additional_ids,
+                    additional_scan_ids=_additional_scan_ids(selected_scans),
                 )
 
                 # Session summary with rich statistics (only if work was done)
