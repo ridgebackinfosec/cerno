@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.43] - 2026-10-15
+
+### Fixed
+- Host search (`[H]`) during multi-scan review now looks up the host across all selected scans instead of only the first, so hosts that appear only in later scans are found and their findings are no longer dropped from the filtered view (`models.py:Host.get_plugin_ids_for_scan()`).
+
 ## [1.3.42] - 2026-09-17
 
 ### Added

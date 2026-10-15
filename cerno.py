@@ -1669,11 +1669,12 @@ def main(args: types.SimpleNamespace) -> None:
                         if host_input.startswith("[") and host_input.endswith("]"):
                             host_input = host_input[1:-1]
 
-                        # Query plugin IDs for this host in current scan
+                        # Query plugin IDs for this host across all selected scans
                         plugin_ids = Host.get_plugin_ids_for_scan(
                             ip_address=host_input,
                             scan_id=scan_id,
-                            partial_match=True
+                            partial_match=True,
+                            scan_ids=all_scan_ids if len(all_scan_ids) > 1 else None,
                         )
 
                         if not plugin_ids:
