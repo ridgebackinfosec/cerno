@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-10-16
+
+### Documentation
+- Added `docs/MCP.md` — full MCP server reference (tools/resources/prompts, gating) with Claude CLI setup for both pipx and development/editable installs, plus verify/manage commands.
+- README: added an MCP capability bullet, condensed the MCP Server section to a quick-start that links to `docs/MCP.md`, and added `docs/MCP.md` to the documentation index.
+
 ## [1.6.0] - 2026-10-15
 
 ### Added
