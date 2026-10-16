@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.2] - 2026-10-16
+
+### Fixed
+- CI test failures across the OS/Python matrix:
+  - MCP output-schema `TypedDict`s now import from `typing_extensions`, fixing a `PydanticUserError` that broke `build_server` on Python 3.11 (`cerno_pkg/mcp_server/server.py`).
+  - `build_aggregate_context()` accepts an optional `conn`, and the MCP `triage_scope` prompt threads it through, so host/port lookups use the caller's connection instead of the default database (fixes `no such table` under tests/CI; `cerno_pkg/claude_assistant.py`).
+  - `get_interface_ip()` degrades gracefully where `fcntl` is unavailable (Windows) instead of raising `ModuleNotFoundError` (`cerno_pkg/ops.py`).
+  - Marked the Unix-only `get_interface_ip` dotted-quad and proxychains shell-wrap tests `skipif(win32)` (`tests/test_ops.py`).
+
 ## [1.6.1] - 2026-10-16
 
 ### Documentation

@@ -1,5 +1,6 @@
 """Tests for cerno_pkg.ops module."""
 
+import sys
 import tempfile
 from pathlib import Path
 
@@ -699,6 +700,7 @@ class TestGetInterfaceIp:
         assert result is None or isinstance(result, str)
 
     @pytest.mark.unit
+    @pytest.mark.skipif(sys.platform == "win32", reason="fcntl is Unix-only")
     def test_returns_dotted_quad_format(self, monkeypatch):
         from cerno_pkg.ops import get_interface_ip
         import socket
@@ -947,6 +949,7 @@ class TestRunCommandWithProgressProxy:
         return captured.get("cmd")
 
     @pytest.mark.unit
+    @pytest.mark.skipif(sys.platform == "win32", reason="proxychains4 is Unix-only")
     def test_proxy_wraps_shell_command_quietly(self, tmp_path, monkeypatch):
         """Shell-string commands are wrapped with proxychains4 -q."""
         from cerno_pkg.ops import ProxyConfig

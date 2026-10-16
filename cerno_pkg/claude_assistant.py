@@ -22,9 +22,10 @@ excluded when the cap is hit.
 from __future__ import annotations
 
 import shutil
+import sqlite3
 import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Optional
 
 from .logging_setup import log_debug, log_error
 
@@ -340,6 +341,7 @@ def build_aggregate_context(
     scan_names: list[str],
     scope_description: str,
     findings_with_plugins: list[tuple[Any, Any]],
+    conn: Optional[sqlite3.Connection] = None,
 ) -> str:
     """Assemble a context block summarising a collection of findings.
 
@@ -405,7 +407,7 @@ def build_aggregate_context(
     lines.append(f"Findings ({min(total, cap)} of {total}, highest severity first):")
     for i, (finding, plugin) in enumerate(sorted_findings[:cap], 1):
         sev_label = severity_labels.get(plugin.severity_int, str(plugin.severity_int))
-        hosts, _ = finding.get_hosts_and_ports()
+        hosts, _ = finding.get_hosts_and_ports(conn)
         host_count = len(hosts)
         msf_flag = "yes" if plugin.has_metasploit else "no"
         cve_str = "none"
