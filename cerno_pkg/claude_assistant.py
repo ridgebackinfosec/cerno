@@ -1,4 +1,4 @@
-"""Claude Assistant integration (BETA) — interactive AI chat for Nessus findings.
+"""Claude Assistant integration — interactive AI chat for Nessus findings.
 
 Provides on-demand AI-assisted analysis via the Claude CLI (`claude -p`) at three scopes:
 
@@ -33,8 +33,8 @@ if TYPE_CHECKING:
     from .workflow_mapper import Workflow
 
 
-BETA_NOTICE = (
-    "[bold yellow]Claude Assistant (BETA)[/bold yellow]\n"
+ASSISTANT_NOTICE = (
+    "[bold yellow]Claude Assistant[/bold yellow]\n"
     "[dim]Responses may be inaccurate. Always verify before acting on suggestions.[/dim]"
 )
 

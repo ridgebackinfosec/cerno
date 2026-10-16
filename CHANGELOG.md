@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-10-15
+
+### Added
+- MCP server: **NetExec enrichment** tools/resource — `get_host_nxc` (credentials, shares, security flags for a host), `list_nxc_credentials` (deduplicated creds across hosts), and resource `cerno://host/{ip}/nxc`. Available when a NetExec workspace is configured (honors `nxc_enrichment_enabled`).
+- MCP server: `find_affected_by_cve` — reverse CVE lookup returning affected findings/hosts across scans (exact, case-insensitive match).
+- MCP server: `read_artifact` — read back the contents of a generated artifact file (e.g. nmap output) by id, capped with a `truncated` flag.
+- MCP server: read-only config awareness — `get_config` tool and `cerno://config` resource expose all current settings with resolved paths.
+
+### Changed
+- MCP server: `execute_command` now emits progress heartbeats while a command runs, so long scans show liveness in progress-capable clients.
+- MCP server: core read tools (`list_scans`, `list_findings`, `get_finding_detail`, `list_hosts`, `list_services`, `list_cves`) now declare structured output schemas for cleaner client-side parsing.
+- Docs: clarified that enabling `mcp_allow_mutations` unlocks `import_nessus` and `set_review_state` (import remains gated as a DB-writing operation).
+
+## [1.5.0] - 2026-10-15
+
+### Added
+- MCP server: **resources** — operator-pinnable context under `cerno://` URIs: `cerno://scans`, `cerno://scan/{id}/hosts`, `cerno://scan/{id}/cves`, `cerno://finding/{id}/output` (raw per-host plugin output), `cerno://finding/{id}/workflow`. Read-only, always available.
+- MCP server: **prompt templates** — `triage_finding`, `exploit_plan`, and `triage_scope`, reusing the same context builders and report-brief wording as the in-TUI `[A]` assistant. (Both features only appear in MCP clients that render resources/prompts; the read tools remain the fallback.)
+
+### Changed
+- `cerno mcp` now logs its active execution/mutation gating state at startup (to `~/.cerno/cerno.log`, never stdout), and `cerno mcp --help` plus the README document that gating flags are read once at startup — reconnect/restart the server to apply changes (`cerno_pkg/mcp_server/server.py:gating_summary()`).
+
+## [1.4.2] - 2026-10-15
+
+### Changed
+- Claude Assistant is no longer marked BETA (the feature is now considered stable). Removed the BETA label from the `[A]` TUI action labels, the chat panel title, the `claude_assistant_enabled` config description, docstrings, and docs. (The MCP server remains BETA.)
+- NetExec Database Integration is no longer marked Beta (feature is now considered stable); removed the Beta label from the README section heading and note.
+
+## [1.4.1] - 2026-10-15
+
+### Added
+- MCP server: three more read/generate tools — `list_cves` (unique CVEs across a scan mapped to their plugins, from cached `plugins.cves`), `list_services` (host/port/protocol/service-name inventory from `host_services`), and `generate_msf_search` (msfconsole search command for a finding's Metasploit modules).
+
+### Changed
+- `cerno config show` now groups settings under category headers (Paths, Review & Display, Tools & Workflows, Logging, NetExec, Claude Assistant, MCP Server, Proxychains, Remote Scan Mode) instead of a flat alphabetical list, marks settings changed from their default with a `▶` and a "changed" status (defaults dimmed), reports a count of changed settings, and no longer truncates long path values (`cerno.py:config_show()`).
+
+## [1.4.0] - 2026-10-15
+
+### Added
+- **MCP server (BETA)**: new `cerno mcp` command exposes Cerno's scan database and tooling over the Model Context Protocol via local stdio transport, so any MCP client (Claude Code, Claude Desktop, etc.) can query findings and drive an engagement. Register it with `claude mcp add cerno -- cerno mcp` (`cerno_pkg/mcp_server/`).
+  - Read + command-generation tools (always available): `list_scans`, `list_findings`, `get_finding_detail`, `get_finding_hosts`, `list_hosts`, `get_web_targets`, `host_history`, `compare_scans`, `get_workflow`, `check_tools`, `list_executions`, `list_artifacts`, `generate_nmap_cmd`, `generate_netexec_cmd`.
+  - Execution tool `execute_command` (runs a command non-interactively, captures output, logs to `tool_executions`) gated behind new config flag `mcp_allow_execution` (default `false`).
+  - Mutation tools `set_review_state` and `import_nessus` gated behind new config flag `mcp_allow_mutations` (default `false`). When a flag is off, the corresponding tools are not registered.
+- New `ops.run_command_captured()` helper: non-interactive command execution that captures output without writing to stdout (used by the MCP server; keeps the stdio JSON-RPC channel clean).
+
 ## [1.3.46] - 2026-10-15
 
 ### Changed

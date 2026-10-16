@@ -12,7 +12,7 @@ A **TUI tool** for reviewing Nessus scan findings and orchestrating security too
 - ⚡ One-command tool launches (nmap NSE scripts, NetExec, custom workflows)
 - 📊 CVE extraction, Metasploit module search, host comparison
 - 🔗 NetExec database integration (correlate credentials with findings)
-- 🤖 Claude Assistant (BETA) — on-demand AI chat at finding, severity, and findings-list scope
+- 🤖 Claude Assistant — on-demand AI chat at finding, severity, and findings-list scope
 - 🔀 Proxychains4 integration — route all tool executions through a SOCKS5 proxy
 
 **📺 Watch the demo:**
@@ -209,7 +209,7 @@ Extract CVEs, search Metasploit modules, and compare findings across hosts.
 
 ---
 
-### 🤖 Claude Assistant (BETA)
+### 🤖 Claude Assistant
 
 Ask Claude questions about findings without leaving the TUI. Powered by the `claude` CLI (`claude -p`) — no API key required, no data sent to external services beyond what `claude` itself handles.
 
@@ -231,11 +231,11 @@ cerno config set claude_assistant_enabled false
 
 **Tool availability:** `[A]` is hidden when `claude` is not on PATH or `claude_assistant_enabled` is `false`. It appears in the tool availability table on review startup alongside nmap/netexec/msfconsole.
 
-> **Note:** This feature is in beta. Responses may be inaccurate — always verify before acting on suggestions.
+> **Note:** Responses may be inaccurate — always verify before acting on suggestions.
 
 ---
 
-### 🔗 NetExec Database Integration (Beta)
+### 🔗 NetExec Database Integration
 
 Automatically enrich finding displays with data from your NetExec databases—see which credentials work on affected hosts, share access, and security misconfigurations.
 
@@ -254,7 +254,7 @@ cerno config set nxc_enrichment_enabled false                    # Disable featu
 
 **Supported protocols:** SMB, SSH, LDAP, MSSQL, RDP, WinRM, FTP, NFS, VNC, WMI
 
-> **Note:** This feature is in beta. NetExec databases are read in read-only mode; Cerno never modifies them.
+> **Note:** NetExec databases are read in read-only mode; Cerno never modifies them.
 
 ---
 
@@ -341,9 +341,53 @@ cerno config get <key>                         # Get a single config value
 cerno config set <key> <value>                 # Set a config value
 cerno config reset                             # Reset to defaults (creates backup)
 
+# MCP server (BETA)
+cerno mcp                                      # Serve scan data/tooling over MCP (stdio)
+
 # Maintenance
 cerno reset                                    # Purge ~/.cerno and return to fresh state
 ```
+
+---
+
+## MCP Server (BETA)
+
+`cerno mcp` exposes your scan database over the [Model Context Protocol](https://modelcontextprotocol.io),
+so any MCP client (Claude Code, Claude Desktop, etc.) can query findings, build target lists, generate
+tool commands, and — when explicitly enabled — execute tools and update review state. It speaks over
+**stdio**, so it is launched by the client rather than run directly in a terminal:
+
+```bash
+claude mcp add cerno -- cerno mcp
+```
+
+**Tool surface:**
+
+| Category | Tools | Gated by |
+| --- | --- | --- |
+| Read | `list_scans`, `list_findings`, `get_finding_detail`, `get_finding_hosts`, `list_hosts`, `list_services`, `get_web_targets`, `list_cves`, `find_affected_by_cve`, `host_history`, `compare_scans`, `get_workflow`, `check_tools`, `list_executions`, `list_artifacts`, `read_artifact`, `get_config` | always available |
+| NetExec | `get_host_nxc`, `list_nxc_credentials` (credentials, shares, security flags; needs a configured NetExec workspace) | always available |
+| Generate | `generate_nmap_cmd`, `generate_netexec_cmd`, `generate_msf_search` (return commands, do not run them) | always available |
+| Execute | `execute_command` (runs a command, captures output, logs it; reports progress) | `mcp_allow_execution` |
+| Mutate | `set_review_state`, `import_nessus` | `mcp_allow_mutations` |
+
+Both gating flags default to `false`, so the server is **read-only** out of the box. Enable the
+capabilities you want:
+
+```bash
+cerno config set mcp_allow_execution true   # permit execute_command
+cerno config set mcp_allow_mutations true   # permit set_review_state / import_nessus
+```
+
+When a flag is off, the corresponding tools are not registered and never appear in the client.
+
+> **Note:** Gating flags are read once at server startup. After changing them, reconnect or restart the server (via your MCP client) for the change to take effect — the active gating state is logged to `~/.cerno/cerno.log` on startup.
+
+**Resources** (operator-pinnable context, read-only): `cerno://scans`, `cerno://scan/{id}/hosts`, `cerno://scan/{id}/cves`, `cerno://finding/{id}/output` (raw per-host plugin output), `cerno://finding/{id}/workflow`, `cerno://config`, `cerno://host/{ip}/nxc` (NetExec enrichment).
+
+**Prompts** (one-click templates): `triage_finding`, `exploit_plan`, `triage_scope`.
+
+> **Note:** Resources and prompts only appear in MCP clients that render them (e.g. Claude Desktop). Tool-only clients ignore them; the read tools provide the same data.
 
 ---
 
@@ -362,7 +406,7 @@ cerno reset                                    # Purge ~/.cerno and return to fr
 - `[M]` - Mark all filtered findings as review completed
 - `[R]` - Show completed findings (with undo)
 - `[U]` - Undo review completion (restore a completed finding to pending)
-- `[A]` - Ask Claude (BETA) — chat about the current filtered findings set
+- `[A]` - Ask Claude — chat about the current filtered findings set
 - `[W]` - View workflow verification steps (when available for selected finding)
 - `[N]` / `[P]` - Next / previous page
 - `[B]` - Back to severity menu
@@ -373,7 +417,7 @@ cerno reset                                    # Purge ~/.cerno and return to fr
 - `[D]` - Finding Details (host list, port distribution, plugin output)
 - `[N]` - NetExec Data (per-host credential and access breakdown)
 - `[T]` - Run Tool (launch nmap, NetExec, Metasploit, or custom workflow)
-- `[A]` - Ask Claude (BETA) — chat about this specific finding
+- `[A]` - Ask Claude — chat about this specific finding
 - `[W]` - View workflow verification steps
 - `[U]` - Undo review completion
 - `[B]` - Back to findings list

@@ -280,7 +280,7 @@ CREATE INDEX IF NOT EXISTS idx_host_services_scan ON host_services(scan_id);
 CREATE INDEX IF NOT EXISTS idx_host_services_host ON host_services(host_id);
 CREATE INDEX IF NOT EXISTS idx_host_services_svc ON host_services(svc_name);
 
--- Claude Assistant conversation history (BETA)
+-- Claude Assistant conversation history
 -- Stores per-finding chat turns; cascades on finding delete
 CREATE TABLE IF NOT EXISTS claude_conversations (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -293,7 +293,7 @@ CREATE TABLE IF NOT EXISTS claude_conversations (
 CREATE INDEX IF NOT EXISTS idx_claude_conversations_finding
     ON claude_conversations(finding_id);
 
--- Claude Assistant aggregate conversations (BETA)
+-- Claude Assistant aggregate conversations
 -- Stores chat turns for severity-menu and findings-list scope conversations.
 -- Keyed by a context_key string (not a FK) since scope spans multiple findings.
 CREATE TABLE IF NOT EXISTS claude_aggregate_conversations (
