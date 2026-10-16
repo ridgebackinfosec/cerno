@@ -14,6 +14,7 @@ A **TUI tool** for reviewing Nessus scan findings and orchestrating security too
 - 🔗 NetExec database integration (correlate credentials with findings)
 - 🤖 Claude Assistant — on-demand AI chat at finding, severity, and findings-list scope
 - 🔀 Proxychains4 integration — route all tool executions through a SOCKS5 proxy
+- 🔌 MCP server — expose scans, findings, targets & tooling to any MCP client (Claude CLI, etc.)
 
 **📺 Watch the demo:**
 
@@ -352,42 +353,36 @@ cerno reset                                    # Purge ~/.cerno and return to fr
 
 ## MCP Server (BETA)
 
-`cerno mcp` exposes your scan database over the [Model Context Protocol](https://modelcontextprotocol.io),
-so any MCP client (Claude Code, Claude Desktop, etc.) can query findings, build target lists, generate
+`cerno mcp` exposes your scan database and tooling over the [Model Context Protocol](https://modelcontextprotocol.io),
+so any MCP client (Claude CLI, Claude Desktop, etc.) can query findings, build target lists, generate
 tool commands, and — when explicitly enabled — execute tools and update review state. It speaks over
-**stdio**, so it is launched by the client rather than run directly in a terminal:
+**stdio**, so it is launched by the client rather than run directly in a terminal.
+
+**Add it to Claude CLI:**
 
 ```bash
+# pipx install (cerno is on PATH)
 claude mcp add cerno -- cerno mcp
+
+# development / editable install (point at your checkout's venv binary)
+claude mcp add cerno -- /abs/path/to/cerno/.venv/bin/cerno mcp
 ```
 
-**Tool surface:**
+Then `claude mcp list` to verify, or `/mcp` inside a session to see the tools,
+resources, and prompts.
 
-| Category | Tools | Gated by |
-| --- | --- | --- |
-| Read | `list_scans`, `list_findings`, `get_finding_detail`, `get_finding_hosts`, `list_hosts`, `list_services`, `get_web_targets`, `list_cves`, `find_affected_by_cve`, `host_history`, `compare_scans`, `get_workflow`, `check_tools`, `list_executions`, `list_artifacts`, `read_artifact`, `get_config` | always available |
-| NetExec | `get_host_nxc`, `list_nxc_credentials` (credentials, shares, security flags; needs a configured NetExec workspace) | always available |
-| Generate | `generate_nmap_cmd`, `generate_netexec_cmd`, `generate_msf_search` (return commands, do not run them) | always available |
-| Execute | `execute_command` (runs a command, captures output, logs it; reports progress) | `mcp_allow_execution` |
-| Mutate | `set_review_state`, `import_nessus` | `mcp_allow_mutations` |
-
-Both gating flags default to `false`, so the server is **read-only** out of the box. Enable the
-capabilities you want:
+The server is **read-only by default** — execution and mutation tools stay
+hidden until you enable them:
 
 ```bash
 cerno config set mcp_allow_execution true   # permit execute_command
 cerno config set mcp_allow_mutations true   # permit set_review_state / import_nessus
 ```
 
-When a flag is off, the corresponding tools are not registered and never appear in the client.
+> Gating flags are read once at startup; reconnect (remove + re-add, or restart the client) to apply a change.
 
-> **Note:** Gating flags are read once at server startup. After changing them, reconnect or restart the server (via your MCP client) for the change to take effect — the active gating state is logged to `~/.cerno/cerno.log` on startup.
-
-**Resources** (operator-pinnable context, read-only): `cerno://scans`, `cerno://scan/{id}/hosts`, `cerno://scan/{id}/cves`, `cerno://finding/{id}/output` (raw per-host plugin output), `cerno://finding/{id}/workflow`, `cerno://config`, `cerno://host/{ip}/nxc` (NetExec enrichment).
-
-**Prompts** (one-click templates): `triage_finding`, `exploit_plan`, `triage_scope`.
-
-> **Note:** Resources and prompts only appear in MCP clients that render them (e.g. Claude Desktop). Tool-only clients ignore them; the read tools provide the same data.
+**See [docs/MCP.md](docs/MCP.md)** for the full tool/resource/prompt reference,
+scopes, and management commands.
 
 ---
 
@@ -462,6 +457,7 @@ workflows:
 
 ## Documentation
 
+- [MCP server](docs/MCP.md)
 - [Database schema & queries](docs/DATABASE.md)
 - [Adding custom tools](docs/ADDING_TOOLS_QUICKSTART.md)
 - [Tool system guide](docs/TOOL_SYSTEM_GUIDE.md)
