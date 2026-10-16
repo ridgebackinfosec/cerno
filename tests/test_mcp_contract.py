@@ -1,0 +1,266 @@
+"""Cross-interface contract tests for the Cerno MCP server.
+
+These guard the TUI <-> MCP boundary: the MCP tools/resources/prompts are thin
+adapters over the same functions the TUI uses, so a change to a shared function
+can break MCP (or vice versa). Unlike ``test_mcp_server.py`` (which calls the
+adapter functions directly), this module drives the **real MCP path**
+(``call_tool`` / ``read_resource`` / ``get_prompt``) against a seeded on-disk
+database, with ``DATABASE_PATH`` monkeypatched so nothing touches the user's
+``~/.cerno``.
+
+If you intentionally change the MCP surface, update ``EXPECTED_TOOLS`` /
+``EXPECTED_*`` below in the same PR — that failure is the tripwire working.
+"""
+
+import asyncio
+import sqlite3
+
+import pytest
+
+import cerno_pkg.database as database
+from cerno_pkg.config import CernoConfig
+from cerno_pkg.constants import reset_results_root_cache
+from cerno_pkg.mcp_server import build_server, server as mcp
+from cerno_pkg.models import Finding, Host, Plugin, Port, Scan
+
+# ---------------------------------------------------------------------------
+# Frozen MCP surface (tripwire). Update deliberately when changing the server.
+# ---------------------------------------------------------------------------
+
+EXPECTED_TOOLS = {
+    # read (always on)
+    "list_scans", "list_findings", "get_finding_detail", "get_finding_hosts",
+    "list_hosts", "list_services", "get_web_targets", "list_cves",
+    "find_affected_by_cve", "host_history", "compare_scans", "get_workflow",
+    "check_tools", "list_executions", "list_artifacts", "read_artifact",
+    "get_config",
+    # netexec (always on)
+    "get_host_nxc", "list_nxc_credentials",
+    # generate (always on)
+    "generate_nmap_cmd", "generate_netexec_cmd", "generate_msf_search",
+    # gated
+    "execute_command",                       # mcp_allow_execution
+    "set_review_state", "import_nessus",     # mcp_allow_mutations
+}
+EXPECTED_STATIC_RESOURCES = {"cerno://scans", "cerno://config"}
+EXPECTED_RESOURCE_TEMPLATES = {
+    "cerno://scan/{scan_id}/hosts",
+    "cerno://scan/{scan_id}/cves",
+    "cerno://finding/{finding_id}/output",
+    "cerno://finding/{finding_id}/workflow",
+    "cerno://host/{host_ip}/nxc",
+}
+EXPECTED_PROMPTS = {"triage_finding", "exploit_plan", "triage_scope"}
+
+
+# ---------------------------------------------------------------------------
+# Seeded on-disk DB + server, with DATABASE_PATH pointed at it
+# ---------------------------------------------------------------------------
+
+def _init_schema(conn: sqlite3.Connection) -> None:
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys=OFF")
+    conn.executescript(database.SCHEMA_SQL_TABLES)
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.executemany(
+        "INSERT INTO severity_levels VALUES (?, ?, ?, ?)",
+        [(4, "Critical", 4, "#8B0000"), (3, "High", 3, "#FF4500"),
+         (2, "Medium", 2, "#FFA500"), (1, "Low", 1, "#FFD700"),
+         (0, "Info", 0, "#4682B4")],
+    )
+    conn.executemany(
+        "INSERT INTO artifact_types (type_name, file_extension, description) VALUES (?, ?, ?)",
+        [("nmap_xml", ".xml", "Nmap XML output"), ("log", ".log", "Tool log")],
+    )
+    conn.executescript(database.SCHEMA_SQL_VIEWS)
+    conn.commit()
+
+
+@pytest.fixture
+def contract(tmp_path, monkeypatch):
+    """Seed an on-disk DB, point DATABASE_PATH at it, build a fully-gated server."""
+    dbfile = tmp_path / "cerno.db"
+    conn = sqlite3.connect(str(dbfile))
+    _init_schema(conn)
+
+    scan_id = Scan(scan_name="engagement", export_root=str(tmp_path)).save(conn)
+    Scan(scan_name="baseline", export_root=str(tmp_path)).save(conn)
+    Plugin(plugin_id=100, plugin_name="SMB Signing", severity_int=4,
+           has_metasploit=True, cves=["CVE-2021-1"],
+           metasploit_names=["ms17_010"]).save(conn)
+    finding_id = Finding(scan_id=scan_id, plugin_id=100).save(conn)
+    host_id = Host.get_or_create("10.0.0.1", "10.0.0.1", "ipv4", conn=conn)
+    Port.get_or_create(445, conn=conn)
+    conn.execute(
+        "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, plugin_output) "
+        "VALUES (?, ?, 445, 'Signing: disabled')",
+        (finding_id, host_id),
+    )
+    conn.execute(
+        "INSERT INTO host_services (scan_id, host_id, port_number, protocol, svc_name) "
+        "VALUES (?, ?, 445, 'tcp', 'cifs')",
+        (scan_id, host_id),
+    )
+    cur = conn.execute(
+        "INSERT INTO tool_executions (tool_name, command_text, executed_at, exit_code) "
+        "VALUES ('nmap', 'nmap -A', 't', 0)"
+    )
+    exec_id = cur.lastrowid
+    artifact_file = tmp_path / "scan.nmap"
+    artifact_file.write_text("Nmap scan report for 10.0.0.1\n445/tcp open microsoft-ds\n")
+    cur = conn.execute(
+        "INSERT INTO artifacts (execution_id, artifact_path, artifact_type_id, created_at) "
+        "VALUES (?, ?, 1, 't')",
+        (exec_id, str(artifact_file)),
+    )
+    artifact_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+
+    # Point the production connection path at the seeded DB.
+    monkeypatch.setattr(database, "DATABASE_PATH", dbfile)
+    reset_results_root_cache()
+
+    cfg = CernoConfig(
+        results_root=str(tmp_path / "artifacts"),
+        mcp_allow_execution=True,
+        mcp_allow_mutations=True,
+    )
+    srv = build_server(cfg)
+    return {
+        "server": srv,
+        "scan_id": scan_id,
+        "finding_id": finding_id,
+        "plugin_id": 100,
+        "artifact_id": artifact_id,
+        "host_ip": "10.0.0.1",
+    }
+
+
+def _run(coro):
+    return asyncio.new_event_loop().run_until_complete(coro)
+
+
+# ---------------------------------------------------------------------------
+# Inventory tripwire
+# ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+def test_mcp_inventory_frozen(contract):
+    s = contract["server"]
+    tools = {t.name for t in _run(s.list_tools())}
+    statics = {str(r.uri) for r in _run(s.list_resources())}
+    templates = {t.uriTemplate for t in _run(s.list_resource_templates())}
+    prompts = {p.name for p in _run(s.list_prompts())}
+
+    assert tools == EXPECTED_TOOLS, f"MCP tool surface changed: {tools ^ EXPECTED_TOOLS}"
+    assert statics == EXPECTED_STATIC_RESOURCES
+    assert templates == EXPECTED_RESOURCE_TEMPLATES
+    assert prompts == EXPECTED_PROMPTS
+
+
+# ---------------------------------------------------------------------------
+# Call-through: every non-side-effecting tool via the real MCP path
+# ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+def test_tools_callable_through_server(contract):
+    s = contract["server"]
+    fid, sid, aid, ip = (
+        contract["finding_id"], contract["scan_id"],
+        contract["artifact_id"], contract["host_ip"],
+    )
+    args = {
+        "list_scans": {},
+        "list_findings": {"scan_ids": [sid]},
+        "get_finding_detail": {"finding_id": fid},
+        "get_finding_hosts": {"finding_id": fid},
+        "list_hosts": {},
+        "list_services": {"scan_id": sid},
+        "get_web_targets": {"scan_id": sid},
+        "list_cves": {"scan_ids": [sid]},
+        "find_affected_by_cve": {"cve": "CVE-2021-1"},
+        "host_history": {"host_ip": ip},
+        "compare_scans": {"scan1_name": "baseline", "scan2_name": "engagement"},
+        "get_workflow": {"plugin_id": contract["plugin_id"]},
+        "check_tools": {},
+        "list_executions": {},
+        "list_artifacts": {},
+        "read_artifact": {"artifact_id": aid},
+        "get_config": {},
+        "get_host_nxc": {"host_ip": ip},
+        "list_nxc_credentials": {},
+        "generate_nmap_cmd": {"finding_id": fid},
+        "generate_netexec_cmd": {"finding_id": fid, "protocol": "smb"},
+        "generate_msf_search": {"finding_id": fid},
+        # mutation (safe): flips review state in the seeded temp DB
+        "set_review_state": {"finding_id": fid, "new_state": "completed"},
+    }
+    # execute_command (subprocess/async) and import_nessus (needs a file) are
+    # covered by the inventory test + test_mcp_server.py; exercising them here
+    # would add platform/side-effect flakiness.
+    for name, kwargs in args.items():
+        result = _run(s.call_tool(name, kwargs))
+        assert result is not None, f"{name} returned nothing"
+
+
+# ---------------------------------------------------------------------------
+# Call-through: resources and prompts
+# ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+def test_resources_readable_through_server(contract):
+    s = contract["server"]
+    sid, fid, ip = contract["scan_id"], contract["finding_id"], contract["host_ip"]
+    uris = [
+        "cerno://scans",
+        "cerno://config",
+        f"cerno://scan/{sid}/hosts",
+        f"cerno://scan/{sid}/cves",
+        f"cerno://finding/{fid}/output",
+        f"cerno://finding/{fid}/workflow",
+        f"cerno://host/{ip}/nxc",
+    ]
+    for uri in uris:
+        result = list(_run(s.read_resource(uri)))
+        assert result, f"{uri} returned no contents"
+
+
+@pytest.mark.integration
+def test_prompts_renderable_through_server(contract):
+    s = contract["server"]
+    fid, sid = contract["finding_id"], contract["scan_id"]
+    assert _run(s.get_prompt("triage_finding", {"finding_id": str(fid)}))
+    assert _run(s.get_prompt("exploit_plan", {"finding_id": str(fid)}))
+    assert _run(s.get_prompt("triage_scope", {"scan_id": str(sid)}))
+
+
+# ---------------------------------------------------------------------------
+# Hermeticity: prompts/adapters must use the injected conn, not the default DB
+# ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+def test_prompts_do_not_touch_default_db(tmp_path, monkeypatch, temp_db):
+    """With DATABASE_PATH pointed at a schema-less DB, prompts built with an
+    injected connection must still succeed (regression guard for the class of
+    bug where an adapter reaches the default ~/.cerno DB)."""
+    empty = tmp_path / "empty.db"
+    sqlite3.connect(str(empty)).close()  # exists but has no schema
+    monkeypatch.setattr(database, "DATABASE_PATH", empty)
+
+    scan_id = Scan(scan_name="s", export_root="/tmp").save(temp_db)
+    Plugin(plugin_id=1, plugin_name="P", severity_int=4).save(temp_db)
+    fid = Finding(scan_id=scan_id, plugin_id=1).save(temp_db)
+    host_id = Host.get_or_create("10.0.0.1", "10.0.0.1", "ipv4", conn=temp_db)
+    Port.get_or_create(445, conn=temp_db)
+    temp_db.execute(
+        "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, plugin_output) "
+        "VALUES (?, ?, 445, 'x')",
+        (fid, host_id),
+    )
+    temp_db.commit()
+
+    # Would raise "no such table" if it fell back to the schema-less default DB.
+    assert "P" in mcp.prompt_triage_finding(fid, conn=temp_db)
+    assert "P" in mcp.prompt_exploit_plan(fid, conn=temp_db)
+    assert "s" in mcp.prompt_triage_scope(scan_id, conn=temp_db)

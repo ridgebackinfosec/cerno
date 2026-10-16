@@ -615,6 +615,16 @@ Set to `null` or omit for automatic detection from terminal height. Falls back t
 - `@pytest.mark.integration`: DB or filesystem (< 1s each)
 - `@pytest.mark.slow`: Large file processing (mark as slow)
 
+### TUI ↔ MCP contract
+
+The MCP server (`cerno_pkg/mcp_server/server.py`) is thin adapters over the same
+functions the TUI uses (`models.py`, `analysis.py`, `cross_scan.py`, `tools.py`,
+`claude_assistant.py`), so changing a shared function can break the other
+interface. `tests/test_mcp_contract.py` guards this: it freezes the MCP
+tool/resource/prompt inventory and drives every category through the real MCP
+path against a seeded DB. When you intentionally change the MCP surface, update
+that test's `EXPECTED_*` sets in the same change. See `CONTRIBUTING.md`.
+
 ## Common Tasks
 
 ### Adding a New Command
