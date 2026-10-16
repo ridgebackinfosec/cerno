@@ -188,16 +188,31 @@ def test_generate_netexec_cmd(seeded, tmp_path):
 
 @pytest.mark.integration
 def test_set_review_state(seeded):
-    res = mcp.tool_set_review_state(seeded["f1"], "completed", conn=seeded["conn"])
-    assert res["review_state"] == "completed"
+    res = mcp.tool_set_review_state(seeded["f1"], "in_progress", conn=seeded["conn"])
+    assert res["review_state"] == "in_progress"
     reloaded = Finding.get_by_id(seeded["f1"], seeded["conn"])
-    assert reloaded.review_state == "completed"
+    assert reloaded.review_state == "in_progress"
 
 
 @pytest.mark.integration
-def test_set_review_state_invalid_raises(seeded):
+def test_set_review_state_full_workflow(seeded):
+    for state in ("in_progress", "done", "unreviewed"):
+        mcp.tool_set_review_state(seeded["f1"], state, conn=seeded["conn"])
+    reloaded = Finding.get_by_id(seeded["f1"], seeded["conn"])
+    assert reloaded.review_state == "unreviewed"
+
+
+@pytest.mark.integration
+def test_set_review_state_rejects_skipping_in_progress(seeded):
+    with pytest.raises(ValueError, match="in_progress"):
+        mcp.tool_set_review_state(seeded["f1"], "done", conn=seeded["conn"])
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("state", ["bogus", "pending", "reviewed", "completed", "skipped"])
+def test_set_review_state_invalid_raises(seeded, state):
     with pytest.raises(ValueError):
-        mcp.tool_set_review_state(seeded["f1"], "bogus", conn=seeded["conn"])
+        mcp.tool_set_review_state(seeded["f1"], state, conn=seeded["conn"])
 
 
 # ---------------------------------------------------------------------------

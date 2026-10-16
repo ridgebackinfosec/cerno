@@ -763,11 +763,7 @@ def _write_to_database(
                     if port is not None:
                         ports_for_plugin.add(port)
 
-                plugin_file = Finding(
-                    scan_id=scan_id,
-                    plugin_id=plugin_id,
-                    review_state="pending"
-                )
+                plugin_file = Finding(scan_id=scan_id, plugin_id=plugin_id)
 
                 finding_id = plugin_file.save(conn)
 

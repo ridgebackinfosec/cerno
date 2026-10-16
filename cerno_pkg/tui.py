@@ -369,7 +369,7 @@ def handle_finding_list_actions(
         return None, file_filter, reviewed_filter, group_filter, sort_mode, page_idx
 
     if ans == "r":
-        header("Completed Findings (Undo Available)")
+        header("Done Findings (Undo Available)")
         _console_global.print(f"Current filter: '{reviewed_filter or '*'}'")
         filtered_reviewed = [
             (pf, p)
@@ -423,7 +423,7 @@ def handle_finding_list_actions(
         if choice == "u":
             # Undo review-complete for one or more findings
             if not filtered_reviewed:
-                warn("No reviewed findings to undo.")
+                warn("No done findings to reset.")
                 return (
                     None,
                     file_filter,
@@ -544,7 +544,7 @@ def handle_finding_list_actions(
             )
 
         # Return special action to handle in browse_file_list where we have
-        # access to completed_total
+        # access to done_total
         return (
             "mark_all",
             file_filter,

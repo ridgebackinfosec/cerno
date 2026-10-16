@@ -119,9 +119,8 @@ class ReviewContext:
         args: CLI arguments namespace
         use_sudo: Whether sudo is available
         workflow_mapper: Workflow mapper for plugin workflows
-        skipped_total: Tracking list for skipped findings
-        reviewed_total: Tracking list for reviewed findings
-        completed_total: Tracking list for completed findings
+        in_progress_total: Tracking list for findings viewed but not marked done
+        done_total: Tracking list for findings marked done
     """
 
     # Scan context (required)
@@ -149,6 +148,5 @@ class ReviewContext:
     workflow_mapper: Optional["WorkflowMapper"] = None
 
     # Statistics tracking
-    skipped_total: List[str] = field(default_factory=list)
-    reviewed_total: List[str] = field(default_factory=list)
-    completed_total: List[str] = field(default_factory=list)
+    in_progress_total: List[str] = field(default_factory=list)
+    done_total: List[str] = field(default_factory=list)

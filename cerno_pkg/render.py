@@ -22,7 +22,11 @@ import time
 
 from .ansi import info, warn, header, get_console, style_if_enabled
 from .config import load_config
-from .constants import SEVERITY_COLORS
+from .constants import (
+    REVIEW_STATE_DONE,
+    REVIEW_STATE_IN_PROGRESS,
+    SEVERITY_COLORS,
+)
 from .fs import default_page_size, pretty_severity_label
 from .logging_setup import log_timing, log_debug
 
@@ -291,7 +295,7 @@ def render_empty_state(context: str, filter_text: str = "") -> None:
         context: Context identifier for empty state type
             - "filter_mismatch": No findings match current filter
             - "no_severity": No findings at this severity level
-            - "all_completed": All findings marked as completed
+            - "all_completed": All findings marked done
             - "no_findings": No findings in scan at all
         filter_text: Current filter string (if applicable)
     """
@@ -319,10 +323,10 @@ def render_empty_state(context: str, filter_text: str = "") -> None:
 
     elif context == "all_completed":
         from .ansi import ok
-        ok("\n✓ All findings marked as completed!")
+        ok("\n✓ All findings marked done!")
         info("")
         info("Next steps:")
-        info("  • Press [R] to view completed findings")
+        info("  • Press [R] to view done findings")
         info("  • Press [U] from the reviewed list to undo completion")
         info("  • All normal menu actions are available below")
         info("")
@@ -383,7 +387,7 @@ def render_scan_context_header(scan: Any, scan_id: int) -> None:
     - Scan name and file
     - Import timestamp
     - Total findings count
-    - Review progress (unreviewed/reviewed/completed)
+    - Review progress (unreviewed/in progress/done)
 
     Layout adapts to terminal width (single line vs multi-line).
     """
@@ -395,17 +399,17 @@ def render_scan_context_header(scan: Any, scan_id: int) -> None:
     with get_connection() as conn:
         cursor = conn.execute("""
             SELECT
-                SUM(CASE WHEN review_state = 'pending' THEN 1 ELSE 0 END) as unreviewed,
-                SUM(CASE WHEN review_state = 'reviewed' THEN 1 ELSE 0 END) as reviewed,
-                SUM(CASE WHEN review_state = 'completed' THEN 1 ELSE 0 END) as completed,
+                SUM(CASE WHEN review_state = 'unreviewed' THEN 1 ELSE 0 END) as unreviewed,
+                SUM(CASE WHEN review_state = 'in_progress' THEN 1 ELSE 0 END) as in_progress,
+                SUM(CASE WHEN review_state = 'done' THEN 1 ELSE 0 END) as done,
                 COUNT(*) as total
             FROM findings
             WHERE scan_id = ?
         """, (scan_id,))
         row = cursor.fetchone()
         unreviewed_count = row[0] if row else 0
-        reviewed_count = row[1] if row else 0
-        completed_count = row[2] if row else 0
+        in_progress_count = row[1] if row else 0
+        done_count = row[2] if row else 0
         total_count = row[3] if row else 0
 
     # Format timestamp as relative time if recent, otherwise date
@@ -457,9 +461,9 @@ def render_scan_context_header(scan: Any, scan_id: int) -> None:
         header_text.append(" | ", style=style_if_enabled("dim"))
         header_text.append(f"Unreviewed: {unreviewed_count}", style=style_if_enabled("cyan"))
         header_text.append(" | ", style=style_if_enabled("dim"))
-        header_text.append(f"Reviewed: {reviewed_count}", style=style_if_enabled("yellow"))
+        header_text.append(f"In progress: {in_progress_count}", style=style_if_enabled("yellow"))
         header_text.append(" | ", style=style_if_enabled("dim"))
-        header_text.append(f"Completed: {completed_count}", style=style_if_enabled("green"))
+        header_text.append(f"Done: {done_count}", style=style_if_enabled("green"))
 
         _console_global.print(header_text)
     else:
@@ -475,9 +479,9 @@ def render_scan_context_header(scan: Any, scan_id: int) -> None:
         line2.append(" | ", style=style_if_enabled("dim"))
         line2.append(f"Unreviewed: {unreviewed_count}", style=style_if_enabled("cyan"))
         line2.append(" | ", style=style_if_enabled("dim"))
-        line2.append(f"Reviewed: {reviewed_count}", style=style_if_enabled("yellow"))
+        line2.append(f"In progress: {in_progress_count}", style=style_if_enabled("yellow"))
         line2.append(" | ", style=style_if_enabled("dim"))
-        line2.append(f"Completed: {completed_count}", style=style_if_enabled("green"))
+        line2.append(f"Done: {done_count}", style=style_if_enabled("green"))
 
         _console_global.print(line1)
         _console_global.print(line2)
@@ -533,8 +537,8 @@ def render_severity_table(
     table.add_column("#", justify="right", no_wrap=True, max_width=5)
     table.add_column("Severity", no_wrap=True, max_width=20)
     # Headers indicate percent (cells contain N (P%))
-    table.add_column("Unreviewed (%)", justify="right", no_wrap=True, max_width=15)
-    table.add_column("Reviewed (%)", justify="right", no_wrap=True, max_width=14)
+    table.add_column("Not done (%)", justify="right", no_wrap=True, max_width=15)
+    table.add_column("Done (%)", justify="right", no_wrap=True, max_width=14)
     table.add_column("Total", justify="right", no_wrap=True, max_width=8)
 
     if scan_id is None and not scan_ids:
@@ -586,6 +590,15 @@ def render_severity_table(
     _console_global.print(table)
 
 
+def _review_state_cell(review_state: Optional[str]) -> Text:
+    """Compact review-state indicator for the findings list ("◐" = in progress)."""
+    if review_state == REVIEW_STATE_IN_PROGRESS:
+        return Text("◐", style=style_if_enabled("bold cyan"))
+    if review_state == REVIEW_STATE_DONE:
+        return Text("✓", style=style_if_enabled("green"))
+    return Text("")
+
+
 def render_finding_list_table(
     display: list[tuple[Any, Any]],
     sort_mode: str,
@@ -607,6 +620,7 @@ def render_finding_list_table(
                      When provided, adds a "Scans" column. When None (default), single-scan mode.
         chat_history_finding_ids: Set of finding_ids that have Claude conversation history.
                                    When non-empty, adds an "AI" column with a ✦ indicator.
+    Always ends with a "State" column: ◐ = in progress, ✓ = done, blank = unreviewed.
     """
     show_ai_column = bool(chat_history_finding_ids)
 
@@ -623,6 +637,7 @@ def render_finding_list_table(
         table.add_column("Scans", justify="right", no_wrap=True, max_width=10)
     if show_ai_column:
         table.add_column("AI", justify="center", no_wrap=True, max_width=4)
+    table.add_column("State", justify="center", no_wrap=True, max_width=5)
 
     for i, (plugin_file, plugin) in enumerate(display, 1):
         row_number = row_offset + i
@@ -680,6 +695,8 @@ def render_finding_list_table(
             else:
                 ai_cell = Text("")
             row_data.append(ai_cell)  # type: ignore[arg-type]
+
+        row_data.append(_review_state_cell(getattr(plugin_file, "review_state", None)))
 
         table.add_row(*row_data)
 
@@ -819,7 +836,7 @@ def render_actions_footer(
     # Row 2: Analysis + pagination
     left_row2 = join_actions_texts(
         [
-            key_text("R", "Reviewed"),
+            key_text("R", "Done list"),
             key_text("H", "Compare"),
             key_text("O", "Overlapping"),
             key_text("V", f"View hosts ({unique_host_count})"),
@@ -837,7 +854,7 @@ def render_actions_footer(
     left_row3 = join_actions_texts(
         [
             key_text("E", f"CVEs ({unique_cve_count})"),
-            key_text("M", f"Mark reviewed ({candidates_count})"),
+            key_text("M", f"Advance ({candidates_count})"),
         ]
     )
     right_row3_items = []
@@ -868,8 +885,18 @@ def render_actions_footer(
             _console_global.print(right_row3)
 
 
+def _mark_action_text(review_state: Optional[str]) -> Text:
+    """Return the state-aware [M] action label for the finding view."""
+    if review_state == REVIEW_STATE_DONE:
+        return key_text("M", "Done (reset via [R] → [U])", enabled=False)
+    if review_state == REVIEW_STATE_IN_PROGRESS:
+        return key_text("M", "Mark done")
+    return key_text("M", "Mark in progress")
+
+
 def render_finding_actions_footer(
     *,
+    review_state: Optional[str] = None,
     has_workflow: bool = False,
     has_nxc_data: bool = False,
     has_claude: bool = False,
@@ -884,6 +911,8 @@ def render_finding_actions_footer(
     Maintains the >> prefix style for consistency with finding review UI.
 
     Args:
+        review_state: Current review state of the finding; sets the [M] label
+            ("Mark in progress" / "Mark done"; dimmed when already done)
         has_workflow: Whether workflow action is available for this plugin
         has_nxc_data: Whether NetExec data is available for these hosts
         has_claude: Whether Claude Assistant is enabled and available
@@ -911,7 +940,7 @@ def render_finding_actions_footer(
     right_row2 = join_actions_texts([key_text("T", "Run tool")])
 
     # Row 3: Control actions (always present)
-    left_row3 = join_actions_texts([key_text("M", "Mark reviewed")])
+    left_row3 = join_actions_texts([_mark_action_text(review_state)])
     right_row3 = join_actions_texts([key_text("B", "Back")])
 
     # Row 4: Claude Assistant (conditional)
@@ -1227,7 +1256,7 @@ def show_actions_help(
         Text("Bulk review", style="bold"),
         key_text(
             "M",
-            f"Mark reviewed ({candidates_count}) - Mark all filtered files as REVIEW_COMPLETE",
+            f"Advance ({candidates_count}) - Move filtered findings one step (unreviewed → in progress → done)",
         ),
     )
     table.add_row(
@@ -1246,20 +1275,20 @@ def show_actions_help(
 
 
 def show_reviewed_help() -> None:
-    """Render help panel for completed findings view."""
+    """Render help panel for done findings view."""
     table = Table.grid(padding=(0, 1))
     table.add_column(style=style_if_enabled("cyan"), no_wrap=True)
     table.add_column()
 
-    table.add_row("Purpose", "View findings marked as completed during review")
-    table.add_row("Undo", "Press [U] to restore findings to pending state")
+    table.add_row("Purpose", "View findings marked done during review")
+    table.add_row("Undo", "Press [U] to reset findings to unreviewed")
     table.add_row("Filter", "Press [F] to filter by plugin name")
     table.add_row("", "")
     table.add_row("Note", "This is a management view - select findings in main list to work with them")
 
     panel = Panel(
         table,
-        title="[bold cyan]Completed Findings Help[/]",
+        title="[bold cyan]Done Findings Help[/]",
         border_style=style_if_enabled("cyan")
     )
     _console_global.print(panel)

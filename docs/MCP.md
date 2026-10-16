@@ -90,7 +90,7 @@ resources, and prompts Cerno exposes.
 | NetExec | `get_host_nxc`, `list_nxc_credentials` (credentials, shares, security flags; needs a configured NetExec workspace) | always available |
 | Generate | `generate_nmap_cmd`, `generate_netexec_cmd`, `generate_msf_search` (return commands, do not run them) | always available |
 | Execute | `execute_command` (runs a command, captures output, logs it; reports progress) | `mcp_allow_execution` |
-| Mutate | `set_review_state`, `import_nessus` | `mcp_allow_mutations` |
+| Mutate | `set_review_state` (`unreviewed` → `in_progress` → `done` → `unreviewed`; other changes rejected), `import_nessus` | `mcp_allow_mutations` |
 
 ### Resources
 

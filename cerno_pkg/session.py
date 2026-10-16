@@ -22,9 +22,8 @@ class SessionState:
     Attributes:
         scan_name: Name of the scan (for display)
         session_start: ISO format timestamp of session start
-        reviewed_count: Count of reviewed (not marked complete) files
-        completed_count: Count of marked complete files
-        skipped_count: Count of skipped (empty) files
+        in_progress_count: Count of findings viewed but not marked done
+        done_count: Count of findings marked done
         tool_executions: Count of tool executions
         cve_extractions: Count of CVE extractions performed
         additional_scan_ids: List of additional scan IDs included in a multi-scan session
@@ -32,9 +31,8 @@ class SessionState:
 
     scan_name: str
     session_start: str
-    reviewed_count: int
-    completed_count: int
-    skipped_count: int
+    in_progress_count: int
+    done_count: int
     tool_executions: int
     cve_extractions: int
     additional_scan_ids: list[int] = field(default_factory=list)
@@ -43,9 +41,8 @@ class SessionState:
 def save_session(
     scan_id: int,
     session_start: datetime,
-    reviewed_count: int = 0,
-    completed_count: int = 0,
-    skipped_count: int = 0,
+    in_progress_count: int = 0,
+    done_count: int = 0,
     tool_executions: int = 0,
     cve_extractions: int = 0,
     additional_scan_ids: Optional[list[int]] = None,
@@ -56,9 +53,8 @@ def save_session(
     Args:
         scan_id: Scan ID
         session_start: Session start datetime
-        reviewed_count: Count of reviewed files
-        completed_count: Count of completed files
-        skipped_count: Count of skipped files
+        in_progress_count: Count of in-progress findings
+        done_count: Count of done findings
         tool_executions: Count of tool executions
         cve_extractions: Count of CVE extractions
         additional_scan_ids: Additional scan IDs for multi-scan sessions
@@ -67,8 +63,8 @@ def save_session(
         session_id if successful, None otherwise
     """
     session_id = _db_save_session(
-        scan_id, session_start, reviewed_count, completed_count,
-        skipped_count, tool_executions, cve_extractions,
+        scan_id, session_start, in_progress_count, done_count,
+        tool_executions, cve_extractions,
         additional_scan_ids=additional_scan_ids,
     )
 
@@ -106,9 +102,8 @@ def load_session(scan_id: int) -> Optional[SessionState]:
                     vs.session_start,
                     vs.tools_executed,
                     vs.cves_extracted,
-                    vs.files_reviewed as reviewed_count,
-                    vs.files_completed as completed_count,
-                    vs.files_skipped as skipped_count,
+                    vs.files_in_progress as in_progress_count,
+                    vs.files_done as done_count,
                     sc.scan_name
                 FROM v_session_stats vs
                 JOIN sessions s ON vs.session_id = s.session_id
@@ -134,9 +129,8 @@ def load_session(scan_id: int) -> Optional[SessionState]:
             return SessionState(
                 scan_name=row["scan_name"],
                 session_start=row["session_start"],
-                reviewed_count=row["reviewed_count"],
-                completed_count=row["completed_count"],
-                skipped_count=row["skipped_count"],
+                in_progress_count=row["in_progress_count"],
+                done_count=row["done_count"],
                 tool_executions=row["tools_executed"],
                 cve_extractions=row["cves_extracted"],
                 additional_scan_ids=additional_scan_ids,
@@ -163,9 +157,8 @@ def delete_session(scan_id: int) -> None:
 def _db_save_session(
     scan_id: int,
     session_start: datetime,
-    reviewed_count: int,
-    completed_count: int,
-    skipped_count: int,
+    in_progress_count: int,
+    done_count: int,
     tool_executions: int,
     cve_extractions: int,
     additional_scan_ids: Optional[list[int]] = None,
@@ -175,9 +168,8 @@ def _db_save_session(
     Args:
         scan_id: Scan ID
         session_start: Session start datetime
-        reviewed_count: Count of reviewed files
-        completed_count: Count of completed files
-        skipped_count: Count of skipped files
+        in_progress_count: Count of in-progress findings
+        done_count: Count of done findings
         tool_executions: Tool execution count
         cve_extractions: CVE extraction count
         additional_scan_ids: Additional scan IDs in a multi-scan session; their
@@ -444,7 +436,7 @@ def show_scan_summary(
     # Build inline file stats with conditional display
     file_stats_parts = [
         f"[cyan]Findings:[/cyan] {total_files} total",
-        f"[cyan]Reviewed:[/cyan] [{review_color}]{reviewed_files} ({review_pct:.1f}%)[/{review_color}]"
+        f"[cyan]Done:[/cyan] [{review_color}]{reviewed_files} ({review_pct:.1f}%)[/{review_color}]"
     ]
     if empties > 0:
         file_stats_parts.append(f"[cyan]Empty:[/cyan] {empties}")

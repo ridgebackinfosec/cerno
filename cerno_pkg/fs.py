@@ -16,7 +16,13 @@ from typing import Optional, List, Any, TYPE_CHECKING
 from rich.prompt import Prompt, Confirm
 
 from .ansi import err, header, ok, warn, get_console, info
-from .constants import get_results_root
+from .constants import (
+    REVIEW_STATE_DONE,
+    REVIEW_STATE_IN_PROGRESS,
+    REVIEW_STATE_LABELS,
+    REVIEW_STATE_UNREVIEWED,
+    get_results_root,
+)
 
 if TYPE_CHECKING:
     from .models import Finding, Plugin
@@ -24,76 +30,77 @@ if TYPE_CHECKING:
 
 
 _console_global = get_console()
-def mark_review_complete(plugin_file, plugin=None) -> bool:
-    """Mark a file as review complete in the database.
+def _display_name(finding, plugin=None) -> str:
+    """Return a 'Plugin <id>: <name>' label for status messages."""
+    if plugin:
+        return f"Plugin {plugin.plugin_id}: {plugin.plugin_name}"
+    return f"Plugin {finding.plugin_id}"
+
+
+def advance_review_state(
+    finding: "Finding", plugin: Optional["Plugin"] = None, *, quiet: bool = False
+) -> Optional[str]:
+    """Advance a finding one workflow step in the database.
+
+    unreviewed -> in_progress -> done. A done finding is not advanced; reset it
+    with ``undo_review_complete()`` instead.
 
     Args:
-        plugin_file: Finding object to mark as completed
+        finding: Finding object to advance
         plugin: Optional Plugin object for display name
+        quiet: Suppress the per-finding success message (bulk operations)
 
     Returns:
-        True if successful, False otherwise
+        The new review state, or None if nothing changed.
     """
+    next_state = finding.next_review_state()
+    if next_state is None:
+        warn("Already done — use [U] in the Done list to reset it.")
+        return None
+
     try:
         from .database import db_transaction
 
-        if plugin_file.review_state == "completed":
-            warn("Already marked as review complete.")
-            return False
-
-        # Update review state in database
         with db_transaction() as conn:
-            plugin_file.update_review_state("completed", conn=conn)
-
-        # Display plugin metadata instead of filename
-        if plugin:
-            display_name = f"Plugin {plugin.plugin_id}: {plugin.plugin_name}"
-        else:
-            display_name = f"Plugin {plugin_file.plugin_id}"
-        ok(f"Marked as review complete: {display_name}")
-        return True
-
+            finding.transition_review_state(next_state, conn=conn)
     except Exception as e:
         from .logging_setup import log_error
-        log_error(f"Failed to mark file as review complete: {e}")
-        err(f"Failed to mark as review complete: {e}")
-        return False
+        log_error(f"Failed to advance review state: {e}")
+        err(f"Failed to mark {REVIEW_STATE_LABELS[next_state].lower()}: {e}")
+        return None
+
+    if not quiet:
+        ok(f"Marked {REVIEW_STATE_LABELS[next_state].lower()}: {_display_name(finding, plugin)}")
+    return next_state
 
 
 def undo_review_complete(plugin_file, plugin=None) -> bool:
-    """Remove review complete status from the database.
+    """Reset a done finding to unreviewed in the database.
 
     Args:
-        plugin_file: Finding object to mark as pending
+        plugin_file: Finding object to reset
         plugin: Optional Plugin object for display name
 
     Returns:
         True if successful, False otherwise
     """
+    if plugin_file.review_state != REVIEW_STATE_DONE:
+        warn("Finding is not marked done.")
+        return False
+
     try:
         from .database import db_transaction
 
-        if plugin_file.review_state != "completed":
-            warn("File is not marked as review complete.")
-            return False
-
-        # Update review state in database
         with db_transaction() as conn:
-            plugin_file.update_review_state("pending", conn=conn)
-
-        # Display plugin metadata instead of filename
-        if plugin:
-            display_name = f"Plugin {plugin.plugin_id}: {plugin.plugin_name}"
-        else:
-            display_name = f"Plugin {plugin_file.plugin_id}"
-        ok(f"Removed review complete marker: {display_name}")
-        return True
-
+            plugin_file.transition_review_state(REVIEW_STATE_UNREVIEWED, conn=conn)
     except Exception as e:
         from .logging_setup import log_error
-        log_error(f"Failed to undo review complete: {e}")
-        err(f"Failed to undo review complete: {e}")
+        log_error(f"Failed to reset review state: {e}")
+        err(f"Failed to reset to unreviewed: {e}")
         return False
+
+    ok(f"Reset to unreviewed: {_display_name(plugin_file, plugin)}")
+    return True
 
 
 def build_results_paths(
@@ -301,7 +308,7 @@ def handle_finding_view(
 
     Returns:
         "back": User wants to go back to file selection
-        "mark_complete": File was marked as reviewed
+        "mark_complete": Finding was advanced to done
         None: Continue normally
     """
     # Lazy imports to avoid circular dependencies
@@ -343,6 +350,7 @@ def handle_finding_view(
 
         # Render responsive action menu
         render_finding_actions_footer(
+            review_state=finding.review_state if finding else None,
             has_workflow=has_workflow,
             has_nxc_data=has_nxc_data,
             has_claude=has_claude,
@@ -359,17 +367,15 @@ def handle_finding_view(
         if action_choice in ("b", "back"):
             return "back"
 
-        # Handle Mark reviewed action
+        # Handle Mark (advance one workflow step) action
         if action_choice in ("m", "mark"):
             if finding is None:
-                warn("Database not available - cannot mark file as reviewed")
+                warn("Database not available - cannot change review state")
                 continue
-            try:
-                if mark_review_complete(finding, plugin):
-                    return "mark_complete"
-            except Exception as exc:
-                warn(f"Failed to mark file: {exc}")
-                continue
+            if advance_review_state(finding, plugin) == REVIEW_STATE_DONE:
+                return "mark_complete"
+            # Now in progress (stay in view), or advance_review_state() reported why not
+            continue
 
         # Handle Run tool action
         if action_choice in ("t", "tool"):
@@ -571,9 +577,8 @@ def process_single_finding(
     sev_dir: Optional[Path],
     args: types.SimpleNamespace,
     use_sudo: bool,
-    skipped_total: List[str],
-    reviewed_total: List[str],
-    completed_total: List[str],
+    in_progress_total: List[str],
+    done_total: List[str],
     show_severity: bool = False,
     workflow_mapper: Optional["WorkflowMapper"] = None,
     use_proxy: bool = False,
@@ -589,9 +594,8 @@ def process_single_finding(
         sev_dir: Severity directory
         args: Command-line arguments
         use_sudo: Whether sudo is available
-        skipped_total: List to track skipped findings
-        reviewed_total: List to track reviewed findings
-        completed_total: List to track completed findings
+        in_progress_total: List to track findings marked in progress
+        done_total: List to track findings marked done
         show_severity: Whether to show severity label (for MSF mode)
         workflow_mapper: Optional workflow mapper for plugin workflows
     """
@@ -606,7 +610,6 @@ def process_single_finding(
 
     if not hosts:
         info("File is empty (no hosts found). This usually means the vulnerability doesn't affect any hosts.")
-        skipped_total.append(display_name)
         return
 
     # Display finding preview panel
@@ -616,6 +619,8 @@ def process_single_finding(
     plugin_url = None
     # Note: _plugin_details_line is no longer available after refactoring
     # This functionality is handled by the database plugin metadata instead
+
+    state_before = finding.review_state
 
     # View file and handle actions
     result = handle_finding_view(
@@ -633,18 +638,10 @@ def process_single_finding(
         use_proxy=use_proxy,
     )
 
-    # Handle result from file view
-    if result == "back":
-        # User chose to go back - add to reviewed list
-        reviewed_total.append(display_name)
-        return
-    elif result == "mark_complete":
-        # File was marked as reviewed
-        completed_total.append(display_name)
-        return
-    else:
-        # Implicit completion - add to reviewed list
-        reviewed_total.append(display_name)
-        return
+    # Tally state changes made during this view (finding is updated in place)
+    if result == "mark_complete":
+        done_total.append(display_name)
+    elif finding.review_state != state_before and finding.review_state == REVIEW_STATE_IN_PROGRESS:
+        in_progress_total.append(display_name)
 
 

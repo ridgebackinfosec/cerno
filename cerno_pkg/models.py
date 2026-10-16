@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Optional, cast
 
+from .constants import REVIEW_STATE_DONE, REVIEW_STATE_UNREVIEWED, REVIEW_TRANSITIONS
 from .database import db_transaction, query_all, query_one
 from .logging_setup import log_error, log_info
 
@@ -178,7 +179,7 @@ class Scan:
                     SUM(CASE WHEN p.severity_int = 2 THEN 1 ELSE 0 END) as medium_count,
                     SUM(CASE WHEN p.severity_int = 1 THEN 1 ELSE 0 END) as low_count,
                     SUM(CASE WHEN p.severity_int = 0 THEN 1 ELSE 0 END) as info_count,
-                    SUM(CASE WHEN f.review_state = 'completed' THEN 1 ELSE 0 END) as reviewed_count
+                    SUM(CASE WHEN f.review_state = 'done' THEN 1 ELSE 0 END) as done_count
                 FROM scans s
                 LEFT JOIN findings f ON s.scan_id = f.scan_id
                 LEFT JOIN plugins p ON f.plugin_id = p.plugin_id
@@ -317,6 +318,10 @@ class Plugin:
 
 # ========== Model: Finding ==========
 
+class InvalidReviewTransition(ValueError):
+    """Raised when a review-state change is not allowed by the workflow."""
+
+
 @dataclass
 class Finding:
     """Represents a finding (plugin instance) for a specific scan.
@@ -327,7 +332,7 @@ class Finding:
     finding_id: Optional[int] = None
     scan_id: int = 0
     plugin_id: int = 0
-    review_state: str = "pending"  # 'pending', 'reviewed', 'completed', 'skipped'
+    review_state: str = REVIEW_STATE_UNREVIEWED  # 'unreviewed', 'in_progress', 'done'
     reviewed_at: Optional[str] = None
     reviewed_by: Optional[str] = None
     review_notes: Optional[str] = None
@@ -406,16 +411,58 @@ class Finding:
             row = query_one(c, "SELECT * FROM findings WHERE finding_id = ?", (finding_id,))
             return cls.from_row(row) if row else None
 
+    def next_review_state(self) -> Optional[str]:
+        """Return the forward workflow step from the current state.
+
+        Returns:
+            'in_progress' from 'unreviewed', 'done' from 'in_progress',
+            or None when already 'done' (resetting is not a forward step).
+        """
+        if self.review_state == REVIEW_STATE_DONE:
+            return None
+        allowed = REVIEW_TRANSITIONS.get(self.review_state, ())
+        return allowed[0] if allowed else None
+
+    def transition_review_state(
+        self,
+        new_state: str,
+        notes: Optional[str] = None,
+        conn: Optional[sqlite3.Connection] = None
+    ) -> None:
+        """Move to ``new_state`` if the review workflow allows it.
+
+        Allowed transitions are defined by ``constants.REVIEW_TRANSITIONS``:
+        unreviewed -> in_progress -> done, and done -> unreviewed.
+
+        Args:
+            new_state: Target review state
+            notes: Optional review notes
+            conn: Database connection
+
+        Raises:
+            InvalidReviewTransition: If the transition is not allowed.
+        """
+        allowed = REVIEW_TRANSITIONS.get(self.review_state, ())
+        if new_state not in allowed:
+            raise InvalidReviewTransition(
+                f"Cannot change review state from {self.review_state!r} to "
+                f"{new_state!r}; allowed next state(s): {list(allowed)}"
+            )
+        self.update_review_state(new_state, notes=notes, conn=conn)
+
     def update_review_state(
         self,
         new_state: str,
         notes: Optional[str] = None,
         conn: Optional[sqlite3.Connection] = None
     ) -> None:
-        """Update review state and timestamp.
+        """Set review state and timestamp without a workflow check.
+
+        Use ``transition_review_state()`` for user-initiated changes; this raw
+        setter is for syncing sibling findings in multi-scan mode.
 
         Args:
-            new_state: New review state ('pending', 'reviewed', 'completed', 'skipped')
+            new_state: New review state ('unreviewed', 'in_progress', 'done')
             notes: Optional review notes
             conn: Database connection
         """
@@ -444,7 +491,7 @@ class Finding:
             scan_id: Scan ID to filter by
             severity_dir: Optional single severity directory filter (e.g., "3_High")
             severity_dirs: Optional list of severity directories to filter by (e.g., ["1_Critical", "2_High"])
-            review_state: Optional review state filter ('pending', 'completed', etc.)
+            review_state: Optional review state filter ('unreviewed', 'in_progress', 'done')
             plugin_name_filter: Optional case-insensitive substring to match plugin names
             has_metasploit: Optional filter for metasploit plugins
             plugin_ids: Optional list of specific plugin IDs to include
@@ -718,7 +765,7 @@ class Finding:
 
         Returns:
             Tuple of (unreviewed_count, reviewed_count, total_count)
-            where reviewed means review_state == 'completed'
+            where reviewed means review_state == 'done'
         """
         with db_transaction(conn) as c:
             # Parse severity_dir to get severity_int (e.g., "4_Critical" -> 4)
@@ -757,10 +804,10 @@ class Finding:
             )
             total_count = total_row[0] if total_row else 0
 
-            # Count reviewed files (review_state = 'completed')
+            # Count reviewed files (review_state = 'done')
             reviewed_row = query_one(
                 c,
-                base_query + " AND pf.review_state = 'completed'" + plugin_filter,
+                base_query + " AND pf.review_state = 'done'" + plugin_filter,
                 tuple(base_params + plugin_params)
             )
             reviewed_count = reviewed_row[0] if reviewed_row else 0
@@ -788,7 +835,7 @@ class Finding:
 
         Returns:
             Tuple of (total_files, reviewed_files)
-            where reviewed means review_state == 'completed'
+            where reviewed means review_state == 'done'
         """
         with db_transaction(conn) as c:
             if scan_ids and len(scan_ids) > 1:
@@ -801,7 +848,7 @@ class Finding:
                 total_count = total_row[0] if total_row else 0
                 reviewed_row = query_one(
                     c,
-                    f"SELECT COUNT(DISTINCT plugin_id) FROM findings WHERE scan_id IN ({placeholders}) AND review_state = 'completed'",
+                    f"SELECT COUNT(DISTINCT plugin_id) FROM findings WHERE scan_id IN ({placeholders}) AND review_state = 'done'",
                     tuple(scan_ids)
                 )
                 reviewed_count = reviewed_row[0] if reviewed_row else 0
@@ -814,7 +861,7 @@ class Finding:
                 total_count = total_row[0] if total_row else 0
                 reviewed_row = query_one(
                     c,
-                    "SELECT COUNT(*) FROM findings WHERE scan_id = ? AND review_state = 'completed'",
+                    "SELECT COUNT(*) FROM findings WHERE scan_id = ? AND review_state = 'done'",
                     (scan_id,)
                 )
                 reviewed_count = reviewed_row[0] if reviewed_row else 0

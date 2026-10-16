@@ -35,10 +35,11 @@ from typing_extensions import TypedDict
 from mcp.server.fastmcp import Context, FastMCP
 
 from ..config import CernoConfig, load_config
+from ..constants import REVIEW_STATES
 from ..logging_setup import log_error, log_info
 
-# Valid review states (mirrors Finding.update_review_state docstring).
-_VALID_REVIEW_STATES = {"pending", "reviewed", "completed", "skipped"}
+# Valid review states (mirrors the findings.review_state CHECK constraint).
+_VALID_REVIEW_STATES = set(REVIEW_STATES)
 
 
 # Result shapes for the core read tools. total=False keeps FastMCP's generated
@@ -56,7 +57,7 @@ class ScanInfo(TypedDict, total=False):
     medium_count: int
     low_count: int
     info_count: int
-    reviewed_count: int
+    done_count: int
 
 
 class FindingSummary(TypedDict, total=False):
@@ -838,7 +839,11 @@ def tool_set_review_state(
     notes: Optional[str] = None,
     conn: Optional[sqlite3.Connection] = None,
 ) -> dict:
-    """Update a finding's review state (pending/reviewed/completed/skipped)."""
+    """Move a finding to a new review state, enforcing the workflow.
+
+    Allowed: unreviewed -> in_progress -> done, and done -> unreviewed.
+    Raises ValueError (InvalidReviewTransition) for any other change.
+    """
     from ..models import Finding
 
     if new_state not in _VALID_REVIEW_STATES:
@@ -851,7 +856,7 @@ def tool_set_review_state(
         finding = Finding.get_by_id(finding_id, c)
         if finding is None:
             raise ValueError(f"No finding with id {finding_id}")
-        finding.update_review_state(new_state, notes=notes, conn=c)
+        finding.transition_review_state(new_state, notes=notes, conn=c)
         c.commit()
     return {"finding_id": finding_id, "review_state": new_state}
 
@@ -1285,7 +1290,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         def set_review_state(
             finding_id: int, new_state: str, notes: Optional[str] = None
         ) -> dict:
-            """Update a finding's review state (pending/reviewed/completed/skipped)."""
+            """Move a finding's review state: unreviewed -> in_progress -> done; done -> unreviewed."""
             return tool_set_review_state(finding_id, new_state, notes=notes)
 
         @mcp.tool()

@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-10-16
+
+### Added
+- **Enforced review workflow**: `unreviewed` → `in_progress` → `done`, and `done` → `unreviewed` to reset. No other transitions are allowed; the rules live in one table (`constants.py:REVIEW_TRANSITIONS`) and are enforced by `Finding.transition_review_state()` for both the TUI and MCP (`InvalidReviewTransition`, a `ValueError`, on a disallowed change).
+- Finding view `[M]` now advances one step and its label follows the state: "Mark in progress" → "Mark done" (dimmed once done). Marking in progress keeps you in the finding view (`fs.py:advance_review_state()`).
+- Findings list `[M] Advance (N)` moves every filtered finding one step; the confirm prompt shows how many go unreviewed → in progress and in progress → done.
+- "State" column in the findings list (`◐` in progress, `✓` done) and an "Unreviewed (N) · In progress (N)" status line.
+- `REVIEW_STATES`, `REVIEW_TRANSITIONS`, `REVIEW_STATE_LABELS` and `REVIEW_STATE_*` constants (`constants.py`).
+
+### Changed
+- **BREAKING — re-import required.** Finding review states are now `unreviewed` / `in_progress` / `done` (previously `pending` / `reviewed` / `completed` / `skipped`). Database schema is version 3 (stored in `PRAGMA user_version`; `review_state` is now `NOT NULL DEFAULT 'unreviewed'`). A database from an earlier version is rejected at startup with instructions instead of failing later with a constraint error. To upgrade: back up and delete `~/.cerno/cerno.db`, then re-import your scans with `cerno import nessus <file>` (review progress from the old database is not carried over). Reinstall any pipx copy too (`pipx install --force <repo>`), since older versions cannot detect a newer database.
+  - `v_session_stats` columns `files_reviewed` / `files_completed` / `files_skipped` → `files_in_progress` / `files_done`.
+  - `Scan.get_all_with_stats()` / MCP `list_scans` field `reviewed_count` → `done_count`; `cerno scan list` column "Reviewed" → "Done".
+  - MCP `set_review_state` accepts only `unreviewed`, `in_progress`, `done` and only along the workflow (e.g. `unreviewed` → `done` is rejected).
+  - `[U]` in the Done list resets a finding to `unreviewed`.
+  - `fs.mark_review_complete()` replaced by `fs.advance_review_state()`.
+  - TUI labels updated: "Done Findings", severity table "Not done/Done (%)", scan header and onboarding show Unreviewed / In progress / Done, session summary shows "In Progress" / "Marked Done".
+
+### Removed
+- `skipped` review state and the "Findings Skipped (empty)" session tally (findings with no hosts are reported and left `unreviewed`).
+
+### Fixed
+- Finding view no longer prints a spurious "Invalid action choice." after `[M]` fails or the finding is already done (`fs.py:handle_finding_view()`).
+
 ## [1.6.3] - 2026-10-16
 
 ### Added

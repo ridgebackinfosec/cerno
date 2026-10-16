@@ -37,12 +37,19 @@ DATABASE_PATH = get_database_path()
 
 # ========== Schema ==========
 
-SCHEMA_VERSION = 1
-"""Schema version.
+SCHEMA_VERSION = 3
+"""Schema version, stored in ``PRAGMA user_version``.
 
 Note: Database is created directly in normalized structure.
 Future versions may implement migrations, but current approach is
-to create the final schema on initialization.
+to create the final schema on initialization. A database created by an
+older schema version is rejected by ``initialize_database()`` with
+``SchemaVersionError`` and must be re-created (re-import scans).
+
+History:
+- 1: Initial normalized schema
+- 2: Review states renamed to pending / in_progress / done
+- 3: 'pending' renamed to 'unreviewed'; transitions enforced in the app layer
 
 Schema features:
 - Normalized host and port tables (cross-scan tracking)
@@ -53,6 +60,12 @@ Schema features:
 Note: SCHEMA_SQL has been split into SCHEMA_SQL_TABLES and SCHEMA_SQL_VIEWS
       for organization purposes.
 """
+
+
+
+class SchemaVersionError(RuntimeError):
+    """Raised when an existing database was created by an older schema version."""
+
 
 SCHEMA_SQL_TABLES = """
 -- See schema.sql for full documentation
@@ -92,13 +105,13 @@ CREATE TABLE IF NOT EXISTS findings (
     finding_id INTEGER PRIMARY KEY AUTOINCREMENT,
     scan_id INTEGER NOT NULL,
     plugin_id INTEGER NOT NULL,
-    review_state TEXT DEFAULT 'pending',
+    review_state TEXT NOT NULL DEFAULT 'unreviewed',
     reviewed_at TIMESTAMP,
     reviewed_by TEXT,
     review_notes TEXT,
     FOREIGN KEY (scan_id) REFERENCES scans(scan_id) ON DELETE CASCADE,
     FOREIGN KEY (plugin_id) REFERENCES plugins(plugin_id),
-    CONSTRAINT valid_review_state CHECK (review_state IN ('pending', 'reviewed', 'completed', 'skipped')),
+    CONSTRAINT valid_review_state CHECK (review_state IN ('unreviewed', 'in_progress', 'done')),
     CONSTRAINT unique_scan_plugin UNIQUE (scan_id, plugin_id)
 );
 
@@ -337,9 +350,8 @@ SELECT
     s.session_start,
     s.session_end,
     (julianday(s.session_end) - julianday(s.session_start)) * 86400 AS duration_seconds,
-    COUNT(DISTINCT CASE WHEN f.review_state = 'reviewed' THEN f.finding_id END) as files_reviewed,
-    COUNT(DISTINCT CASE WHEN f.review_state = 'completed' THEN f.finding_id END) as files_completed,
-    COUNT(DISTINCT CASE WHEN f.review_state = 'skipped' THEN f.finding_id END) as files_skipped,
+    COUNT(DISTINCT CASE WHEN f.review_state = 'in_progress' THEN f.finding_id END) as files_in_progress,
+    COUNT(DISTINCT CASE WHEN f.review_state = 'done' THEN f.finding_id END) as files_done,
     COUNT(DISTINCT te.execution_id) as tools_executed,
     COUNT(DISTINCT CASE WHEN p.cves IS NOT NULL THEN p.plugin_id END) as cves_extracted
 FROM sessions s
@@ -552,6 +564,32 @@ def db_transaction(
 
 # ========== Schema Initialization ==========
 
+def _check_schema_version(conn: sqlite3.Connection, db_path: Path) -> None:
+    """Reject databases created by an older schema version.
+
+    A database with no ``findings`` table is treated as fresh. One that has
+    tables but a ``user_version`` below ``SCHEMA_VERSION`` predates the
+    current schema (v1 databases never set ``user_version``, so they read 0).
+
+    Raises:
+        SchemaVersionError: If the existing database is outdated.
+    """
+    has_findings = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='findings'"
+    ).fetchone()
+    if not has_findings:
+        return
+
+    db_version = conn.execute("PRAGMA user_version").fetchone()[0]
+    if db_version < SCHEMA_VERSION:
+        raise SchemaVersionError(
+            f"Database schema at {db_path} is version {db_version}, but this "
+            f"version of Cerno requires schema version {SCHEMA_VERSION}. "
+            f"Back up and delete {db_path}, then re-import your scans "
+            f"with 'cerno import nessus <file>'."
+        )
+
+
 def initialize_database(database_path: Optional[Path] = None) -> bool:
     """Initialize database schema with final structure.
 
@@ -563,11 +601,17 @@ def initialize_database(database_path: Optional[Path] = None) -> bool:
 
     Returns:
         True if initialization succeeded, False otherwise
+
+    Raises:
+        SchemaVersionError: If the database was created by an older schema
+            version (it must be deleted and scans re-imported).
     """
     db_path = database_path or DATABASE_PATH
 
     try:
         with db_transaction(database_path=db_path) as conn:
+            _check_schema_version(conn, db_path)
+
             # Create all tables
             conn.executescript(SCHEMA_SQL_TABLES)
 
@@ -597,9 +641,13 @@ def initialize_database(database_path: Optional[Path] = None) -> bool:
             # Create views
             conn.executescript(SCHEMA_SQL_VIEWS)
 
+            conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+
         log_info("Database schema initialized successfully")
         return True
 
+    except SchemaVersionError:
+        raise
     except Exception as e:
         log_error(f"Failed to initialize database: {e}")
         return False

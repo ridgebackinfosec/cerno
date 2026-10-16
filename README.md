@@ -281,7 +281,7 @@ Launch nmap NSE scripts, NetExec, Metasploit, or custom commands with placeholde
 
 **Session Management:**
 - Auto-save/resume interrupted reviews
-- Reversible review-complete (undo with `[U]`)
+- Review workflow: `unreviewed` → `in_progress` → `done` with `[M]`; reset done findings with `[U]`
 - Session statistics (duration, per-severity breakdown)
 
 **Database:** SQLite-backed persistence at `~/.cerno/cerno.db` tracks scans, findings, sessions, tool executions, and artifacts. Cross-scan tracking enables host history queries. See [docs/DATABASE.md](docs/DATABASE.md) for schema details.
@@ -409,9 +409,9 @@ scopes, and management commands.
 - `[X]` - Clear group filter (when a comparison/overlap group is active)
 - `[D]` - View full group details in pager (when a group filter is active)
 - `[E]` - Extract CVEs for all findings matching current filter
-- `[M]` - Mark all filtered findings as review completed
-- `[R]` - Show completed findings (with undo)
-- `[U]` - Undo review completion (restore a completed finding to pending)
+- `[M]` - Advance all filtered findings one step (unreviewed → in progress → done)
+- `[R]` - Show done findings (with undo)
+- `[U]` - Reset a done finding to unreviewed (in the `[R]` view)
 - `[A]` - Ask Claude — chat about the current filtered findings set
 - `[W]` - View workflow verification steps (when available for selected finding)
 - `[N]` / `[P]` - Next / previous page

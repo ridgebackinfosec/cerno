@@ -44,7 +44,7 @@ __all__ = [
     "page_text", "bulk_extract_cves_for_plugins", "bulk_extract_cves_for_findings",
     "display_bulk_cve_results", "color_unreviewed",
     # FS module
-    "build_results_paths", "mark_review_complete", "undo_review_complete",
+    "build_results_paths", "advance_review_state", "undo_review_complete",
     "default_page_size", "pretty_severity_label", "write_work_files",
     "display_workflow", "handle_finding_view", "process_single_finding",
     # Tools module
@@ -123,7 +123,7 @@ from .render import (
     display_bulk_cve_results, color_unreviewed,
 )
 from .fs import (
-    build_results_paths, mark_review_complete, undo_review_complete,
+    build_results_paths, advance_review_state, undo_review_complete,
     default_page_size, pretty_severity_label, write_work_files,
     display_workflow, handle_finding_view, process_single_finding
 )
