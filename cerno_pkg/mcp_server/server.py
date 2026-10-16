@@ -26,7 +26,11 @@ import sqlite3
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Generator, Optional, TypedDict, cast
+from typing import Any, Generator, Optional, cast
+
+# Pydantic (via FastMCP output schemas) requires typing_extensions.TypedDict on
+# Python < 3.12; typing_extensions ships with mcp/pydantic, so always use it.
+from typing_extensions import TypedDict
 
 from mcp.server.fastmcp import Context, FastMCP
 
@@ -1012,9 +1016,13 @@ def prompt_triage_scope(
         pairs = Finding.get_by_scan_with_plugin(
             scan_id, severity_dir=severity_dir, conn=c
         )
-    sev_note = "" if severity_int is None else f" (severity {severity_int})"
-    scope_description = f"{scan.scan_name}{sev_note}: {len(pairs)} finding(s)"
-    context = build_aggregate_context([scan.scan_name], scope_description, pairs)
+        sev_note = "" if severity_int is None else f" (severity {severity_int})"
+        scope_description = f"{scan.scan_name}{sev_note}: {len(pairs)} finding(s)"
+        # Pass conn so host/port lookups use the injected connection (not the
+        # default DB) — keeps the prompt hermetic under tests.
+        context = build_aggregate_context(
+            [scan.scan_name], scope_description, pairs, conn=c
+        )
     return f"{context}\n\n{REPORT_BRIEF_QUERY}"
 
 

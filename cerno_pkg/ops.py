@@ -758,10 +758,11 @@ def get_interface_ip(interface: str) -> Optional[str]:
     """
     import socket
     import struct
-    import fcntl
 
     SIOCGIFADDR = 0x8915
     try:
+        import fcntl  # Unix-only; absent on Windows
+
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             result = fcntl.ioctl(
                 s.fileno(),
@@ -769,7 +770,8 @@ def get_interface_ip(interface: str) -> Optional[str]:
                 struct.pack("256s", interface[:15].encode()),
             )
         return socket.inet_ntoa(result[20:24])
-    except OSError:
+    except (OSError, ImportError, AttributeError):
+        # ImportError: no fcntl (Windows); AttributeError: no ioctl on platform
         return None
 
 
