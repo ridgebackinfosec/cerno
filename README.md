@@ -7,20 +7,40 @@
 A **TUI tool** for reviewing Nessus scan findings and orchestrating security tools (**nmap**, **NetExec**, custom commands). Import `.nessus` files into a SQLite database for organized, persistent vulnerability verification and exploitation.
 
 **Key capabilities:**
-- 🔍 Interactive TUI for browsing/reviewing vulnerability findings
-- 💾 SQLite-backed persistence (cross-scan tracking, session resume)
-- ⚡ One-command tool launches (nmap NSE scripts, NetExec, custom workflows)
-- 📊 CVE extraction, Metasploit module search, host comparison
-- 🔗 NetExec database integration (correlate credentials with findings)
-- 🤖 Claude Assistant — on-demand AI chat at finding, severity, and findings-list scope
-- 🔀 Proxychains4 integration — route all tool executions through a SOCKS5 proxy
-- 🔌 MCP server — expose scans, findings, targets & tooling to any MCP client (Claude CLI, etc.)
+- 🔍 Interactive TUI for browsing/reviewing vulnerability findings — triage hundreds of findings fast
+- 💾 SQLite-backed persistence — never lose review progress; track risk across scans
+- ⚡ One-command tool launches (nmap NSE scripts, NetExec, custom workflows) — no retyping targets
+- 📊 CVE extraction, Metasploit module search, host comparison — go from finding to exploit path
+- 🔗 NetExec database integration — see where your credentials already work
+- 🤖 Claude Assistant — on-demand AI second opinion without leaving the TUI
+- 🔀 Proxychains4 integration — route every tool through your pivot with one toggle
+- 🔌 MCP server — drive an engagement from any MCP client (Claude CLI, etc.)
 
 **📺 Watch the demo:**
 
 <a href="https://www.youtube.com/watch?v=aGmRenQ28Ro">
   <img src="https://img.youtube.com/vi/aGmRenQ28Ro/maxresdefault.jpg" alt="BHIS Webcast - Cerno Tool Overview" width="50%">
 </a>
+
+---
+
+## Table of Contents
+
+- [Quick Start](#quick-start)
+- [How It Works](#how-it-works)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Features](#features)
+- [Commands](#commands)
+- [MCP Server (BETA)](#mcp-server-beta)
+- [Keyboard Shortcuts](#keyboard-shortcuts)
+- [Custom Workflows](#custom-workflows)
+- [Troubleshooting](#troubleshooting)
+- [Documentation](#documentation)
+- [Releases](#releases)
+- [Contributing](#contributing)
+- [About the Name](#about-the-name)
+- [License](#license)
 
 ---
 
@@ -37,7 +57,7 @@ cerno import nessus scan.nessus
 cerno review
 ```
 
-**That's it!** See [Common Commands](#commands) for more.
+**That's it!** See [Commands](#commands) for more.
 
 **No Nessus file handy?** Use the synthetic demo scan included in this repo:
 
@@ -57,31 +77,25 @@ See [docs/demo](docs/demo) for details.
 
 ---
 
-## About the Name
+## How It Works
 
-**Cerno** comes from the Latin verb *cernō*, meaning:
-- To discern, distinguish, perceive
-- To separate, sift through
-- To decide, determine, resolve
+Cerno turns a raw Nessus export into a tracked, actionable verification workflow:
 
-The name reflects this tool's core purpose: **to help security professionals discern what matters** in large vulnerability scans. Just as *cernō* means to sift through and distinguish the important from the noise, Cerno helps you:
+1. **Import** — parse one or more `.nessus` files into a local SQLite database (`~/.cerno/cerno.db`).
+2. **Review** — browse findings in an interactive TUI: filter by severity, host, and exploitability; inspect plugin detail, CVEs, and affected `host:port`s.
+3. **Act** — launch nmap / NetExec / Metasploit / custom commands against the exact hosts and ports of a finding, with execution and artifacts logged automatically.
+4. **Track** — review state, sessions, and tool history persist in the database, so progress survives restarts and you can compare a host's risk across scans.
 
-- **Discern** which findings require immediate action vs. can be deferred
-- **Separate** findings by severity, host, and exploitability
-- **Perceive** patterns across hosts and identify verification paths
-- **Determine** the most efficient approach to vulnerability validation
-- **Resolve** findings through organized, tracked remediation workflows
-
-In penetration testing and vulnerability management, clarity through careful examination is essential—that's Cerno.
-
-
-**Pronunciation:** In Classical Latin, *cerno* is pronounced **KEHR-noh** (IPA: [ˈkɛr.noː])—the 'c' as a hard 'k' sound, the 'e' as in 'bed', and the 'o' as in 'no' (long). [Audio sample](https://www.howtopronounce.com/latin/cerno)
+The same database and tooling are also exposed over the [Model Context Protocol](#mcp-server-beta), so an MCP client (e.g. Claude CLI) can query findings and generate commands programmatically.
 
 ---
 
 ## Installation
 
-**Requirements:** Python 3.11+ on Linux, macOS, or Windows.
+**Requirements:**
+- **Python 3.11+** on Linux, macOS, or Windows (Linux recommended)
+- **Optional tools** (only if you use them): `nmap`, `nxc`/`netexec`, `msfconsole`, `claude`
+- **Clipboard support on Linux:** `xclip`, `xsel`, or `wl-copy`
 
 **Recommended (pipx):**
 ```bash
@@ -98,38 +112,13 @@ pip install git+https://github.com/ridgebackinfosec/cerno.git
 ```bash
 git clone https://github.com/ridgebackinfosec/cerno.git
 cd cerno
-pip install -e .
+pip install -e ".[dev]"
 ```
 
 **Shell completion:**
 ```bash
 cerno --install-completion  # Enable tab completion for your shell
 ```
-
----
-
-## Releases
-
-Cerno uses **automated releases** triggered by version changes in [pyproject.toml](pyproject.toml).
-
-**How it works:**
-- When `pyproject.toml` version is updated and merged to `main`, GitHub Actions automatically:
-  - Creates a git tag (e.g., `v1.0.1`)
-  - Generates a GitHub Release marked as "latest"
-  - Extracts release notes from [CHANGELOG.md](CHANGELOG.md)
-  - Attaches built wheel and source distribution
-
-**View releases:** [github.com/ridgebackinfosec/cerno/releases](https://github.com/ridgebackinfosec/cerno/releases)
-
-**For contributors:** To create a new release, update the version in `pyproject.toml` and add an entry to `CHANGELOG.md` following [Keep a Changelog](https://keepachangelog.com/) format. The release workflow runs automatically when changes are merged to `main`.
-
----
-
-## Requirements
-
-- **Python 3.11+**
-- **Optional tools:** `nmap`, `nxc`/`netexec`, `msfconsole`, `claude` (only if you use them)
-- **Linux recommended** (clipboard tools: `xclip`, `xsel`, or `wl-copy`)
 
 ---
 
@@ -154,7 +143,7 @@ cerno config set proxychains_port 9000           # SOCKS5 proxy port (matches ss
 ```
 
 <p align="center">
-  <img src="docs/images/default-config-values.png" alt="Finding browser with pagination and keyboard shortcuts" width="800">
+  <img src="docs/images/default-config-values.png" alt="Output of cerno config show listing all configuration values" width="800">
   <br>
   <em>Show all configuration values using "cerno config show"</em>
 </p>
@@ -164,6 +153,8 @@ cerno config set proxychains_port 9000           # SOCKS5 proxy port (matches ss
 ## Features
 
 ### 🔍 Interactive TUI for browsing/reviewing vulnerability findings
+
+*Triage hundreds of findings fast — see what matters without scrolling through raw Nessus exports.*
 
 Rich tables with paged views, keyboard-driven navigation, and real-time filtering.
 
@@ -181,6 +172,8 @@ Rich tables with paged views, keyboard-driven navigation, and real-time filterin
 ---
 
 ### 📊 Intelligence & Research
+
+*Go from a finding to an exploitation path without context-switching — CVEs, Metasploit modules, and host overlap in one place.*
 
 Extract CVEs, search Metasploit modules, and compare findings across hosts.
 
@@ -212,6 +205,8 @@ Extract CVEs, search Metasploit modules, and compare findings across hosts.
 
 ### 🤖 Claude Assistant
 
+*Get a second opinion on exploitability without leaving your review or copying scan data elsewhere.*
+
 Ask Claude questions about findings without leaving the TUI. Powered by the `claude` CLI (`claude -p`) — no API key required, no data sent to external services beyond what `claude` itself handles.
 
 **Three scopes:**
@@ -238,6 +233,8 @@ cerno config set claude_assistant_enabled false
 
 ### 🔗 NetExec Database Integration
 
+*Instantly see where your credentials already work, so you prioritize provable risk over theoretical findings.*
+
 Automatically enrich finding displays with data from your NetExec databases—see which credentials work on affected hosts, share access, and security misconfigurations.
 
 **Features:**
@@ -261,6 +258,8 @@ cerno config set nxc_enrichment_enabled false                    # Disable featu
 
 ### ⚡ One-command tool launches
 
+*Skip retyping targets — launch the right tool against the exact hosts and ports of a finding.*
+
 Launch nmap NSE scripts, NetExec, Metasploit, or custom commands with placeholder substitution.
 
 <p align="center">
@@ -278,6 +277,8 @@ Launch nmap NSE scripts, NetExec, Metasploit, or custom commands with placeholde
 
 ### 💾 SQLite-backed persistence
 
+*Never lose review progress, and see how a host's risk profile changes over time.*
+
 **Session Management:**
 - Auto-save/resume interrupted reviews
 - Reversible review-complete (undo with `[U]`)
@@ -288,6 +289,8 @@ Launch nmap NSE scripts, NetExec, Metasploit, or custom commands with placeholde
 ---
 
 ### 🔀 Proxychains4 Integration
+
+*Run every tool through your pivot with a single toggle — no per-command proxy fiddling.*
 
 Route all tool executions (nmap, NetExec, Metasploit, custom commands) through a SOCKS5 proxy via `proxychains4`. Designed for use with an SSH `-D` tunnel.
 
@@ -313,6 +316,14 @@ cerno review --no-proxy   # Force-disable for this session
 - Cerno manages its own `~/.cerno/proxychains4.conf` — system config is not touched
 
 > **Requires:** `proxychains4` installed and available on PATH.
+
+---
+
+### 🔌 MCP server (BETA)
+
+*Drive an engagement from an AI client — query findings, build target lists, and generate commands programmatically.*
+
+`cerno mcp` exposes the same scan database and tooling over the Model Context Protocol, so any MCP client (Claude CLI, Claude Desktop, etc.) can work with your findings. Read-only by default; execution and mutation are opt-in. See [MCP Server (BETA)](#mcp-server-beta) below for setup and the full capability reference.
 
 ---
 
@@ -455,16 +466,6 @@ workflows:
 
 ---
 
-## Documentation
-
-- [MCP server](docs/MCP.md)
-- [Database schema & queries](docs/DATABASE.md)
-- [Adding custom tools](docs/ADDING_TOOLS_QUICKSTART.md)
-- [Tool system guide](docs/TOOL_SYSTEM_GUIDE.md)
-- [Error handling](docs/ERROR_HANDLING.md)
-
----
-
 ## Troubleshooting
 
 **Database issues:**
@@ -497,12 +498,65 @@ cerno reset   # Prompts for typed confirmation before deleting
 
 ---
 
+## Documentation
+
+- [MCP server](docs/MCP.md)
+- [Database schema & queries](docs/DATABASE.md)
+- [Adding custom tools](docs/ADDING_TOOLS_QUICKSTART.md)
+- [Tool system guide](docs/TOOL_SYSTEM_GUIDE.md)
+- [Error handling](docs/ERROR_HANDLING.md)
+
+---
+
+## Releases
+
+Cerno uses **automated releases** triggered by version changes in [pyproject.toml](pyproject.toml).
+
+**How it works:**
+- When `pyproject.toml` version is updated and merged to `main`, GitHub Actions automatically:
+  - Creates a git tag (e.g., `v1.0.1`)
+  - Generates a GitHub Release marked as "latest"
+  - Extracts release notes from [CHANGELOG.md](CHANGELOG.md)
+  - Attaches built wheel and source distribution
+
+**View releases:** [github.com/ridgebackinfosec/cerno/releases](https://github.com/ridgebackinfosec/cerno/releases)
+
+**For contributors:** To create a new release, update the version in `pyproject.toml` and add an entry to `CHANGELOG.md` following [Keep a Changelog](https://keepachangelog.com/) format. The release workflow runs automatically when changes are merged to `main`.
+
+---
+
 ## Contributing
 
 Found a bug or have a feature request? Please open an issue at:
 [github.com/ridgebackinfosec/cerno/issues](https://github.com/ridgebackinfosec/cerno/issues)
 
 Pull requests are welcome. For major changes, please open an issue first to discuss.
+
+> **Target the `develop` branch** — all contributor PRs should be opened against `develop`, not `main`. Releases flow from `develop` to `main`.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for dev setup, the test workflow, and the TUI ↔ MCP shared-core contract that keeps both interfaces working.
+
+---
+
+## About the Name
+
+**Cerno** comes from the Latin verb *cernō*, meaning:
+- To discern, distinguish, perceive
+- To separate, sift through
+- To decide, determine, resolve
+
+The name reflects this tool's core purpose: **to help security professionals discern what matters** in large vulnerability scans. Just as *cernō* means to sift through and distinguish the important from the noise, Cerno helps you:
+
+- **Discern** which findings require immediate action vs. can be deferred
+- **Separate** findings by severity, host, and exploitability
+- **Perceive** patterns across hosts and identify verification paths
+- **Determine** the most efficient approach to vulnerability validation
+- **Resolve** findings through organized, tracked remediation workflows
+
+In penetration testing and vulnerability management, clarity through careful examination is essential—that's Cerno.
+
+
+**Pronunciation:** In Classical Latin, *cerno* is pronounced **KEHR-noh** (IPA: [ˈkɛr.noː])—the 'c' as a hard 'k' sound, the 'e' as in 'bed', and the 'o' as in 'no' (long). [Audio sample](https://www.howtopronounce.com/latin/cerno)
 
 ---
 

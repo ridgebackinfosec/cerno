@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.3] - 2026-10-16
+
+### Added
+- `CONTRIBUTING.md` — dev setup, the "PRs target `develop`" rule, and the TUI ↔ MCP shared-core contract that keeps both interfaces working.
+- `tests/test_mcp_contract.py` — cross-interface regression guard: freezes the MCP tool/resource/prompt inventory (tripwire), drives every category through the real MCP path (`call_tool`/`read_resource`/`get_prompt`) against a seeded DB, and asserts prompts never fall back to the default database.
+
+### Changed
+- Restructured `README.md` for flow and learnability: added a Table of Contents, a "How It Works" overview, and a one-line user-benefit lead for each feature; merged the duplicated Requirements into Installation; moved Releases/About-the-Name below the usage sections; surfaced the MCP server under Features; fixed an incorrect screenshot alt text. No content removed.
+
 ## [1.6.2] - 2026-10-16
 
 ### Fixed
