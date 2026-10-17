@@ -83,7 +83,7 @@ def choose_nse_profile(config: Optional["CernoConfig"] = None) -> tuple[list[str
         try:
             answer = Prompt.ask("Choose").strip().lower()
         except KeyboardInterrupt:
-            warn("\nInterrupted — returning to file menu.")
+            warn("\nInterrupted — returning to finding menu.")
             return [], False
 
         if answer in ("b", "back", "q"):
@@ -221,7 +221,7 @@ def configure_nmap_options(config: Optional["CernoConfig"] = None) -> Optional[t
         try:
             answer = Prompt.ask("Choose", default="").strip().lower()
         except KeyboardInterrupt:
-            warn("\nInterrupted — returning to file menu.")
+            warn("\nInterrupted — returning to finding menu.")
             return None
 
         if answer == "" or answer in ("c", "continue"):
@@ -529,7 +529,7 @@ def choose_tool(config: Optional["CernoConfig"] = None) -> Optional[str]:
             answer = Prompt.ask("Choose", default="" if default_tool else None)
             answer = (answer or "").strip().lower()
         except KeyboardInterrupt:
-            warn("\nInterrupted — returning to file menu.")
+            warn("\nInterrupted — returning to finding menu.")
             return None
 
         # Handle default (Enter key)
@@ -586,7 +586,7 @@ def choose_netexec_protocol(config: Optional["CernoConfig"] = None) -> Optional[
         try:
             answer = Prompt.ask("Choose protocol", default=default_proto).strip().lower()
         except KeyboardInterrupt:
-            warn("\nInterrupted — returning to file menu.")
+            warn("\nInterrupted — returning to finding menu.")
             return None
 
         if answer == "":
@@ -736,7 +736,7 @@ def command_review_menu(
         try:
             choice = Prompt.ask("Choose").strip()
         except KeyboardInterrupt:
-            warn("\nInterrupted — returning to file menu.")
+            warn("\nInterrupted — returning to finding menu.")
             return "cancel"
 
         if choice in ("1", "r", "run"):

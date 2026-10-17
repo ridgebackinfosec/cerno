@@ -840,7 +840,7 @@ def browse_file_list(
                 claude_installed=claude_installed,
             )
 
-            ans = Prompt.ask("Choose a file number, or action").strip().lower()
+            ans = Prompt.ask("Choose a finding number, or action").strip().lower()
         except KeyboardInterrupt:
             warn("\nInterrupted — returning to severity menu.")
             break
@@ -2487,12 +2487,30 @@ def _import_nessus_directory(directory: Path) -> None:
 # Grouped under 'cerno scan'
 
 @scan_app.command(name="list", help="List all imported scans with statistics and review progress")
-def list_scans() -> None:
-    """Display all scans in the database with finding counts and severity breakdown."""
+def list_scans(
+    wide: bool = typer.Option(
+        False, "--wide", "--details", help="Show the full per-severity breakdown"
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Output scan data as JSON (for scripting)"
+    ),
+) -> None:
+    """Display all scans in the database with finding counts and severity breakdown.
+
+    The default view is compact (readable at 80 columns). Use --wide for every
+    severity column, or --json for machine-readable output.
+    """
     from cerno_pkg.models import Scan
     from rich.table import Table
 
     scans = Scan.get_all_with_stats()
+
+    # --json: emit the raw rows and stop (scriptable, no Rich formatting).
+    if json_output:
+        import json
+
+        print(json.dumps(scans, indent=2, default=str))
+        return
 
     if not scans:
         info("No scans found in database.")
@@ -2501,49 +2519,76 @@ def list_scans() -> None:
 
     from cerno_pkg.ansi import style_if_enabled
 
-    # Create summary table
-    table = Table(title="Imported Scans", show_header=True, header_style=style_if_enabled("bold cyan"))
-    table.add_column("Scan Name", style=style_if_enabled("yellow"), no_wrap=True)
-    table.add_column("Total Unique Hosts", justify="right", style=style_if_enabled("bright_cyan"))
-    table.add_column("Total Findings", justify="right")
-    table.add_column("Critical", justify="right", style=style_if_enabled("red"))
-    table.add_column("High", justify="right", style=style_if_enabled("bright_red"))
-    table.add_column("Medium", justify="right", style=style_if_enabled("yellow"))
-    table.add_column("Low", justify="right", style=style_if_enabled("cyan"))
-    table.add_column("Info", justify="right", style=style_if_enabled("dim"))
-    table.add_column("Done", justify="right", style=style_if_enabled("green"))
-    table.add_column("Last Reviewed", style=style_if_enabled("dim"))
+    def _fmt_last_reviewed(value: object) -> str:
+        if not value:
+            return "Never"
+        try:
+            from datetime import datetime
 
-    for scan in scans:
-        # Format last reviewed date
-        last_reviewed = scan["last_reviewed_at"]
-        if last_reviewed:
-            # Parse ISO format and display as date only
-            try:
-                from datetime import datetime
-                dt = datetime.fromisoformat(last_reviewed)
-                last_reviewed = dt.strftime("%Y-%m-%d")
-            except Exception:
-                pass
-        else:
-            last_reviewed = "Never"
+            return datetime.fromisoformat(str(value)).strftime("%Y-%m-%d")
+        except Exception:
+            return str(value)
 
-        table.add_row(
-            scan["scan_name"],
-            str(scan["unique_hosts"] or 0),
-            str(scan["total_findings"] or 0),
-            str(scan["critical_count"] or 0),
-            str(scan["high_count"] or 0),
-            str(scan["medium_count"] or 0),
-            str(scan["low_count"] or 0),
-            str(scan["info_count"] or 0),
-            str(scan["done_count"] or 0),
-            last_reviewed
-        )
+    def _done_pct(scan: dict) -> str:
+        total = scan["total_findings"] or 0
+        if not total:
+            return "0%"
+        return f"{round((scan['done_count'] or 0) / total * 100)}%"
+
+    table = Table(
+        title="Imported Scans",
+        show_header=True,
+        header_style=style_if_enabled("bold cyan"),
+    )
+
+    if wide:
+        table.add_column("Scan Name", style=style_if_enabled("yellow"), no_wrap=True)
+        table.add_column("Total Unique Hosts", justify="right", style=style_if_enabled("bright_cyan"))
+        table.add_column("Total Findings", justify="right")
+        table.add_column("Critical", justify="right", style=style_if_enabled("red"))
+        table.add_column("High", justify="right", style=style_if_enabled("bright_red"))
+        table.add_column("Medium", justify="right", style=style_if_enabled("yellow"))
+        table.add_column("Low", justify="right", style=style_if_enabled("cyan"))
+        table.add_column("Info", justify="right", style=style_if_enabled("dim"))
+        table.add_column("Done", justify="right", style=style_if_enabled("green"))
+        table.add_column("Last Reviewed", style=style_if_enabled("dim"))
+        for scan in scans:
+            table.add_row(
+                scan["scan_name"],
+                str(scan["unique_hosts"] or 0),
+                str(scan["total_findings"] or 0),
+                str(scan["critical_count"] or 0),
+                str(scan["high_count"] or 0),
+                str(scan["medium_count"] or 0),
+                str(scan["low_count"] or 0),
+                str(scan["info_count"] or 0),
+                str(scan["done_count"] or 0),
+                _fmt_last_reviewed(scan["last_reviewed_at"]),
+            )
+    else:
+        table.add_column("Scan Name", style=style_if_enabled("yellow"), no_wrap=True)
+        table.add_column("Hosts", justify="right", style=style_if_enabled("bright_cyan"))
+        table.add_column("Findings", justify="right")
+        table.add_column("Crit", justify="right", style=style_if_enabled("red"))
+        table.add_column("High", justify="right", style=style_if_enabled("bright_red"))
+        table.add_column("Done %", justify="right", style=style_if_enabled("green"))
+        table.add_column("Last Reviewed", style=style_if_enabled("dim"))
+        for scan in scans:
+            table.add_row(
+                scan["scan_name"],
+                str(scan["unique_hosts"] or 0),
+                str(scan["total_findings"] or 0),
+                str(scan["critical_count"] or 0),
+                str(scan["high_count"] or 0),
+                _done_pct(scan),
+                _fmt_last_reviewed(scan["last_reviewed_at"]),
+            )
 
     _console_global.print(table)
     _console_global.print()  # Blank line
     info(f"Total scans: {len(scans)}")
+    if not wide:
+        info("Tip: --wide shows all severities; --json outputs machine-readable data")
     info("Use 'cerno review' to start reviewing a scan")
 
 

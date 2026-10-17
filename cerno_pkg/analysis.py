@@ -115,7 +115,7 @@ def compare_filtered(
         warn("No files selected for comparison.")
         return []
 
-    header("Filtered Files: Host/Port Comparison")
+    header("Filtered Findings: Host/Port Comparison")
     info(f"Files compared: {len(files)}")
 
     # Detect what type of input we have (database-only)
@@ -276,7 +276,7 @@ def analyze_inclusions(
         warn("No files selected for superset analysis.")
         return []
 
-    header("Filtered Files: Overlapping Findings Analysis")
+    header("Filtered Findings: Overlapping Findings Analysis")
     info(f"Files analyzed: {len(files)}")
 
     # Detect what type of input we have (database-only)
