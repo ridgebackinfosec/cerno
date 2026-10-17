@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.1] - 2026-10-17
+
+### Changed
+- Consistent review-status wording across the TUI. Status changes all use **Move**: "Move to In Progress", "Move to Done", "Move back to Unreviewed", and the findings-list bulk action "Move to next status (N)" (was "Advance"). Confirmations and summaries use the same words ("Moved 2 to In Progress, 1 to Done.").
+- Done list is now opened with **`[D]`** (was `[R]`), and inside it `[U] Undo completion` is replaced by `[M] Move back to Unreviewed`. The view is called "Done list" everywhere (header, help, footer, empty state), replacing "Done Findings (Undo Available)" and the stale "reviewed list".
+- Severity, Metasploit/Workflow rows and the workflow picker now show **Unreviewed (%) · In Progress (%) · Done (%) · Total** instead of "Not done / Done", so in-progress work is visible (`Finding.count_by_scan_severity()` now returns four counts; new `models.count_review_states()`).
+- Findings list "State" column renamed **Status**, with icons and a legend (`○` Unreviewed, `◐` In Progress).
+- Status colours are consistent everywhere (Unreviewed cyan, In Progress blue, Done magenta — kept apart from the severity palette) via new `REVIEW_STATE_STYLES` / `REVIEW_STATE_ICONS` / `REVIEW_MOVE_LABELS` constants.
+- Session summary rows are now "Moved to In Progress", "Moved to Done", "Total status changes", and the list status line reads "Unreviewed N · In Progress N" with "Session: 3m (+1 In Progress, +0 Done)".
+- `fs.advance_review_state()` and `fs.undo_review_complete()` replaced by `fs.move_review_state(finding, target=None)`.
+
 ## [1.7.0] - 2026-10-16
 
 ### Added

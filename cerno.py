@@ -37,6 +37,7 @@ from cerno_pkg import (
     render_finding_list_table,
     render_actions_footer,
     severity_cell,
+    review_count_cells,
     pretty_severity_label,
     default_page_size,
     print_action_menu,
@@ -79,9 +80,12 @@ from rich.traceback import install as rich_tb_install
 
 # Create a console for the interactive flow (configured with no_color setting)
 from cerno_pkg.ansi import get_console, get_terminal_width
+from cerno_pkg.models import count_review_states
 from cerno_pkg.constants import (
     REVIEW_STATE_DONE,
     REVIEW_STATE_IN_PROGRESS,
+    REVIEW_STATE_LABELS,
+    REVIEW_STATE_STYLES,
     REVIEW_STATE_UNREVIEWED,
 )
 _console_global = get_console()
@@ -330,25 +334,15 @@ def browse_workflow_groups(
         table = Table(title="Workflows", box=box.SIMPLE)
         table.add_column("#", style="cyan", justify="right")
         table.add_column("Workflow Name", style="bold")
-        table.add_column("Not done", justify="right")
-        table.add_column("Done", justify="right")
+        for state in (REVIEW_STATE_UNREVIEWED, REVIEW_STATE_IN_PROGRESS, REVIEW_STATE_DONE):
+            table.add_column(f"{REVIEW_STATE_LABELS[state]} (%)", justify="right")
         table.add_column("Total", justify="right")
 
         workflow_list = sorted(workflow_groups.items(), key=lambda x: len(x[1]), reverse=True)
 
         for idx, (workflow_name, files) in enumerate(workflow_list, start=1):
-            total = len(files)
-            # Use database review_state instead of filename checking
-            reviewed = sum(1 for (pf, _p) in files if pf.review_state == REVIEW_STATE_DONE)
-            unreviewed = total - reviewed
-
-            table.add_row(
-                str(idx),
-                workflow_name,
-                str(unreviewed),
-                str(reviewed),
-                str(total),
-            )
+            counts = count_review_states(pf for (pf, _p) in files)
+            table.add_row(str(idx), workflow_name, *review_count_cells(counts))
 
         _console_global.print(table)
         print_action_menu([("B", "Back")])
@@ -444,7 +438,7 @@ def browse_file_list(
         use_sudo: Whether sudo is available
         in_progress_total: List to track findings viewed but not marked done
         done_total: List to track findings marked done
-        is_msf_mode: If True, display severity labels in reviewed list
+        is_msf_mode: If True, display severity labels in the Done list
         has_metasploit_filter: Optional filter for metasploit plugins
         plugin_ids_filter: Optional list of specific plugin IDs to include
     """
@@ -669,11 +663,19 @@ def browse_file_list(
 
             status_parts: list[str | Text] = []
 
-            # Open (not done) counts by state
-            in_progress_n = sum(1 for (pf, _p) in unreviewed if pf.review_state == REVIEW_STATE_IN_PROGRESS)
-            status_parts.append(
-                f"Unreviewed ({len(unreviewed) - in_progress_n}) · In progress ({in_progress_n})"
+            # Open (not Done) counts by status
+            open_unrev, open_in_prog, _done, _total = count_review_states(pf for (pf, _p) in unreviewed)
+            open_text = Text()
+            open_text.append(
+                f"{REVIEW_STATE_LABELS[REVIEW_STATE_UNREVIEWED]} {open_unrev}",
+                style=style_if_enabled(REVIEW_STATE_STYLES[REVIEW_STATE_UNREVIEWED]),
             )
+            open_text.append(" · ")
+            open_text.append(
+                f"{REVIEW_STATE_LABELS[REVIEW_STATE_IN_PROGRESS]} {open_in_prog}",
+                style=style_if_enabled(REVIEW_STATE_STYLES[REVIEW_STATE_IN_PROGRESS]),
+            )
+            status_parts.append(open_text)
 
             # File filter with visual indicator if active
             if file_filter:
@@ -731,7 +733,9 @@ def browse_file_list(
                 # Build session stats string
                 session_stats = f"Session: {session_time_str}"
                 if in_progress_total or done_total:
-                    session_stats += f" | In progress:{len(in_progress_total)} Done:{len(done_total)}"
+                    session_stats += (
+                        f" (+{len(in_progress_total)} In Progress, +{len(done_total)} Done)"
+                    )
                 status_parts.append(session_stats)
 
             # Proxy badge
@@ -983,8 +987,8 @@ def browse_file_list(
         elif action_type == "help":
             continue
         elif action_type == "mark_all":
-            # Bulk advance: each filtered finding moves one workflow step
-            from cerno_pkg.fs import advance_review_state
+            # Bulk move: each filtered finding moves to its next status
+            from cerno_pkg.fs import move_review_state
             from rich.prompt import Confirm
 
             to_start = sum(1 for (f, _p) in candidates if f.review_state == REVIEW_STATE_UNREVIEWED)
@@ -992,8 +996,8 @@ def browse_file_list(
 
             try:
                 confirm_msg = (
-                    f"Advance {len(candidates)} findings? "
-                    f"{to_start} unreviewed → in progress, {to_finish} in progress → done"
+                    f"Move {len(candidates)} findings to their next status? "
+                    f"{to_start} → In Progress, {to_finish} → Done"
                 )
                 confirmed = Confirm.ask(confirm_msg, default=False)
             except KeyboardInterrupt:
@@ -1013,10 +1017,10 @@ def browse_file_list(
                 transient=True,
             ) as progress:
                 task = progress.add_task(
-                    "Advancing findings...", total=len(candidates)
+                    "Moving findings to next status...", total=len(candidates)
                 )
                 for finding, plugin in candidates:
-                    new_state = advance_review_state(finding, plugin, quiet=True)
+                    new_state = move_review_state(finding, plugin, quiet=True)
                     if new_state is not None:
                         display_name = f"Plugin {plugin.plugin_id}: {plugin.plugin_name}"
                         if new_state == REVIEW_STATE_DONE:
@@ -1031,7 +1035,7 @@ def browse_file_list(
                                 if other_f.finding_id != finding.finding_id:
                                     other_f.update_review_state(new_state)
                     progress.advance(task)
-            ok(f"Summary: {started} marked in progress, {finished} marked done.")
+            ok(f"Moved {started} to In Progress, {finished} to Done.")
             continue
         elif action_type == "file_selected":
             # Determine which record was selected
@@ -1135,9 +1139,9 @@ def show_session_statistics(
     overall_table.add_column("Count", justify="right", style=style_if_enabled("yellow"))
 
     overall_table.add_row("Session Duration", duration_str)
-    overall_table.add_row("Findings In Progress (viewed, not done)", str(len(in_progress_total)))
-    overall_table.add_row("Findings Marked Done", str(len(done_total)))
-    overall_table.add_row("Total Findings Processed", str(len(in_progress_total) + len(done_total)))
+    overall_table.add_row("Moved to In Progress", str(len(in_progress_total)))
+    overall_table.add_row("Moved to Done", str(len(done_total)))
+    overall_table.add_row("Total status changes", str(len(in_progress_total) + len(done_total)))
 
     console.print(overall_table)
     _console_global.print()
@@ -1200,7 +1204,10 @@ def show_session_statistics(
         if severity_counts:
             sev_table = Table(show_header=True, header_style=style_if_enabled("bold cyan"))
             sev_table.add_column("Severity Level", style=style_if_enabled("cyan"))
-            sev_table.add_column("Done Count", justify="right", style=style_if_enabled("yellow"))
+            sev_table.add_column(
+                "Moved to Done", justify="right",
+                style=style_if_enabled(REVIEW_STATE_STYLES[REVIEW_STATE_DONE]),
+            )
 
             for sev_label in sorted(severity_counts.keys()):
                 sev_col = severity_cell(sev_label)
@@ -1459,7 +1466,7 @@ def main(args: types.SimpleNamespace) -> None:
                     session_date = datetime.fromisoformat(previous_session.session_start)
                     header("Previous Session Found")
                     info(f"Session started: {session_date.strftime('%Y-%m-%d %H:%M:%S')}")
-                    info(f"In progress: {previous_session.in_progress_count} findings")
+                    info(f"In Progress: {previous_session.in_progress_count} findings")
                     info(f"Done: {previous_session.done_count} findings")
                     try:
                         resume = Confirm.ask("Resume this session?", default=True)
@@ -1562,16 +1569,8 @@ def main(args: types.SimpleNamespace) -> None:
                         )
 
                     has_msf = len(msf_files) > 0
-                    msf_total = len(msf_files)
-                    msf_reviewed = sum(
-                        1
-                        for (pf, _p) in msf_files
-                        if pf.review_state == REVIEW_STATE_DONE
-                    )
-                    msf_unrev = msf_total - msf_reviewed
-
                     msf_summary = (
-                        (msf_unrev, msf_reviewed, msf_total)
+                        count_review_states(pf for (pf, _p) in msf_files)
                         if has_msf
                         else None
                     )
@@ -1604,16 +1603,8 @@ def main(args: types.SimpleNamespace) -> None:
                         workflow_files = []
 
                     has_workflows = len(workflow_files) > 0
-                    workflow_total = len(workflow_files)
-                    workflow_reviewed = sum(
-                        1
-                        for (pf, _p) in workflow_files
-                        if pf.review_state == REVIEW_STATE_DONE
-                    )
-                    workflow_unrev = workflow_total - workflow_reviewed
-
                     workflow_summary = (
-                        (workflow_unrev, workflow_reviewed, workflow_total)
+                        count_review_states(pf for (pf, _p) in workflow_files)
                         if has_workflows
                         else None
                     )

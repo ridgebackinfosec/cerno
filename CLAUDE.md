@@ -558,8 +558,9 @@ Only after user confirms the changelog content:
 **States** (`constants.py:REVIEW_STATES`): `unreviewed` → `in_progress` → `done`, and `done` → `unreviewed`
 - Transitions are defined once in `constants.py:REVIEW_TRANSITIONS` and enforced by `Finding.transition_review_state()` (raises `InvalidReviewTransition`) — used by the TUI and MCP `set_review_state`
 - `Finding.update_review_state()` is the raw setter with no check; use it only to sync multi-scan siblings to an already-validated state
-- Finding view `[M]` → `fs.py:advance_review_state()` (one step; label follows state); findings list `[M]` advances every filtered finding one step
-- `[R]` Done list → `[U]` resets `done` → `unreviewed` (`fs.py:undo_review_complete()`, multi-select support)
+- All TUI status changes go through `fs.py:move_review_state(finding, target=None)` (default = next status in the cycle)
+- UI wording/colours come from `constants.py` (`REVIEW_STATE_LABELS`, `REVIEW_STATE_STYLES`, `REVIEW_STATE_ICONS`, `REVIEW_MOVE_LABELS`): users see "status" and the verb "Move" ("Move to In Progress", "Move to Done", "Move back to Unreviewed", bulk "Move to next status") — reuse these rather than hardcoding strings
+- Finding view `[M]` moves one step; findings list `[M]` moves every filtered finding one step; `[D]` Done list → `[M]` moves Done findings back to Unreviewed (multi-select)
 
 **Database-only**: `findings.review_state` is the sole record (no filename prefixes).
 

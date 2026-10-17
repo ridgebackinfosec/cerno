@@ -10,9 +10,14 @@ import json
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Optional, cast
+from typing import Any, Iterable, Optional, cast
 
-from .constants import REVIEW_STATE_DONE, REVIEW_STATE_UNREVIEWED, REVIEW_TRANSITIONS
+from .constants import (
+    REVIEW_STATE_DONE,
+    REVIEW_STATE_IN_PROGRESS,
+    REVIEW_STATE_UNREVIEWED,
+    REVIEW_TRANSITIONS,
+)
 from .database import db_transaction, query_all, query_one
 from .logging_setup import log_error, log_info
 
@@ -320,6 +325,21 @@ class Plugin:
 
 class InvalidReviewTransition(ValueError):
     """Raised when a review-state change is not allowed by the workflow."""
+
+
+def count_review_states(findings: Iterable["Finding"]) -> tuple[int, int, int, int]:
+    """Tally findings by review state.
+
+    Args:
+        findings: Finding objects to count
+
+    Returns:
+        Tuple of (unreviewed, in_progress, done, total)
+    """
+    states = [f.review_state for f in findings]
+    in_progress = states.count(REVIEW_STATE_IN_PROGRESS)
+    done = states.count(REVIEW_STATE_DONE)
+    return (len(states) - in_progress - done, in_progress, done, len(states))
 
 
 @dataclass
@@ -753,8 +773,12 @@ class Finding:
         conn: Optional[sqlite3.Connection] = None,
         *,
         scan_ids: Optional[list[int]] = None,
-    ) -> tuple[int, int, int]:
-        """Count files in a severity directory by review state.
+    ) -> tuple[int, int, int, int]:
+        """Count findings in a severity directory by review state.
+
+        In multi-scan mode a plugin is counted once; its state is taken from
+        the furthest-along instance (done > in_progress > unreviewed), matching
+        how review-state changes are broadcast to all selected scans.
 
         Args:
             scan_id: Scan ID to count files for (ignored when scan_ids is provided)
@@ -764,58 +788,46 @@ class Finding:
             scan_ids: Optional list of scan IDs for multi-scan queries (overrides scan_id)
 
         Returns:
-            Tuple of (unreviewed_count, reviewed_count, total_count)
-            where reviewed means review_state == 'done'
+            Tuple of (unreviewed, in_progress, done, total)
+        """
+        try:
+            severity_int = int(severity_dir.split('_')[0])
+        except (ValueError, IndexError):
+            return (0, 0, 0, 0)
+
+        effective_ids = list(scan_ids) if scan_ids and len(scan_ids) > 1 else [scan_id]
+        id_placeholders = ",".join("?" * len(effective_ids))
+        params: list[Any] = effective_ids + [severity_int]
+
+        plugin_filter = ""
+        if plugin_ids:
+            plugin_filter = f" AND pf.plugin_id IN ({','.join('?' * len(plugin_ids))})"
+            params += list(plugin_ids)
+
+        # One row per plugin with its most advanced state (rank 2=done, 1=in_progress, 0=unreviewed)
+        query = f"""
+            SELECT
+                SUM(CASE WHEN rank = 0 THEN 1 ELSE 0 END),
+                SUM(CASE WHEN rank = 1 THEN 1 ELSE 0 END),
+                SUM(CASE WHEN rank = 2 THEN 1 ELSE 0 END),
+                COUNT(*)
+            FROM (
+                SELECT pf.plugin_id,
+                       MAX(CASE pf.review_state
+                               WHEN '{REVIEW_STATE_DONE}' THEN 2
+                               WHEN '{REVIEW_STATE_IN_PROGRESS}' THEN 1
+                               ELSE 0 END) AS rank
+                FROM findings pf
+                JOIN plugins p ON pf.plugin_id = p.plugin_id
+                WHERE pf.scan_id IN ({id_placeholders}) AND p.severity_int = ?{plugin_filter}
+                GROUP BY pf.plugin_id
+            )
         """
         with db_transaction(conn) as c:
-            # Parse severity_dir to get severity_int (e.g., "4_Critical" -> 4)
-            try:
-                severity_int = int(severity_dir.split('_')[0])
-            except (ValueError, IndexError):
-                # Invalid format, return zeros
-                return (0, 0, 0)
-
-            # Build base query and params
-            if scan_ids and len(scan_ids) > 1:
-                id_placeholders = ",".join("?" * len(scan_ids))
-                base_query = f"""SELECT COUNT(DISTINCT pf.plugin_id) FROM findings pf
-                       JOIN plugins p ON pf.plugin_id = p.plugin_id
-                       WHERE pf.scan_id IN ({id_placeholders}) AND p.severity_int = ?"""
-                base_params: list[Any] = list(scan_ids) + [severity_int]
-            else:
-                base_query = """SELECT COUNT(*) FROM findings pf
-                       JOIN plugins p ON pf.plugin_id = p.plugin_id
-                       WHERE pf.scan_id = ? AND p.severity_int = ?"""
-                base_params = [scan_id, severity_int]
-
-            # Add plugin_ids filter if provided
-            plugin_filter = ""
-            plugin_params: list[Any] = []
-            if plugin_ids is not None and len(plugin_ids) > 0:
-                placeholders = ",".join("?" * len(plugin_ids))
-                plugin_filter = f" AND pf.plugin_id IN ({placeholders})"
-                plugin_params = list(plugin_ids)
-
-            # Count total files in this severity
-            total_row = query_one(
-                c,
-                base_query + plugin_filter,
-                tuple(base_params + plugin_params)
-            )
-            total_count = total_row[0] if total_row else 0
-
-            # Count reviewed files (review_state = 'done')
-            reviewed_row = query_one(
-                c,
-                base_query + " AND pf.review_state = 'done'" + plugin_filter,
-                tuple(base_params + plugin_params)
-            )
-            reviewed_count = reviewed_row[0] if reviewed_row else 0
-
-            # Calculate unreviewed
-            unreviewed_count = total_count - reviewed_count
-
-            return unreviewed_count, reviewed_count, total_count
+            row = query_one(c, query, tuple(params))
+        if not row or not row[3]:
+            return (0, 0, 0, 0)
+        return (row[0] or 0, row[1] or 0, row[2] or 0, row[3])
 
     @classmethod
     def count_by_scan(

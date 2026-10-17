@@ -82,10 +82,32 @@ Enforced by ``Finding.transition_review_state()`` for both the TUI and MCP.
 
 REVIEW_STATE_LABELS: dict[str, str] = {
     REVIEW_STATE_UNREVIEWED: "Unreviewed",
-    REVIEW_STATE_IN_PROGRESS: "In progress",
+    REVIEW_STATE_IN_PROGRESS: "In Progress",
     REVIEW_STATE_DONE: "Done",
 }
-"""Human-readable display labels for review states."""
+"""Display labels for review states (shown to users as the finding's "status")."""
+
+REVIEW_STATE_STYLES: dict[str, str] = {
+    REVIEW_STATE_UNREVIEWED: "cyan",
+    REVIEW_STATE_IN_PROGRESS: "blue",
+    REVIEW_STATE_DONE: "magenta",
+}
+"""Rich styles for review states. Deliberately avoids the severity palette
+(red/yellow/green) so progress is never mistaken for risk."""
+
+REVIEW_STATE_ICONS: dict[str, str] = {
+    REVIEW_STATE_UNREVIEWED: "○",
+    REVIEW_STATE_IN_PROGRESS: "◐",
+    REVIEW_STATE_DONE: "✓",
+}
+"""Compact status indicators: ○ Unreviewed, ◐ In Progress, ✓ Done (Done list rows)."""
+
+REVIEW_MOVE_LABELS: dict[str, str] = {
+    REVIEW_STATE_IN_PROGRESS: "Move to In Progress",
+    REVIEW_STATE_DONE: "Move to Done",
+    REVIEW_STATE_UNREVIEWED: "Move back to Unreviewed",
+}
+"""[M] action labels keyed by *target* status (past tense: replace "Move" with "Moved")."""
 
 
 # ========== Plugin details configuration ==========

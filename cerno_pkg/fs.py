@@ -17,10 +17,10 @@ from rich.prompt import Prompt, Confirm
 
 from .ansi import err, header, ok, warn, get_console, info
 from .constants import (
+    REVIEW_MOVE_LABELS,
     REVIEW_STATE_DONE,
     REVIEW_STATE_IN_PROGRESS,
-    REVIEW_STATE_LABELS,
-    REVIEW_STATE_UNREVIEWED,
+    REVIEW_TRANSITIONS,
     get_results_root,
 )
 
@@ -37,70 +37,45 @@ def _display_name(finding, plugin=None) -> str:
     return f"Plugin {finding.plugin_id}"
 
 
-def advance_review_state(
-    finding: "Finding", plugin: Optional["Plugin"] = None, *, quiet: bool = False
+def move_review_state(
+    finding: "Finding",
+    plugin: Optional["Plugin"] = None,
+    *,
+    target: Optional[str] = None,
+    quiet: bool = False,
 ) -> Optional[str]:
-    """Advance a finding one workflow step in the database.
+    """Move a finding to its next status (or ``target``) in the database.
 
-    unreviewed -> in_progress -> done. A done finding is not advanced; reset it
-    with ``undo_review_complete()`` instead.
+    Statuses cycle Unreviewed -> In Progress -> Done -> Unreviewed; only those
+    moves are allowed (``constants.REVIEW_TRANSITIONS``).
 
     Args:
-        finding: Finding object to advance
+        finding: Finding object to move
         plugin: Optional Plugin object for display name
+        target: Status to move to; defaults to the next status in the cycle
         quiet: Suppress the per-finding success message (bulk operations)
 
     Returns:
         The new review state, or None if nothing changed.
     """
-    next_state = finding.next_review_state()
-    if next_state is None:
-        warn("Already done — use [U] in the Done list to reset it.")
-        return None
+    if target is None:
+        target = REVIEW_TRANSITIONS[finding.review_state][0]
+    moved = REVIEW_MOVE_LABELS[target].replace("Move", "Moved", 1)
 
     try:
         from .database import db_transaction
 
         with db_transaction() as conn:
-            finding.transition_review_state(next_state, conn=conn)
+            finding.transition_review_state(target, conn=conn)
     except Exception as e:
         from .logging_setup import log_error
-        log_error(f"Failed to advance review state: {e}")
-        err(f"Failed to mark {REVIEW_STATE_LABELS[next_state].lower()}: {e}")
+        log_error(f"Failed to move review state: {e}")
+        err(f"Could not {REVIEW_MOVE_LABELS[target].lower()}: {e}")
         return None
 
     if not quiet:
-        ok(f"Marked {REVIEW_STATE_LABELS[next_state].lower()}: {_display_name(finding, plugin)}")
-    return next_state
-
-
-def undo_review_complete(plugin_file, plugin=None) -> bool:
-    """Reset a done finding to unreviewed in the database.
-
-    Args:
-        plugin_file: Finding object to reset
-        plugin: Optional Plugin object for display name
-
-    Returns:
-        True if successful, False otherwise
-    """
-    if plugin_file.review_state != REVIEW_STATE_DONE:
-        warn("Finding is not marked done.")
-        return False
-
-    try:
-        from .database import db_transaction
-
-        with db_transaction() as conn:
-            plugin_file.transition_review_state(REVIEW_STATE_UNREVIEWED, conn=conn)
-    except Exception as e:
-        from .logging_setup import log_error
-        log_error(f"Failed to reset review state: {e}")
-        err(f"Failed to reset to unreviewed: {e}")
-        return False
-
-    ok(f"Reset to unreviewed: {_display_name(plugin_file, plugin)}")
-    return True
+        ok(f"{moved}: {_display_name(finding, plugin)}")
+    return target
 
 
 def build_results_paths(
@@ -308,7 +283,7 @@ def handle_finding_view(
 
     Returns:
         "back": User wants to go back to file selection
-        "mark_complete": Finding was advanced to done
+        "mark_complete": Finding was moved to Done
         None: Continue normally
     """
     # Lazy imports to avoid circular dependencies
@@ -367,14 +342,14 @@ def handle_finding_view(
         if action_choice in ("b", "back"):
             return "back"
 
-        # Handle Mark (advance one workflow step) action
+        # Handle Move (next status) action
         if action_choice in ("m", "mark"):
             if finding is None:
                 warn("Database not available - cannot change review state")
                 continue
-            if advance_review_state(finding, plugin) == REVIEW_STATE_DONE:
+            if move_review_state(finding, plugin) == REVIEW_STATE_DONE:
                 return "mark_complete"
-            # Now in progress (stay in view), or advance_review_state() reported why not
+            # Now In Progress (stay in view), or move_review_state() reported why not
             continue
 
         # Handle Run tool action

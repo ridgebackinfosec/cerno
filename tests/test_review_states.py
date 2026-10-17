@@ -8,8 +8,14 @@ import pytest
 from cerno_pkg import database
 from cerno_pkg.constants import REVIEW_STATES, REVIEW_TRANSITIONS
 from cerno_pkg.database import SCHEMA_VERSION, SchemaVersionError, initialize_database
-from cerno_pkg.fs import advance_review_state, undo_review_complete
-from cerno_pkg.models import Finding, InvalidReviewTransition, Plugin, Scan
+from cerno_pkg.fs import move_review_state
+from cerno_pkg.models import (
+    Finding,
+    InvalidReviewTransition,
+    Plugin,
+    Scan,
+    count_review_states,
+)
 
 ALLOWED = {
     ("unreviewed", "in_progress"),
@@ -113,31 +119,56 @@ class TestTransitionReviewState:
 
 
 @pytest.mark.integration
-class TestTuiActions:
-    def test_advance_walks_workflow_then_stops_at_done(self, file_db):
+class TestMoveReviewState:
+    def test_move_cycles_through_every_status(self, file_db):
         db_path, finding = file_db
-        assert advance_review_state(finding) == "in_progress"
-        assert _state(db_path, finding.finding_id) == "in_progress"
-        assert advance_review_state(finding) == "done"
-        assert _state(db_path, finding.finding_id) == "done"
-        assert advance_review_state(finding) is None
-        assert _state(db_path, finding.finding_id) == "done"
+        for expected in ("in_progress", "done", "unreviewed"):
+            assert move_review_state(finding) == expected
+            assert _state(db_path, finding.finding_id) == expected
 
-    def test_undo_resets_done_to_unreviewed(self, file_db):
+    def test_move_back_to_unreviewed_from_done(self, file_db):
         db_path, finding = file_db
-        advance_review_state(finding)
-        advance_review_state(finding)
-        assert undo_review_complete(finding)
+        move_review_state(finding)
+        move_review_state(finding)
+        assert move_review_state(finding, target="unreviewed") == "unreviewed"
         assert _state(db_path, finding.finding_id) == "unreviewed"
 
-    @pytest.mark.parametrize("steps", [0, 1])
-    def test_undo_requires_done(self, file_db, steps):
+    @pytest.mark.parametrize("steps,target", [(0, "done"), (0, "unreviewed"), (1, "unreviewed")])
+    def test_disallowed_target_leaves_status(self, file_db, steps, target):
         db_path, finding = file_db
         for _ in range(steps):
-            advance_review_state(finding)
+            move_review_state(finding)
         before = _state(db_path, finding.finding_id)
-        assert not undo_review_complete(finding)
+        assert move_review_state(finding, target=target) is None
         assert _state(db_path, finding.finding_id) == before
+
+
+@pytest.mark.unit
+def test_count_review_states():
+    findings = [Finding(review_state=s) for s in ("unreviewed", "unreviewed", "in_progress", "done")]
+    assert count_review_states(findings) == (2, 1, 1, 4)
+
+
+@pytest.mark.integration
+class TestCountByScanSeverity:
+    def test_counts_each_status(self, temp_db):
+        scan_id = Scan(scan_name="s", export_root="/tmp").save(temp_db)
+        assert scan_id is not None
+        for pid, state in ((1, "unreviewed"), (2, "in_progress"), (3, "done"), (4, "done")):
+            Plugin(plugin_id=pid, plugin_name=f"p{pid}", severity_int=3).save(temp_db)
+            Finding(scan_id=scan_id, plugin_id=pid, review_state=state).save(temp_db)
+        assert Finding.count_by_scan_severity(scan_id, "3_High", conn=temp_db) == (1, 1, 2, 4)
+        assert Finding.count_by_scan_severity(scan_id, "2_Medium", conn=temp_db) == (0, 0, 0, 0)
+
+    def test_multi_scan_uses_most_advanced_instance(self, temp_db):
+        a = Scan(scan_name="a", export_root="/tmp").save(temp_db)
+        b = Scan(scan_name="b", export_root="/tmp").save(temp_db)
+        assert a is not None and b is not None
+        Plugin(plugin_id=1, plugin_name="p1", severity_int=3).save(temp_db)
+        Finding(scan_id=a, plugin_id=1, review_state="unreviewed").save(temp_db)
+        Finding(scan_id=b, plugin_id=1, review_state="in_progress").save(temp_db)
+        counts = Finding.count_by_scan_severity(a, "3_High", conn=temp_db, scan_ids=[a, b])
+        assert counts == (0, 1, 0, 1)
 
 
 @pytest.mark.integration
@@ -167,3 +198,12 @@ class TestSchemaVersionGuard:
 
         with pytest.raises(SchemaVersionError, match="re-import"):
             initialize_database(db_path)
+
+
+@pytest.mark.unit
+def test_status_legend_and_icons():
+    from cerno_pkg.render import _review_state_cell, _status_legend  # pyright: ignore[reportPrivateUsage]
+
+    assert _status_legend().plain == "Status: ○ Unreviewed  ◐ In Progress"
+    assert _review_state_cell("unreviewed").plain == "○"
+    assert _review_state_cell("in_progress").plain == "◐"
