@@ -230,8 +230,13 @@ cerno_pkg/
   │                        #   (cerno:// URIs incl. config + host/{ip}/nxc), and prompts
   │                        #   always on; NetExec enrichment (get_host_nxc/
   │                        #   list_nxc_credentials) + find_affected_by_cve + read_artifact +
-  │                        #   get_config also always on. execute_command gated by
-  │                        #   mcp_allow_execution (async w/ progress heartbeats);
+  │                        #   get_config + search_findings (all scans) + top_hosts +
+  │                        #   get_capabilities + get_finding_artifacts also always on.
+  │                        #   list_findings supports merged/limit/offset; get_finding_detail
+  │                        #   caps per-host output via max_hosts. execute_command gated by
+  │                        #   mcp_allow_execution (async w/ progress heartbeats; binary
+  │                        #   checked against mcp_exec_allowlist, timeout clamped, optional
+  │                        #   finding_id threaded to ops.log_tool_execution for attribution);
   │                        #   set_review_state/import_nessus gated by mcp_allow_mutations.
   │                        #   Core read tools declare TypedDict output schemas. stdout is the
   │                        #   JSON-RPC channel, so adapters never print (exec uses
@@ -511,6 +516,7 @@ Only after user confirms the changelog content:
 - `claude_assistant_enabled` - Enable/disable Claude Assistant (default: `true`); set to `false` to hide `[A]` entirely
 - `mcp_allow_execution` - Allow the `cerno mcp` server to execute tool commands via `execute_command` (default: `false`)
 - `mcp_allow_mutations` - Allow the `cerno mcp` server to mutate state (`set_review_state`, `import_nessus`) (default: `false`)
+- `mcp_exec_allowlist` - Binaries the MCP `execute_command` tool may run, matched on the basename of `command[0]` (default: `nmap, nxc, netexec, msfconsole, proxychains4`); only consulted when `mcp_allow_execution` is on; an empty list falls back to the default set, not "deny all". Set via CSV: `cerno config set mcp_exec_allowlist "nmap,nxc"`
 
 **NSE profiles** (`constants.py:NSE_PROFILES`): Pre-configured nmap script sets (SMB, SSL, HTTP, etc.)
 

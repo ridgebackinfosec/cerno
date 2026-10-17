@@ -209,7 +209,9 @@ def test_set_review_state_rejects_skipping_in_progress(seeded):
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("state", ["bogus", "pending", "reviewed", "completed", "skipped"])
+@pytest.mark.parametrize(
+    "state", ["bogus", "pending", "reviewed", "completed", "skipped"]
+)
 def test_set_review_state_invalid_raises(seeded, state):
     with pytest.raises(ValueError):
         mcp.tool_set_review_state(seeded["f1"], state, conn=seeded["conn"])
@@ -225,6 +227,7 @@ def test_execute_command_captures_and_logs(seeded):
     out = mcp.tool_execute_command(
         ["python3", "-c", "print('hello-mcp')"],
         tool_name="test",
+        config=CernoConfig(mcp_exec_allowlist=["python3"]),
         conn=seeded["conn"],
     )
     assert out["exit_code"] == 0
@@ -302,7 +305,10 @@ def test_check_tools_shape():
 def test_list_executions_and_artifacts(seeded):
     # Produce one execution to list
     out = mcp.tool_execute_command(
-        ["python3", "-c", "print('x')"], tool_name="probe", conn=seeded["conn"]
+        ["python3", "-c", "print('x')"],
+        tool_name="probe",
+        config=CernoConfig(mcp_exec_allowlist=["python3"]),
+        conn=seeded["conn"],
     )
     execs = mcp.tool_list_executions(conn=seeded["conn"])
     assert any(e["execution_id"] == out["execution_id"] for e in execs)
@@ -676,3 +682,142 @@ def test_core_read_tools_have_output_schema():
         "list_cves",
     ]:
         assert tools[name].outputSchema is not None
+
+
+# ---------------------------------------------------------------------------
+# New: paging / truncation / merged / search / prioritization / capabilities
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_list_findings_limit_and_offset(seeded):
+    first = mcp.tool_list_findings([seeded["scan_id"]], limit=1, conn=seeded["conn"])
+    assert len(first) == 1
+    second = mcp.tool_list_findings(
+        [seeded["scan_id"]], limit=1, offset=1, conn=seeded["conn"]
+    )
+    assert len(second) == 1
+    assert first[0]["plugin_id"] != second[0]["plugin_id"]
+
+
+@pytest.mark.integration
+def test_list_findings_merged_dedups_by_plugin(temp_db):
+    # Same plugin present in two scans → merged yields one representative row.
+    s1 = Scan(scan_name="s1", export_root="/tmp").save(temp_db)
+    s2 = Scan(scan_name="s2", export_root="/tmp").save(temp_db)
+    _seed_finding(temp_db, s1, 500, ["10.0.0.1"], [445], severity=4)
+    _seed_finding(temp_db, s2, 500, ["10.0.0.2"], [445], severity=4)
+    concat = mcp.tool_list_findings([s1, s2], conn=temp_db)
+    assert len(concat) == 2  # two distinct finding_ids
+    merged = mcp.tool_list_findings([s1, s2], merged=True, conn=temp_db)
+    assert len(merged) == 1
+    assert merged[0]["plugin_id"] == 500
+
+
+@pytest.mark.integration
+def test_get_finding_detail_truncates(seeded):
+    full = mcp.tool_get_finding_detail(seeded["f1"], conn=seeded["conn"])
+    assert full["affected_total"] == 2
+    assert full["affected_truncated"] is False
+    capped = mcp.tool_get_finding_detail(seeded["f1"], max_hosts=1, conn=seeded["conn"])
+    assert len(capped["affected"]) == 1
+    assert capped["affected_total"] == 2
+    assert capped["affected_truncated"] is True
+
+
+@pytest.mark.integration
+def test_search_findings_cross_scan(seeded):
+    hits = mcp.tool_search_findings(severity_int=4, conn=seeded["conn"])
+    assert [h["plugin_id"] for h in hits] == [100]
+    assert hits[0]["scan_name"] == "engagement"
+    none = mcp.tool_search_findings(plugin_name="no-such-plugin", conn=seeded["conn"])
+    assert none == []
+
+
+@pytest.mark.integration
+def test_search_findings_limit(seeded):
+    assert len(mcp.tool_search_findings(limit=1, conn=seeded["conn"])) == 1
+
+
+@pytest.mark.integration
+def test_top_hosts_orders_by_severity(seeded):
+    hosts = mcp.tool_top_hosts(limit=10, conn=seeded["conn"])
+    assert hosts  # at least the seeded hosts
+    sevs = [h.get("max_severity") or -1 for h in hosts]
+    assert sevs == sorted(sevs, reverse=True)
+
+
+@pytest.mark.integration
+def test_execute_command_allowlist_rejects_unlisted(seeded):
+    with pytest.raises(ValueError, match="allowlist"):
+        mcp.tool_execute_command(
+            ["python3", "-c", "print(1)"],
+            config=CernoConfig(mcp_exec_allowlist=["nmap"]),
+            conn=seeded["conn"],
+        )
+
+
+@pytest.mark.integration
+def test_execute_command_empty_allowlist_falls_back_to_default(seeded):
+    # Empty list ⇒ built-in default set, which does NOT include python3.
+    with pytest.raises(ValueError, match="allowlist"):
+        mcp.tool_execute_command(
+            ["python3", "-c", "print(1)"],
+            config=CernoConfig(mcp_exec_allowlist=[]),
+            conn=seeded["conn"],
+        )
+
+
+@pytest.mark.integration
+def test_execute_command_timeout_clamped(seeded):
+    # Huge timeout is accepted (clamped internally) and the run still succeeds.
+    out = mcp.tool_execute_command(
+        ["python3", "-c", "print('ok')"],
+        timeout=10_000_000,
+        config=CernoConfig(mcp_exec_allowlist=["python3"]),
+        conn=seeded["conn"],
+    )
+    assert out["exit_code"] == 0
+
+
+@pytest.mark.integration
+def test_execute_command_attributes_finding_and_get_finding_artifacts(seeded):
+    out = mcp.tool_execute_command(
+        ["python3", "-c", "print('hi')"],
+        tool_name="probe",
+        finding_id=seeded["f1"],
+        config=CernoConfig(mcp_exec_allowlist=["python3"]),
+        conn=seeded["conn"],
+    )
+    row = (
+        seeded["conn"]
+        .execute(
+            "SELECT finding_id FROM tool_executions WHERE execution_id = ?",
+            (out["execution_id"],),
+        )
+        .fetchone()
+    )
+    assert row["finding_id"] == seeded["f1"]
+    # No artifacts logged for this run → empty list (not an error).
+    assert mcp.tool_get_finding_artifacts(seeded["f1"], conn=seeded["conn"]) == []
+
+
+@pytest.mark.unit
+def test_get_capabilities_reports_flags_and_allowlist():
+    caps = mcp.tool_get_capabilities(
+        CernoConfig(mcp_allow_execution=True, mcp_exec_allowlist=["nmap", "nxc"])
+    )
+    assert caps["execution_enabled"] is True
+    assert caps["mutations_enabled"] is False
+    assert caps["exec_allowlist"] == ["nmap", "nxc"]
+    assert "nxc_available" in caps
+
+
+@pytest.mark.integration
+def test_triage_scope_multi_scan(temp_db):
+    s1 = Scan(scan_name="alpha", export_root="/tmp").save(temp_db)
+    s2 = Scan(scan_name="beta", export_root="/tmp").save(temp_db)
+    _seed_finding(temp_db, s1, 700, ["10.0.0.1"], [445], severity=4)
+    _seed_finding(temp_db, s2, 800, ["10.0.0.2"], [22], severity=3)
+    text = mcp.prompt_triage_scope([s1, s2], conn=temp_db)
+    assert "alpha" in text and "beta" in text

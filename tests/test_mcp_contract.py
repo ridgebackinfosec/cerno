@@ -29,18 +29,38 @@ from cerno_pkg.models import Finding, Host, Plugin, Port, Scan
 
 EXPECTED_TOOLS = {
     # read (always on)
-    "list_scans", "list_findings", "get_finding_detail", "get_finding_hosts",
-    "list_hosts", "list_services", "get_web_targets", "list_cves",
-    "find_affected_by_cve", "host_history", "compare_scans", "get_workflow",
-    "check_tools", "list_executions", "list_artifacts", "read_artifact",
+    "list_scans",
+    "list_findings",
+    "get_finding_detail",
+    "get_finding_hosts",
+    "list_hosts",
+    "list_services",
+    "get_web_targets",
+    "list_cves",
+    "find_affected_by_cve",
+    "host_history",
+    "compare_scans",
+    "get_workflow",
+    "check_tools",
+    "list_executions",
+    "list_artifacts",
+    "read_artifact",
     "get_config",
+    "search_findings",
+    "top_hosts",
+    "get_capabilities",
+    "get_finding_artifacts",
     # netexec (always on)
-    "get_host_nxc", "list_nxc_credentials",
+    "get_host_nxc",
+    "list_nxc_credentials",
     # generate (always on)
-    "generate_nmap_cmd", "generate_netexec_cmd", "generate_msf_search",
+    "generate_nmap_cmd",
+    "generate_netexec_cmd",
+    "generate_msf_search",
     # gated
-    "execute_command",                       # mcp_allow_execution
-    "set_review_state", "import_nessus",     # mcp_allow_mutations
+    "execute_command",  # mcp_allow_execution
+    "set_review_state",
+    "import_nessus",  # mcp_allow_mutations
 }
 EXPECTED_STATIC_RESOURCES = {"cerno://scans", "cerno://config"}
 EXPECTED_RESOURCE_TEMPLATES = {
@@ -57,6 +77,7 @@ EXPECTED_PROMPTS = {"triage_finding", "exploit_plan", "triage_scope"}
 # Seeded on-disk DB + server, with DATABASE_PATH pointed at it
 # ---------------------------------------------------------------------------
 
+
 def _init_schema(conn: sqlite3.Connection) -> None:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=OFF")
@@ -64,9 +85,13 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA foreign_keys=ON")
     conn.executemany(
         "INSERT INTO severity_levels VALUES (?, ?, ?, ?)",
-        [(4, "Critical", 4, "#8B0000"), (3, "High", 3, "#FF4500"),
-         (2, "Medium", 2, "#FFA500"), (1, "Low", 1, "#FFD700"),
-         (0, "Info", 0, "#4682B4")],
+        [
+            (4, "Critical", 4, "#8B0000"),
+            (3, "High", 3, "#FF4500"),
+            (2, "Medium", 2, "#FFA500"),
+            (1, "Low", 1, "#FFD700"),
+            (0, "Info", 0, "#4682B4"),
+        ],
     )
     conn.executemany(
         "INSERT INTO artifact_types (type_name, file_extension, description) VALUES (?, ?, ?)",
@@ -85,9 +110,14 @@ def contract(tmp_path, monkeypatch):
 
     scan_id = Scan(scan_name="engagement", export_root=str(tmp_path)).save(conn)
     Scan(scan_name="baseline", export_root=str(tmp_path)).save(conn)
-    Plugin(plugin_id=100, plugin_name="SMB Signing", severity_int=4,
-           has_metasploit=True, cves=["CVE-2021-1"],
-           metasploit_names=["ms17_010"]).save(conn)
+    Plugin(
+        plugin_id=100,
+        plugin_name="SMB Signing",
+        severity_int=4,
+        has_metasploit=True,
+        cves=["CVE-2021-1"],
+        metasploit_names=["ms17_010"],
+    ).save(conn)
     finding_id = Finding(scan_id=scan_id, plugin_id=100).save(conn)
     host_id = Host.get_or_create("10.0.0.1", "10.0.0.1", "ipv4", conn=conn)
     Port.get_or_create(445, conn=conn)
@@ -107,7 +137,9 @@ def contract(tmp_path, monkeypatch):
     )
     exec_id = cur.lastrowid
     artifact_file = tmp_path / "scan.nmap"
-    artifact_file.write_text("Nmap scan report for 10.0.0.1\n445/tcp open microsoft-ds\n")
+    artifact_file.write_text(
+        "Nmap scan report for 10.0.0.1\n445/tcp open microsoft-ds\n"
+    )
     cur = conn.execute(
         "INSERT INTO artifacts (execution_id, artifact_path, artifact_type_id, created_at) "
         "VALUES (?, ?, 1, 't')",
@@ -145,6 +177,7 @@ def _run(coro):
 # Inventory tripwire
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.integration
 def test_mcp_inventory_frozen(contract):
     s = contract["server"]
@@ -153,7 +186,9 @@ def test_mcp_inventory_frozen(contract):
     templates = {t.uriTemplate for t in _run(s.list_resource_templates())}
     prompts = {p.name for p in _run(s.list_prompts())}
 
-    assert tools == EXPECTED_TOOLS, f"MCP tool surface changed: {tools ^ EXPECTED_TOOLS}"
+    assert (
+        tools == EXPECTED_TOOLS
+    ), f"MCP tool surface changed: {tools ^ EXPECTED_TOOLS}"
     assert statics == EXPECTED_STATIC_RESOURCES
     assert templates == EXPECTED_RESOURCE_TEMPLATES
     assert prompts == EXPECTED_PROMPTS
@@ -163,12 +198,15 @@ def test_mcp_inventory_frozen(contract):
 # Call-through: every non-side-effecting tool via the real MCP path
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.integration
 def test_tools_callable_through_server(contract):
     s = contract["server"]
     fid, sid, aid, ip = (
-        contract["finding_id"], contract["scan_id"],
-        contract["artifact_id"], contract["host_ip"],
+        contract["finding_id"],
+        contract["scan_id"],
+        contract["artifact_id"],
+        contract["host_ip"],
     )
     args = {
         "list_scans": {},
@@ -208,6 +246,7 @@ def test_tools_callable_through_server(contract):
 # Call-through: resources and prompts
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.integration
 def test_resources_readable_through_server(contract):
     s = contract["server"]
@@ -232,12 +271,13 @@ def test_prompts_renderable_through_server(contract):
     fid, sid = contract["finding_id"], contract["scan_id"]
     assert _run(s.get_prompt("triage_finding", {"finding_id": str(fid)}))
     assert _run(s.get_prompt("exploit_plan", {"finding_id": str(fid)}))
-    assert _run(s.get_prompt("triage_scope", {"scan_id": str(sid)}))
+    assert _run(s.get_prompt("triage_scope", {"scan_ids": str(sid)}))
 
 
 # ---------------------------------------------------------------------------
 # Hermeticity: prompts/adapters must use the injected conn, not the default DB
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.integration
 def test_prompts_do_not_touch_default_db(tmp_path, monkeypatch, temp_db):

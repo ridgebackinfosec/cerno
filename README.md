@@ -386,11 +386,14 @@ The server is **read-only by default** — execution and mutation tools stay
 hidden until you enable them:
 
 ```bash
-cerno config set mcp_allow_execution true   # permit execute_command
-cerno config set mcp_allow_mutations true   # permit set_review_state / import_nessus
+cerno config set mcp_allow_execution true        # permit execute_command
+cerno config set mcp_allow_mutations true        # permit set_review_state / import_nessus
+cerno config set mcp_exec_allowlist "nmap,nxc"   # restrict which binaries execute_command may run
 ```
 
 > Gating flags are read once at startup; reconnect (remove + re-add, or restart the client) to apply a change.
+
+> Even with execution enabled, `execute_command` only runs binaries in `mcp_exec_allowlist` (default: nmap, nxc, netexec, msfconsole, proxychains4).
 
 **See [docs/MCP.md](docs/MCP.md)** for the full tool/resource/prompt reference,
 scopes, and management commands.

@@ -6,7 +6,7 @@ Configuration is optional - the application works with defaults if no config fil
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -81,6 +81,14 @@ class CernoConfig:
     """Allow the `cerno mcp` server to MUTATE state — update review state, import scans (default: False).
     When False, those tools are not registered and the server is effectively read-only."""
 
+    mcp_exec_allowlist: list[str] = field(
+        default_factory=lambda: ["nmap", "nxc", "netexec", "msfconsole", "proxychains4"]
+    )
+    """Binaries the `cerno mcp` server's execute_command tool may run (matched on the
+    basename of command[0], so absolute paths resolve). Only consulted when
+    mcp_allow_execution is True. An empty list falls back to the built-in default set,
+    not "deny all"."""
+
     # Proxy settings
     proxychains_enabled: bool = False
     """Route all tool executions through proxychains4 SOCKS5 proxy (default: False)."""
@@ -152,6 +160,10 @@ def load_config() -> CernoConfig:
             claude_assistant_enabled=data.get("claude_assistant_enabled", True),
             mcp_allow_execution=data.get("mcp_allow_execution", False),
             mcp_allow_mutations=data.get("mcp_allow_mutations", False),
+            mcp_exec_allowlist=data.get(
+                "mcp_exec_allowlist",
+                ["nmap", "nxc", "netexec", "msfconsole", "proxychains4"],
+            ),
             proxychains_enabled=data.get("proxychains_enabled", False),
             proxychains_host=data.get("proxychains_host", "127.0.0.1"),
             proxychains_port=data.get("proxychains_port", 9000),
@@ -203,6 +215,7 @@ def save_config(config: CernoConfig) -> bool:
                 "claude_assistant_enabled": config.claude_assistant_enabled,
                 "mcp_allow_execution": config.mcp_allow_execution,
                 "mcp_allow_mutations": config.mcp_allow_mutations,
+                "mcp_exec_allowlist": config.mcp_exec_allowlist,
                 "proxychains_enabled": config.proxychains_enabled,
                 "proxychains_host": config.proxychains_host,
                 "proxychains_port": config.proxychains_port,
@@ -248,6 +261,7 @@ def create_example_config() -> bool:
         claude_assistant_enabled=True,
         mcp_allow_execution=False,
         mcp_allow_mutations=False,
+        mcp_exec_allowlist=["nmap", "nxc", "netexec", "msfconsole", "proxychains4"],
         proxychains_enabled=False,
         proxychains_host="127.0.0.1",
         proxychains_port=9000,

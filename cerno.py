@@ -2750,6 +2750,7 @@ def config_show() -> None:
         ("MCP Server", [
             _row("mcp_allow_execution", config.mcp_allow_execution, "Allow MCP server to execute commands"),
             _row("mcp_allow_mutations", config.mcp_allow_mutations, "Allow MCP server to mutate state"),
+            _row("mcp_exec_allowlist", ", ".join(config.mcp_exec_allowlist), "Binaries execute_command may run"),
         ]),
         ("Proxychains", [
             _row("proxychains_enabled", config.proxychains_enabled, "Route tools through SOCKS5 proxy"),
@@ -2850,17 +2851,19 @@ def config_set(
         info("                default_tool, default_netexec_protocol, nmap_default_profile,")
         info("                log_path, debug_logging, no_color, term_override, nxc_workspace_path,")
         info("                nxc_enrichment_enabled, claude_assistant_enabled, mcp_allow_execution,")
-        info("                mcp_allow_mutations, proxychains_enabled,")
+        info("                mcp_allow_mutations, mcp_exec_allowlist, proxychains_enabled,")
         info("                proxychains_host, proxychains_port")
         raise typer.Exit(1)
 
     # Type conversion based on key
     try:
-        typed_value: int | bool | str
+        typed_value: int | bool | str | list[str]
         if key in ["default_page_size", "top_ports_count", "proxychains_port"]:
             typed_value = int(value)
         elif key in ["no_color", "debug_logging", "nxc_enrichment_enabled", "claude_assistant_enabled", "mcp_allow_execution", "mcp_allow_mutations", "proxychains_enabled"]:
             typed_value = value.lower() in ("true", "1", "yes", "on")
+        elif key == "mcp_exec_allowlist":
+            typed_value = [s.strip() for s in value.split(",") if s.strip()]
         else:
             typed_value = value
 

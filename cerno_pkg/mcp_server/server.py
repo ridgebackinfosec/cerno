@@ -78,6 +78,70 @@ class FindingSummary(TypedDict, total=False):
 class FindingDetail(FindingSummary, total=False):
     metasploit_names: list[str]
     affected: list[dict]
+    affected_total: int
+    affected_truncated: bool
+
+
+class FindingSearchResult(FindingSummary, total=False):
+    scan_name: str
+
+
+class FindingHosts(TypedDict, total=False):
+    finding_id: int
+    hosts: list[str]
+    ports: str
+    target_lines: list[str]
+
+
+class ExecutionInfo(TypedDict, total=False):
+    execution_id: int
+    tool_name: str
+    tool_protocol: Optional[str]
+    command_text: str
+    executed_at: str
+    exit_code: Optional[int]
+    duration_seconds: Optional[float]
+    host_count: Optional[int]
+    ports: Optional[str]
+    used_sudo: bool
+
+
+class ArtifactInfo(TypedDict, total=False):
+    artifact_id: int
+    execution_id: Optional[int]
+    artifact_path: str
+    artifact_type: str
+    file_extension: Optional[str]
+    file_size_bytes: Optional[int]
+    file_hash: Optional[str]
+    created_at: str
+
+
+class CveAffected(TypedDict, total=False):
+    finding_id: int
+    scan_id: int
+    plugin_id: int
+    plugin_name: str
+    severity_int: int
+    hosts: list[str]
+
+
+class GeneratedCommand(TypedDict, total=False):
+    command: Any
+    ips_file: str
+    output_base: str
+    log_path: Optional[str]
+    relay_path: Optional[str]
+    search_term: str
+    has_metasploit: bool
+    metasploit_names: list[str]
+
+
+class Capabilities(TypedDict, total=False):
+    execution_enabled: bool
+    mutations_enabled: bool
+    exec_allowlist: list[str]
+    nxc_available: bool
 
 
 class HostInfo(TypedDict, total=False):
@@ -167,39 +231,173 @@ def tool_list_findings(
     review_state: Optional[str] = None,
     has_metasploit: Optional[bool] = None,
     plugin_name: Optional[str] = None,
+    merged: bool = False,
+    limit: int = 500,
+    offset: int = 0,
     conn: Optional[sqlite3.Connection] = None,
 ) -> list[dict]:
-    """List findings across one or more scans, optionally filtered.
+    """List findings across one or more scans, optionally filtered and paged.
 
     Args:
-        scan_ids: Scan IDs to include. Findings from all are concatenated.
+        scan_ids: Scan IDs to include.
         severity_int: Optional severity filter (0=Info .. 4=Critical).
         review_state: Optional review-state filter.
         has_metasploit: If set, keep only findings whose plugin has a MSF module.
         plugin_name: Optional case-insensitive substring match on plugin name.
+        merged: When True and more than one scan is given, deduplicate by
+            ``plugin_id`` (one representative finding per plugin, siblings tracked
+            in ``extra_finding_ids``) — matching the TUI's multi-scan review.
+            When False (default), findings are concatenated and deduplicated by
+            ``finding_id``.
+        limit: Maximum number of findings to return (applied after filtering/dedup).
+        offset: Number of findings to skip before ``limit`` (for paging).
     """
     from ..models import Finding
 
     severity_dir = None if severity_int is None else f"{severity_int}_"
     results: list[dict] = []
-    seen: set[int] = set()
     with _db(conn) as c:
-        for scan_id in scan_ids:
+        if merged and len(scan_ids) > 1:
+            display_list, _ = Finding.get_by_scan_ids_merged(
+                scan_ids,
+                severity_dir=severity_dir,
+                has_metasploit=has_metasploit,
+                conn=c,
+            )
+            needle = plugin_name.lower() if plugin_name else None
+            for finding, plugin in display_list:
+                if review_state is not None and finding.review_state != review_state:
+                    continue
+                if (
+                    needle is not None
+                    and needle not in (plugin.plugin_name or "").lower()
+                ):
+                    continue
+                results.append(_finding_plugin_to_dict(finding, plugin))
+        else:
+            seen: set[int] = set()
+            for scan_id in scan_ids:
+                pairs = Finding.get_by_scan_with_plugin(
+                    scan_id,
+                    severity_dir=severity_dir,
+                    review_state=review_state,
+                    plugin_name_filter=plugin_name,
+                    has_metasploit=has_metasploit,
+                    conn=c,
+                )
+                for finding, plugin in pairs:
+                    fid = finding.finding_id
+                    if fid is None or fid in seen:
+                        continue
+                    seen.add(fid)
+                    results.append(_finding_plugin_to_dict(finding, plugin))
+    if offset:
+        results = results[offset:]
+    if limit is not None and limit >= 0:
+        results = results[:limit]
+    return results
+
+
+def tool_search_findings(
+    *,
+    plugin_name: Optional[str] = None,
+    severity_int: Optional[int] = None,
+    has_metasploit: Optional[bool] = None,
+    limit: int = 500,
+    conn: Optional[sqlite3.Connection] = None,
+) -> list[dict]:
+    """Search findings across ALL scans (no scan_ids required).
+
+    Answers questions like "every host with a critical SMB finding anywhere".
+    Each result carries its ``scan_name`` for cross-scan context. Results are
+    capped at ``limit``.
+    """
+    from ..models import Finding, Scan
+
+    severity_dir = None if severity_int is None else f"{severity_int}_"
+    results: list[dict] = []
+    with _db(conn) as c:
+        for scan in Scan.get_all_with_stats(c):
+            scan_id = scan["scan_id"]
             pairs = Finding.get_by_scan_with_plugin(
                 scan_id,
                 severity_dir=severity_dir,
-                review_state=review_state,
                 plugin_name_filter=plugin_name,
                 has_metasploit=has_metasploit,
                 conn=c,
             )
             for finding, plugin in pairs:
-                fid = finding.finding_id
-                if fid is None or fid in seen:
-                    continue
-                seen.add(fid)
-                results.append(_finding_plugin_to_dict(finding, plugin))
+                row = _finding_plugin_to_dict(finding, plugin)
+                row["scan_name"] = scan["scan_name"]
+                results.append(row)
+                if len(results) >= limit >= 0:
+                    return results
     return results
+
+
+def tool_top_hosts(
+    limit: int = 20, conn: Optional[sqlite3.Connection] = None
+) -> list[dict]:
+    """Return hosts ordered worst-severity-first for prioritization.
+
+    Sorted by max severity (descending), then finding count (descending),
+    sliced to ``limit``. Reuses the cross-scan host inventory.
+    """
+    from ..models import Host
+
+    with _db(conn) as c:
+        hosts = Host.get_all_with_stats(c)
+    hosts.sort(
+        key=lambda h: (h.get("max_severity") or -1, h.get("finding_count") or 0),
+        reverse=True,
+    )
+    return hosts[:limit] if limit >= 0 else hosts
+
+
+def tool_get_capabilities(config: Optional[CernoConfig] = None) -> dict:
+    """Report which gated capabilities are live, so an agent can self-orient."""
+    from ..nxc_db import get_nxc_manager
+
+    cfg = config or load_config()
+    allowlist = cfg.mcp_exec_allowlist or [
+        "nmap",
+        "nxc",
+        "netexec",
+        "msfconsole",
+        "proxychains4",
+    ]
+    return {
+        "execution_enabled": cfg.mcp_allow_execution,
+        "mutations_enabled": cfg.mcp_allow_mutations,
+        "exec_allowlist": allowlist,
+        "nxc_available": get_nxc_manager() is not None,
+    }
+
+
+def tool_get_finding_artifacts(
+    finding_id: int, conn: Optional[sqlite3.Connection] = None
+) -> list[dict]:
+    """Return artifact files generated by executions attributed to a finding.
+
+    Joins findings -> tool_executions (finding_id) -> artifacts so an agent can
+    retrieve the evidence (e.g. nmap output) produced for a specific finding.
+    """
+    from ..database import query_all
+
+    with _db(conn) as c:
+        rows = query_all(
+            c,
+            """
+            SELECT a.artifact_id, a.execution_id, a.artifact_path, a.artifact_type,
+                   a.file_extension, a.file_size_bytes, a.file_hash, a.created_at
+            FROM v_artifacts_with_types a
+            JOIN tool_executions te ON a.execution_id = te.execution_id
+            WHERE te.finding_id = ?
+            ORDER BY a.created_at DESC
+            """,
+            (finding_id,),
+        )
+        return [dict(row) for row in rows]
 
 
 def tool_get_finding_hosts(
@@ -278,13 +476,19 @@ def tool_get_workflow(plugin_id: int) -> Optional[dict]:
 
 
 def tool_get_finding_detail(
-    finding_id: int, conn: Optional[sqlite3.Connection] = None
+    finding_id: int,
+    max_hosts: int = 100,
+    conn: Optional[sqlite3.Connection] = None,
 ) -> dict:
     """Return full detail for one finding: plugin metadata + per-host plugin output.
 
     Note: Cerno does not store Nessus description/solution/synopsis text. The
     authoritative evidence is the per-host ``plugin_output`` plus the CVE list,
     Metasploit module names, and the Tenable ``plugin_url`` for further reading.
+
+    The ``affected`` list is capped at ``max_hosts`` entries to protect the
+    caller's context on large scans; ``affected_total`` gives the true count and
+    ``affected_truncated`` flags when the list was cut.
     """
     from ..models import Finding, Plugin, SeverityLevel
 
@@ -298,6 +502,8 @@ def tool_get_finding_detail(
         sev = SeverityLevel.get_by_int(plugin.severity_int, c)
         outputs = finding.get_plugin_outputs_by_host(c)
 
+    total = len(outputs)
+    capped = outputs[:max_hosts] if max_hosts >= 0 else outputs
     return {
         "finding_id": finding_id,
         "scan_id": finding.scan_id,
@@ -314,8 +520,10 @@ def tool_get_finding_detail(
         "plugin_url": plugin.plugin_url,
         "affected": [
             {"host": host, "port": port, "plugin_output": output}
-            for host, port, output in outputs
+            for host, port, output in capped
         ],
+        "affected_total": total,
+        "affected_truncated": max_hosts >= 0 and total > max_hosts,
     }
 
 
@@ -776,20 +984,31 @@ def tool_generate_msf_search(
 # ========== Execution (gated by mcp_allow_execution) ==========
 
 
+#: Fallback allowlist used when config.mcp_exec_allowlist is empty.
+_DEFAULT_EXEC_ALLOWLIST = ["nmap", "nxc", "netexec", "msfconsole", "proxychains4"]
+
+#: Hard ceiling on execute_command timeouts (seconds).
+_MAX_EXEC_TIMEOUT = 3600
+
+
 def tool_execute_command(
     command: list[str],
     *,
     tool_name: str = "mcp",
     use_proxy: bool = False,
     timeout: int = 300,
+    finding_id: Optional[int] = None,
     config: Optional[CernoConfig] = None,
     conn: Optional[sqlite3.Connection] = None,
 ) -> dict:
     """Execute a command non-interactively, capture output, and log the run.
 
-    The command is run with ``shell=False`` (argv list). Output is captured and
-    returned; nothing is written to stdout. The run is recorded in
-    ``tool_executions`` via ``ops.log_tool_execution``.
+    The command is run with ``shell=False`` (argv list). The basename of
+    ``command[0]`` must be in the configured ``mcp_exec_allowlist`` (an empty
+    allowlist falls back to the built-in default set, not "deny all"). ``timeout``
+    is clamped to [1, 3600] seconds. Output is captured and returned; nothing is
+    written to stdout. The run is recorded in ``tool_executions`` via
+    ``ops.log_tool_execution``, attributed to ``finding_id`` when supplied.
     """
     from ..ops import ProxyConfig, log_tool_execution, run_command_captured
 
@@ -797,6 +1016,18 @@ def tool_execute_command(
         raise ValueError("command must be a non-empty list of arguments")
 
     cfg = config or load_config()
+
+    allowlist = cfg.mcp_exec_allowlist or _DEFAULT_EXEC_ALLOWLIST
+    binary = Path(str(command[0])).name
+    if binary not in allowlist:
+        raise ValueError(
+            f"Binary {binary!r} is not in the execute_command allowlist "
+            f"{sorted(allowlist)}. Adjust with "
+            "'cerno config set mcp_exec_allowlist ...' then reconnect."
+        )
+
+    timeout = max(1, min(int(timeout), _MAX_EXEC_TIMEOUT))
+
     proxy = None
     if use_proxy and cfg.proxychains_enabled:
         proxy = ProxyConfig(
@@ -816,6 +1047,7 @@ def tool_execute_command(
             tool_name,
             command_text,
             meta,
+            finding_id=finding_id,
             conn=c,
         )
 
@@ -1005,29 +1237,46 @@ def prompt_exploit_plan(
 
 
 def prompt_triage_scope(
-    scan_id: int,
+    scan_ids: list[int] | int,
     severity_int: Optional[int] = None,
     conn: Optional[sqlite3.Connection] = None,
 ) -> str:
-    """Report-brief prompt for a scan scope (optionally one severity)."""
+    """Report-brief prompt for a scan scope spanning one or more scans.
+
+    Accepts a single ``scan_id`` or a list. Multiple scans are merged and
+    deduplicated by plugin_id (``Finding.get_by_scan_ids_merged``), matching the
+    TUI's scope-level aggregate assistant.
+    """
     from ..claude_assistant import REPORT_BRIEF_QUERY, build_aggregate_context
     from ..models import Finding, Scan
 
+    ids = [scan_ids] if isinstance(scan_ids, int) else list(scan_ids)
+    if not ids:
+        raise ValueError("scan_ids must contain at least one scan id")
+
     severity_dir = None if severity_int is None else f"{severity_int}_"
     with _db(conn) as c:
-        scan = Scan.get_by_id(scan_id, c)
-        if scan is None:
-            raise ValueError(f"No scan with id {scan_id}")
-        pairs = Finding.get_by_scan_with_plugin(
-            scan_id, severity_dir=severity_dir, conn=c
-        )
+        names: list[str] = []
+        for sid in ids:
+            scan = Scan.get_by_id(sid, c)
+            if scan is None:
+                raise ValueError(f"No scan with id {sid}")
+            names.append(scan.scan_name)
+
+        if len(ids) > 1:
+            pairs, _ = Finding.get_by_scan_ids_merged(
+                ids, severity_dir=severity_dir, conn=c
+            )
+        else:
+            pairs = Finding.get_by_scan_with_plugin(
+                ids[0], severity_dir=severity_dir, conn=c
+            )
         sev_note = "" if severity_int is None else f" (severity {severity_int})"
-        scope_description = f"{scan.scan_name}{sev_note}: {len(pairs)} finding(s)"
+        scope_label = ", ".join(names)
+        scope_description = f"{scope_label}{sev_note}: {len(pairs)} finding(s)"
         # Pass conn so host/port lookups use the injected connection (not the
         # default DB) — keeps the prompt hermetic under tests.
-        context = build_aggregate_context(
-            [scan.scan_name], scope_description, pairs, conn=c
-        )
+        context = build_aggregate_context(names, scope_description, pairs, conn=c)
     return f"{context}\n\n{REPORT_BRIEF_QUERY}"
 
 
@@ -1056,8 +1305,15 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         review_state: Optional[str] = None,
         has_metasploit: Optional[bool] = None,
         plugin_name: Optional[str] = None,
+        merged: bool = False,
+        limit: int = 500,
+        offset: int = 0,
     ) -> list[FindingSummary]:
-        """List findings across scans, filtered by severity/state/metasploit/name."""
+        """List findings across scans, filtered and paged.
+
+        merged=True dedups multi-scan results by plugin (TUI semantics); limit/
+        offset page the result.
+        """
         return cast(
             "list[FindingSummary]",
             tool_list_findings(
@@ -1066,13 +1322,34 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
                 review_state=review_state,
                 has_metasploit=has_metasploit,
                 plugin_name=plugin_name,
+                merged=merged,
+                limit=limit,
+                offset=offset,
             ),
         )
 
     @mcp.tool()
-    def get_finding_hosts(finding_id: int) -> dict:
+    def search_findings(
+        plugin_name: Optional[str] = None,
+        severity_int: Optional[int] = None,
+        has_metasploit: Optional[bool] = None,
+        limit: int = 500,
+    ) -> list[FindingSearchResult]:
+        """Search findings across ALL scans (no scan_ids needed); each carries scan_name."""
+        return cast(
+            "list[FindingSearchResult]",
+            tool_search_findings(
+                plugin_name=plugin_name,
+                severity_int=severity_int,
+                has_metasploit=has_metasploit,
+                limit=limit,
+            ),
+        )
+
+    @mcp.tool()
+    def get_finding_hosts(finding_id: int) -> FindingHosts:
         """Get host list, ports, and ready-to-use host:port target lines for a finding."""
-        return tool_get_finding_hosts(finding_id)
+        return cast("FindingHosts", tool_get_finding_hosts(finding_id))
 
     @mcp.tool()
     def get_web_targets(scan_id: int) -> list[str]:
@@ -1097,9 +1374,11 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         return tool_get_workflow(plugin_id)
 
     @mcp.tool()
-    def get_finding_detail(finding_id: int) -> FindingDetail:
-        """Get full detail for a finding: plugin metadata + per-host plugin output."""
-        return cast("FindingDetail", tool_get_finding_detail(finding_id))
+    def get_finding_detail(finding_id: int, max_hosts: int = 100) -> FindingDetail:
+        """Get full detail for a finding: plugin metadata + per-host plugin output (capped)."""
+        return cast(
+            "FindingDetail", tool_get_finding_detail(finding_id, max_hosts=max_hosts)
+        )
 
     @mcp.tool()
     def list_hosts(scan_id: Optional[int] = None) -> list[HostInfo]:
@@ -1107,21 +1386,31 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         return cast("list[HostInfo]", tool_list_hosts(scan_id))
 
     @mcp.tool()
+    def top_hosts(limit: int = 20) -> list[HostInfo]:
+        """List hosts worst-severity-first for prioritization (cross-scan)."""
+        return cast("list[HostInfo]", tool_top_hosts(limit))
+
+    @mcp.tool()
     def check_tools() -> dict:
         """Report which security tools (nmap/netexec/msf/proxychains4) are installed."""
         return tool_check_tools()
 
     @mcp.tool()
-    def list_executions(limit: int = 50) -> list[dict]:
+    def list_executions(limit: int = 50) -> list[ExecutionInfo]:
         """List recent tool executions recorded in the database."""
-        return tool_list_executions(limit)
+        return cast("list[ExecutionInfo]", tool_list_executions(limit))
 
     @mcp.tool()
     def list_artifacts(
         execution_id: Optional[int] = None, limit: int = 50
-    ) -> list[dict]:
+    ) -> list[ArtifactInfo]:
         """List generated artifact files, optionally for one execution."""
-        return tool_list_artifacts(execution_id, limit)
+        return cast("list[ArtifactInfo]", tool_list_artifacts(execution_id, limit))
+
+    @mcp.tool()
+    def get_finding_artifacts(finding_id: int) -> list[ArtifactInfo]:
+        """List artifact files generated by executions attributed to a finding."""
+        return cast("list[ArtifactInfo]", tool_get_finding_artifacts(finding_id))
 
     @mcp.tool()
     def list_cves(
@@ -1140,9 +1429,11 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
     @mcp.tool()
     def find_affected_by_cve(
         cve: str, scan_ids: Optional[list[int]] = None
-    ) -> list[dict]:
+    ) -> list[CveAffected]:
         """Find findings/hosts affected by a CVE across scans (reverse of list_cves)."""
-        return tool_find_affected_by_cve(cve, scan_ids=scan_ids)
+        return cast(
+            "list[CveAffected]", tool_find_affected_by_cve(cve, scan_ids=scan_ids)
+        )
 
     @mcp.tool()
     def read_artifact(artifact_id: int, max_bytes: int = 100_000) -> dict:
@@ -1153,6 +1444,11 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
     def get_config() -> dict:
         """Return all current Cerno config settings (read-only)."""
         return tool_get_config()
+
+    @mcp.tool()
+    def get_capabilities() -> Capabilities:
+        """Report which gated capabilities (execution/mutations/nxc) are live."""
+        return cast("Capabilities", tool_get_capabilities(cfg))
 
     @mcp.tool()
     def get_host_nxc(host_ip: str) -> dict:
@@ -1171,21 +1467,31 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         udp: bool = False,
         nse_option: Optional[str] = None,
         use_sudo: bool = False,
-    ) -> dict:
+    ) -> GeneratedCommand:
         """Build an nmap command for a finding's hosts/ports (does not run it)."""
-        return tool_generate_nmap_cmd(
-            finding_id, udp=udp, nse_option=nse_option, use_sudo=use_sudo, config=cfg
+        return cast(
+            "GeneratedCommand",
+            tool_generate_nmap_cmd(
+                finding_id,
+                udp=udp,
+                nse_option=nse_option,
+                use_sudo=use_sudo,
+                config=cfg,
+            ),
         )
 
     @mcp.tool()
-    def generate_netexec_cmd(finding_id: int, protocol: str) -> dict:
+    def generate_netexec_cmd(finding_id: int, protocol: str) -> GeneratedCommand:
         """Build a netexec command for a finding's hosts (does not run it)."""
-        return tool_generate_netexec_cmd(finding_id, protocol, config=cfg)
+        return cast(
+            "GeneratedCommand",
+            tool_generate_netexec_cmd(finding_id, protocol, config=cfg),
+        )
 
     @mcp.tool()
-    def generate_msf_search(finding_id: int) -> dict:
+    def generate_msf_search(finding_id: int) -> GeneratedCommand:
         """Build an msfconsole search command for a finding's Metasploit modules."""
-        return tool_generate_msf_search(finding_id)
+        return cast("GeneratedCommand", tool_generate_msf_search(finding_id))
 
     # --- Resources (always on; operator-pinnable context) ---
     @mcp.resource("cerno://scans", mime_type="application/json")
@@ -1235,9 +1541,14 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         return prompt_exploit_plan(finding_id)
 
     @mcp.prompt()
-    def triage_scope(scan_id: int, severity_int: Optional[int] = None) -> str:
-        """Draft a report brief across a scan scope (optionally one severity)."""
-        return prompt_triage_scope(scan_id, severity_int)
+    def triage_scope(scan_ids: str, severity_int: Optional[int] = None) -> str:
+        """Draft a report brief across one or more scans (optionally one severity).
+
+        scan_ids is a comma-separated list of scan IDs (e.g. "1" or "1,3"); multiple
+        scans are merged and deduplicated by plugin, matching the TUI scope assistant.
+        """
+        ids = [int(s) for s in str(scan_ids).split(",") if s.strip()]
+        return prompt_triage_scope(ids, severity_int)
 
     # --- Execution (gated) ---
     if cfg.mcp_allow_execution:
@@ -1248,9 +1559,14 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
             tool_name: str = "mcp",
             use_proxy: bool = False,
             timeout: int = 300,
+            finding_id: Optional[int] = None,
             ctx: Optional[Context] = None,
         ) -> dict:
             """Execute a command (argv list), capture output, and log the run.
+
+            command[0]'s basename must be in the configured mcp_exec_allowlist;
+            timeout is clamped to [1, 3600]s. Pass finding_id to attribute the run
+            to a finding (so get_finding_artifacts can later find its output).
 
             Runs the blocking command in a worker thread and emits periodic
             progress heartbeats so long scans (e.g. nmap) show liveness in
@@ -1263,6 +1579,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
                     tool_name=tool_name,
                     use_proxy=use_proxy,
                     timeout=timeout,
+                    finding_id=finding_id,
                     config=cfg,
                 )
             )

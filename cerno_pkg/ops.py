@@ -478,6 +478,7 @@ def log_tool_execution(
     ports: Optional[str] = None,
     file_path: Optional[Path] = None,
     scan_dir: Optional[Path] = None,
+    finding_id: Optional[int] = None,
     conn: Optional[sqlite3.Connection] = None,
 ) -> Optional[int]:
     """Log a tool execution to the database.
@@ -492,6 +493,9 @@ def log_tool_execution(
         ports: Port specification string
         file_path: Path to plugin file being processed
         scan_dir: Scan directory for session linking
+        finding_id: Explicit finding to attribute this execution to. Takes
+            precedence over session/scan_dir derivation (used by the MCP server,
+            which has no scan_dir but knows the finding).
         conn: Optional database connection. If None, creates new connection.
               Useful for testing or including in larger transactions.
 
@@ -511,6 +515,7 @@ def log_tool_execution(
             ports,
             file_path,
             scan_dir,
+            finding_id,
         )
 
     # Production path: create new connection
@@ -529,6 +534,7 @@ def log_tool_execution(
                 ports,
                 file_path,
                 scan_dir,
+                finding_id,
             )
     except Exception as e:
         log_error(f"Failed to log tool execution to database: {e}")
@@ -546,6 +552,7 @@ def _log_tool_execution_impl(
     ports: Optional[str],
     file_path: Optional[Path],
     scan_dir: Optional[Path],
+    finding_id: Optional[int] = None,
 ) -> Optional[int]:
     """Internal implementation of log_tool_execution - requires connection.
 
@@ -560,9 +567,8 @@ def _log_tool_execution_impl(
         from .database import query_one
         from .models import ToolExecution, now_iso
 
-        # Determine session_id and finding_id
+        # Determine session_id; finding_id may be supplied explicitly.
         session_id = None
-        finding_id = None
 
         if scan_dir and scan_dir.exists():
             # Try to find active session
