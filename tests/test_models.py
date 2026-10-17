@@ -465,7 +465,7 @@ class TestFindingModel:
         assert len(hosts) == 3
         assert "192.168.1.1" in hosts
         assert "192.168.1.2" in hosts
-        assert "example.com" in hosts  # Original scan target (FQDN)
+        assert hosts.count("example.com") == 1  # Original scan target (FQDN)
 
         # IPv4s come first (ordered by scan_target), then FQDNs
         assert hosts[0] == "192.168.1.1"
@@ -594,7 +594,7 @@ class TestFindingModel:
         assert len(lines) == 3
         assert "192.168.1.1:80" in lines
         assert "192.168.1.1:443" in lines
-        assert "example.com:80" in lines  # Original scan target (FQDN)
+        assert lines.count("example.com:80") == 1  # Original scan target (FQDN)
 
         # IPv4s first (ordered by scan_target), then FQDNs
         assert lines == ["192.168.1.1:80", "192.168.1.1:443", "example.com:80"]
