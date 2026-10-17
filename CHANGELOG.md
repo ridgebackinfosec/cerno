@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.2] - 2026-10-17
+
+### Changed
+- Dependabot version-update PRs now target the `develop` branch instead of `main` (`.github/dependabot.yml`: `target-branch: "develop"`)
+
 ## [1.7.1] - 2026-10-17
 
 ### Changed
