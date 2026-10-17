@@ -44,6 +44,18 @@ def test_mcp_exec_allowlist_missing_uses_default(config_path):
 
 
 @pytest.mark.unit
+def test_claude_assistant_disabled_by_default():
+    assert CernoConfig().claude_assistant_enabled is False
+
+
+@pytest.mark.integration
+def test_claude_assistant_default_persists_false(config_path):
+    # A config file without the key loads the opt-in default (off).
+    config_path.write_text("debug_logging: true\n", encoding="utf-8")
+    assert load_config().claude_assistant_enabled is False
+
+
+@pytest.mark.unit
 def test_mcp_exec_allowlist_csv_coercion_matches_config_set():
     """Mirror the CSV→list coercion used by `cerno config set`."""
     value = " nmap , nxc ,, msfconsole "

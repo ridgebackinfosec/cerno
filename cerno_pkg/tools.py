@@ -492,28 +492,34 @@ def choose_tool(config: Optional["CernoConfig"] = None) -> Optional[str]:
     # Display menu header
     header("Choose a tool")
 
-    # Display tools dynamically from registry
+    # Display tools dynamically from registry. All tools are listed (stable
+    # indices), but those whose binary is missing are marked and non-selectable
+    # so a missing tool can never be chosen or become the Enter-default.
+    from .ansi import C
+
     for index, tool in enumerate(available_tools, start=1):
         # Format: [1] nmap or [2] netexec — multi-protocol
         if tool.description and tool.description != tool.name:
-            print(f"[{index}] {tool.name} — {tool.description}")
+            label = f"[{index}] {tool.name} — {tool.description}"
         else:
-            print(f"[{index}] {tool.name}")
+            label = f"[{index}] {tool.name}"
+        if tool.is_available():
+            print(label)
+        else:
+            print(f"{label} {C.YELLOW}({tool.missing_requirement_hint()}){C.RESET}")
 
     print_action_menu([("B", "Back")])
 
-    # Use config default if available and valid, otherwise first tool
+    # Enter-default: the configured default_tool only if it's available, else the
+    # first available tool. Never default to a missing tool.
     default_tool = None
     if config.default_tool:
-        # Find tool by id in available_tools
         for tool in available_tools:
-            if tool.id == config.default_tool:
+            if tool.id == config.default_tool and tool.is_available():
                 default_tool = tool
                 break
-
-    # Fall back to first tool if no valid config default
-    if not default_tool and available_tools:
-        default_tool = available_tools[0]
+    if not default_tool:
+        default_tool = next((t for t in available_tools if t.is_available()), None)
 
     if default_tool:
         print(f"(Press Enter for '{default_tool.name}')")
@@ -539,6 +545,13 @@ def choose_tool(config: Optional["CernoConfig"] = None) -> Optional[str]:
             choice_index = int(answer)
             selected_tool = get_tool_by_menu_index(choice_index, available_only=False)
             if selected_tool:
+                if not selected_tool.is_available():
+                    warn(
+                        f"{selected_tool.name} is not installed "
+                        f"({selected_tool.missing_requirement_hint()}). "
+                        "Install it or choose another tool."
+                    )
+                    continue
                 return selected_tool.id
 
         warn("Invalid choice.")
@@ -872,7 +885,7 @@ def build_nmap_workflow(ctx: "ToolContext") -> Optional["CommandResult"]:
     """
     from .tool_context import CommandResult
     from .ansi import info, C
-    from .ops import require_cmd
+    from .ops import ensure_cmd
     from .config import load_config
 
     config = load_config()
@@ -891,7 +904,12 @@ def build_nmap_workflow(ctx: "ToolContext") -> Optional["CommandResult"]:
 
     effective_udp = bool(udp_ports) and not ctx.use_proxy
     ips_file = ctx.udp_ips if effective_udp else ctx.tcp_ips
-    require_cmd("nmap")
+    if not ensure_cmd("nmap"):
+        # Missing binary must not kill the review session — return to the menu.
+        from .ansi import info
+
+        info("Skipping run; returning to tool menu.")
+        return None
 
     # --- Remote scan mode ---
     if remote_mode:

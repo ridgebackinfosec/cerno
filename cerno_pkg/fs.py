@@ -361,8 +361,13 @@ def handle_finding_view(
                 warn("Plugin/Finding information not available for tool execution.")
                 continue
 
-            # Run tool workflow with database objects
-            run_tool_workflow(plugin, finding, scan_dir, sev_dir, hosts, ports_str or "", args, use_sudo)
+            # Run tool workflow with database objects. Guard against any deeper
+            # hard-exit (e.g. a require_cmd on a missing binary) so a tooling
+            # problem never drops the operator out of the review session.
+            try:
+                run_tool_workflow(plugin, finding, scan_dir, sev_dir, hosts, ports_str or "", args, use_sudo)
+            except SystemExit:
+                warn("Tool execution aborted; returning to the finding menu.")
             # Reset NXC manager to pick up any new data from tool execution
             reset_nxc_manager()
             # After tool completes, loop back to show menu again
@@ -378,12 +383,16 @@ def handle_finding_view(
 
         # Handle Claude Assistant action
         if action_choice in ("a", "ask", "claude"):
-            if not has_claude:
-                if not claude_installed:
-                    warn("Claude CLI not found on PATH. Install claude to use this feature.")
-                else:
-                    warn("Claude Assistant is disabled. Enable with: cerno config set claude_assistant_enabled true")
+            if not claude_installed:
+                warn("Claude CLI not found on PATH. Install claude to use this feature.")
                 continue
+            if not has_claude:
+                # Installed but off: show the data-path disclosure and let the
+                # operator opt in (persisted). Decline returns to the menu.
+                from .claude_assistant import ensure_enabled
+                if not ensure_enabled(_cfg):
+                    continue
+                has_claude = True
             if finding is None or plugin is None:
                 warn("Finding/Plugin information not available for Claude Assistant.")
                 continue

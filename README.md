@@ -221,11 +221,13 @@ Ask Claude questions about findings without leaving the TUI. Powered by the `cla
 # Install Claude Code CLI (required)
 npm install -g @anthropic-ai/claude-code   # or follow https://claude.ai/code
 
-# Disable if not wanted
-cerno config set claude_assistant_enabled false
+# Opt in (off by default). You can also just press [A] in review and confirm the prompt.
+cerno config set claude_assistant_enabled true
 ```
 
-**Tool availability:** `[A]` is hidden when `claude` is not on PATH or `claude_assistant_enabled` is `false`. It appears in the tool availability table on review startup alongside nmap/netexec/msfconsole.
+**Opt-in (default off):** the assistant sends finding names, plugin metadata, affected hosts, ports, CVEs, workflow steps, and Nessus plugin output to the local `claude` CLI. Because that is sensitive engagement data, it is disabled by default. The first time you press `[A]` with `claude` installed, Cerno shows a data-path disclosure and, on confirmation, enables and remembers the choice. Enable it only if your engagement rules allow that data path.
+
+**Tool availability:** `[A]` is hidden only when `claude` is not on PATH. When installed but not yet enabled, `[A]` is shown and triggers the one-time opt-in prompt.
 
 > **Note:** Responses may be inaccurate — always verify before acting on suggestions.
 

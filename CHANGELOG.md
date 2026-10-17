@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-10-17
+
+### Changed
+- **Claude Assistant is now opt-in.** `claude_assistant_enabled` defaults to `false`. Because the assistant sends finding names, plugin metadata, affected hosts, ports, CVEs, workflow steps, and Nessus plugin output to the local `claude` CLI, the TUI now shows a data-path disclosure on first use and persists the choice when the operator consents (press `[A]` → confirm). Enable ahead of time with `cerno config set claude_assistant_enabled true`.
+
+### Fixed
+- A missing external tool no longer exits the review session. The tool picker lists tools whose binary is absent as `(not installed: …)`, never selects them, and never makes one the Enter-default; launching one shows an inline error and returns to the tool menu (`ops.ensure_cmd()` replaces a hard `sys.exit`, with a `SystemExit` guard around the tool run as a backstop).
+- Tool availability now uses OR semantics across acceptable binaries, so `netexec` shows as available when either `nxc` or `netexec` is installed (previously required both).
+
 ## [1.8.0] - 2026-10-17
 
 ### Added

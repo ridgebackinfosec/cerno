@@ -482,8 +482,9 @@ def browse_file_list(
     scan_dir = Path(primary_scan.export_root) / primary_scan.scan_name
 
     # Claude availability check (once per browse session)
-    from cerno_pkg.claude_assistant import check_claude_available
-    has_claude = check_claude_available() and config.claude_assistant_enabled
+    from cerno_pkg.claude_assistant import check_claude_available, claude_enabled
+    claude_installed = check_claude_available()
+    has_claude = claude_enabled(config)
 
     def get_counts_for(finding: "Finding") -> Tuple[int, str]:
         """Get host/port counts from database.
@@ -836,6 +837,7 @@ def browse_file_list(
                 can_next=can_next,
                 can_prev=can_prev,
                 has_claude=has_claude,
+                claude_installed=claude_installed,
             )
 
             ans = Prompt.ask("Choose a file number, or action").strip().lower()
@@ -932,6 +934,10 @@ def browse_file_list(
 
         # Handle Claude aggregate chat (intercept before generic action handler)
         if ans == "a":
+            if not has_claude and claude_installed:
+                from cerno_pkg.claude_assistant import ensure_enabled
+                if ensure_enabled(config):
+                    has_claude = True
             if has_claude:
                 import hashlib
                 scope_parts = [f"Severity: {severity_label}"]
@@ -950,7 +956,7 @@ def browse_file_list(
                     scan_names=scan_names,
                     findings_with_plugins=candidates,
                 )
-            else:
+            elif not claude_installed:
                 warn("Claude Assistant is not available. Install the claude CLI to use this feature.")
             continue
 
@@ -1521,7 +1527,9 @@ def main(args: types.SimpleNamespace) -> None:
 
                 # Claude availability (computed once per scan selection)
                 from cerno_pkg.claude_assistant import check_claude_available as _check_claude
-                _has_claude_sev = _check_claude() and config.claude_assistant_enabled
+                from cerno_pkg.claude_assistant import claude_enabled as _claude_enabled
+                _claude_installed_sev = _check_claude()
+                _has_claude_sev = _claude_enabled(config)
 
                 # Build multi-scan display label for breadcrumb/header
                 if len(selected_scans) > 1:
@@ -1628,6 +1636,8 @@ def main(args: types.SimpleNamespace) -> None:
                         _sev_menu_items.append(("C", "Clear filter"))
                     if _has_claude_sev:
                         _sev_menu_items.append(("A", "Ask Claude"))
+                    elif _claude_installed_sev:
+                        _sev_menu_items.append(("A", "Ask Claude (enable…)"))
                     _sev_menu_items.append(("B", "Back"))
                     print_action_menu(_sev_menu_items)
 
@@ -1690,6 +1700,10 @@ def main(args: types.SimpleNamespace) -> None:
                         continue
 
                     elif ans == "a":
+                        if not _has_claude_sev and _claude_installed_sev:
+                            from cerno_pkg.claude_assistant import ensure_enabled
+                            if ensure_enabled(config):
+                                _has_claude_sev = True
                         if _has_claude_sev:
                             # Build aggregate context from all findings in the current scan scope
                             _sev_scan_names = [s.scan_name for s in selected_scans]
@@ -1716,7 +1730,7 @@ def main(args: types.SimpleNamespace) -> None:
                                 scan_names=_sev_scan_names,
                                 findings_with_plugins=_sev_findings,
                             )
-                        else:
+                        elif not _claude_installed_sev:
                             warn("Claude Assistant is not available. Install the claude CLI to use this feature.")
                         continue
 

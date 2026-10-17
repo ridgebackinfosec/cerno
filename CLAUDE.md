@@ -261,7 +261,7 @@ cerno_pkg/
   ├── ops.py               # Command execution, sudo handling
   ├── workflow_mapper.py   # YAML workflow configuration
   ├── config.py            # YAML config file management
-  │                        # claude_assistant_enabled: bool (default: True)
+  │                        # claude_assistant_enabled: bool (default: False, opt-in)
   ├── constants.py         # Global constants (paths, severities, NSE profiles)
   ├── ansi.py              # ANSI color helpers
   ├── logging_setup.py     # Loguru setup with rotation
@@ -513,7 +513,7 @@ Only after user confirms the changelog content:
 - `default_netexec_protocol` - Default protocol for NetExec (e.g., `smb`, `ssh`)
 - `nmap_default_profile` - Default NSE profile name
 - `custom_workflows_path` - Path to custom workflows YAML file
-- `claude_assistant_enabled` - Enable/disable Claude Assistant (default: `true`); set to `false` to hide `[A]` entirely
+- `claude_assistant_enabled` - Enable/disable Claude Assistant (default: `false`, opt-in). Pressing `[A]` while installed-but-disabled shows a data-path disclosure (`claude_assistant.CONSENT_DISCLOSURE`) and persists consent via `claude_assistant.ensure_enabled()`; `claude_assistant.claude_enabled(config)` is the single availability gate. `[A]` is hidden only when `claude` is not on PATH
 - `mcp_allow_execution` - Allow the `cerno mcp` server to execute tool commands via `execute_command` (default: `false`)
 - `mcp_allow_mutations` - Allow the `cerno mcp` server to mutate state (`set_review_state`, `import_nessus`) (default: `false`)
 - `mcp_exec_allowlist` - Binaries the MCP `execute_command` tool may run, matched on the basename of `command[0]` (default: `nmap, nxc, netexec, msfconsole, proxychains4`); only consulted when `mcp_allow_execution` is on; an empty list falls back to the default set, not "deny all". Set via CSV: `cerno config set mcp_exec_allowlist "nmap,nxc"`
