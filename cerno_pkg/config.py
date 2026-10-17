@@ -68,8 +68,12 @@ class CernoConfig:
     nxc_enrichment_enabled: bool = True
     """Enable NetExec enrichment in finding displays (default: True)."""
 
-    claude_assistant_enabled: bool = True
-    """Enable Claude Assistant interactive chat panel in review TUI (default: True)."""
+    claude_assistant_enabled: bool = False
+    """Enable Claude Assistant interactive chat panel in review TUI (default: False).
+
+    Opt-in because the assistant sends finding/host/plugin-output context to the
+    local `claude` CLI; the TUI shows a data-path disclosure and persists consent
+    on first use."""
 
     # MCP server (BETA)
     mcp_allow_execution: bool = False
@@ -157,7 +161,7 @@ def load_config() -> CernoConfig:
             term_override=data.get("term_override"),
             nxc_workspace_path=data.get("nxc_workspace_path"),
             nxc_enrichment_enabled=data.get("nxc_enrichment_enabled", True),
-            claude_assistant_enabled=data.get("claude_assistant_enabled", True),
+            claude_assistant_enabled=data.get("claude_assistant_enabled", False),
             mcp_allow_execution=data.get("mcp_allow_execution", False),
             mcp_allow_mutations=data.get("mcp_allow_mutations", False),
             mcp_exec_allowlist=data.get(
@@ -258,7 +262,7 @@ def create_example_config() -> bool:
         term_override=None,
         nxc_workspace_path=None,  # Uses ~/.nxc/workspaces/default/ by default
         nxc_enrichment_enabled=True,
-        claude_assistant_enabled=True,
+        claude_assistant_enabled=False,
         mcp_allow_execution=False,
         mcp_allow_mutations=False,
         mcp_exec_allowlist=["nmap", "nxc", "netexec", "msfconsole", "proxychains4"],

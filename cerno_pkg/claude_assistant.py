@@ -79,6 +79,60 @@ def check_claude_available() -> bool:
     return _claude_available
 
 
+# Disclosure shown before the assistant is enabled for the first time. Names the
+# data that would leave the machine so the operator can decide against engagement
+# rules before any context is sent to the `claude` CLI.
+CONSENT_DISCLOSURE = (
+    "Claude Assistant may send finding names, plugin metadata, affected hosts, "
+    "ports, CVEs, workflow steps, and Nessus plugin output to the configured "
+    "`claude` CLI. Only enable this if your engagement rules allow that data path."
+)
+
+
+def claude_enabled(config: Any) -> bool:
+    """Return True if the assistant is installed AND enabled in config.
+
+    Single source of truth for the `[A]` availability gate across the finding
+    view, the findings-list aggregate, and the severity-menu aggregate.
+    """
+    return check_claude_available() and bool(config.claude_assistant_enabled)
+
+
+def ensure_enabled(config: Any) -> bool:
+    """Ensure the assistant is enabled, prompting for consent on first use.
+
+    Returns True if already enabled, or if the operator consents now (in which
+    case ``claude_assistant_enabled`` is set on ``config`` and persisted). Returns
+    False if the operator declines. Assumes the `claude` CLI is installed (callers
+    gate on :func:`check_claude_available` first).
+    """
+    if config.claude_assistant_enabled:
+        return True
+
+    from rich.prompt import Confirm
+
+    from .ansi import get_console
+    from .config import save_config
+
+    console = get_console()
+    console.print(ASSISTANT_NOTICE)
+    console.print(f"[yellow]{CONSENT_DISCLOSURE}[/yellow]")
+    try:
+        consented = Confirm.ask(
+            "Enable Claude Assistant and remember this choice?", default=False
+        )
+    except (KeyboardInterrupt, EOFError):
+        console.print()
+        return False
+    if not consented:
+        return False
+
+    config.claude_assistant_enabled = True
+    if not save_config(config):
+        log_error("Failed to persist claude_assistant_enabled after consent")
+    return True
+
+
 def load_skill_prompt() -> str:
     """Load the cerno-assistant skill file as a system prompt string.
 

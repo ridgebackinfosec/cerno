@@ -378,6 +378,26 @@ def require_cmd(name: str) -> None:
         sys.exit(1)
 
 
+def ensure_cmd(name: str) -> bool:
+    """Soft availability check for interactive flows.
+
+    Like :func:`require_cmd` but never exits the process: prints the same inline
+    error and returns ``False`` when the command is missing, so a caller inside
+    the review loop can abort the action and return to the menu instead of
+    killing the session.
+
+    Args:
+        name: Command name to check for
+
+    Returns:
+        True if ``name`` is on PATH, False (after printing an error) otherwise
+    """
+    if shutil.which(name) is None:
+        err(f"Required command '{name}' not found on PATH.")
+        return False
+    return True
+
+
 def resolve_cmd(candidates: list[str]) -> Optional[str]:
     """Find the first available command from a list of candidates.
 

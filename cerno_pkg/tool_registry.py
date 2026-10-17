@@ -53,6 +53,23 @@ class Tool:
         if self.workflow_builder is None:
             raise ValueError(f"Tool '{self.id}' must have workflow_builder")
 
+    def is_available(self) -> bool:
+        """Return True if the tool can run on this system.
+
+        ``requires`` lists acceptable binaries; the tool is available when *any*
+        one of them is on PATH (OR semantics, e.g. ``nxc`` *or* ``netexec``). A
+        tool with no requirements (e.g. ``custom``) is always available.
+        """
+        import shutil
+
+        if not self.requires:
+            return True
+        return any(shutil.which(cmd) for cmd in self.requires)
+
+    def missing_requirement_hint(self) -> str:
+        """Human-readable '(not installed: ...)' reason for menu display."""
+        return "not installed: " + "/".join(self.requires)
+
 
 # ============================================================================
 # TOOL REGISTRY - Single Source of Truth
@@ -127,18 +144,13 @@ def get_available_tools(check_requirements: bool = False) -> list[Tool]:
     Returns:
         List of Tool instances sorted by menu_order
     """
-    import shutil
-
     _ensure_registered()
     tools = list(TOOL_REGISTRY.values())
 
     if check_requirements:
-        available = []
-        for tool in tools:
-            # Check if all required binaries are available
-            if all(shutil.which(cmd) for cmd in tool.requires):
-                available.append(tool)
-        tools = available
+        # OR semantics: a tool is available when any one of its acceptable
+        # binaries is on PATH (see Tool.is_available).
+        tools = [tool for tool in tools if tool.is_available()]
 
     # Sort by menu_order, then by name
     return sorted(tools, key=lambda t: (t.menu_order, t.name))

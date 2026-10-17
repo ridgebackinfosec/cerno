@@ -138,3 +138,52 @@ class TestBuildFindingContextWorkflow:
         result = build_finding_context(plugin, finding, hosts=[])
 
         assert "=== Verification Workflow ===" not in result
+
+
+@pytest.mark.unit
+class TestClaudeConsent:
+    """Tests for the opt-in gate and first-use consent flow."""
+
+    def _cfg(self, enabled: bool):
+        from cerno_pkg.config import CernoConfig
+
+        return CernoConfig(claude_assistant_enabled=enabled)
+
+    def test_claude_enabled_requires_install_and_flag(self):
+        from cerno_pkg import claude_assistant as ca
+
+        with patch.object(ca, "check_claude_available", return_value=True):
+            assert ca.claude_enabled(self._cfg(True)) is True
+            assert ca.claude_enabled(self._cfg(False)) is False
+        with patch.object(ca, "check_claude_available", return_value=False):
+            assert ca.claude_enabled(self._cfg(True)) is False
+
+    def test_ensure_enabled_noop_when_already_on(self):
+        from cerno_pkg import claude_assistant as ca
+
+        cfg = self._cfg(True)
+        with patch("cerno_pkg.config.save_config") as save:
+            assert ca.ensure_enabled(cfg) is True
+            save.assert_not_called()
+
+    def test_ensure_enabled_persists_on_consent(self):
+        from cerno_pkg import claude_assistant as ca
+
+        cfg = self._cfg(False)
+        with patch("rich.prompt.Confirm.ask", return_value=True), patch(
+            "cerno_pkg.config.save_config", return_value=True
+        ) as save:
+            assert ca.ensure_enabled(cfg) is True
+            assert cfg.claude_assistant_enabled is True
+            save.assert_called_once()
+
+    def test_ensure_enabled_declined_leaves_disabled(self):
+        from cerno_pkg import claude_assistant as ca
+
+        cfg = self._cfg(False)
+        with patch("rich.prompt.Confirm.ask", return_value=False), patch(
+            "cerno_pkg.config.save_config"
+        ) as save:
+            assert ca.ensure_enabled(cfg) is False
+            assert cfg.claude_assistant_enabled is False
+            save.assert_not_called()

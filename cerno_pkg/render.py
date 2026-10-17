@@ -800,6 +800,7 @@ def render_actions_footer(
     can_next: bool,
     can_prev: bool,
     has_claude: bool = False,
+    claude_installed: bool = False,
 ) -> None:
     """Render action footer with responsive layout based on terminal width.
 
@@ -867,6 +868,9 @@ def render_actions_footer(
     right_row3_items = []
     if has_claude:
         right_row3_items.append(key_text("A", "Ask Claude"))
+    elif claude_installed:
+        # Installed but not enabled: still offer [A] so it reaches the opt-in prompt.
+        right_row3_items.append(key_text("A", "Ask Claude (enable…)"))
     right_row3 = join_actions_texts(right_row3_items) if right_row3_items else Text()
 
     # Detect terminal width for responsive layout
@@ -952,11 +956,8 @@ def render_finding_actions_footer(
     if has_claude:
         claude_row = join_actions_texts([key_text("A", "Ask Claude")])
     elif claude_installed:
-        # Show grayed-out hint when claude is installed but assistant is disabled
-        not_enabled = Text()
-        not_enabled.append("[A]", style="dim")
-        not_enabled.append(" Ask Claude (disabled)", style="dim")
-        claude_row = not_enabled
+        # Installed but not enabled: offer [A] so it reaches the opt-in prompt.
+        claude_row = join_actions_texts([key_text("A", "Ask Claude (enable…)")])
 
     term_width = get_terminal_width()
     if use_proxy:
