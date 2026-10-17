@@ -86,11 +86,22 @@ resources, and prompts Cerno exposes.
 
 | Category | Tools | Gated by |
 | --- | --- | --- |
-| Read | `list_scans`, `list_findings`, `get_finding_detail`, `get_finding_hosts`, `list_hosts`, `list_services`, `get_web_targets`, `list_cves`, `find_affected_by_cve`, `host_history`, `compare_scans`, `get_workflow`, `check_tools`, `list_executions`, `list_artifacts`, `read_artifact`, `get_config` | always available |
+| Read | `list_scans`, `list_findings`, `search_findings`, `get_finding_detail`, `get_finding_hosts`, `list_hosts`, `top_hosts`, `list_services`, `get_web_targets`, `list_cves`, `find_affected_by_cve`, `host_history`, `compare_scans`, `get_workflow`, `check_tools`, `list_executions`, `list_artifacts`, `get_finding_artifacts`, `read_artifact`, `get_config`, `get_capabilities` | always available |
 | NetExec | `get_host_nxc`, `list_nxc_credentials` (credentials, shares, security flags; needs a configured NetExec workspace) | always available |
 | Generate | `generate_nmap_cmd`, `generate_netexec_cmd`, `generate_msf_search` (return commands, do not run them) | always available |
-| Execute | `execute_command` (runs a command, captures output, logs it; reports progress) | `mcp_allow_execution` |
+| Execute | `execute_command` (runs a command, captures output, logs it; reports progress). Binary must be in `mcp_exec_allowlist`; `timeout` clamped to [1, 3600]s; optional `finding_id` attributes the run (then surfaced by `get_finding_artifacts`) | `mcp_allow_execution` |
 | Mutate | `set_review_state` (`unreviewed` → `in_progress` → `done` → `unreviewed`; other changes rejected), `import_nessus` | `mcp_allow_mutations` |
+
+Notes:
+
+- `list_findings` takes `merged` (dedup multi-scan results by plugin, matching
+  the TUI), `limit`, and `offset` for paging.
+- `search_findings` searches **all** scans at once (no `scan_ids`); each result
+  carries its `scan_name`.
+- `get_finding_detail` caps per-host output at `max_hosts` (default 100) and
+  reports `affected_total` / `affected_truncated`.
+- `get_capabilities` reports which gated capabilities are live, so a client can
+  self-orient without a failed call.
 
 ### Resources
 
@@ -111,7 +122,8 @@ One-click templates in clients that render MCP prompts:
 
 - `triage_finding` — draft a pentest-report brief for a finding
 - `exploit_plan` — outline the fastest viable exploitation/verification path
-- `triage_scope` — report brief across a scan scope (optionally one severity)
+- `triage_scope` — report brief across one or more scans (comma-separated
+  `scan_ids`, e.g. `1,3`; merged and deduplicated by plugin), optionally one severity
 
 ---
 
@@ -121,8 +133,9 @@ Both flags default to `false`, so the server is read-only out of the box.
 Enable the capabilities you want:
 
 ```bash
-cerno config set mcp_allow_execution true   # permit execute_command
-cerno config set mcp_allow_mutations true   # permit set_review_state / import_nessus
+cerno config set mcp_allow_execution true        # permit execute_command
+cerno config set mcp_allow_mutations true        # permit set_review_state / import_nessus
+cerno config set mcp_exec_allowlist "nmap,nxc"   # restrict which binaries execute_command may run
 ```
 
 - When a flag is off, the corresponding tools are **not registered** and never
@@ -130,6 +143,10 @@ cerno config set mcp_allow_mutations true   # permit set_review_state / import_n
 - Enabling `mcp_allow_mutations` unlocks both `set_review_state` and
   `import_nessus` (importing writes scans/findings to the database, so it is
   treated as a mutation).
+- `mcp_exec_allowlist` (default `nmap, nxc, netexec, msfconsole, proxychains4`)
+  bounds `execute_command` even when execution is enabled: the basename of
+  `command[0]` must be listed, so "execution on" is not "arbitrary command
+  execution on". An empty list falls back to the built-in default set.
 
 ---
 
