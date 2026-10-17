@@ -485,7 +485,7 @@ def handle_finding_list_actions(
                 page_idx,
             )
         if choice == "f":
-            info("Filter help: Enter any text to match filenames (case-insensitive)")
+            info("Filter help: Enter any text to match finding names (case-insensitive)")
             info("Examples: 'apache' matches 'Apache_2.4', 'ssl' matches 'SSL_Certificate'")
             reviewed_filter = Prompt.ask(
                 "Enter substring to filter by (e.g., 'apache', 'ssl', 'windows') or press Enter for none",
@@ -518,7 +518,7 @@ def handle_finding_list_actions(
                 sort_mode,
                 page_idx,
             )
-        warn("Read-only view; no file selection here.")
+        warn("Read-only view; no finding selection here.")
         return None, file_filter, reviewed_filter, group_filter, sort_mode, page_idx
 
     if ans == "e":
@@ -665,7 +665,7 @@ def handle_finding_list_actions(
         )
 
     if not ans.isdigit():
-        warn("Please select a file by number, or use actions above.")
+        warn("Please select a finding by number, or use actions above.")
         return None, file_filter, reviewed_filter, group_filter, sort_mode, page_idx
 
     global_idx = int(ans) - 1

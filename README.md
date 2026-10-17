@@ -341,7 +341,7 @@ cerno review --no-proxy                        # Force-disable proxychains4 rout
 cerno review --check                           # Check tool availability and exit
 
 # Manage scans
-cerno scan list
+cerno scan list                                # Compact summary (use --wide for all severities, --json for scripting)
 cerno scan delete <scan_name>
 cerno scan compare <scan1> <scan2>             # Compare findings between two scans
 cerno scan history <host_ip>                   # View vulnerability timeline for a host

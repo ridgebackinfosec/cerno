@@ -786,7 +786,7 @@ def render_compare_tables(
             except KeyboardInterrupt:
                 pass
     else:
-        info("\nAll filtered files fall into a single identical group.")
+        info("\nAll filtered findings fall into a single identical group.")
 
 
 @log_timing
@@ -1247,7 +1247,7 @@ def show_actions_help(
     )
     table.add_row(
         Text("Filtering", style="bold"),
-        key_text("F", "Filter - Set a filter to narrow down file list"),
+        key_text("F", "Filter - Set a filter to narrow down finding list"),
         key_text("C", "Clear filter - Remove active filter"),
     )
     table.add_row(
@@ -1267,10 +1267,10 @@ def show_actions_help(
     )
     table.add_row(
         Text("Analysis", style="bold"),
-        key_text("H", "Compare - Find files with identical host:port combinations"),
+        key_text("H", "Compare - Find findings with identical host:port combinations"),
         key_text("O", "Overlapping - Find findings that cover all affected systems of another finding"),
         key_text("V", f"View hosts ({unique_host_count}) - Show all unique hosts across filtered findings"),
-        key_text("E", f"CVEs ({unique_cve_count}) - Extract CVEs for all filtered files"),
+        key_text("E", f"CVEs ({unique_cve_count}) - Extract CVEs for all filtered findings"),
     )
     if group_applied:
         table.add_row(
@@ -2358,7 +2358,7 @@ def bulk_extract_cves_for_findings(files: List[Path]) -> None:
     from .parsing import extract_plugin_id_from_filename
 
     header("CVE Information for Filtered Findings")
-    info(f"Displaying CVEs from {len(files)} file(s)...\n")
+    info(f"Displaying CVEs from {len(files)} finding(s)...\n")
 
     results = {}  # plugin_name -> list of CVEs
     failed_count = 0

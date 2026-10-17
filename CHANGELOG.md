@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-10-17
+
+### Changed
+- `cerno scan list` now defaults to a **compact, 80-column-readable** table (Scan Name · Hosts · Findings · Crit · High · Done % · Last Reviewed). Use `--wide`/`--details` for the full per-severity breakdown, or `--json` for machine-readable output (scripting).
+- User-facing wording now says **"finding"** instead of "file" where the database-backed product has no per-finding files (finding-list prompt and filter help, the "returning to finding menu" interrupts, the filtered-findings comparison/overlap headers, and CVE-extraction labels). Genuine file references (`.nessus`, config, logs, artifacts) are unchanged.
+
+### Fixed
+- `cerno --version` (and the review banner) now report the version from the repo's `pyproject.toml` when running from a source checkout / editable install, instead of stale installed package metadata; pipx/wheel installs still use their installed metadata.
+
 ## [1.9.0] - 2026-10-17
 
 ### Changed

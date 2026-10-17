@@ -47,25 +47,26 @@ def test_get_version_function():
 
 @patch('cerno_pkg._version._get_version_from_metadata')
 @patch('cerno_pkg._version._get_version_from_pyproject')
-def test_get_version_prefers_metadata(mock_pyproject, mock_metadata):
-    """Test that get_version() prefers importlib.metadata when available."""
-    mock_metadata.return_value = "1.2.3"
+def test_get_version_prefers_pyproject(mock_pyproject, mock_metadata):
+    """Test that get_version() prefers the adjacent pyproject.toml (source checkout)."""
     mock_pyproject.return_value = "9.9.9"
+    mock_metadata.return_value = "1.2.3"
 
     from cerno_pkg._version import get_version
     # Since __version__ is cached, we need to call get_version directly
-    get_version()
+    version = get_version()
 
-    # Should use metadata version (1.2.3), not pyproject (9.9.9)
-    mock_metadata.assert_called_once()
+    # Should use pyproject version (9.9.9), not metadata (1.2.3)
+    assert version == "9.9.9"
+    mock_pyproject.assert_called_once()
 
 
 @patch('cerno_pkg._version._get_version_from_metadata')
 @patch('cerno_pkg._version._get_version_from_pyproject')
-def test_get_version_falls_back_to_pyproject(mock_pyproject, mock_metadata):
-    """Test that get_version() falls back to pyproject.toml if metadata fails."""
-    mock_metadata.return_value = None
-    mock_pyproject.return_value = "1.2.3"
+def test_get_version_falls_back_to_metadata(mock_pyproject, mock_metadata):
+    """Test that get_version() falls back to installed metadata when no pyproject is found."""
+    mock_pyproject.return_value = None
+    mock_metadata.return_value = "1.2.3"
 
     from cerno_pkg._version import get_version
     version = get_version()

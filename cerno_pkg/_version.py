@@ -1,9 +1,15 @@
 """Version management for cerno package.
 
 Provides a hybrid approach to reading version:
-1. Try importlib.metadata (for installed packages)
-2. Fall back to parsing pyproject.toml (for development)
+1. Try the adjacent pyproject.toml (source checkout / editable install)
+2. Fall back to importlib.metadata (installed packages: pipx / wheel)
 3. Fall back to "unknown" if both fail
+
+pyproject.toml is resolved relative to this file, so it is only found when the
+running code lives in the repo (``python cerno.py`` or ``pip install -e .``). In
+that case it is the source of truth for the code actually executing, which keeps
+``cerno --version`` in sync with the checkout. A pipx/wheel install has no
+adjacent pyproject.toml, so it falls through to installed metadata as before.
 """
 
 from pathlib import Path
@@ -55,20 +61,22 @@ def get_version() -> str:
     """Get cerno version from the best available source.
 
     Priority:
-    1. Installed package metadata (importlib.metadata)
-    2. pyproject.toml parsing (development mode)
+    1. pyproject.toml adjacent to this file (source checkout / editable install)
+    2. Installed package metadata (importlib.metadata)
     3. "unknown" (fallback)
 
     Returns:
         Version string (e.g., "1.10.4" or "unknown")
     """
-    # Try installed package metadata first (fastest for production)
-    version = _get_version_from_metadata()
+    # Prefer the repo's pyproject.toml when running from a source checkout, so
+    # the reported version matches the code actually executing. Only resolvable
+    # when pyproject.toml sits next to the package (not in a pipx/wheel install).
+    version = _get_version_from_pyproject()
     if version:
         return version
 
-    # Fall back to parsing pyproject.toml (development mode)
-    version = _get_version_from_pyproject()
+    # Installed package metadata (pipx / wheel installs).
+    version = _get_version_from_metadata()
     if version:
         return version
 
