@@ -96,6 +96,13 @@ def test_gating_summary_reflects_flags():
         CernoConfig(mcp_allow_execution=True, mcp_allow_mutations=True)
     )
     assert "execution=on" in on and "mutations=on" in on
+    assert "denylist=" in on
+    assert "allowlist=*" in mcp.gating_summary(
+        CernoConfig(mcp_allow_execution=True, mcp_exec_allowlist=["*"])
+    )
+    assert "deny-all" in mcp.gating_summary(
+        CernoConfig(mcp_allow_execution=True, mcp_exec_allowlist=[])
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -758,14 +765,157 @@ def test_execute_command_allowlist_rejects_unlisted(seeded):
 
 
 @pytest.mark.integration
-def test_execute_command_empty_allowlist_falls_back_to_default(seeded):
-    # Empty list ⇒ built-in default set, which does NOT include python3.
-    with pytest.raises(ValueError, match="allowlist"):
+def test_execute_command_empty_allowlist_denies_all(seeded):
+    with pytest.raises(ValueError, match="empty, so all commands are denied"):
         mcp.tool_execute_command(
             ["python3", "-c", "print(1)"],
             config=CernoConfig(mcp_exec_allowlist=[]),
             conn=seeded["conn"],
         )
+
+
+@pytest.mark.integration
+def test_execute_command_wildcard_allowlist_runs_any(seeded):
+    out = mcp.tool_execute_command(
+        ["python3", "-c", "print('ok')"],
+        config=CernoConfig(mcp_exec_allowlist=["*"]),
+        conn=seeded["conn"],
+    )
+    assert out["exit_code"] == 0
+
+
+@pytest.mark.integration
+def test_execute_command_denylist_rejects_before_running(seeded):
+    with pytest.raises(ValueError, match="denylist"):
+        mcp.tool_execute_command(
+            ["python3", "-c", "print(1)"],
+            config=CernoConfig(mcp_exec_allowlist=["*"], mcp_exec_denylist=["python*"]),
+            conn=seeded["conn"],
+        )
+    count = seeded["conn"].execute("SELECT COUNT(*) FROM tool_executions").fetchone()
+    assert count[0] == 0
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "command, chain",
+    [
+        (["nmap", "-sS", "10.0.0.1"], ["nmap"]),
+        (["/usr/bin/nmap", "-p", "80"], ["nmap"]),
+        (["sudo", "nmap", "-sS"], ["sudo", "nmap"]),
+        (["sudo", "-u", "root", "nmap"], ["sudo", "nmap"]),
+        (["sudo", "-uroot", "nmap"], ["sudo", "nmap"]),
+        (["sudo", "-Eu", "root", "nmap"], ["sudo", "nmap"]),
+        (["sudo", "--user", "root", "nmap"], ["sudo", "nmap"]),
+        (["sudo", "--user=root", "nmap"], ["sudo", "nmap"]),
+        (["sudo", "-n", "--", "nmap"], ["sudo", "nmap"]),
+        (["proxychains4", "-q", "-f", "/etc/pc.conf", "nxc"], ["proxychains4", "nxc"]),
+        (
+            ["sudo", "proxychains4", "-q", "nmap", "-sT"],
+            ["sudo", "proxychains4", "nmap"],
+        ),
+        # Generic wrappers
+        (["env", "rm"], ["env", "rm"]),
+        (["env", "FOO=1", "BAR=2", "rm"], ["env", "rm"]),
+        (["env", "-i", "-u", "PATH", "rm"], ["env", "rm"]),
+        (["timeout", "60", "rm"], ["timeout", "rm"]),
+        (["timeout", "-k", "5", "10", "rm"], ["timeout", "rm"]),
+        (["timeout", "--signal=KILL", "10", "rm"], ["timeout", "rm"]),
+        (["nice", "-10", "rm"], ["nice", "rm"]),
+        (["nice", "-n", "5", "rm"], ["nice", "rm"]),
+        (["nohup", "rm"], ["nohup", "rm"]),
+        (["stdbuf", "-oL", "rm"], ["stdbuf", "rm"]),
+        (["ionice", "-c2", "-n0", "rm"], ["ionice", "rm"]),
+        (["setsid", "rm"], ["setsid", "rm"]),
+        (["doas", "-u", "root", "rm"], ["doas", "rm"]),
+        (
+            ["env", "FOO=1", "timeout", "5", "nice", "-10", "rm", "-rf", "/x"],
+            ["env", "timeout", "nice", "rm"],
+        ),
+        (["sudo", "env", "timeout", "5", "rm"], ["sudo", "env", "timeout", "rm"]),
+    ],
+)
+def test_command_chain_unwraps_wrappers(command, chain):
+    assert mcp._command_chain(command) == chain
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["sudo"],
+        ["sudo", "-i"],
+        ["proxychains4", "-q"],
+        ["sudo", "-u", "root"],
+        ["env", "-S", "rm -rf /"],  # command packed into an option value
+        ["timeout", "5"],  # duration but no command
+        ["nohup"],
+    ],
+)
+def test_command_chain_rejects_wrapper_without_target(command):
+    with pytest.raises(ValueError, match="does not wrap a command"):
+        mcp._command_chain(command)
+
+
+_ALLOW = ["nmap", "nxc", "python3"]
+_DENY = ["rm", "mkfs*"]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "command, allow, deny",
+    [
+        (["rm", "-rf", "/tmp/x"], ["rm"], ["rm"]),  # deny beats explicit allow
+        (["rm", "-rf", "/tmp/x"], ["*"], _DENY),  # deny beats wildcard
+        (["/bin/rm", "x"], ["*"], _DENY),  # basename matched
+        (["proxychains4", "rm", "x"], ["proxychains4", "rm"], _DENY),  # unwrapped
+        (["sudo", "rm", "x"], ["*"], _DENY),
+        (["mkfs.ext4", "/dev/sdz"], ["*"], _DENY),  # glob
+        (["sudo", "nmap", "-sS"], _ALLOW, ["sudo"]),  # wrapper itself denied
+        # Generic wrappers can't hide a denied target under a "*" allowlist.
+        (["env", "rm", "-rf", "/x"], ["*"], _DENY),
+        (["timeout", "60", "rm", "-rf", "/x"], ["*"], _DENY),
+        (["nice", "rm"], ["*"], _DENY),
+        (["env", "FOO=1", "mkfs.ext4", "/dev/sdz"], ["*"], _DENY),
+    ],
+)
+def test_exec_policy_denylist_wins(command, allow, deny):
+    with pytest.raises(ValueError, match="denylist"):
+        mcp._check_exec_policy(command, allow, deny)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "command, allow",
+    [
+        (["proxychains4", "bash", "-c", "id"], ["nmap", "proxychains4"]),
+        (["sudo", "bash"], ["nmap", "sudo"]),
+        (["map"], "nmap"),  # str allowlist must not substring-match
+        (["python3"], ["nmap"]),
+    ],
+)
+def test_exec_policy_rejects_unlisted_target(command, allow):
+    with pytest.raises(ValueError, match="not in the execute_command allowlist"):
+        mcp._check_exec_policy(command, allow, [])
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "command, allow, target",
+    [
+        (["nmap", "-sV"], _ALLOW, "nmap"),
+        (["sudo", "-n", "nmap", "-sS"], _ALLOW, "nmap"),  # wrappers need no entry
+        (["proxychains4", "-q", "python3"], _ALLOW, "python3"),
+        (["anything"], ["*"], "anything"),
+        (["nxc", "smb"], ["n*"], "nxc"),
+        # Generic wrappers need no allowlist entry; the target is what's checked.
+        (["timeout", "60", "nmap", "-sS"], ["nmap"], "nmap"),
+        (["env", "FOO=1", "nmap"], ["nmap"], "nmap"),
+        (["nice", "-10", "nxc", "smb"], _ALLOW, "nxc"),
+    ],
+)
+def test_exec_policy_allows(command, allow, target):
+    assert mcp._check_exec_policy(command, allow, _DENY) == target
 
 
 @pytest.mark.integration
@@ -810,7 +960,17 @@ def test_get_capabilities_reports_flags_and_allowlist():
     assert caps["execution_enabled"] is True
     assert caps["mutations_enabled"] is False
     assert caps["exec_allowlist"] == ["nmap", "nxc"]
+    assert caps["exec_denylist"] == CernoConfig().mcp_exec_denylist
     assert "nxc_available" in caps
+
+
+@pytest.mark.unit
+def test_get_capabilities_reports_empty_allowlist_as_is():
+    caps = mcp.tool_get_capabilities(
+        CernoConfig(mcp_exec_allowlist=[], mcp_exec_denylist=[])
+    )
+    assert caps["exec_allowlist"] == []
+    assert caps["exec_denylist"] == []
 
 
 @pytest.mark.integration

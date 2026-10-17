@@ -390,12 +390,13 @@ hidden until you enable them:
 ```bash
 cerno config set mcp_allow_execution true        # permit execute_command
 cerno config set mcp_allow_mutations true        # permit set_review_state / import_nessus
-cerno config set mcp_exec_allowlist "nmap,nxc"   # restrict which binaries execute_command may run
+cerno config set mcp_exec_allowlist "nmap,nxc"   # restrict which binaries execute_command may run ("*" = any)
+cerno config set mcp_exec_denylist "rm,dd,sh"    # binaries execute_command may never run (always wins)
 ```
 
 > Gating flags are read once at startup; reconnect (remove + re-add, or restart the client) to apply a change.
 
-> Even with execution enabled, `execute_command` only runs binaries in `mcp_exec_allowlist` (default: nmap, nxc, netexec, msfconsole, proxychains4).
+> Even with execution enabled, `execute_command` only runs binaries matching `mcp_exec_allowlist` (default: nmap, nxc, netexec, msfconsole; an empty list denies everything) and never runs binaries matching `mcp_exec_denylist` (default: destructive commands such as rm, dd, mkfs\*, shred, shutdown). Common wrapper prefixes (`sudo`, `env`, `timeout`, `nice`, `nohup`, …) are unwrapped so the real target is checked. The denylist is a guardrail, not a security boundary: with `"*"`, shells and interpreters can still run denied programs unless you deny them too.
 
 **See [docs/MCP.md](docs/MCP.md)** for the full tool/resource/prompt reference,
 scopes, and management commands.

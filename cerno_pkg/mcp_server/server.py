@@ -21,12 +21,13 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import fnmatch
 import json
 import sqlite3
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Generator, Optional, cast
+from typing import Any, Generator, Optional, Sequence, cast
 
 # Pydantic (via FastMCP output schemas) requires typing_extensions.TypedDict on
 # Python < 3.12; typing_extensions ships with mcp/pydantic, so always use it.
@@ -141,6 +142,7 @@ class Capabilities(TypedDict, total=False):
     execution_enabled: bool
     mutations_enabled: bool
     exec_allowlist: list[str]
+    exec_denylist: list[str]
     nxc_available: bool
 
 
@@ -359,17 +361,11 @@ def tool_get_capabilities(config: Optional[CernoConfig] = None) -> dict:
     from ..nxc_db import get_nxc_manager
 
     cfg = config or load_config()
-    allowlist = cfg.mcp_exec_allowlist or [
-        "nmap",
-        "nxc",
-        "netexec",
-        "msfconsole",
-        "proxychains4",
-    ]
     return {
         "execution_enabled": cfg.mcp_allow_execution,
         "mutations_enabled": cfg.mcp_allow_mutations,
-        "exec_allowlist": allowlist,
+        "exec_allowlist": list(cfg.mcp_exec_allowlist),
+        "exec_denylist": list(cfg.mcp_exec_denylist),
         "nxc_available": get_nxc_manager() is not None,
     }
 
@@ -984,11 +980,175 @@ def tool_generate_msf_search(
 # ========== Execution (gated by mcp_allow_execution) ==========
 
 
-#: Fallback allowlist used when config.mcp_exec_allowlist is empty.
-_DEFAULT_EXEC_ALLOWLIST = ["nmap", "nxc", "netexec", "msfconsole", "proxychains4"]
-
 #: Hard ceiling on execute_command timeouts (seconds).
 _MAX_EXEC_TIMEOUT = 3600
+
+
+@dataclasses.dataclass(frozen=True)
+class _WrapperSpec:
+    """How to step past a wrapper binary's own arguments to its wrapped command.
+
+    ``short_val`` are short option letters that consume a value; ``long_val`` are
+    ``--long`` options whose value is a separate argument. ``skip_positionals``
+    is the count of positional arguments before the command (e.g. ``timeout``'s
+    DURATION), and ``assignments`` skips leading ``NAME=VALUE`` tokens (``env``).
+    """
+
+    short_val: frozenset[str] = frozenset()
+    long_val: frozenset[str] = frozenset()
+    skip_positionals: int = 0
+    assignments: bool = False
+
+
+#: Wrapper binaries that run another command. The wrapped target is unwrapped so
+#: policy applies to what actually runs — e.g. ``env rm`` or ``timeout 5 rm``
+#: must expose ``rm`` to the denylist, not hide it behind the wrapper. The
+#: positional-mask wrappers ``taskset`` / ``chrt`` are deliberately omitted (their
+#: grammar is ambiguous to parse without running them).
+_EXEC_WRAPPERS: dict[str, _WrapperSpec] = {
+    "sudo": _WrapperSpec(
+        short_val=frozenset("ugCDhprtUT"),
+        long_val=frozenset(
+            {
+                "--user",
+                "--group",
+                "--close-from",
+                "--chdir",
+                "--host",
+                "--prompt",
+                "--role",
+                "--type",
+                "--other-user",
+                "--command-timeout",
+            }
+        ),
+    ),
+    # doas takes a subset of sudo's value options; overmatching is harmless here.
+    "doas": _WrapperSpec(short_val=frozenset("uCa")),
+    "proxychains4": _WrapperSpec(short_val=frozenset("f")),
+    "proxychains": _WrapperSpec(short_val=frozenset("f")),
+    "env": _WrapperSpec(
+        short_val=frozenset("uCS"),
+        long_val=frozenset({"--unset", "--chdir", "--split-string"}),
+        assignments=True,
+    ),
+    "nice": _WrapperSpec(short_val=frozenset("n")),
+    "timeout": _WrapperSpec(
+        short_val=frozenset("sk"),
+        long_val=frozenset({"--signal", "--kill-after"}),
+        skip_positionals=1,  # DURATION
+    ),
+    "stdbuf": _WrapperSpec(short_val=frozenset("ioe")),
+    "ionice": _WrapperSpec(short_val=frozenset("cnp")),
+    "setsid": _WrapperSpec(),
+    "nohup": _WrapperSpec(),
+    # /usr/bin/time (the shell builtin never reaches an argv list).
+    "time": _WrapperSpec(
+        short_val=frozenset("of"),
+        long_val=frozenset({"--output", "--format"}),
+    ),
+}
+
+
+def _skip_wrapper_options(command: Sequence[Any], i: int, spec: _WrapperSpec) -> int:
+    """Return the index of the wrapper's command, stepping past its arguments.
+
+    Handles getopt-style options (short flags may be clustered as ``-Eu root`` or
+    carry an attached value as ``-uroot``; ``--`` ends option parsing), then any
+    ``NAME=VALUE`` assignments (``env``), then ``skip_positionals`` positionals
+    (``timeout`` DURATION).
+    """
+    short_vals, long_vals = spec.short_val, spec.long_val
+    while i < len(command):
+        arg = str(command[i])
+        if arg == "--":
+            i += 1
+            break
+        if not arg.startswith("-") or arg == "-":
+            break
+        if arg.startswith("--"):
+            i += 2 if arg in long_vals else 1
+            continue
+        i += 1
+        for pos, letter in enumerate(arg[1:], start=1):
+            if letter in short_vals:
+                if pos == len(arg) - 1:  # value is the next argument
+                    i += 1
+                break  # anything after the letter is its attached value
+
+    if spec.assignments:
+        while i < len(command):
+            arg = str(command[i])
+            if "=" in arg and not arg.startswith("-"):
+                i += 1
+            else:
+                break
+
+    i += spec.skip_positionals
+    return i
+
+
+def _command_chain(command: Sequence[Any]) -> list[str]:
+    """Basenames of every binary in ``command``, unwrapping known wrappers.
+
+    ``["sudo", "-u", "root", "proxychains4", "-q", "nmap", ...]`` yields
+    ``["sudo", "proxychains4", "nmap"]``; the last entry is the real target. Known
+    wrappers (``_EXEC_WRAPPERS``) such as sudo, env, timeout and nice are stepped
+    past so the wrapped command is exposed. Raises ValueError if a wrapper is left
+    with no command to run (fail closed).
+    """
+    chain: list[str] = []
+    i = 0
+    while i < len(command):
+        name = Path(str(command[i])).name
+        chain.append(name)
+        spec = _EXEC_WRAPPERS.get(name)
+        if spec is None:
+            return chain
+        i = _skip_wrapper_options(command, i + 1, spec)
+    raise ValueError(
+        f"{chain[-1]!r} does not wrap a command to run"
+        if chain
+        else "command must be a non-empty list of arguments"
+    )
+
+
+def _matches_any(name: str, patterns: Sequence[str]) -> bool:
+    """True if ``name`` matches any glob pattern (``*`` matches everything)."""
+    return any(fnmatch.fnmatchcase(name, p) for p in patterns)
+
+
+def _check_exec_policy(
+    command: Sequence[Any], allowlist: Sequence[str], denylist: Sequence[str]
+) -> str:
+    """Enforce the execute_command allow/deny policy; return the target binary.
+
+    Every binary in the (unwrapped) chain is checked against the denylist, which
+    always wins. The target must then match the allowlist; wrappers need no
+    allowlist entry. An empty allowlist denies everything.
+    """
+    chain = _command_chain(command)
+    for name in chain:
+        if _matches_any(name, denylist):
+            raise ValueError(
+                f"Binary {name!r} is in the execute_command denylist "
+                f"{sorted(denylist)}. Adjust with "
+                "'cerno config set mcp_exec_denylist ...' then reconnect."
+            )
+    target = chain[-1]
+    if not allowlist:
+        raise ValueError(
+            "The execute_command allowlist is empty, so all commands are denied. "
+            "Set it with 'cerno config set mcp_exec_allowlist \"nmap,nxc\"' "
+            '(or "*") then reconnect.'
+        )
+    if not _matches_any(target, allowlist):
+        raise ValueError(
+            f"Binary {target!r} is not in the execute_command allowlist "
+            f"{sorted(allowlist)}. Adjust with "
+            "'cerno config set mcp_exec_allowlist ...' then reconnect."
+        )
+    return target
 
 
 def tool_execute_command(
@@ -1003,9 +1163,10 @@ def tool_execute_command(
 ) -> dict:
     """Execute a command non-interactively, capture output, and log the run.
 
-    The command is run with ``shell=False`` (argv list). The basename of
-    ``command[0]`` must be in the configured ``mcp_exec_allowlist`` (an empty
-    allowlist falls back to the built-in default set, not "deny all"). ``timeout``
+    The command is run with ``shell=False`` (argv list). Leading ``sudo`` /
+    ``proxychains4`` wrappers are unwrapped; no binary in the chain may match
+    ``mcp_exec_denylist``, and the target must match ``mcp_exec_allowlist``
+    (glob patterns, ``*`` = anything; empty = deny all). ``timeout``
     is clamped to [1, 3600] seconds. Output is captured and returned; nothing is
     written to stdout. The run is recorded in ``tool_executions`` via
     ``ops.log_tool_execution``, attributed to ``finding_id`` when supplied.
@@ -1017,14 +1178,7 @@ def tool_execute_command(
 
     cfg = config or load_config()
 
-    allowlist = cfg.mcp_exec_allowlist or _DEFAULT_EXEC_ALLOWLIST
-    binary = Path(str(command[0])).name
-    if binary not in allowlist:
-        raise ValueError(
-            f"Binary {binary!r} is not in the execute_command allowlist "
-            f"{sorted(allowlist)}. Adjust with "
-            "'cerno config set mcp_exec_allowlist ...' then reconnect."
-        )
+    _check_exec_policy(command, cfg.mcp_exec_allowlist, cfg.mcp_exec_denylist)
 
     timeout = max(1, min(int(timeout), _MAX_EXEC_TIMEOUT))
 
@@ -1564,7 +1718,10 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         ) -> dict:
             """Execute a command (argv list), capture output, and log the run.
 
-            command[0]'s basename must be in the configured mcp_exec_allowlist;
+            sudo/proxychains4 prefixes are allowed and unwrapped. No binary in the
+            chain may match mcp_exec_denylist, and the target binary's basename
+            must match mcp_exec_allowlist (globs; "*" = anything not denied; an
+            empty allowlist denies all). Call get_capabilities to see both lists.
             timeout is clamped to [1, 3600]s. Pass finding_id to attribute the run
             to a finding (so get_finding_artifacts can later find its output).
 
@@ -1630,7 +1787,19 @@ def gating_summary(config: CernoConfig) -> str:
     the flags are read only when the server boots, it also reminds the operator
     to reconnect after changing them.
     """
-    execution = "on" if config.mcp_allow_execution else "off"
+    execution = "off"
+    if config.mcp_allow_execution:
+        allow = config.mcp_exec_allowlist
+        if not allow:
+            allow_desc = "empty=deny-all"
+        elif "*" in allow:
+            allow_desc = "*"
+        else:
+            allow_desc = f"{len(allow)} entries"
+        execution = (
+            f"on [allowlist={allow_desc}, "
+            f"denylist={len(config.mcp_exec_denylist)} entries]"
+        )
     mutations = "on" if config.mcp_allow_mutations else "off"
     return (
         f"mcp: serving over stdio (execution={execution}, mutations={mutations}); "

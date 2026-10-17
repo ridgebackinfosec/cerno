@@ -234,8 +234,11 @@ cerno_pkg/
   │                        #   get_capabilities + get_finding_artifacts also always on.
   │                        #   list_findings supports merged/limit/offset; get_finding_detail
   │                        #   caps per-host output via max_hosts. execute_command gated by
-  │                        #   mcp_allow_execution (async w/ progress heartbeats; binary
-  │                        #   checked against mcp_exec_allowlist, timeout clamped, optional
+  │                        #   mcp_allow_execution (async w/ progress heartbeats; common
+  │                        #   wrappers sudo/doas/proxychains4/env/nice/nohup/timeout/stdbuf/
+  │                        #   setsid/ionice/time unwrapped (_EXEC_WRAPPERS), chain checked
+  │                        #   against mcp_exec_denylist then target against mcp_exec_allowlist
+  │                        #   via _check_exec_policy, timeout clamped, optional
   │                        #   finding_id threaded to ops.log_tool_execution for attribution);
   │                        #   set_review_state/import_nessus gated by mcp_allow_mutations.
   │                        #   Core read tools declare TypedDict output schemas. stdout is the
@@ -516,7 +519,8 @@ Only after user confirms the changelog content:
 - `claude_assistant_enabled` - Enable/disable Claude Assistant (default: `false`, opt-in). Pressing `[A]` while installed-but-disabled shows a data-path disclosure (`claude_assistant.CONSENT_DISCLOSURE`) and persists consent via `claude_assistant.ensure_enabled()`; `claude_assistant.claude_enabled(config)` is the single availability gate. `[A]` is hidden only when `claude` is not on PATH
 - `mcp_allow_execution` - Allow the `cerno mcp` server to execute tool commands via `execute_command` (default: `false`)
 - `mcp_allow_mutations` - Allow the `cerno mcp` server to mutate state (`set_review_state`, `import_nessus`) (default: `false`)
-- `mcp_exec_allowlist` - Binaries the MCP `execute_command` tool may run, matched on the basename of `command[0]` (default: `nmap, nxc, netexec, msfconsole, proxychains4`); only consulted when `mcp_allow_execution` is on; an empty list falls back to the default set, not "deny all". Set via CSV: `cerno config set mcp_exec_allowlist "nmap,nxc"`
+- `mcp_exec_allowlist` - Glob patterns for the binaries the MCP `execute_command` tool may run, matched on the basename of the target binary after unwrapping `sudo`/`proxychains4` (default: `config.DEFAULT_MCP_EXEC_ALLOWLIST` = `nmap, nxc, netexec, msfconsole`). `*` = any binary not denied; **empty list = deny all**. Only consulted when `mcp_allow_execution` is on. Set via CSV: `cerno config set mcp_exec_allowlist "nmap,nxc"`
+- `mcp_exec_denylist` - Glob patterns for binaries `execute_command` may never run, checked against every binary in the chain including wrappers; always wins over the allowlist (default: `config.DEFAULT_MCP_EXEC_DENYLIST`, destructive commands like `rm, dd, mkfs*`). A guardrail, not a security boundary. Both list keys go through `config.coerce_str_list()` on load and `config set`, so YAML scalars and CSV strings become lists
 
 **NSE profiles** (`constants.py:NSE_PROFILES`): Pre-configured nmap script sets (SMB, SSL, HTTP, etc.)
 

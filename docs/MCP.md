@@ -89,7 +89,7 @@ resources, and prompts Cerno exposes.
 | Read | `list_scans`, `list_findings`, `search_findings`, `get_finding_detail`, `get_finding_hosts`, `list_hosts`, `top_hosts`, `list_services`, `get_web_targets`, `list_cves`, `find_affected_by_cve`, `host_history`, `compare_scans`, `get_workflow`, `check_tools`, `list_executions`, `list_artifacts`, `get_finding_artifacts`, `read_artifact`, `get_config`, `get_capabilities` | always available |
 | NetExec | `get_host_nxc`, `list_nxc_credentials` (credentials, shares, security flags; needs a configured NetExec workspace) | always available |
 | Generate | `generate_nmap_cmd`, `generate_netexec_cmd`, `generate_msf_search` (return commands, do not run them) | always available |
-| Execute | `execute_command` (runs a command, captures output, logs it; reports progress). Binary must be in `mcp_exec_allowlist`; `timeout` clamped to [1, 3600]s; optional `finding_id` attributes the run (then surfaced by `get_finding_artifacts`) | `mcp_allow_execution` |
+| Execute | `execute_command` (runs a command, captures output, logs it; reports progress). Target binary must match `mcp_exec_allowlist` and no binary in the chain may match `mcp_exec_denylist` (common wrappers such as `sudo`/`env`/`timeout` are unwrapped); `timeout` clamped to [1, 3600]s; optional `finding_id` attributes the run (then surfaced by `get_finding_artifacts`) | `mcp_allow_execution` |
 | Mutate | `set_review_state` (`unreviewed` → `in_progress` → `done` → `unreviewed`; other changes rejected), `import_nessus` | `mcp_allow_mutations` |
 
 Notes:
@@ -135,7 +135,8 @@ Enable the capabilities you want:
 ```bash
 cerno config set mcp_allow_execution true        # permit execute_command
 cerno config set mcp_allow_mutations true        # permit set_review_state / import_nessus
-cerno config set mcp_exec_allowlist "nmap,nxc"   # restrict which binaries execute_command may run
+cerno config set mcp_exec_allowlist "nmap,nxc"   # restrict which binaries execute_command may run ("*" = any)
+cerno config set mcp_exec_denylist "rm,dd,sh"    # binaries execute_command may never run (always wins)
 ```
 
 - When a flag is off, the corresponding tools are **not registered** and never
@@ -143,10 +144,32 @@ cerno config set mcp_exec_allowlist "nmap,nxc"   # restrict which binaries execu
 - Enabling `mcp_allow_mutations` unlocks both `set_review_state` and
   `import_nessus` (importing writes scans/findings to the database, so it is
   treated as a mutation).
-- `mcp_exec_allowlist` (default `nmap, nxc, netexec, msfconsole, proxychains4`)
-  bounds `execute_command` even when execution is enabled: the basename of
-  `command[0]` must be listed, so "execution on" is not "arbitrary command
-  execution on". An empty list falls back to the built-in default set.
+- `execute_command` policy, applied on every call even when execution is enabled:
+  1. Leading wrapper binaries (and their options) are unwrapped, so
+     `["sudo", "-n", "proxychains4", "-q", "nmap", …]` yields the chain
+     `sudo → proxychains4 → nmap` and a hidden target like `["env", "rm", …]`
+     exposes `rm`. Recognised wrappers: `sudo`, `doas`, `proxychains4`,
+     `proxychains`, `env`, `nice`, `nohup`, `timeout`, `stdbuf`, `setsid`,
+     `ionice`, `time`. A wrapper left with nothing to run — including one whose
+     command is packed into an option value, e.g. `env -S "rm -rf /"` — is
+     rejected (fail closed). `taskset` / `chrt` are intentionally not unwrapped
+     (their positional MASK/PRIORITY grammar is ambiguous), so treat them like
+     any other target binary.
+  2. If **any** binary in the chain matches `mcp_exec_denylist`, the call is
+     rejected. The denylist always wins over the allowlist, and adding `sudo` to it
+     blocks privilege escalation. Default: `rm, rmdir, dd, shred, wipefs, mkfs*,
+     fdisk, sfdisk, parted, shutdown, reboot, halt, poweroff`.
+  3. The target (last binary) must match `mcp_exec_allowlist` (default `nmap, nxc,
+     netexec, msfconsole`). Wrappers need no entry. `"*"` permits anything not
+     denied, and **an empty list denies everything**.
+- Entries in both lists are glob patterns (`fnmatch`, case-sensitive) matched
+  against the binary's **basename**, so `/usr/bin/rm` and `rm` are treated alike.
+- The denylist guards against mistakes; it is **not a security boundary**. With
+  `"*"`, `sh -c "rm …"`, `python3 -c …`, or `find -delete` still run unless those
+  binaries are denied too. Prefer an explicit allowlist when it matters.
+- `sudo` runs non-interactively. If sudo would prompt for a password, the call is
+  refused (pre-authenticate with `sudo -v`).
+- `get_capabilities` reports both lists as configured.
 
 ---
 
