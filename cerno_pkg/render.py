@@ -22,7 +22,17 @@ import time
 
 from .ansi import info, warn, header, get_console, style_if_enabled
 from .config import load_config
-from .constants import SEVERITY_COLORS
+from .constants import (
+    REVIEW_MOVE_LABELS,
+    REVIEW_STATE_DONE,
+    REVIEW_STATE_ICONS,
+    REVIEW_STATE_IN_PROGRESS,
+    REVIEW_STATE_LABELS,
+    REVIEW_STATE_STYLES,
+    REVIEW_STATE_UNREVIEWED,
+    REVIEW_TRANSITIONS,
+    SEVERITY_COLORS,
+)
 from .fs import default_page_size, pretty_severity_label
 from .logging_setup import log_timing, log_debug
 
@@ -291,7 +301,7 @@ def render_empty_state(context: str, filter_text: str = "") -> None:
         context: Context identifier for empty state type
             - "filter_mismatch": No findings match current filter
             - "no_severity": No findings at this severity level
-            - "all_completed": All findings marked as completed
+            - "all_completed": All findings have Done status
             - "no_findings": No findings in scan at all
         filter_text: Current filter string (if applicable)
     """
@@ -319,11 +329,11 @@ def render_empty_state(context: str, filter_text: str = "") -> None:
 
     elif context == "all_completed":
         from .ansi import ok
-        ok("\n✓ All findings marked as completed!")
+        ok("\n✓ All findings are Done!")
         info("")
         info("Next steps:")
-        info("  • Press [R] to view completed findings")
-        info("  • Press [U] from the reviewed list to undo completion")
+        info("  • Press [D] to open the Done list")
+        info("  • In the Done list, [M] moves findings back to Unreviewed")
         info("  • All normal menu actions are available below")
         info("")
 
@@ -383,7 +393,7 @@ def render_scan_context_header(scan: Any, scan_id: int) -> None:
     - Scan name and file
     - Import timestamp
     - Total findings count
-    - Review progress (unreviewed/reviewed/completed)
+    - Review progress (unreviewed/in progress/done)
 
     Layout adapts to terminal width (single line vs multi-line).
     """
@@ -395,17 +405,17 @@ def render_scan_context_header(scan: Any, scan_id: int) -> None:
     with get_connection() as conn:
         cursor = conn.execute("""
             SELECT
-                SUM(CASE WHEN review_state = 'pending' THEN 1 ELSE 0 END) as unreviewed,
-                SUM(CASE WHEN review_state = 'reviewed' THEN 1 ELSE 0 END) as reviewed,
-                SUM(CASE WHEN review_state = 'completed' THEN 1 ELSE 0 END) as completed,
+                SUM(CASE WHEN review_state = 'unreviewed' THEN 1 ELSE 0 END) as unreviewed,
+                SUM(CASE WHEN review_state = 'in_progress' THEN 1 ELSE 0 END) as in_progress,
+                SUM(CASE WHEN review_state = 'done' THEN 1 ELSE 0 END) as done,
                 COUNT(*) as total
             FROM findings
             WHERE scan_id = ?
         """, (scan_id,))
         row = cursor.fetchone()
         unreviewed_count = row[0] if row else 0
-        reviewed_count = row[1] if row else 0
-        completed_count = row[2] if row else 0
+        in_progress_count = row[1] if row else 0
+        done_count = row[2] if row else 0
         total_count = row[3] if row else 0
 
     # Format timestamp as relative time if recent, otherwise date
@@ -455,11 +465,7 @@ def render_scan_context_header(scan: Any, scan_id: int) -> None:
         header_text.append(" | ", style=style_if_enabled("dim"))
         header_text.append(f"Total: {total_count} plugins", style=style_if_enabled("bold"))
         header_text.append(" | ", style=style_if_enabled("dim"))
-        header_text.append(f"Unreviewed: {unreviewed_count}", style=style_if_enabled("cyan"))
-        header_text.append(" | ", style=style_if_enabled("dim"))
-        header_text.append(f"Reviewed: {reviewed_count}", style=style_if_enabled("yellow"))
-        header_text.append(" | ", style=style_if_enabled("dim"))
-        header_text.append(f"Completed: {completed_count}", style=style_if_enabled("green"))
+        _append_status_counts(header_text, unreviewed_count, in_progress_count, done_count)
 
         _console_global.print(header_text)
     else:
@@ -473,11 +479,7 @@ def render_scan_context_header(scan: Any, scan_id: int) -> None:
         line2 = Text()
         line2.append(f"Total: {total_count} plugins", style=style_if_enabled("bold"))
         line2.append(" | ", style=style_if_enabled("dim"))
-        line2.append(f"Unreviewed: {unreviewed_count}", style=style_if_enabled("cyan"))
-        line2.append(" | ", style=style_if_enabled("dim"))
-        line2.append(f"Reviewed: {reviewed_count}", style=style_if_enabled("yellow"))
-        line2.append(" | ", style=style_if_enabled("dim"))
-        line2.append(f"Completed: {completed_count}", style=style_if_enabled("green"))
+        _append_status_counts(line2, unreviewed_count, in_progress_count, done_count)
 
         _console_global.print(line1)
         _console_global.print(line2)
@@ -504,8 +506,8 @@ def render_scan_table(scans: list[Path]) -> None:
 
 def render_severity_table(
     severities: list[Path],
-    msf_summary: Optional[tuple[int, int, int]] = None,
-    workflow_summary: Optional[tuple[int, int, int]] = None,
+    msf_summary: Optional[tuple[int, int, int, int]] = None,
+    workflow_summary: Optional[tuple[int, int, int, int]] = None,
     scan_id: Optional[int] = None,
     plugin_ids: Optional[list[int]] = None,
     scan_ids: Optional[list[int]] = None,
@@ -519,9 +521,9 @@ def render_severity_table(
 
     Args:
         severities: List of severity directory paths
-        msf_summary: Optional tuple of (unreviewed, reviewed, total)
+        msf_summary: Optional tuple of (unreviewed, in_progress, done, total)
             for Metasploit modules row. Only shown if provided.
-        workflow_summary: Optional tuple of (unreviewed, reviewed, total)
+        workflow_summary: Optional tuple of (unreviewed, in_progress, done, total)
             for Workflow Mapped row. Only shown if provided.
         scan_id: Scan ID for database queries (required)
         plugin_ids: Optional list of plugin IDs to filter counts by (for host filtering)
@@ -533,8 +535,10 @@ def render_severity_table(
     table.add_column("#", justify="right", no_wrap=True, max_width=5)
     table.add_column("Severity", no_wrap=True, max_width=20)
     # Headers indicate percent (cells contain N (P%))
-    table.add_column("Unreviewed (%)", justify="right", no_wrap=True, max_width=15)
-    table.add_column("Reviewed (%)", justify="right", no_wrap=True, max_width=14)
+    for state in (REVIEW_STATE_UNREVIEWED, REVIEW_STATE_IN_PROGRESS, REVIEW_STATE_DONE):
+        table.add_column(
+            f"{REVIEW_STATE_LABELS[state]} (%)", justify="right", no_wrap=True, max_width=17
+        )
     table.add_column("Total", justify="right", no_wrap=True, max_width=8)
 
     if scan_id is None and not scan_ids:
@@ -546,44 +550,57 @@ def render_severity_table(
     effective_scan_id = scan_id or (scan_ids[0] if scan_ids else 0)
 
     for i, severity_dir in enumerate(severities, 1):
-        unreviewed, reviewed, total = count_severity_findings(
+        counts = count_severity_findings(
             severity_dir, scan_id=effective_scan_id, plugin_ids=plugin_ids, scan_ids=scan_ids
         )
         label = pretty_severity_label(severity_dir.name)
-        table.add_row(
-            str(i),
-            severity_cell(label),
-            unreviewed_cell(unreviewed, total),
-            reviewed_cell(reviewed, total),
-            total_cell(total),
-        )
+        table.add_row(str(i), severity_cell(label), *review_count_cells(counts))
 
     # Add section separator and special filters header if any special filters exist
     if msf_summary or workflow_summary:
         table.add_section()
-        table.add_row("", "[dim]Special Filters[/dim]", "", "", "")
+        table.add_row("", "[dim]Special Filters[/dim]", "", "", "", "")
 
     if msf_summary:
-        unreviewed, reviewed, total = msf_summary
         table.add_row(
             "[bold cyan]M[/bold cyan]",
             severity_cell("Metasploit Module"),
-            unreviewed_cell(unreviewed, total),
-            reviewed_cell(reviewed, total),
-            total_cell(total),
+            *review_count_cells(msf_summary),
         )
 
     if workflow_summary:
-        unreviewed, reviewed, total = workflow_summary
         table.add_row(
             "[bold cyan]W[/bold cyan]",
             severity_cell("Workflow Mapped"),
-            unreviewed_cell(unreviewed, total),
-            reviewed_cell(reviewed, total),
-            total_cell(total),
+            *review_count_cells(workflow_summary),
         )
 
     _console_global.print(table)
+
+
+def _append_status_counts(text: Text, unreviewed: int, in_progress: int, done: int) -> None:
+    """Append "Unreviewed: N | In Progress: N | Done: N" in status colours to ``text``."""
+    counts = {
+        REVIEW_STATE_UNREVIEWED: unreviewed,
+        REVIEW_STATE_IN_PROGRESS: in_progress,
+        REVIEW_STATE_DONE: done,
+    }
+    for i, (state, count) in enumerate(counts.items()):
+        if i:
+            text.append(" | ", style=style_if_enabled("dim"))
+        text.append(
+            f"{REVIEW_STATE_LABELS[state]}: {count}",
+            style=style_if_enabled(REVIEW_STATE_STYLES[state]),
+        )
+
+
+def _review_state_cell(review_state: Optional[str]) -> Text:
+    """Compact status icon for the findings list (○ Unreviewed, ◐ In Progress)."""
+    state = review_state or REVIEW_STATE_UNREVIEWED
+    return Text(
+        REVIEW_STATE_ICONS.get(state, ""),
+        style=style_if_enabled(f"bold {REVIEW_STATE_STYLES.get(state, '')}".strip()),
+    )
 
 
 def render_finding_list_table(
@@ -607,6 +624,8 @@ def render_finding_list_table(
                      When provided, adds a "Scans" column. When None (default), single-scan mode.
         chat_history_finding_ids: Set of finding_ids that have Claude conversation history.
                                    When non-empty, adds an "AI" column with a ✦ indicator.
+    Always ends with a "Status" column (○ Unreviewed, ◐ In Progress)
+    and a caption legend for the icons.
     """
     show_ai_column = bool(chat_history_finding_ids)
 
@@ -623,6 +642,9 @@ def render_finding_list_table(
         table.add_column("Scans", justify="right", no_wrap=True, max_width=10)
     if show_ai_column:
         table.add_column("AI", justify="center", no_wrap=True, max_width=4)
+    table.add_column("Status", justify="center", no_wrap=True, max_width=6)
+    table.caption = _status_legend()
+    table.caption_justify = "left"
 
     for i, (plugin_file, plugin) in enumerate(display, 1):
         row_number = row_offset + i
@@ -680,6 +702,8 @@ def render_finding_list_table(
             else:
                 ai_cell = Text("")
             row_data.append(ai_cell)  # type: ignore[arg-type]
+
+        row_data.append(_review_state_cell(getattr(plugin_file, "review_state", None)))
 
         table.add_row(*row_data)
 
@@ -819,7 +843,7 @@ def render_actions_footer(
     # Row 2: Analysis + pagination
     left_row2 = join_actions_texts(
         [
-            key_text("R", "Reviewed"),
+            key_text("D", "Done list"),
             key_text("H", "Compare"),
             key_text("O", "Overlapping"),
             key_text("V", f"View hosts ({unique_host_count})"),
@@ -837,7 +861,7 @@ def render_actions_footer(
     left_row3 = join_actions_texts(
         [
             key_text("E", f"CVEs ({unique_cve_count})"),
-            key_text("M", f"Mark reviewed ({candidates_count})"),
+            key_text("M", f"Move to next status ({candidates_count})"),
         ]
     )
     right_row3_items = []
@@ -868,8 +892,15 @@ def render_actions_footer(
             _console_global.print(right_row3)
 
 
+def _move_action_text(review_state: Optional[str]) -> Text:
+    """Return the status-aware [M] Move label for the finding view."""
+    target = REVIEW_TRANSITIONS[review_state or REVIEW_STATE_UNREVIEWED][0]
+    return key_text("M", REVIEW_MOVE_LABELS[target])
+
+
 def render_finding_actions_footer(
     *,
+    review_state: Optional[str] = None,
     has_workflow: bool = False,
     has_nxc_data: bool = False,
     has_claude: bool = False,
@@ -884,6 +915,8 @@ def render_finding_actions_footer(
     Maintains the >> prefix style for consistency with finding review UI.
 
     Args:
+        review_state: Current review state of the finding; sets the [M] label
+            ("Move to In Progress" / "Move to Done" / "Move back to Unreviewed")
         has_workflow: Whether workflow action is available for this plugin
         has_nxc_data: Whether NetExec data is available for these hosts
         has_claude: Whether Claude Assistant is enabled and available
@@ -911,7 +944,7 @@ def render_finding_actions_footer(
     right_row2 = join_actions_texts([key_text("T", "Run tool")])
 
     # Row 3: Control actions (always present)
-    left_row3 = join_actions_texts([key_text("M", "Mark reviewed")])
+    left_row3 = join_actions_texts([_move_action_text(review_state)])
     right_row3 = join_actions_texts([key_text("B", "Back")])
 
     # Row 4: Claude Assistant (conditional)
@@ -1224,11 +1257,12 @@ def show_actions_help(
         ),
     )
     table.add_row(
-        Text("Bulk review", style="bold"),
+        Text("Status", style="bold"),
         key_text(
             "M",
-            f"Mark reviewed ({candidates_count}) - Mark all filtered files as REVIEW_COMPLETE",
+            f"Move to next status ({candidates_count}) - Unreviewed → In Progress, In Progress → Done",
         ),
+        key_text("D", "Done list - Findings with Done status; [M] there moves them back to Unreviewed"),
     )
     table.add_row(
         Text("Analysis", style="bold"),
@@ -1246,20 +1280,20 @@ def show_actions_help(
 
 
 def show_reviewed_help() -> None:
-    """Render help panel for completed findings view."""
+    """Render help panel for the Done list."""
     table = Table.grid(padding=(0, 1))
     table.add_column(style=style_if_enabled("cyan"), no_wrap=True)
     table.add_column()
 
-    table.add_row("Purpose", "View findings marked as completed during review")
-    table.add_row("Undo", "Press [U] to restore findings to pending state")
+    table.add_row("Purpose", "Findings with Done status")
+    table.add_row("Move", f"Press [M] to {REVIEW_MOVE_LABELS[REVIEW_STATE_UNREVIEWED].lower()}")
     table.add_row("Filter", "Press [F] to filter by plugin name")
     table.add_row("", "")
     table.add_row("Note", "This is a management view - select findings in main list to work with them")
 
     panel = Panel(
         table,
-        title="[bold cyan]Completed Findings Help[/]",
+        title="[bold cyan]Done List Help[/]",
         border_style=style_if_enabled("cyan")
     )
     _console_global.print(panel)
@@ -1358,8 +1392,8 @@ def count_severity_findings(
     scan_id: int,
     plugin_ids: Optional[list[int]] = None,
     scan_ids: Optional[list[int]] = None,
-) -> tuple[int, int, int]:
-    """Count unreviewed, reviewed, and total files in a severity directory.
+) -> tuple[int, int, int, int]:
+    """Count findings in a severity directory by review state.
 
     Database-only mode: queries the database for review state tracking.
 
@@ -1370,7 +1404,7 @@ def count_severity_findings(
         scan_ids: Optional list of scan IDs for multi-scan queries (overrides scan_id)
 
     Returns:
-        Tuple of (unreviewed_count, reviewed_count, total_count)
+        Tuple of (unreviewed, in_progress, done, total)
     """
     from .models import Finding
     severity_dir_name = directory.name
@@ -1392,44 +1426,51 @@ def severity_cell(label: str) -> Any:
     return text
 
 
-def unreviewed_cell(count: int, total: int) -> Any:
-    """Format an unreviewed count cell with percentage and color.
-
-    Uses neutral cyan color for progress tracking (not risk indication).
-    Reserve red/yellow/green for severity labels only.
+def review_count_cell(count: int, total: int, state: str) -> Text:
+    """Format a status count cell as "N (P%)" in the status colour.
 
     Args:
-        count: Number of unreviewed files
-        total: Total number of files
+        count: Number of findings in ``state``
+        total: Total number of findings
+        state: Review state the count belongs to (sets the colour)
 
     Returns:
         Styled Text object showing count and percentage
     """
-    percentage = 0
-    if total:
-        percentage = round((count / total) * 100)
-    text = Text(f"{count} ({percentage}%)")
-    # Use neutral cyan color for progress metrics (not risk colors)
-    text.stylize(style_if_enabled("cyan"))
-    return text
+    percentage = round((count / total) * 100) if total else 0
+    return Text(
+        f"{count} ({percentage}%)", style=style_if_enabled(REVIEW_STATE_STYLES[state])
+    )
 
 
-def reviewed_cell(count: int, total: int) -> Any:
-    """Format a reviewed count cell with percentage.
+def review_count_cells(counts: tuple[int, int, int, int]) -> list[Text]:
+    """Build the Unreviewed / In Progress / Done / Total cells for a progress row.
 
     Args:
-        count: Number of reviewed files
-        total: Total number of files
+        counts: (unreviewed, in_progress, done, total)
 
     Returns:
-        Styled Text object showing count and percentage
+        Four Text cells in table column order
     """
-    percentage = 0
-    if total:
-        percentage = round((count / total) * 100)
-    text = Text(f"{count} ({percentage}%)")
-    text.stylize(style_if_enabled("magenta"))
-    return text
+    unreviewed, in_progress, done, total = counts
+    return [
+        review_count_cell(unreviewed, total, REVIEW_STATE_UNREVIEWED),
+        review_count_cell(in_progress, total, REVIEW_STATE_IN_PROGRESS),
+        review_count_cell(done, total, REVIEW_STATE_DONE),
+        total_cell(total),
+    ]
+
+
+def _status_legend() -> Text:
+    """Dim one-line legend for the findings-list Status icons."""
+    legend = Text("Status: ", style=style_if_enabled("dim"))
+    states = (REVIEW_STATE_UNREVIEWED, REVIEW_STATE_IN_PROGRESS)
+    for i, state in enumerate(states):
+        if i:
+            legend.append("  ")
+        legend.append(REVIEW_STATE_ICONS[state], style=style_if_enabled(REVIEW_STATE_STYLES[state]))
+        legend.append(f" {REVIEW_STATE_LABELS[state]}", style=style_if_enabled("dim"))
+    return legend
 
 
 def total_cell(count: int) -> Any:

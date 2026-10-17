@@ -256,23 +256,23 @@ class TestFindingModel:
         pf = Finding(
             scan_id=scan_id,
             plugin_id=12345,
-            review_state="pending"
+            review_state="unreviewed"
         )
         finding_id = pf.save(temp_db)
         assert finding_id is not None
 
         # Update review state
         pf.finding_id = finding_id
-        pf.update_review_state("completed", notes="All fixed", conn=temp_db)
+        pf.update_review_state("done", notes="All fixed", conn=temp_db)
 
         # Verify
         retrieved = Finding.get_by_id(finding_id, temp_db)
         assert retrieved is not None
-        assert retrieved.review_state == "completed"
+        assert retrieved.review_state == "done"
         assert retrieved.reviewed_at is not None
 
     def test_finding_default_review_state(self, temp_db):
-        """Test default review state is 'pending'."""
+        """Test default review state is 'unreviewed'."""
         scan = Scan(scan_name="test_scan", export_root="/tmp")
         scan_id = scan.save(temp_db)
         assert scan_id is not None
@@ -288,7 +288,7 @@ class TestFindingModel:
 
         retrieved = Finding.get_by_id(finding_id, temp_db)
         assert retrieved is not None
-        assert retrieved.review_state == "pending"
+        assert retrieved.review_state == "unreviewed"
 
     def test_get_severity_dirs_for_scan_empty(self, temp_db):
         """Test get_severity_dirs_for_scan returns empty list when no files exist."""

@@ -28,7 +28,14 @@ class SeveritySelection:
 
 from .ansi import warn, info, ok, header, get_console, colorize_severity_label
 from .render import print_action_menu, show_actions_help, show_reviewed_help
-from .constants import VISIBLE_GROUPS
+from .constants import (
+    REVIEW_MOVE_LABELS,
+    REVIEW_STATE_DONE,
+    REVIEW_STATE_ICONS,
+    REVIEW_STATE_STYLES,
+    REVIEW_STATE_UNREVIEWED,
+    VISIBLE_GROUPS,
+)
 
 if TYPE_CHECKING:
     from .models import Finding
@@ -368,8 +375,8 @@ def handle_finding_list_actions(
         page_idx = 0
         return None, file_filter, reviewed_filter, group_filter, sort_mode, page_idx
 
-    if ans == "r":
-        header("Completed Findings (Undo Available)")
+    if ans == "d":
+        header("Done List")
         _console_global.print(f"Current filter: '{reviewed_filter or '*'}'")
         filtered_reviewed = [
             (pf, p)
@@ -377,6 +384,8 @@ def handle_finding_list_actions(
             if (reviewed_filter.lower() in p.plugin_name.lower())
         ]
 
+        done_style = REVIEW_STATE_STYLES[REVIEW_STATE_DONE]
+        done_icon = REVIEW_STATE_ICONS[REVIEW_STATE_DONE]
         for idx, (finding, plugin) in enumerate(filtered_reviewed, 1):
             display_name = f"Plugin {plugin.plugin_id}: {plugin.plugin_name}"
             if sev_map:  # MSF mode with severity labels (deprecated)
@@ -384,14 +393,14 @@ def handle_finding_list_actions(
                 sev_label = plugin.severity_label or f"Severity {plugin.severity_int}"
                 sev_col = colorize_severity_label(sev_label)
                 # Use Rich markup instead of ANSI codes for Rich console
-                _console_global.print(f"[{idx}] [magenta]✓ {display_name}[/magenta]  — {sev_col}")
+                _console_global.print(f"[{idx}] [{done_style}]{done_icon} {display_name}[/{done_style}]  — {sev_col}")
             else:
                 # Use Rich markup instead of ANSI codes for Rich console
-                _console_global.print(f"[{idx}] [magenta]✓ {display_name}[/magenta]")
+                _console_global.print(f"[{idx}] [{done_style}]{done_icon} {display_name}[/{done_style}]")
 
         print_action_menu([
             ("?", "Help"),
-            ("U", "Undo completion"),
+            ("M", REVIEW_MOVE_LABELS[REVIEW_STATE_UNREVIEWED]),
             ("F", "Filter"),
             ("C", "Clear filter"),
             ("B", "Back")
@@ -420,10 +429,10 @@ def handle_finding_list_actions(
                 sort_mode,
                 page_idx,
             )
-        if choice == "u":
-            # Undo review-complete for one or more findings
+        if choice == "m":
+            # Move one or more Done findings back to Unreviewed
             if not filtered_reviewed:
-                warn("No reviewed findings to undo.")
+                warn("No Done findings to move back.")
                 return (
                     None,
                     file_filter,
@@ -434,7 +443,7 @@ def handle_finding_list_actions(
                 )
 
             try:
-                selection = Prompt.ask("Enter file number(s) to undo (e.g., 1 or 1,3,5) or [A]ll").strip()
+                selection = Prompt.ask("Finding number(s) to move back to Unreviewed (e.g. 1 or 1,3,5) or [A]ll").strip()
             except KeyboardInterrupt:
                 return (
                     None,
@@ -446,11 +455,11 @@ def handle_finding_list_actions(
                 )
 
             if selection.lower() == "a":
-                files_to_undo = filtered_reviewed
+                files_to_move = filtered_reviewed
             else:
                 try:
                     indices = [int(i.strip()) for i in selection.split(",")]
-                    files_to_undo = [filtered_reviewed[i - 1] for i in indices if 1 <= i <= len(filtered_reviewed)]
+                    files_to_move = [filtered_reviewed[i - 1] for i in indices if 1 <= i <= len(filtered_reviewed)]
                 except (ValueError, IndexError):
                     warn("Invalid selection.")
                     return (
@@ -462,10 +471,10 @@ def handle_finding_list_actions(
                         page_idx,
                     )
 
-            # Undo each file (lists will be regenerated on next loop)
-            from .fs import undo_review_complete
-            for finding, plugin in files_to_undo:
-                undo_review_complete(finding)
+            # Move each finding back (lists will be regenerated on next loop)
+            from .fs import move_review_state
+            for finding, plugin in files_to_move:
+                move_review_state(finding, plugin, target=REVIEW_STATE_UNREVIEWED)
 
             return (
                 None,
@@ -544,7 +553,7 @@ def handle_finding_list_actions(
             )
 
         # Return special action to handle in browse_file_list where we have
-        # access to completed_total
+        # access to done_total
         return (
             "mark_all",
             file_filter,

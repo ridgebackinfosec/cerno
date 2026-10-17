@@ -223,14 +223,14 @@ class TestReviewStateBroadcast:
 
         # Update both findings to completed (simulating broadcast)
         for f in all_instances[44444]:
-            f.update_review_state("completed", conn=temp_db)
+            f.update_review_state("done", conn=temp_db)
 
         temp_db.commit()
 
         # Verify both findings have been updated to completed
         rows = query_all(temp_db, "SELECT review_state FROM findings WHERE plugin_id = ?", (44444,))
         states = [r["review_state"] for r in rows]
-        assert all(s == "completed" for s in states)
+        assert all(s == "done" for s in states)
 
 
 # ========== TestHostPluginIdsMultiScan ==========

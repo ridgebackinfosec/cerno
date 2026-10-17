@@ -301,7 +301,7 @@ Finding records - one row per plugin per scan.
 | `finding_id` | INTEGER | Primary key |
 | `scan_id` | INTEGER | Foreign key to scans |
 | `plugin_id` | INTEGER | Foreign key to plugins |
-| `review_state` | TEXT | 'pending', 'reviewed', 'completed', 'skipped' |
+| `review_state` | TEXT NOT NULL | 'unreviewed' (default), 'in_progress', 'done'. Transitions (unreviewed → in_progress → done → unreviewed) are enforced in the app layer by `Finding.transition_review_state()` |
 | `reviewed_at` | TIMESTAMP | When finding was reviewed |
 | `reviewed_by` | TEXT | User tracking (future feature) |
 | `review_notes` | TEXT | User notes (future feature) |
@@ -314,7 +314,7 @@ Finding records - one row per plugin per scan.
 
 **Constraints**:
 - `UNIQUE(scan_id, plugin_id)` - One finding per plugin per scan
-- `CHECK(review_state IN ('pending', 'reviewed', 'completed', 'skipped'))`
+- `CHECK(review_state IN ('unreviewed', 'in_progress', 'done'))`
 
 **Relationships**: Has many `finding_affected_hosts`, `tool_executions`, and `workflow_executions`
 
@@ -468,9 +468,8 @@ Replaces cached statistics columns from `sessions` table.
 **Columns**:
 - `session_id`, `scan_id`, `session_start`, `session_end`
 - `duration_seconds` - Computed from start/end timestamps
-- `files_reviewed` - COUNT files with review_state='reviewed'
-- `files_completed` - COUNT files with review_state='completed'
-- `files_skipped` - COUNT files with review_state='skipped'
+- `files_in_progress` - COUNT findings with review_state='in_progress'
+- `files_done` - COUNT findings with review_state='done'
 - `tools_executed` - COUNT tool executions in session
 - `cves_extracted` - COUNT plugins with non-NULL cves
 
@@ -695,10 +694,10 @@ ORDER BY scan_count DESC, finding_count DESC;
 SELECT
     s.scan_name,
     COUNT(*) as total_files,
-    SUM(CASE WHEN f.review_state = 'completed' THEN 1 ELSE 0 END) as completed,
-    SUM(CASE WHEN f.review_state = 'reviewed' THEN 1 ELSE 0 END) as reviewed,
-    SUM(CASE WHEN f.review_state = 'pending' THEN 1 ELSE 0 END) as pending,
-    ROUND(100.0 * SUM(CASE WHEN f.review_state = 'completed' THEN 1 ELSE 0 END) / COUNT(*), 1) as completion_pct
+    SUM(CASE WHEN f.review_state = 'done' THEN 1 ELSE 0 END) as done,
+    SUM(CASE WHEN f.review_state = 'in_progress' THEN 1 ELSE 0 END) as in_progress,
+    SUM(CASE WHEN f.review_state = 'unreviewed' THEN 1 ELSE 0 END) as unreviewed,
+    ROUND(100.0 * SUM(CASE WHEN f.review_state = 'done' THEN 1 ELSE 0 END) / COUNT(*), 1) as completion_pct
 FROM scans s
 JOIN findings f ON f.scan_id = s.scan_id
 GROUP BY s.scan_name
@@ -865,7 +864,7 @@ Full schema available in [`../schema.sql`](../schema.sql).
 The database is initialized automatically on first use. Schema creation is handled by `cerno_pkg/database.py:initialize_database()`.
 
 **Key Points**:
-- Schema version: 1 (single-version, no migration system)
+- Schema version: 3, stored in `PRAGMA user_version` (no migration system; an older database is rejected at startup and must be deleted and scans re-imported)
 - All tables created with `CREATE TABLE IF NOT EXISTS` for idempotency
 - Foundation tables pre-populated automatically
 - Views created after tables

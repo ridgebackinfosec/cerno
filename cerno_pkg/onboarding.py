@@ -15,6 +15,13 @@ from rich.prompt import Prompt
 from rich.text import Text
 
 from .ansi import get_console, header, info, ok, style_if_enabled
+from .constants import (
+    REVIEW_STATE_DONE,
+    REVIEW_STATE_IN_PROGRESS,
+    REVIEW_STATE_LABELS,
+    REVIEW_STATE_STYLES,
+    REVIEW_STATE_UNREVIEWED,
+)
 
 if TYPE_CHECKING:
     pass
@@ -135,9 +142,10 @@ def show_tour_step(step: int) -> None:
         header("Step 4/4: Tracking Progress")
         info("─" * 60)
         info("")
-        info("Mark findings to track what you've reviewed:")
+        info("Each finding has a status: Unreviewed → In Progress → Done.")
         info("")
-        info("  [M] Mark reviewed - Fully investigated")
+        info("  [M] Move - move a finding to its next status")
+        info("  [D] Done list - [M] there moves a finding back to Unreviewed")
         info("")
         info("Resume where you left off - Cerno saves your progress!")
         info("")
@@ -183,9 +191,9 @@ def show_workflow_guidance(
             f"""
             SELECT
                 COUNT(*) as total,
-                SUM(CASE WHEN review_state = 'pending' THEN 1 ELSE 0 END) as unreviewed,
-                SUM(CASE WHEN review_state = 'reviewed' THEN 1 ELSE 0 END) as reviewed,
-                SUM(CASE WHEN review_state = 'completed' THEN 1 ELSE 0 END) as completed
+                SUM(CASE WHEN review_state = 'unreviewed' THEN 1 ELSE 0 END) as unreviewed,
+                SUM(CASE WHEN review_state = 'in_progress' THEN 1 ELSE 0 END) as in_progress,
+                SUM(CASE WHEN review_state = 'done' THEN 1 ELSE 0 END) as done
             FROM findings
             WHERE scan_id IN ({placeholders})
             """,
@@ -193,7 +201,7 @@ def show_workflow_guidance(
         )
         stats = cursor.fetchone()
 
-    total, unreviewed, reviewed, completed = stats[0], stats[1], stats[2], stats[3]
+    total, unreviewed, in_progress, completed = stats[0], stats[1], stats[2], stats[3]
 
     # Skip guidance if scan has no findings or all are reviewed
     if total == 0 or unreviewed == 0:
@@ -218,12 +226,15 @@ def show_workflow_guidance(
     # Statistics with colored labels
     content.append("Findings: ", style="bold cyan")
     content.append(f"{total} plugins  ")
-    content.append("│  ", style="dim")
-    content.append("Unreviewed: ", style="bold yellow")
-    content.append(f"{unreviewed}  ")
-    content.append("│  ", style="dim")
-    content.append("Reviewed: ", style="bold green")
-    content.append(f"{reviewed}\n\n")
+    for state, count in (
+        (REVIEW_STATE_UNREVIEWED, unreviewed),
+        (REVIEW_STATE_IN_PROGRESS, in_progress),
+        (REVIEW_STATE_DONE, completed),
+    ):
+        content.append("│  ", style="dim")
+        content.append(f"{REVIEW_STATE_LABELS[state]}: ", style=f"bold {REVIEW_STATE_STYLES[state]}")
+        content.append(f"{count}  ")
+    content.append("\n\n")
 
     # Recommended workflow with icons and inline styled keys
     content.append("Recommended Workflow:\n", style="bold")
@@ -234,15 +245,15 @@ def show_workflow_guidance(
     content.append("  3️⃣  Run verification tools ")
     content.append("[T]", style="cyan")
     content.append(" for nmap/NetExec/Metasploit\n")
-    content.append("  4️⃣  Mark findings as reviewed ")
+    content.append("  4️⃣  Move findings Unreviewed → In Progress → Done with ")
     content.append("[M]", style="cyan")
     content.append("\n")
     content.append("  5️⃣  Use ")
     content.append("[H]", style="cyan")
     content.append(" to find duplicate findings across plugins\n")
     content.append("  6️⃣  Check ")
-    content.append("[R]", style="cyan")
-    content.append(" to see reviewed findings (undo available)\n\n")
+    content.append("[D]", style="cyan")
+    content.append(" for the Done list ([M] there moves back to Unreviewed)\n\n")
 
     # Combine content and shortcuts
     combined = Text()
@@ -349,7 +360,7 @@ def _show_context_aware_tips(
         if progress_pct >= 50:
             tip = Text()
             tip.append("✅ ", style="green")
-            tip.append(f"Progress: You've reviewed {completed}/{total} findings ({progress_pct}%) - keep going!")
+            tip.append(f"Progress: {completed}/{total} findings Done ({progress_pct}%) - keep going!")
             tips.append(tip)
 
     # Return panel if tips exist
@@ -418,11 +429,11 @@ def show_additional_tips() -> None:
     content.append("Progress Tracking:\n", style="bold cyan")
     content.append("  • ")
     content.append("[M]", style="cyan")
-    content.append(" Mark reviewed - fully investigated\n")
+    content.append(" Move - Unreviewed → In Progress → Done\n")
     content.append("  • ")
-    content.append("[R]", style="cyan")
-    content.append(" View reviewed findings - you can undo with ")
-    content.append("[U]", style="cyan")
+    content.append("[D]", style="cyan")
+    content.append(" Done list - move findings back to Unreviewed with ")
+    content.append("[M]", style="cyan")
     content.append("\n")
     content.append("  • Sessions auto-save - resume where you left off!")
 

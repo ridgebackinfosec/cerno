@@ -37,6 +37,7 @@ from cerno_pkg import (
     render_finding_list_table,
     render_actions_footer,
     severity_cell,
+    review_count_cells,
     pretty_severity_label,
     default_page_size,
     print_action_menu,
@@ -79,6 +80,14 @@ from rich.traceback import install as rich_tb_install
 
 # Create a console for the interactive flow (configured with no_color setting)
 from cerno_pkg.ansi import get_console, get_terminal_width
+from cerno_pkg.models import count_review_states
+from cerno_pkg.constants import (
+    REVIEW_STATE_DONE,
+    REVIEW_STATE_IN_PROGRESS,
+    REVIEW_STATE_LABELS,
+    REVIEW_STATE_STYLES,
+    REVIEW_STATE_UNREVIEWED,
+)
 _console_global = get_console()
 
 # Install pretty tracebacks, but suppress for Typer/Click exit exceptions
@@ -280,9 +289,8 @@ def browse_workflow_groups(
     workflow_groups: Dict[str, List[Tuple[Any, Any]]],
     args: types.SimpleNamespace,
     use_sudo: bool,
-    skipped_total: List[str],
-    reviewed_total: List[str],
-    completed_total: List[str],
+    in_progress_total: List[str],
+    done_total: List[str],
     workflow_mapper,
     config: Optional["CernoConfig"] = None,
     session_start_time: Optional[Any] = None,
@@ -300,9 +308,8 @@ def browse_workflow_groups(
         workflow_groups: Dict mapping workflow_name -> list of (Finding, Plugin) tuples
         args: Command-line arguments
         use_sudo: Whether sudo is available
-        skipped_total: List of skipped filenames
-        reviewed_total: List of reviewed filenames
-        completed_total: List of completed filenames
+        in_progress_total: List of findings viewed but not marked done
+        done_total: List of findings marked done
         workflow_mapper: WorkflowMapper instance
         scan_label: Optional display label override (used for multi-scan breadcrumbs)
         scans: Optional full list of selected Scan objects for multi-scan support
@@ -327,25 +334,15 @@ def browse_workflow_groups(
         table = Table(title="Workflows", box=box.SIMPLE)
         table.add_column("#", style="cyan", justify="right")
         table.add_column("Workflow Name", style="bold")
-        table.add_column("Unreviewed", justify="right")
-        table.add_column("Reviewed", justify="right")
+        for state in (REVIEW_STATE_UNREVIEWED, REVIEW_STATE_IN_PROGRESS, REVIEW_STATE_DONE):
+            table.add_column(f"{REVIEW_STATE_LABELS[state]} (%)", justify="right")
         table.add_column("Total", justify="right")
 
         workflow_list = sorted(workflow_groups.items(), key=lambda x: len(x[1]), reverse=True)
 
         for idx, (workflow_name, files) in enumerate(workflow_list, start=1):
-            total = len(files)
-            # Use database review_state instead of filename checking
-            reviewed = sum(1 for (pf, _p) in files if pf.review_state == "completed")
-            unreviewed = total - reviewed
-
-            table.add_row(
-                str(idx),
-                workflow_name,
-                str(unreviewed),
-                str(reviewed),
-                str(total),
-            )
+            counts = count_review_states(pf for (pf, _p) in files)
+            table.add_row(str(idx), workflow_name, *review_count_cells(counts))
 
         _console_global.print(table)
         print_action_menu([("B", "Back")])
@@ -381,9 +378,8 @@ def browse_workflow_groups(
             f"Workflow: {workflow_name}",
             args,
             use_sudo,
-            skipped_total,
-            reviewed_total,
-            completed_total,
+            in_progress_total,
+            done_total,
             is_msf_mode=True,  # Show severity labels
             workflow_mapper=workflow_mapper,
             plugin_ids_filter=plugin_ids if plugin_ids else None,
@@ -419,9 +415,8 @@ def browse_file_list(
     severity_label: str,
     args: types.SimpleNamespace,
     use_sudo: bool,
-    skipped_total: List[str],
-    reviewed_total: List[str],
-    completed_total: List[str],
+    in_progress_total: List[str],
+    done_total: List[str],
     is_msf_mode: bool = False,
     workflow_mapper: Optional[WorkflowMapper] = None,
     has_metasploit_filter: Optional[bool] = None,
@@ -441,10 +436,9 @@ def browse_file_list(
         workflow_mapper: Optional workflow mapper for plugin workflows
         args: Command-line arguments
         use_sudo: Whether sudo is available
-        skipped_total: List to track skipped findings
-        reviewed_total: List to track reviewed findings
-        completed_total: List to track completed findings
-        is_msf_mode: If True, display severity labels in reviewed list
+        in_progress_total: List to track findings viewed but not marked done
+        done_total: List to track findings marked done
+        is_msf_mode: If True, display severity labels in the Done list
         has_metasploit_filter: Optional filter for metasploit plugins
         plugin_ids_filter: Optional list of specific plugin IDs to include
     """
@@ -556,10 +550,10 @@ def browse_file_list(
 
         # Separate reviewed and unreviewed based on review_state from database
         reviewed = [
-            (pf, p) for (pf, p) in all_records if pf.review_state == "completed"
+            (pf, p) for (pf, p) in all_records if pf.review_state == REVIEW_STATE_DONE
         ]
         unreviewed = [
-            (pf, p) for (pf, p) in all_records if pf.review_state != "completed"
+            (pf, p) for (pf, p) in all_records if pf.review_state != REVIEW_STATE_DONE
         ]
 
         # Apply file filter (plugin name search)
@@ -669,8 +663,19 @@ def browse_file_list(
 
             status_parts: list[str | Text] = []
 
-            # Unreviewed count
-            status_parts.append(f"Unreviewed findings ({len(unreviewed)})")
+            # Open (not Done) counts by status
+            open_unrev, open_in_prog, _done, _total = count_review_states(pf for (pf, _p) in unreviewed)
+            open_text = Text()
+            open_text.append(
+                f"{REVIEW_STATE_LABELS[REVIEW_STATE_UNREVIEWED]} {open_unrev}",
+                style=style_if_enabled(REVIEW_STATE_STYLES[REVIEW_STATE_UNREVIEWED]),
+            )
+            open_text.append(" · ")
+            open_text.append(
+                f"{REVIEW_STATE_LABELS[REVIEW_STATE_IN_PROGRESS]} {open_in_prog}",
+                style=style_if_enabled(REVIEW_STATE_STYLES[REVIEW_STATE_IN_PROGRESS]),
+            )
+            status_parts.append(open_text)
 
             # File filter with visual indicator if active
             if file_filter:
@@ -727,8 +732,10 @@ def browse_file_list(
 
                 # Build session stats string
                 session_stats = f"Session: {session_time_str}"
-                if reviewed_total or completed_total or skipped_total:
-                    session_stats += f" | R:{len(reviewed_total)} C:{len(completed_total)} S:{len(skipped_total)}"
+                if in_progress_total or done_total:
+                    session_stats += (
+                        f" (+{len(in_progress_total)} In Progress, +{len(done_total)} Done)"
+                    )
                 status_parts.append(session_stats)
 
             # Proxy badge
@@ -980,12 +987,18 @@ def browse_file_list(
         elif action_type == "help":
             continue
         elif action_type == "mark_all":
-            # Always require confirmation for bulk operations
-            from cerno_pkg.fs import mark_review_complete
+            # Bulk move: each filtered finding moves to its next status
+            from cerno_pkg.fs import move_review_state
             from rich.prompt import Confirm
 
+            to_start = sum(1 for (f, _p) in candidates if f.review_state == REVIEW_STATE_UNREVIEWED)
+            to_finish = sum(1 for (f, _p) in candidates if f.review_state == REVIEW_STATE_IN_PROGRESS)
+
             try:
-                confirm_msg = f"Mark all {len(candidates)} findings as review complete?"
+                confirm_msg = (
+                    f"Move {len(candidates)} findings to their next status? "
+                    f"{to_start} → In Progress, {to_finish} → Done"
+                )
                 confirmed = Confirm.ask(confirm_msg, default=False)
             except KeyboardInterrupt:
                 warn("\nInterrupted — cancelling bulk operation.")
@@ -995,8 +1008,7 @@ def browse_file_list(
                 info("Bulk operation cancelled.")
                 continue
 
-            # Proceed with bulk marking
-            marked = 0
+            started = finished = 0
             with Progress(
                 SpinnerColumn(style="cyan"),
                 TextColumn("[progress.description]{task.description}"),
@@ -1005,20 +1017,25 @@ def browse_file_list(
                 transient=True,
             ) as progress:
                 task = progress.add_task(
-                    "Marking findings as review complete...", total=len(candidates)
+                    "Moving findings to next status...", total=len(candidates)
                 )
                 for finding, plugin in candidates:
-                    if mark_review_complete(finding):
-                        marked += 1
+                    new_state = move_review_state(finding, plugin, quiet=True)
+                    if new_state is not None:
                         display_name = f"Plugin {plugin.plugin_id}: {plugin.plugin_name}"
-                        completed_total.append(display_name)
-                        # Broadcast to other scan instances in multi-scan mode
+                        if new_state == REVIEW_STATE_DONE:
+                            finished += 1
+                            done_total.append(display_name)
+                        else:
+                            started += 1
+                            in_progress_total.append(display_name)
+                        # Sync other scan instances in multi-scan mode
                         if is_multi_scan:
                             for other_f in all_instances.get(plugin.plugin_id, []):
                                 if other_f.finding_id != finding.finding_id:
-                                    other_f.update_review_state("completed")
+                                    other_f.update_review_state(new_state)
                     progress.advance(task)
-            ok(f"Summary: {marked} marked, {len(candidates)-marked} skipped.")
+            ok(f"Moved {started} to In Progress, {finished} to Done.")
             continue
         elif action_type == "file_selected":
             # Determine which record was selected
@@ -1053,9 +1070,8 @@ def browse_file_list(
                 chosen_sev_dir,
                 args,
                 use_sudo,
-                skipped_total,
-                reviewed_total,
-                completed_total,
+                in_progress_total,
+                done_total,
                 show_severity=is_msf_mode,
                 workflow_mapper=workflow_mapper,
                 use_proxy=_proxy_active,
@@ -1085,9 +1101,8 @@ def browse_file_list(
 
 def show_session_statistics(
     session_start_time,
-    reviewed_total: list[str],
-    completed_total: list[str],
-    skipped_total: list[str],
+    in_progress_total: list[str],
+    done_total: list[str],
     scan_dir: Path,
     scan_id: Optional[int] = None,
     scan_ids: Optional[list[int]] = None,
@@ -1097,9 +1112,8 @@ def show_session_statistics(
 
     Args:
         session_start_time: Datetime when session started
-        reviewed_total: List of reviewed (not marked complete) findings
-        completed_total: List of marked complete findings
-        skipped_total: List of skipped (empty) findings
+        in_progress_total: List of findings viewed but not marked done
+        done_total: List of findings marked done
         scan_dir: Scan directory for severity analysis
         scan_id: Optional scan ID for database queries
         scan_ids: Optional list of scan IDs for multi-scan queries (overrides scan_id)
@@ -1125,16 +1139,15 @@ def show_session_statistics(
     overall_table.add_column("Count", justify="right", style=style_if_enabled("yellow"))
 
     overall_table.add_row("Session Duration", duration_str)
-    overall_table.add_row("Findings Reviewed (not marked)", str(len(reviewed_total)))
-    overall_table.add_row("Findings Marked Complete", str(len(completed_total)))
-    overall_table.add_row("Findings Skipped (empty)", str(len(skipped_total)))
-    overall_table.add_row("Total Findings Processed", str(len(reviewed_total) + len(completed_total) + len(skipped_total)))
+    overall_table.add_row("Moved to In Progress", str(len(in_progress_total)))
+    overall_table.add_row("Moved to Done", str(len(done_total)))
+    overall_table.add_row("Total status changes", str(len(in_progress_total) + len(done_total)))
 
     console.print(overall_table)
     _console_global.print()
 
     # Per-severity breakdown (for completed findings only)
-    if completed_total:
+    if done_total:
         severity_counts = {}
 
         # Use database if available, otherwise fall back to filesystem
@@ -1148,7 +1161,7 @@ def show_session_statistics(
                     SELECT p.severity_label, COUNT(DISTINCT f.plugin_id) as count
                     FROM findings f
                     JOIN v_plugins_with_severity p ON f.plugin_id = p.plugin_id
-                    WHERE f.scan_id IN ({placeholders}) AND f.review_state = 'completed'
+                    WHERE f.scan_id IN ({placeholders}) AND f.review_state = 'done'
                     GROUP BY p.severity_label
                     """,
                     tuple(scan_ids)
@@ -1167,7 +1180,7 @@ def show_session_statistics(
                     SELECT p.severity_label, COUNT(*) as count
                     FROM findings f
                     JOIN v_plugins_with_severity p ON f.plugin_id = p.plugin_id
-                    WHERE f.scan_id = ? AND f.review_state = 'completed'
+                    WHERE f.scan_id = ? AND f.review_state = 'done'
                     GROUP BY p.severity_label
                     """,
                     (scan_id,)
@@ -1181,7 +1194,7 @@ def show_session_statistics(
                 if not sev_dir.is_dir():
                     continue
                 sev_label = pretty_severity_label(sev_dir.name)
-                count = sum(1 for name in completed_total if any(
+                count = sum(1 for name in done_total if any(
                     (sev_dir / fname).exists() or (sev_dir / f"REVIEW_COMPLETE-{fname}").exists()
                     for fname in [name, name.replace("REVIEW_COMPLETE-", "")]
                 ))
@@ -1191,7 +1204,10 @@ def show_session_statistics(
         if severity_counts:
             sev_table = Table(show_header=True, header_style=style_if_enabled("bold cyan"))
             sev_table.add_column("Severity Level", style=style_if_enabled("cyan"))
-            sev_table.add_column("Completed Count", justify="right", style=style_if_enabled("yellow"))
+            sev_table.add_column(
+                "Moved to Done", justify="right",
+                style=style_if_enabled(REVIEW_STATE_STYLES[REVIEW_STATE_DONE]),
+            )
 
             for sev_label in sorted(severity_counts.keys()):
                 sev_col = severity_cell(sev_label)
@@ -1299,9 +1315,8 @@ def main(args: types.SimpleNamespace) -> None:
     if args.no_tools:
         info("(no-tools mode: tool prompts disabled for this session)")
 
-    reviewed_total: List[str] = []
-    completed_total: List[str] = []
-    skipped_total: List[str] = []
+    in_progress_total: List[str] = []
+    done_total: List[str] = []
 
     # If no export_root specified, use database scan selection
     if export_root is None:
@@ -1325,20 +1340,18 @@ def main(args: types.SimpleNamespace) -> None:
                     save_session(
                         scan_id,
                         session_start_time,
-                        reviewed_count=len(reviewed_total),
-                        completed_count=len(completed_total),
-                        skipped_count=len(skipped_total),
+                        in_progress_count=len(in_progress_total),
+                        done_count=len(done_total),
                         additional_scan_ids=_additional_scan_ids(selected_scans),
                     )
 
                     # Show statistics if work was done
-                    if reviewed_total or completed_total or skipped_total:
+                    if in_progress_total or done_total:
                         if scan_dir is not None:
                             show_session_statistics(
                                 session_start_time,
-                                reviewed_total,
-                                completed_total,
-                                skipped_total,
+                                in_progress_total,
+                                done_total,
                                 scan_dir,
                                 scan_id=scan_id,
                                 scan_ids=all_scan_ids if len(all_scan_ids) > 1 else None,
@@ -1349,9 +1362,8 @@ def main(args: types.SimpleNamespace) -> None:
                     # Reset tracking for next scan
                     scan_id = 0
                     scan_dir = None
-                    reviewed_total = []
-                    completed_total = []
-                    skipped_total = []
+                    in_progress_total = []
+                    done_total = []
 
                 # Get all scans from database
                 try:
@@ -1454,9 +1466,8 @@ def main(args: types.SimpleNamespace) -> None:
                     session_date = datetime.fromisoformat(previous_session.session_start)
                     header("Previous Session Found")
                     info(f"Session started: {session_date.strftime('%Y-%m-%d %H:%M:%S')}")
-                    info(f"Reviewed: {previous_session.reviewed_count} findings")
-                    info(f"Completed: {previous_session.completed_count} findings")
-                    info(f"Skipped: {previous_session.skipped_count} findings")
+                    info(f"In Progress: {previous_session.in_progress_count} findings")
+                    info(f"Done: {previous_session.done_count} findings")
                     try:
                         resume = Confirm.ask("Resume this session?", default=True)
                     except KeyboardInterrupt:
@@ -1558,16 +1569,8 @@ def main(args: types.SimpleNamespace) -> None:
                         )
 
                     has_msf = len(msf_files) > 0
-                    msf_total = len(msf_files)
-                    msf_reviewed = sum(
-                        1
-                        for (pf, _p) in msf_files
-                        if pf.review_state == "completed"
-                    )
-                    msf_unrev = msf_total - msf_reviewed
-
                     msf_summary = (
-                        (msf_unrev, msf_reviewed, msf_total)
+                        count_review_states(pf for (pf, _p) in msf_files)
                         if has_msf
                         else None
                     )
@@ -1600,16 +1603,8 @@ def main(args: types.SimpleNamespace) -> None:
                         workflow_files = []
 
                     has_workflows = len(workflow_files) > 0
-                    workflow_total = len(workflow_files)
-                    workflow_reviewed = sum(
-                        1
-                        for (pf, _p) in workflow_files
-                        if pf.review_state == "completed"
-                    )
-                    workflow_unrev = workflow_total - workflow_reviewed
-
                     workflow_summary = (
-                        (workflow_unrev, workflow_reviewed, workflow_total)
+                        count_review_states(pf for (pf, _p) in workflow_files)
                         if has_workflows
                         else None
                     )
@@ -1769,9 +1764,8 @@ def main(args: types.SimpleNamespace) -> None:
                             label,
                             args,
                             use_sudo,
-                            skipped_total,
-                            reviewed_total,
-                            completed_total,
+                            in_progress_total,
+                            done_total,
                             is_msf_mode=True,  # Show severity labels for each file
                             workflow_mapper=workflow_mapper,
                             severity_dirs_filter=severity_dir_names,
@@ -1800,9 +1794,8 @@ def main(args: types.SimpleNamespace) -> None:
                             label,
                             args,
                             use_sudo,
-                            skipped_total,
-                            reviewed_total,
-                            completed_total,
+                            in_progress_total,
+                            done_total,
                             is_msf_mode=False,
                             workflow_mapper=workflow_mapper,
                             plugin_ids_filter=host_filter_plugin_ids,
@@ -1825,9 +1818,8 @@ def main(args: types.SimpleNamespace) -> None:
                             label,
                             args,
                             use_sudo,
-                            skipped_total,
-                            reviewed_total,
-                            completed_total,
+                            in_progress_total,
+                            done_total,
                             is_msf_mode=True,
                             workflow_mapper=workflow_mapper,
                             has_metasploit_filter=True,
@@ -1847,9 +1839,8 @@ def main(args: types.SimpleNamespace) -> None:
                             workflow_groups,
                             args,
                             use_sudo,
-                            skipped_total,
-                            reviewed_total,
-                            completed_total,
+                            in_progress_total,
+                            done_total,
                             workflow_mapper,
                             config=config,
                             session_start_time=session_start_time,
@@ -1867,21 +1858,19 @@ def main(args: types.SimpleNamespace) -> None:
                 save_session(
                     scan_id,
                     session_start_time,
-                    reviewed_count=len(reviewed_total),
-                    completed_count=len(completed_total),
-                    skipped_count=len(skipped_total),
+                    in_progress_count=len(in_progress_total),
+                    done_count=len(done_total),
                     additional_scan_ids=_additional_scan_ids(selected_scans),
                 )
 
                 # Session summary with rich statistics (only if work was done)
-                if reviewed_total or completed_total or skipped_total:
+                if in_progress_total or done_total:
                     # Type guard: scan_dir must be defined if any work was done
                     if scan_dir is not None:
                         show_session_statistics(
                             session_start_time,
-                            reviewed_total,
-                            completed_total,
-                            skipped_total,
+                            in_progress_total,
+                            done_total,
                             scan_dir,
                             scan_id=scan_id,
                             scan_ids=all_scan_ids if len(all_scan_ids) > 1 else None,
@@ -2120,7 +2109,7 @@ def main_callback(
     # Load configuration (auto-creates with defaults if missing)
     from cerno_pkg import load_config, initialize_colors
     from cerno_pkg.logging_setup import init_logger
-    from cerno_pkg.database import initialize_database
+    from cerno_pkg.database import SchemaVersionError, initialize_database
 
     config = load_config()
 
@@ -2129,7 +2118,12 @@ def main_callback(
     initialize_colors(config)
 
     # Initialize database AFTER logger is ready (prevents logging bleed during import)
-    initialize_database()
+    try:
+        initialize_database()
+    except SchemaVersionError as e:
+        # stderr: `cerno mcp` reserves stdout for JSON-RPC
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(code=1)
 
     # Store config in context for access by commands
     _config_context.set(config)
@@ -2503,7 +2497,7 @@ def list_scans() -> None:
     table.add_column("Medium", justify="right", style=style_if_enabled("yellow"))
     table.add_column("Low", justify="right", style=style_if_enabled("cyan"))
     table.add_column("Info", justify="right", style=style_if_enabled("dim"))
-    table.add_column("Reviewed", justify="right", style=style_if_enabled("green"))
+    table.add_column("Done", justify="right", style=style_if_enabled("green"))
     table.add_column("Last Reviewed", style=style_if_enabled("dim"))
 
     for scan in scans:
@@ -2529,7 +2523,7 @@ def list_scans() -> None:
             str(scan["medium_count"] or 0),
             str(scan["low_count"] or 0),
             str(scan["info_count"] or 0),
-            str(scan["reviewed_count"] or 0),
+            str(scan["done_count"] or 0),
             last_reviewed
         )
 

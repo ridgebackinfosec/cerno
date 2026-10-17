@@ -53,6 +53,62 @@ SCANS_ROOT: Path = Path.home() / ".cerno" / "scans"
 REVIEW_PREFIX: str = "REVIEW_COMPLETE-"
 """Prefix added to filenames that have been reviewed."""
 
+REVIEW_STATE_UNREVIEWED: str = "unreviewed"
+"""Finding not yet reviewed (default on import)."""
+
+REVIEW_STATE_IN_PROGRESS: str = "in_progress"
+"""Finding review started but not finished."""
+
+REVIEW_STATE_DONE: str = "done"
+"""Finding review finished."""
+
+REVIEW_STATES: tuple[str, ...] = (
+    REVIEW_STATE_UNREVIEWED,
+    REVIEW_STATE_IN_PROGRESS,
+    REVIEW_STATE_DONE,
+)
+"""Valid values for ``findings.review_state`` (mirrors the schema CHECK constraint)."""
+
+REVIEW_TRANSITIONS: dict[str, tuple[str, ...]] = {
+    REVIEW_STATE_UNREVIEWED: (REVIEW_STATE_IN_PROGRESS,),
+    REVIEW_STATE_IN_PROGRESS: (REVIEW_STATE_DONE,),
+    REVIEW_STATE_DONE: (REVIEW_STATE_UNREVIEWED,),
+}
+"""Allowed review-state transitions (current state -> permitted next states).
+
+Workflow: unreviewed -> in_progress -> done, and done -> unreviewed to reset.
+Enforced by ``Finding.transition_review_state()`` for both the TUI and MCP.
+"""
+
+REVIEW_STATE_LABELS: dict[str, str] = {
+    REVIEW_STATE_UNREVIEWED: "Unreviewed",
+    REVIEW_STATE_IN_PROGRESS: "In Progress",
+    REVIEW_STATE_DONE: "Done",
+}
+"""Display labels for review states (shown to users as the finding's "status")."""
+
+REVIEW_STATE_STYLES: dict[str, str] = {
+    REVIEW_STATE_UNREVIEWED: "cyan",
+    REVIEW_STATE_IN_PROGRESS: "blue",
+    REVIEW_STATE_DONE: "magenta",
+}
+"""Rich styles for review states. Deliberately avoids the severity palette
+(red/yellow/green) so progress is never mistaken for risk."""
+
+REVIEW_STATE_ICONS: dict[str, str] = {
+    REVIEW_STATE_UNREVIEWED: "○",
+    REVIEW_STATE_IN_PROGRESS: "◐",
+    REVIEW_STATE_DONE: "✓",
+}
+"""Compact status indicators: ○ Unreviewed, ◐ In Progress, ✓ Done (Done list rows)."""
+
+REVIEW_MOVE_LABELS: dict[str, str] = {
+    REVIEW_STATE_IN_PROGRESS: "Move to In Progress",
+    REVIEW_STATE_DONE: "Move to Done",
+    REVIEW_STATE_UNREVIEWED: "Move back to Unreviewed",
+}
+"""[M] action labels keyed by *target* status (past tense: replace "Move" with "Moved")."""
+
 
 # ========== Plugin details configuration ==========
 PLUGIN_DETAILS_BASE: str = "https://www.tenable.com/plugins/nessus/"

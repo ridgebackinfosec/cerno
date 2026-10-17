@@ -194,7 +194,7 @@ def test_tools_callable_through_server(contract):
         "generate_netexec_cmd": {"finding_id": fid, "protocol": "smb"},
         "generate_msf_search": {"finding_id": fid},
         # mutation (safe): flips review state in the seeded temp DB
-        "set_review_state": {"finding_id": fid, "new_state": "completed"},
+        "set_review_state": {"finding_id": fid, "new_state": "in_progress"},
     }
     # execute_command (subprocess/async) and import_nessus (needs a file) are
     # covered by the inventory test + test_mcp_server.py; exercising them here

@@ -33,7 +33,7 @@ __all__ = [
     "render_compare_tables", "render_actions_footer", "render_finding_actions_footer",
     "render_responsive_action_menu", "show_actions_help",
     "render_tool_availability_table",
-    "show_reviewed_help", "menu_pager", "severity_cell", "severity_style",
+    "show_reviewed_help", "menu_pager", "severity_cell", "severity_style", "review_count_cells",
     "print_action_menu", "file_raw_payload_text", "file_raw_paged_text",
     "grouped_payload_text", "grouped_paged_text", "hosts_only_payload_text",
     "hosts_only_paged_text", "build_plugin_output_details", "display_finding_preview",
@@ -44,7 +44,7 @@ __all__ = [
     "page_text", "bulk_extract_cves_for_plugins", "bulk_extract_cves_for_findings",
     "display_bulk_cve_results", "color_unreviewed",
     # FS module
-    "build_results_paths", "mark_review_complete", "undo_review_complete",
+    "build_results_paths", "move_review_state",
     "default_page_size", "pretty_severity_label", "write_work_files",
     "display_workflow", "handle_finding_view", "process_single_finding",
     # Tools module
@@ -108,7 +108,7 @@ from .render import (
     render_scan_table, render_severity_table, render_finding_list_table,
     render_compare_tables, render_actions_footer, render_finding_actions_footer,
     render_responsive_action_menu, show_actions_help, render_tool_availability_table,
-    show_reviewed_help, menu_pager, severity_cell, severity_style,
+    show_reviewed_help, menu_pager, severity_cell, severity_style, review_count_cells,
     print_action_menu,
     file_raw_payload_text, file_raw_paged_text,
     grouped_payload_text, grouped_paged_text,
@@ -123,7 +123,7 @@ from .render import (
     display_bulk_cve_results, color_unreviewed,
 )
 from .fs import (
-    build_results_paths, mark_review_complete, undo_review_complete,
+    build_results_paths, move_review_state,
     default_page_size, pretty_severity_label, write_work_files,
     display_workflow, handle_finding_view, process_single_finding
 )

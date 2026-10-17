@@ -5,7 +5,7 @@
 -- and generated artifacts. This file serves as reference documentation.
 --
 -- Database location: ~/.cerno/cerno.db (global, cross-scan queries)
--- Schema version: 1 (single-version, normalized structure)
+-- Schema version: 3 (normalized structure; review states unreviewed/in_progress/done)
 --
 -- IMPORTANT: This file is DOCUMENTATION ONLY
 -- - Actual schema initialization: cerno_pkg/database.py (SCHEMA_SQL_TABLES + SCHEMA_SQL_VIEWS)
@@ -165,7 +165,7 @@ CREATE TABLE IF NOT EXISTS findings (
     finding_id INTEGER PRIMARY KEY AUTOINCREMENT,
     scan_id INTEGER NOT NULL,
     plugin_id INTEGER NOT NULL,
-    review_state TEXT DEFAULT 'pending',
+    review_state TEXT NOT NULL DEFAULT 'unreviewed',
     reviewed_at TIMESTAMP,
     reviewed_by TEXT,
     review_notes TEXT,
@@ -176,7 +176,7 @@ CREATE TABLE IF NOT EXISTS findings (
 
     FOREIGN KEY (scan_id) REFERENCES scans(scan_id) ON DELETE CASCADE,
     FOREIGN KEY (plugin_id) REFERENCES plugins(plugin_id),
-    CONSTRAINT valid_review_state CHECK (review_state IN ('pending', 'reviewed', 'completed', 'skipped')),
+    CONSTRAINT valid_review_state CHECK (review_state IN ('unreviewed', 'in_progress', 'done')),
     CONSTRAINT unique_scan_plugin UNIQUE (scan_id, plugin_id)
 );
 
@@ -350,9 +350,8 @@ SELECT
     s.session_start,
     s.session_end,
     (julianday(s.session_end) - julianday(s.session_start)) * 86400 AS duration_seconds,
-    COUNT(DISTINCT CASE WHEN f.review_state = 'reviewed' THEN f.finding_id END) as files_reviewed,
-    COUNT(DISTINCT CASE WHEN f.review_state = 'completed' THEN f.finding_id END) as files_completed,
-    COUNT(DISTINCT CASE WHEN f.review_state = 'skipped' THEN f.finding_id END) as files_skipped,
+    COUNT(DISTINCT CASE WHEN f.review_state = 'in_progress' THEN f.finding_id END) as files_in_progress,
+    COUNT(DISTINCT CASE WHEN f.review_state = 'done' THEN f.finding_id END) as files_done,
     COUNT(DISTINCT te.execution_id) as tools_executed,
     COUNT(DISTINCT CASE WHEN p.cves IS NOT NULL THEN p.plugin_id END) as cves_extracted
 FROM sessions s

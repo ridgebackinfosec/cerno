@@ -57,7 +57,7 @@ Follow Python best practices (PEP 8, type hints, docstrings, SOLID, DRY, paramet
 
 ### Schema Management
 - Database uses normalized structure created on initialization
-- Schema version tracked in `database.py:SCHEMA_VERSION` (current: 1)
+- Schema version tracked in `database.py:SCHEMA_VERSION` (current: 3), written to `PRAGMA user_version`; `initialize_database()` raises `SchemaVersionError` for older DBs (CLI prints re-import instructions to stderr)
 - Future schema changes will include migration system when needed
 - Always test schema changes with fresh database before release
 
@@ -192,7 +192,7 @@ pyright cerno_pkg/tui.py
 Cerno uses a **fully normalized database architecture** with SQLite as the source of truth:
 
 - **Location**: `~/.cerno/cerno.db` (global, cross-scan)
-- **Schema version**: Tracked in `database.py:SCHEMA_VERSION` (current: 1)
+- **Schema version**: Tracked in `database.py:SCHEMA_VERSION` (current: 3; v2/v3 renamed review states — shipped in 1.7.0 as a minor bump by explicit user decision)
 - **Schema approach**: Normalized structure created on initialization
 - `.txt` files are **reference only** - all data lives in database
 
@@ -555,17 +555,20 @@ Only after user confirms the changelog content:
 
 ### Review State Management
 
-**States**: `pending`, `reviewed`, `completed`, `skipped`
+**States** (`constants.py:REVIEW_STATES`): `unreviewed` → `in_progress` → `done`, and `done` → `unreviewed`
+- Transitions are defined once in `constants.py:REVIEW_TRANSITIONS` and enforced by `Finding.transition_review_state()` (raises `InvalidReviewTransition`) — used by the TUI and MCP `set_review_state`
+- `Finding.update_review_state()` is the raw setter with no check; use it only to sync multi-scan siblings to an already-validated state
+- All TUI status changes go through `fs.py:move_review_state(finding, target=None)` (default = next status in the cycle)
+- UI wording/colours come from `constants.py` (`REVIEW_STATE_LABELS`, `REVIEW_STATE_STYLES`, `REVIEW_STATE_ICONS`, `REVIEW_MOVE_LABELS`): users see "status" and the verb "Move" ("Move to In Progress", "Move to Done", "Move back to Unreviewed", bulk "Move to next status") — reuse these rather than hardcoding strings
+- Finding view `[M]` moves one step; findings list `[M]` moves every filtered finding one step; `[D]` Done list → `[M]` moves Done findings back to Unreviewed (multi-select)
 
-**Database-first**: Update `findings.review_state` column → Sync to filename prefix (`[R]`, `[X]`, `[S]`).
-
-**Reversible**: Press `[U]` to undo review-complete (multi-select support).
+**Database-only**: `findings.review_state` is the sole record (no filename prefixes).
 
 ### Session Persistence
 
 **Auto-save**: Review progress saved to `sessions` table (no `.cerno_session.json` files in DB-only mode).
 
-**Resume prompt**: On startup, shows session details (reviewed/completed/skipped counts, session start time).
+**Resume prompt**: On startup, shows session details (in-progress/done counts, session start time).
 
 **Cleanup**: Auto-delete session after successful completion.
 
