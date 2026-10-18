@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-10-17
+
+### Added
+- New `mcp_exec_denylist` config key: binaries the MCP `execute_command` tool may **never** run. It always wins over `mcp_exec_allowlist` and is checked against every binary in the command chain, so denying `sudo` blocks privilege escalation. Default: destructive commands (`rm, rmdir, dd, shred, wipefs, mkfs*, fdisk, sfdisk, parted, shutdown, reboot, halt, poweroff`). Set via `cerno config set mcp_exec_denylist "rm,dd,sh"`.
+- `mcp_exec_allowlist` accepts `"*"` to permit any binary not in the denylist. Entries in both lists are glob patterns matched on the binary's basename (e.g. `mkfs*` matches `mkfs.ext4`). `cerno config set` warns when the allowlist is set to `*` or emptied.
+- MCP `execute_command` supports `sudo <allowed-binary>`, e.g. for nmap SYN scans. sudo runs non-interactively and is refused if it would prompt for a password.
+- MCP `get_capabilities` reports `exec_denylist`. `cerno config show` lists the denylist, and the server's startup log line summarizes both lists.
+
+### Changed
+- **An empty `mcp_exec_allowlist` now denies every command.** Previously it silently fell back to the default set.
+- `proxychains4` was removed from the default `mcp_exec_allowlist`. Wrappers are now unwrapped and the target is checked; `use_proxy=true` still routes through proxychains.
+- The default allow/deny lists are defined once (`config.DEFAULT_MCP_EXEC_ALLOWLIST` / `DEFAULT_MCP_EXEC_DENYLIST`).
+
+### Fixed
+- `mcp_exec_allowlist` hand-edited into `config.yaml` as a string (e.g. `mcp_exec_allowlist: nmap,nxc`) was matched by substring, so `map` passed. List keys are now coerced to lists on load (`config.coerce_str_list()`).
+
+### Security
+- MCP `execute_command` now unwraps leading wrapper binaries before checking policy, so the real target is what the denylist/allowlist see. Covers `sudo`, `doas`, `proxychains4`, `proxychains`, `env`, `nice`, `nohup`, `timeout`, `stdbuf`, `setsid`, `ionice`, and `time`. Previously an allowlisted (or wildcard-allowed) wrapper could smuggle a denied binary past the denylist, e.g. `["proxychains4", "bash", "-c", …]`, `["env", "rm", …]`, or `["timeout", "60", "rm", …]`. A wrapper whose command is packed into an option value (`env -S "rm -rf /"`) is rejected (fail closed).
+
 ## [1.10.0] - 2026-10-17
 
 ### Changed

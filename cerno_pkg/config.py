@@ -8,9 +8,50 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional, Sequence
 
 import yaml
+
+#: Default binaries the MCP ``execute_command`` tool may run (single source of truth).
+#: Wrappers (sudo, proxychains4) need no entry: the wrapped target is what's checked.
+DEFAULT_MCP_EXEC_ALLOWLIST: tuple[str, ...] = ("nmap", "nxc", "netexec", "msfconsole")
+
+#: Default binaries the MCP ``execute_command`` tool may never run (destructive commands).
+DEFAULT_MCP_EXEC_DENYLIST: tuple[str, ...] = (
+    "rm",
+    "rmdir",
+    "dd",
+    "shred",
+    "wipefs",
+    "mkfs*",
+    "fdisk",
+    "sfdisk",
+    "parted",
+    "shutdown",
+    "reboot",
+    "halt",
+    "poweroff",
+)
+
+
+def coerce_str_list(value: Any, default: Sequence[str]) -> list[str]:
+    """Normalize a config value into a list of non-empty, stripped strings.
+
+    Accepts a list/tuple, or a comma-separated string (as typed into
+    ``cerno config set`` or hand-edited into YAML as a scalar). ``None`` (key
+    missing) and any other type fall back to a copy of ``default``. Coercing
+    strings matters: a bare string would otherwise turn ``x in value`` into a
+    substring test.
+    """
+    if value is None:
+        return list(default)
+    if isinstance(value, str):
+        items: Sequence[Any] = value.split(",")
+    elif isinstance(value, (list, tuple)):
+        items = value
+    else:
+        return list(default)
+    return [str(x).strip() for x in items if str(x).strip()]
 
 
 @dataclass
@@ -86,12 +127,21 @@ class CernoConfig:
     When False, those tools are not registered and the server is effectively read-only."""
 
     mcp_exec_allowlist: list[str] = field(
-        default_factory=lambda: ["nmap", "nxc", "netexec", "msfconsole", "proxychains4"]
+        default_factory=lambda: list(DEFAULT_MCP_EXEC_ALLOWLIST)
     )
-    """Binaries the `cerno mcp` server's execute_command tool may run (matched on the
-    basename of command[0], so absolute paths resolve). Only consulted when
-    mcp_allow_execution is True. An empty list falls back to the built-in default set,
-    not "deny all"."""
+    """Binaries the `cerno mcp` server's execute_command tool may run, matched as
+    glob patterns against the basename of the target binary (after unwrapping
+    sudo/proxychains4). ``*`` permits any binary not in mcp_exec_denylist. An empty
+    list denies everything. Only consulted when mcp_allow_execution is True."""
+
+    mcp_exec_denylist: list[str] = field(
+        default_factory=lambda: list(DEFAULT_MCP_EXEC_DENYLIST)
+    )
+    """Binaries the `cerno mcp` server's execute_command tool may NEVER run, matched as
+    glob patterns against the basename of every binary in the command chain
+    (including wrappers, so adding ``sudo`` blocks privilege escalation). Always wins
+    over mcp_exec_allowlist. A guardrail, not a security boundary: under ``*``,
+    shells/interpreters can still run denied programs unless they are denied too."""
 
     # Proxy settings
     proxychains_enabled: bool = False
@@ -164,9 +214,11 @@ def load_config() -> CernoConfig:
             claude_assistant_enabled=data.get("claude_assistant_enabled", False),
             mcp_allow_execution=data.get("mcp_allow_execution", False),
             mcp_allow_mutations=data.get("mcp_allow_mutations", False),
-            mcp_exec_allowlist=data.get(
-                "mcp_exec_allowlist",
-                ["nmap", "nxc", "netexec", "msfconsole", "proxychains4"],
+            mcp_exec_allowlist=coerce_str_list(
+                data.get("mcp_exec_allowlist"), DEFAULT_MCP_EXEC_ALLOWLIST
+            ),
+            mcp_exec_denylist=coerce_str_list(
+                data.get("mcp_exec_denylist"), DEFAULT_MCP_EXEC_DENYLIST
             ),
             proxychains_enabled=data.get("proxychains_enabled", False),
             proxychains_host=data.get("proxychains_host", "127.0.0.1"),
@@ -220,6 +272,7 @@ def save_config(config: CernoConfig) -> bool:
                 "mcp_allow_execution": config.mcp_allow_execution,
                 "mcp_allow_mutations": config.mcp_allow_mutations,
                 "mcp_exec_allowlist": config.mcp_exec_allowlist,
+                "mcp_exec_denylist": config.mcp_exec_denylist,
                 "proxychains_enabled": config.proxychains_enabled,
                 "proxychains_host": config.proxychains_host,
                 "proxychains_port": config.proxychains_port,
@@ -265,7 +318,8 @@ def create_example_config() -> bool:
         claude_assistant_enabled=False,
         mcp_allow_execution=False,
         mcp_allow_mutations=False,
-        mcp_exec_allowlist=["nmap", "nxc", "netexec", "msfconsole", "proxychains4"],
+        mcp_exec_allowlist=list(DEFAULT_MCP_EXEC_ALLOWLIST),
+        mcp_exec_denylist=list(DEFAULT_MCP_EXEC_DENYLIST),
         proxychains_enabled=False,
         proxychains_host="127.0.0.1",
         proxychains_port=9000,

@@ -2015,6 +2015,9 @@ def mcp_cmd() -> None:
         cerno config set mcp_allow_execution true
         cerno config set mcp_allow_mutations true
 
+    execute_command only runs binaries matching mcp_exec_allowlist ("*" for any)
+    and never runs binaries matching mcp_exec_denylist (the denylist always wins).
+
     Gating flags are read once at startup. After changing them, reconnect or
     restart the server (e.g. via your MCP client) for the change to take effect.
     The active gating state is logged to the Cerno log on startup.
@@ -2809,7 +2812,8 @@ def config_show() -> None:
         ("MCP Server", [
             _row("mcp_allow_execution", config.mcp_allow_execution, "Allow MCP server to execute commands"),
             _row("mcp_allow_mutations", config.mcp_allow_mutations, "Allow MCP server to mutate state"),
-            _row("mcp_exec_allowlist", ", ".join(config.mcp_exec_allowlist), "Binaries execute_command may run"),
+            _row("mcp_exec_allowlist", ", ".join(config.mcp_exec_allowlist) or "(empty: deny all)", "Binaries execute_command may run"),
+            _row("mcp_exec_denylist", ", ".join(config.mcp_exec_denylist) or "(none)", "Binaries execute_command may never run"),
         ]),
         ("Proxychains", [
             _row("proxychains_enabled", config.proxychains_enabled, "Route tools through SOCKS5 proxy"),
@@ -2882,8 +2886,9 @@ def config_get(
         info("Available keys: results_root, default_page_size, top_ports_count, custom_workflows_path,")
         info("                default_tool, default_netexec_protocol, nmap_default_profile,")
         info("                log_path, debug_logging, no_color, term_override, nxc_workspace_path,")
-        info("                nxc_enrichment_enabled, claude_assistant_enabled, proxychains_enabled,")
-        info("                proxychains_host, proxychains_port")
+        info("                nxc_enrichment_enabled, claude_assistant_enabled, mcp_allow_execution,")
+        info("                mcp_allow_mutations, mcp_exec_allowlist, mcp_exec_denylist,")
+        info("                proxychains_enabled, proxychains_host, proxychains_port")
         raise typer.Exit(1)
 
     value = getattr(config, key)
@@ -2900,6 +2905,7 @@ def config_set(
 ) -> None:
     """Set a configuration value in ~/.cerno/config.yaml."""
     from cerno_pkg import load_config, save_config, get_config_path
+    from cerno_pkg.config import coerce_str_list
 
     config = load_config()
 
@@ -2910,8 +2916,8 @@ def config_set(
         info("                default_tool, default_netexec_protocol, nmap_default_profile,")
         info("                log_path, debug_logging, no_color, term_override, nxc_workspace_path,")
         info("                nxc_enrichment_enabled, claude_assistant_enabled, mcp_allow_execution,")
-        info("                mcp_allow_mutations, mcp_exec_allowlist, proxychains_enabled,")
-        info("                proxychains_host, proxychains_port")
+        info("                mcp_allow_mutations, mcp_exec_allowlist, mcp_exec_denylist,")
+        info("                proxychains_enabled, proxychains_host, proxychains_port")
         raise typer.Exit(1)
 
     # Type conversion based on key
@@ -2921,8 +2927,8 @@ def config_set(
             typed_value = int(value)
         elif key in ["no_color", "debug_logging", "nxc_enrichment_enabled", "claude_assistant_enabled", "mcp_allow_execution", "mcp_allow_mutations", "proxychains_enabled"]:
             typed_value = value.lower() in ("true", "1", "yes", "on")
-        elif key == "mcp_exec_allowlist":
-            typed_value = [s.strip() for s in value.split(",") if s.strip()]
+        elif key in ["mcp_exec_allowlist", "mcp_exec_denylist"]:
+            typed_value = coerce_str_list(value, [])
         else:
             typed_value = value
 
@@ -2931,6 +2937,15 @@ def config_set(
         if save_config(config):
             ok(f"Set {key} = {typed_value}")
             info(f"Config saved to {get_config_path()}")
+            if key == "mcp_exec_allowlist" and isinstance(typed_value, list) and not typed_value:
+                warn("Empty allowlist: execute_command will deny every command.")
+            elif key == "mcp_exec_allowlist" and isinstance(typed_value, list) and "*" in typed_value:
+                warn(
+                    "Wildcard allowlist: execute_command may run any binary not in "
+                    "mcp_exec_denylist. The denylist is a guardrail, not a security "
+                    "boundary (shells/interpreters can run denied programs unless "
+                    "they are denied too)."
+                )
         else:
             err("Failed to save config")
             info("Try: cerno config reset")
