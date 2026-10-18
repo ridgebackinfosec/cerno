@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.11.1] - 2026-10-17
+
+### Fixed
+- Review file list: the clipboard-copy fallback no longer crashes with `NameError` when copying fails; it now prints the payload for manual copy as intended (`cerno.py:browse_file_list()`).
+
 ## [1.11.0] - 2026-10-17
 
 ### Added

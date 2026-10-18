@@ -896,7 +896,7 @@ def browse_file_list(
                     ok("Copied to clipboard.")
                 else:
                     warn(f"{detail} Printing below for manual copy:")
-                    console.print(payload)
+                    _console_global.print(payload)
 
             elif post_choice in ("f", "format"):
                 print_action_menu([
