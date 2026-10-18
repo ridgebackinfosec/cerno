@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.11.2] - 2026-10-17
+
+### Fixed
+- Silenced two CodeQL `py/incomplete-url-substring-sanitization` false positives in `tests/test_models.py` by rewriting list-membership assertions (`"example.com" in hosts`) as `.count(...) == 1` checks. Test-only; no production code was affected.
+
 ## [1.11.1] - 2026-10-17
 
 ### Fixed
