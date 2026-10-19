@@ -23,6 +23,7 @@ import time
 from .ansi import info, warn, header, get_console, style_if_enabled
 from .config import load_config
 from .constants import (
+    PLUGIN_DETAILS_BASE,
     REVIEW_MOVE_LABELS,
     REVIEW_STATE_DONE,
     REVIEW_STATE_ICONS,
@@ -1835,7 +1836,7 @@ def display_finding_preview(
         plugin: Plugin metadata object
         finding: Finding database object (required)
         sev_dir: Severity directory path
-        chosen: File path (for URL extraction)
+        chosen: Synthetic finding path (unused; kept for caller compatibility)
         workflow_mapper: Optional workflow mapper to check for workflow availability
     """
 
@@ -1857,19 +1858,13 @@ def display_finding_preview(
     sev_label = pretty_severity_label(sev_dir.name) if sev_dir else f"{plugin.severity_int}_{plugin.severity_label or 'Unknown'}"
     content.append(f"{sev_label}\n", style=severity_style(sev_label))
 
-    # Plugin Details (URL)
-    # Import _plugin_details_line from parsing module if needed
-    # For now, we'll skip this feature until Phase 5 when we move _plugin_details_line
-    # pd_line = _plugin_details_line(chosen)
-    # if pd_line:
-    #     try:
-    #         match = re.search(r"(https?://[^\s)\]\}>,;]+)", pd_line)
-    #         plugin_url = match.group(1) if match else None
-    #         if plugin_url:
-    #             content.append("Plugin Details: ", style=style_if_enabled("cyan"))
-    #             content.append(f"{plugin_url}\n", style=style_if_enabled("blue underline"))
-    #     except Exception:
-    #         pass
+    # Plugin Details (Tenable URL). Display drops "www." to save space; the OSC 8
+    # link target keeps the full URL. The link is applied even when colors are off.
+    plugin_url = plugin.plugin_url or f"{PLUGIN_DETAILS_BASE}{plugin.plugin_id}"
+    display_url = plugin_url.replace("://www.", "://", 1)
+    content.append("Plugin Details: ", style=style_if_enabled("cyan"))
+    link_style = f"{style_if_enabled('blue underline')} link {plugin_url}".strip()
+    content.append(f"{display_url}\n", style=link_style)
 
     # Get port distribution from database
     port_distribution = finding.get_port_distribution()

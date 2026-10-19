@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.1] - 2026-10-19
+
+### Added
+- Finding preview panel shows a `Plugin Details:` link to the plugin's Tenable page again (e.g. `https://tenable.com/plugins/nessus/41028`). It is an OSC 8 hyperlink to the full `https://www.tenable.com/...` URL, so Ctrl+click opens it in supporting terminals, and it still appears with `no_color` on. Plugins without a stored URL fall back to one built from the plugin ID (`render.py:display_finding_preview()`).
+
 ## [1.12.0] - 2026-10-19
 
 ### Added

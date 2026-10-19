@@ -1,4 +1,5 @@
 """Tests for render.py rendering behaviour."""
+from pathlib import Path
 from unittest.mock import patch, MagicMock
 import pytest
 
@@ -124,3 +125,64 @@ def test_empty_state_status_mismatch(monkeypatch):
     text = "\n".join(messages)
     assert "In Progress" in text
     assert "[I]" in text
+
+
+def _preview_plugin(plugin_url):
+    from cerno_pkg.models import Plugin
+
+    return Plugin(
+        plugin_id=41028,
+        plugin_name="SNMP Agent Default Community Name (public)",
+        severity_int=3,
+        severity_label="High",
+        plugin_url=plugin_url,
+    )
+
+
+def _preview_finding():
+    finding = MagicMock()
+    finding.get_hosts_and_ports.return_value = (["198.51.100.20"], [161])
+    finding.get_port_distribution.return_value = {"161": 1}
+    return finding
+
+
+def _render_preview(monkeypatch, plugin_url):
+    import cerno_pkg.render as render_module
+
+    console = _record_console(monkeypatch, render_module)
+    monkeypatch.setattr(render_module, "render_nxc_enrichment_summary", lambda hosts: None)
+    render_module.display_finding_preview(
+        _preview_plugin(plugin_url), _preview_finding(), None, Path("x.txt")
+    )
+    return console
+
+
+@pytest.mark.unit
+def test_finding_preview_shows_plugin_url(monkeypatch):
+    console = _render_preview(monkeypatch, "https://www.tenable.com/plugins/nessus/41028")
+    out = console.export_text(clear=False)
+    assert "Plugin Details: https://tenable.com/plugins/nessus/41028" in out
+    assert "www." not in out
+
+
+@pytest.mark.unit
+def test_finding_preview_plugin_url_fallback(monkeypatch):
+    console = _render_preview(monkeypatch, None)
+    assert "Plugin Details: https://tenable.com/plugins/nessus/41028" in console.export_text()
+
+
+@pytest.mark.unit
+def test_finding_preview_link_target_is_full_url(monkeypatch):
+    import cerno_pkg.render as render_module
+    from rich.text import Text
+
+    printed = []
+    monkeypatch.setattr(render_module, "_console_global", MagicMock(print=lambda *a, **k: printed.extend(a)))
+    monkeypatch.setattr(render_module, "render_nxc_enrichment_summary", lambda hosts: None)
+    render_module.display_finding_preview(
+        _preview_plugin("https://www.tenable.com/plugins/nessus/41028"), _preview_finding(), None, Path("x.txt")
+    )
+    panel = printed[-1]
+    assert isinstance(panel.renderable, Text)
+    links = {str(span.style) for span in panel.renderable.spans if "link" in str(span.style)}
+    assert any("link https://www.tenable.com/plugins/nessus/41028" in s for s in links), links
