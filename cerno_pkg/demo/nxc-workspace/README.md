@@ -1,8 +1,8 @@
 # Demo NetExec Workspace
 
 This directory is a synthetic NetExec workspace for Cerno demos. It contains
-SQLite databases that match the subset of NetExec schemas Cerno reads for
-enrichment.
+SQLite databases built from the real NetExec 1.5.1 schemas (copied from
+`tests/fixtures/nxc/`), so the demo exercises exactly what NetExec writes.
 
 It is not output from a real assessment.
 
@@ -12,7 +12,9 @@ It is not output from a real assessment.
   security flags.
 - `ssh.db` - SSH hosts and working credentials.
 - `ftp.db` - FTP anonymous access for the legacy demo host.
-- `vnc.db` - VNC no-auth access for the legacy demo host.
+- `vnc.db` - VNC service presence and banner for the legacy demo host.
+- `ldap.db` - Domain controller with LDAP signing not required.
+- `rdp.db` - RDP hosts, some with NLA disabled.
 
 ## Use With Cerno
 
@@ -38,7 +40,7 @@ cerno import nessus docs/demo/cerno-demo-expanded.nessus
 cerno review
 ```
 
-Findings that touch SMB, SSH, FTP, or VNC hosts should display NetExec context
+Findings that touch SMB, SSH, FTP, VNC, LDAP, or RDP hosts should display NetExec context
 in the finding detail view. Press `[N]` for the per-host breakdown.
 
 ## Regenerate

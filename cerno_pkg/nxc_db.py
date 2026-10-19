@@ -13,13 +13,64 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, List, Optional
+from typing import Any, Dict, FrozenSet, List, Optional, Tuple
 
-if TYPE_CHECKING:
-    pass
+from .logging_setup import log_debug
 
 # Supported protocol databases
 SUPPORTED_PROTOCOLS = ["smb", "ssh", "ldap", "mssql", "rdp", "winrm", "ftp", "nfs", "vnc", "wmi"]
+
+
+@dataclass(frozen=True)
+class _ProtocolSpec:
+    """How one NetExec protocol database is laid out.
+
+    Derived from the schemas NetExec 1.5.1 creates (see ``tests/fixtures/nxc``).
+    Every table/column name used in dynamically built SQL comes from these
+    specs, never from user input; optional columns are additionally checked
+    against ``PRAGMA table_info`` so schema drift degrades instead of failing.
+
+    Attributes:
+        address_col: ``hosts`` column holding the target address (``ip`` or ``host``)
+        host_attrs: ``hosts`` columns surfaced in ``NxcHostData.protocol_details``
+        cred_table: Credential table (``users`` or ``credentials``), or None
+        rel_cred_col: Credential FK column in ``admin_relations``/``loggedin_relations``
+        rel_host_col: Host FK column in ``admin_relations``/``loggedin_relations``
+    """
+
+    address_col: str
+    host_attrs: Tuple[str, ...]
+    cred_table: Optional[str] = None
+    rel_cred_col: str = "userid"
+    rel_host_col: str = "hostid"
+
+
+# Relations tables are optional per protocol: ldap has `users` but no relations,
+# vnc/wmi have `credentials` but no relations, rdp has neither. Missing tables
+# are detected at query time and simply skipped.
+_PROTOCOL_SPECS: Dict[str, _ProtocolSpec] = {
+    "smb": _ProtocolSpec(
+        "ip",
+        ("hostname", "domain", "os", "dc", "smbv1", "signing", "spooler", "zerologon", "petitpotam"),
+        "users",
+    ),
+    "mssql": _ProtocolSpec("ip", ("hostname", "domain", "os", "instances"), "users"),
+    "winrm": _ProtocolSpec("ip", ("port", "hostname", "domain", "os"), "users"),
+    "ldap": _ProtocolSpec(
+        "ip", ("hostname", "domain", "os", "signing_required", "channel_binding"), "users"
+    ),
+    "ssh": _ProtocolSpec("host", ("port", "banner", "os"), "credentials", "credid", "hostid"),
+    "ftp": _ProtocolSpec("host", ("port", "banner"), "credentials", "credid", "hostid"),
+    "nfs": _ProtocolSpec("ip", ("hostname", "port"), "credentials", "cred_id", "host_id"),
+    "rdp": _ProtocolSpec("ip", ("port", "hostname", "domain", "os", "nla")),
+    "vnc": _ProtocolSpec("ip", ("hostname", "port", "server_banner"), "credentials"),
+    "wmi": _ProtocolSpec("ip", ("hostname", "port"), "credentials"),
+}
+
+# hosts columns declared BOOLEAN by NetExec; normalised to Python bools.
+_BOOLEAN_ATTRS = frozenset(
+    {"dc", "smbv1", "signing", "spooler", "zerologon", "petitpotam", "signing_required", "nla"}
+)
 
 
 @dataclass
@@ -32,6 +83,8 @@ class NxcCredential:
         domain: Domain (for AD credentials)
         credential_type: Type of credential (plaintext, hash, key, etc.)
         has_admin: Whether this credential grants admin access
+        pillaged: Whether this credential was dumped from this host
+            (``users.pillaged_from_hostid``) rather than proven to log in to it
     """
 
     protocol: str
@@ -39,6 +92,7 @@ class NxcCredential:
     domain: Optional[str] = None
     credential_type: str = "plaintext"
     has_admin: bool = False
+    pillaged: bool = False
 
 
 @dataclass
@@ -74,6 +128,19 @@ class NxcSecurityFlags:
 
 
 @dataclass
+class NxcConfCheck:
+    """A failed SMB configuration check (NetExec ``conf_checks_results``).
+
+    Attributes:
+        name: Check name (e.g., "LDAP signing")
+        reasons: NetExec's explanation of why the check failed
+    """
+
+    name: str
+    reasons: Optional[str] = None
+
+
+@dataclass
 class NxcHostData:
     """Aggregated NetExec data for a single host.
 
@@ -81,9 +148,12 @@ class NxcHostData:
         host_address: IP address of the host
         hostname: Hostname if known
         protocols_seen: List of protocols where this host was found
-        credentials: List of credentials that work on this host
+        credentials: List of credentials that work on (or were dumped from) this host
         shares: List of accessible shares (SMB only)
         security_flags: Security configuration flags (SMB only)
+        protocol_details: Per-protocol host attributes, e.g.
+            ``{"rdp": {"ports": [3389], "nla": False}, "ssh": {"ports": [22], "banner": "..."}}``
+        failed_checks: Failed SMB configuration checks
     """
 
     host_address: str
@@ -92,6 +162,8 @@ class NxcHostData:
     credentials: List[NxcCredential] = field(default_factory=list)
     shares: List[NxcShare] = field(default_factory=list)
     security_flags: Optional[NxcSecurityFlags] = None
+    protocol_details: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    failed_checks: List[NxcConfCheck] = field(default_factory=list)
 
 
 @dataclass
@@ -119,6 +191,11 @@ class NxcEnrichmentSummary:
     per_host_data: Dict[str, NxcHostData] = field(default_factory=dict)  # ip -> data
 
 
+def _placeholders(n: int) -> str:
+    """Return ``?, ?, ...`` with ``n`` bound-parameter markers."""
+    return ", ".join("?" * n)
+
+
 class NxcDatabaseManager:
     """Manager for NetExec database queries.
 
@@ -138,6 +215,7 @@ class NxcDatabaseManager:
         """
         self.workspace_path = workspace_path
         self._connection_cache: Dict[str, sqlite3.Connection] = {}
+        self._columns_cache: Dict[Tuple[str, str], FrozenSet[str]] = {}
 
     def is_available(self) -> bool:
         """Check if NetExec databases exist and are readable.
@@ -202,264 +280,197 @@ class NxcDatabaseManager:
             except sqlite3.Error:
                 pass
         self._connection_cache.clear()
+        self._columns_cache.clear()
 
-    def _query_smb_host(self, conn: sqlite3.Connection, host_ip: str) -> Optional[NxcHostData]:
-        """Query SMB database for host data.
-
-        Args:
-            conn: Database connection
-            host_ip: IP address to query
-
-        Returns:
-            NxcHostData or None if host not found
-        """
-        try:
-            # Get host record with security flags
-            cursor = conn.execute(
-                """
-                SELECT id, ip, hostname, domain, os, smbv1, signing, zerologon, petitpotam
-                FROM hosts
-                WHERE ip = ?
-                """,
-                (host_ip,),
-            )
-            host_row = cursor.fetchone()
-            if not host_row:
-                return None
-
-            host_id = host_row["id"]
-            hostname = host_row["hostname"]
-
-            # Build security flags
-            security_flags = NxcSecurityFlags(
-                signing_required=bool(host_row["signing"]) if host_row["signing"] is not None else True,
-                smbv1_enabled=bool(host_row["smbv1"]) if host_row["smbv1"] is not None else False,
-                zerologon_vulnerable=bool(host_row["zerologon"]) if host_row["zerologon"] is not None else False,
-                petitpotam_vulnerable=bool(host_row["petitpotam"]) if host_row["petitpotam"] is not None else False,
-            )
-
-            # Get credentials with admin access
-            credentials = []
-            cursor = conn.execute(
-                """
-                SELECT u.username, u.domain, u.credtype,
-                       CASE WHEN ar.id IS NOT NULL THEN 1 ELSE 0 END as has_admin
-                FROM users u
-                LEFT JOIN admin_relations ar ON ar.userid = u.id AND ar.hostid = ?
-                LEFT JOIN loggedin_relations lr ON lr.userid = u.id AND lr.hostid = ?
-                WHERE ar.id IS NOT NULL OR lr.id IS NOT NULL
-                """,
-                (host_id, host_id),
-            )
-            for row in cursor:
-                credentials.append(
-                    NxcCredential(
-                        protocol="smb",
-                        username=row["username"],
-                        domain=row["domain"],
-                        credential_type=row["credtype"] or "plaintext",
-                        has_admin=bool(row["has_admin"]),
-                    )
-                )
-
-            # Get shares
-            shares = []
-            cursor = conn.execute(
-                """
-                SELECT name, read, write
-                FROM shares
-                WHERE hostid = ?
-                """,
-                (host_id,),
-            )
-            for row in cursor:
-                shares.append(
-                    NxcShare(
-                        name=row["name"],
-                        read_access=bool(row["read"]),
-                        write_access=bool(row["write"]),
-                    )
-                )
-
-            return NxcHostData(
-                host_address=host_ip,
-                hostname=hostname,
-                protocols_seen=["smb"],
-                credentials=credentials,
-                shares=shares,
-                security_flags=security_flags,
-            )
-
-        except sqlite3.Error:
-            return None
-
-    def _query_ssh_host(self, conn: sqlite3.Connection, host_ip: str) -> Optional[NxcHostData]:
-        """Query SSH database for host data.
+    def _columns(self, protocol: str, conn: sqlite3.Connection, table: str) -> FrozenSet[str]:
+        """Return the column names of ``table`` (empty if the table is missing).
 
         Args:
-            conn: Database connection
-            host_ip: IP address to query
+            protocol: Protocol name (cache key)
+            conn: Connection to that protocol's database
+            table: Table name (always a constant from ``_PROTOCOL_SPECS``)
 
         Returns:
-            NxcHostData or None if host not found
+            Frozen set of column names
         """
-        try:
-            # SSH uses 'host' column instead of 'ip'
-            cursor = conn.execute(
-                """
-                SELECT id, host, hostname
-                FROM hosts
-                WHERE host = ?
-                """,
-                (host_ip,),
-            )
-            host_row = cursor.fetchone()
-            if not host_row:
-                return None
+        key = (protocol, table)
+        if key not in self._columns_cache:
+            rows = conn.execute(f'PRAGMA table_info("{table}")').fetchall()
+            self._columns_cache[key] = frozenset(row[1] for row in rows)
+        return self._columns_cache[key]
 
-            host_id = host_row["id"]
-            # SSH may not have hostname column in all versions
-            hostname = host_row["hostname"] if "hostname" in host_row.keys() else None
-
-            # Get credentials
-            credentials = []
-            cursor = conn.execute(
-                """
-                SELECT c.username, c.credtype,
-                       CASE WHEN ar.id IS NOT NULL THEN 1 ELSE 0 END as has_admin
-                FROM credentials c
-                LEFT JOIN admin_relations ar ON ar.credid = c.id AND ar.hostid = ?
-                LEFT JOIN loggedin_relations lr ON lr.credid = c.id AND lr.hostid = ?
-                WHERE ar.id IS NOT NULL OR lr.id IS NOT NULL
-                """,
-                (host_id, host_id),
-            )
-            for row in cursor:
-                credentials.append(
-                    NxcCredential(
-                        protocol="ssh",
-                        username=row["username"],
-                        domain=None,
-                        credential_type=row["credtype"] or "plaintext",
-                        has_admin=bool(row["has_admin"]),
-                    )
-                )
-
-            if not credentials:
-                return None
-
-            return NxcHostData(
-                host_address=host_ip,
-                hostname=hostname,
-                protocols_seen=["ssh"],
-                credentials=credentials,
-                shares=[],
-                security_flags=None,
-            )
-
-        except sqlite3.Error:
-            return None
-
-    def _query_generic_host(
+    def _query_protocol_host(
         self, conn: sqlite3.Connection, host_ip: str, protocol: str
     ) -> Optional[NxcHostData]:
-        """Query a generic protocol database for host data.
+        """Query one protocol database for a host.
 
-        Works for protocols with standard schema (ldap, mssql, winrm, rdp, etc.)
+        Host presence alone is returned (with ``protocol_details``) even when no
+        credentials are tied to the host, so every protocol NetExec touched shows up.
 
         Args:
             conn: Database connection
             host_ip: IP address to query
-            protocol: Protocol name
+            protocol: Protocol name (key of ``_PROTOCOL_SPECS``)
 
         Returns:
-            NxcHostData or None if host not found
+            NxcHostData or None if the host is not in this database
         """
+        spec = _PROTOCOL_SPECS.get(protocol)
+        if spec is None:
+            return None
+
         try:
-            # Try 'ip' column first, then 'host'
-            cursor = conn.execute(
-                """
-                SELECT id, COALESCE(ip, host) as ip, hostname
-                FROM hosts
-                WHERE ip = ? OR host = ?
-                """,
-                (host_ip, host_ip),
-            )
-            host_row = cursor.fetchone()
-            if not host_row:
+            host_cols = self._columns(protocol, conn, "hosts")
+            if spec.address_col not in host_cols:
+                log_debug(f"nxc {protocol}.db: hosts.{spec.address_col} missing; skipping")
+                return None
+            attrs = [a for a in spec.host_attrs if a in host_cols]
+            select_cols = ", ".join(["id", *attrs])
+            # Non-UNIQUE address columns (ssh/ftp/nfs/vnc/wmi) hold one row per port.
+            rows = conn.execute(
+                f"SELECT {select_cols} FROM hosts WHERE {spec.address_col} = ? ORDER BY id",
+                (host_ip,),
+            ).fetchall()
+            if not rows:
                 return None
 
-            host_id = host_row["id"]
-            hostname = host_row["hostname"] if "hostname" in host_row.keys() else None
+            host_ids = [row["id"] for row in rows]
+            details = self._host_details(rows, attrs)
+            hostname = details.pop("hostname", None)
 
-            # Try to get credentials - different protocols use different schemas
-            credentials = []
-
-            # Try users table (ldap, mssql, winrm)
-            try:
-                cursor = conn.execute(
-                    """
-                    SELECT u.username, u.domain, u.credtype,
-                           CASE WHEN ar.id IS NOT NULL THEN 1 ELSE 0 END as has_admin
-                    FROM users u
-                    LEFT JOIN admin_relations ar ON ar.userid = u.id AND ar.hostid = ?
-                    LEFT JOIN loggedin_relations lr ON lr.userid = u.id AND lr.hostid = ?
-                    WHERE ar.id IS NOT NULL OR lr.id IS NOT NULL
-                    """,
-                    (host_id, host_id),
-                )
-                for row in cursor:
-                    credentials.append(
-                        NxcCredential(
-                            protocol=protocol,
-                            username=row["username"],
-                            domain=row["domain"] if "domain" in row.keys() else None,
-                            credential_type=row["credtype"] or "plaintext" if "credtype" in row.keys() else "plaintext",
-                            has_admin=bool(row["has_admin"]),
-                        )
-                    )
-            except sqlite3.Error:
-                pass
-
-            # Try credentials table (ftp, nfs, vnc, wmi)
-            if not credentials:
-                try:
-                    cursor = conn.execute(
-                        """
-                        SELECT c.username
-                        FROM credentials c
-                        JOIN loggedin_relations lr ON lr.credid = c.id OR lr.cred_id = c.id
-                        WHERE lr.hostid = ? OR lr.host_id = ?
-                        """,
-                        (host_id, host_id),
-                    )
-                    for row in cursor:
-                        credentials.append(
-                            NxcCredential(
-                                protocol=protocol,
-                                username=row["username"],
-                                domain=None,
-                                credential_type="plaintext",
-                                has_admin=False,
-                            )
-                        )
-                except sqlite3.Error:
-                    pass
-
-            if not credentials:
-                return None
-
-            return NxcHostData(
+            data = NxcHostData(
                 host_address=host_ip,
                 hostname=hostname,
                 protocols_seen=[protocol],
-                credentials=credentials,
-                shares=[],
-                security_flags=None,
+                credentials=self._host_credentials(conn, protocol, spec, host_ids),
+                protocol_details={protocol: details},
             )
+            if protocol == "smb":
+                self._add_smb_extras(conn, data, details, host_ids)
+            return data
 
-        except sqlite3.Error:
+        except sqlite3.Error as exc:
+            log_debug(f"nxc {protocol}.db query failed for {host_ip}: {exc}")
             return None
+
+    @staticmethod
+    def _host_details(rows: List[sqlite3.Row], attrs: List[str]) -> Dict[str, Any]:
+        """Collapse host rows into one attribute dict.
+
+        ``port`` becomes a sorted ``ports`` list; other attributes take the first
+        non-NULL value. BOOLEAN columns are normalised to bool.
+        """
+        details: Dict[str, Any] = {}
+        for attr in attrs:
+            values = [row[attr] for row in rows if row[attr] is not None]
+            if not values:
+                continue
+            if attr == "port":
+                details["ports"] = sorted(set(values))
+            elif attr in _BOOLEAN_ATTRS:
+                details[attr] = bool(values[0])
+            else:
+                details[attr] = values[0]
+        return details
+
+    def _host_credentials(
+        self,
+        conn: sqlite3.Connection,
+        protocol: str,
+        spec: _ProtocolSpec,
+        host_ids: List[int],
+    ) -> List[NxcCredential]:
+        """Credentials tied to the host via admin/loggedin relations or pillaging.
+
+        Uses EXISTS rather than joins so a credential appears once no matter how
+        many (non-unique) relation rows NetExec recorded.
+        """
+        table = spec.cred_table
+        if table is None:
+            return []
+        cred_cols = self._columns(protocol, conn, table)
+        if "username" not in cred_cols:
+            return []
+
+        in_ids = _placeholders(len(host_ids))
+
+        def rel_exists(rel_table: str) -> Optional[str]:
+            if {spec.rel_cred_col, spec.rel_host_col} <= self._columns(protocol, conn, rel_table):
+                return (
+                    f"EXISTS (SELECT 1 FROM {rel_table} r WHERE r.{spec.rel_cred_col} = c.id "
+                    f"AND r.{spec.rel_host_col} IN ({in_ids}))"
+                )
+            return None
+
+        admin_expr = rel_exists("admin_relations")
+        conditions = [e for e in (admin_expr, rel_exists("loggedin_relations")) if e]
+        pillaged_expr: Optional[str] = None
+        if "pillaged_from_hostid" in cred_cols:
+            pillaged_expr = f"c.pillaged_from_hostid IN ({in_ids})"
+            conditions.append(pillaged_expr)
+        if not conditions:
+            return []
+
+        domain_expr = "c.domain" if "domain" in cred_cols else "NULL"
+        credtype_expr = "c.credtype" if "credtype" in cred_cols else "NULL"
+        sql = (
+            f"SELECT c.username, {domain_expr} AS domain, {credtype_expr} AS credtype, "
+            f"{admin_expr or '0'} AS has_admin, {pillaged_expr or '0'} AS pillaged "
+            f"FROM {table} c WHERE {' OR '.join(conditions)} ORDER BY c.id"
+        )
+        # Parameter order follows placeholder order: SELECT exprs, then WHERE conditions.
+        n_select = sum(1 for e in (admin_expr, pillaged_expr) if e)
+        params = host_ids * (n_select + len(conditions))
+
+        return [
+            NxcCredential(
+                protocol=protocol,
+                username=row["username"],
+                domain=row["domain"],
+                credential_type=row["credtype"] or "plaintext",
+                has_admin=bool(row["has_admin"]),
+                pillaged=bool(row["pillaged"]),
+            )
+            for row in conn.execute(sql, params)
+        ]
+
+    def _add_smb_extras(
+        self,
+        conn: sqlite3.Connection,
+        data: NxcHostData,
+        details: Dict[str, Any],
+        host_ids: List[int],
+    ) -> None:
+        """Attach SMB-only data: security flags, shares, failed config checks."""
+        data.security_flags = NxcSecurityFlags(
+            signing_required=details.get("signing", True),
+            smbv1_enabled=details.get("smbv1", False),
+            zerologon_vulnerable=details.get("zerologon", False),
+            petitpotam_vulnerable=details.get("petitpotam", False),
+        )
+        in_ids = _placeholders(len(host_ids))
+
+        # shares is UNIQUE(hostid, userid, name): one row per user — collapse per name.
+        if {"hostid", "name", "read", "write"} <= self._columns("smb", conn, "shares"):
+            for row in conn.execute(
+                f"SELECT name, MAX(read) AS r, MAX(write) AS w FROM shares "
+                f"WHERE hostid IN ({in_ids}) GROUP BY name ORDER BY MIN(id)",
+                host_ids,
+            ):
+                data.shares.append(
+                    NxcShare(name=row["name"], read_access=bool(row["r"]), write_access=bool(row["w"]))
+                )
+
+        if {"host_id", "check_id", "secure"} <= self._columns(
+            "smb", conn, "conf_checks_results"
+        ) and "name" in self._columns("smb", conn, "conf_checks"):
+            for row in conn.execute(
+                f"SELECT c.name, r.reasons FROM conf_checks_results r "
+                f"JOIN conf_checks c ON c.id = r.check_id "
+                f"WHERE r.host_id IN ({in_ids}) AND r.secure = 0 ORDER BY r.id",
+                host_ids,
+            ):
+                data.failed_checks.append(NxcConfCheck(name=row["name"], reasons=row["reasons"] or None))
 
     def get_host_enrichment(self, host_ip: str) -> Optional[NxcHostData]:
         """Get aggregated NetExec data for a single host.
@@ -479,26 +490,22 @@ class NxcDatabaseManager:
             if not conn:
                 continue
 
-            # Query based on protocol
-            if protocol == "smb":
-                data = self._query_smb_host(conn, host_ip)
-            elif protocol == "ssh":
-                data = self._query_ssh_host(conn, host_ip)
-            else:
-                data = self._query_generic_host(conn, host_ip, protocol)
+            data = self._query_protocol_host(conn, host_ip, protocol)
+            if not data:
+                continue
+            if merged_data is None:
+                merged_data = data
+                continue
 
-            if data:
-                if merged_data is None:
-                    merged_data = data
-                else:
-                    # Merge protocols, credentials, shares
-                    merged_data.protocols_seen.extend(data.protocols_seen)
-                    merged_data.credentials.extend(data.credentials)
-                    merged_data.shares.extend(data.shares)
-                    if data.security_flags and not merged_data.security_flags:
-                        merged_data.security_flags = data.security_flags
-                    if data.hostname and not merged_data.hostname:
-                        merged_data.hostname = data.hostname
+            merged_data.protocols_seen.extend(data.protocols_seen)
+            merged_data.credentials.extend(data.credentials)
+            merged_data.shares.extend(data.shares)
+            merged_data.protocol_details.update(data.protocol_details)
+            merged_data.failed_checks.extend(data.failed_checks)
+            if data.security_flags and not merged_data.security_flags:
+                merged_data.security_flags = data.security_flags
+            if data.hostname and not merged_data.hostname:
+                merged_data.hostname = data.hostname
 
         return merged_data
 
@@ -520,6 +527,8 @@ class NxcDatabaseManager:
             "smbv1_enabled": 0,
             "zerologon": 0,
             "petitpotam": 0,
+            "ldap_signing_disabled": 0,
+            "rdp_nla_disabled": 0,
         }
 
         for host_ip in host_ips:
@@ -552,17 +561,24 @@ class NxcDatabaseManager:
                         security_flag_counts["zerologon"] += 1
                     if data.security_flags.petitpotam_vulnerable:
                         security_flag_counts["petitpotam"] += 1
+                # Only explicit False counts; NULL (not checked) is absent from details.
+                if data.protocol_details.get("ldap", {}).get("signing_required") is False:
+                    security_flag_counts["ldap_signing_disabled"] += 1
+                if data.protocol_details.get("rdp", {}).get("nla") is False:
+                    security_flag_counts["rdp_nla_disabled"] += 1
 
         # Build unique credentials with counts
         unique_credentials: List[tuple[NxcCredential, int]] = []
         for (proto, user, domain, cred_type), count in credential_counts.items():
-            # Determine if any instance has admin
-            has_admin = any(
-                cred.has_admin
+            # Determine if any instance has admin / was pillaged
+            instances = [
+                cred
                 for data in per_host_data.values()
                 for cred in data.credentials
                 if cred.protocol == proto and cred.username == user and cred.domain == domain
-            )
+            ]
+            has_admin = any(cred.has_admin for cred in instances)
+            pillaged = any(cred.pillaged for cred in instances)
             unique_credentials.append(
                 (
                     NxcCredential(
@@ -571,6 +587,7 @@ class NxcDatabaseManager:
                         domain=domain,
                         credential_type=cred_type,
                         has_admin=has_admin,
+                        pillaged=pillaged,
                     ),
                     count,
                 )

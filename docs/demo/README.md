@@ -8,8 +8,8 @@ first-time exploration:
 - `cerno-demo-expanded.nessus` - larger follow-up scan for screenshots,
   richer review demos, `[H] Compare`, `[O] Overlapping`, workflows, and
   Metasploit examples.
-- `nxc-workspace/` - synthetic NetExec workspace with SMB, SSH, FTP, and VNC
-  databases for enrichment demos.
+- `nxc-workspace/` - synthetic NetExec workspace with SMB, SSH, FTP, VNC,
+  LDAP, and RDP databases for enrichment demos.
 
 Both fixtures use documentation-only IP ranges from RFC 5737 and `.example`
 hostnames. They are not scanner output from a real environment.
@@ -45,7 +45,7 @@ cerno demo
 cerno review
 ```
 
-Open an SMB, SSH, FTP, or VNC finding and press `[N]` for the per-host NetExec
+Open an SMB, SSH, FTP, VNC, LDAP, or RDP finding and press `[N]` for the per-host NetExec
 breakdown.
 
 `cerno demo` imports both demo Nessus scans and sets `nxc_workspace_path` to the
@@ -76,7 +76,8 @@ make `cerno scan compare` useful while keeping the first review approachable.
 - Synthetic Metasploit module mappings for Telnet, VNC, MS17-010, Shellshock,
   and Tomcat search demos.
 - Synthetic NetExec data for SMB signing, share access, domain credentials,
-  SSH keys, FTP anonymous login, and VNC no-auth context.
+  SSH keys, FTP anonymous login, VNC service presence, LDAP signing, and RDP
+  NLA context.
 - Mixed host types: web, API, SMB/file, domain controller, database, legacy,
   VPN, mail, monitoring, backup, Linux, Windows workstation, shopping app, CI,
   Git, and IPv6 web targets.

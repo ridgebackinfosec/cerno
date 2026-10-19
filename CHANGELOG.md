@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.2] - 2026-10-19
+
+### Added
+- NetExec context now shows every protocol NetExec saw a host on, even when no credentials are tied to it. A new "Seen via" line in the `[N]` per-host view lists protocols with ports and banners (e.g. `SMB, SSH (22, 2222 · SSH-2.0-OpenSSH_9.6), RDP (3389)`). Per-protocol host attributes come through MCP `get_host_nxc` as `protocol_details` (`nxc_db.py:NxcHostData.protocol_details`).
+- New NetExec security flags: **LDAP signing not required** (ldap.db) and **RDP NLA disabled** (rdp.db), in the per-host view, the NetExec Context summary, and MCP `security_flag_counts` (`ldap_signing_disabled`, `rdp_nla_disabled`). Only explicit results count; hosts NetExec didn't check are not flagged.
+- Credentials NetExec dumped from a host (`pillaged_from_hostid`, e.g. SAM/LSA) are tied to that host and marked "dumped" (`NxcCredential.pillaged`).
+- Failed SMB configuration checks (NetExec `conf_checks_results`) show as security flags per host (`NxcHostData.failed_checks`).
+- Demo NetExec workspace adds `ldap.db` and `rdp.db`, and all demo databases are now built from the real NetExec 1.5.1 schemas (`scripts/create_demo_nxc_workspace.py`).
+
+### Fixed
+- NetExec enrichment silently returned nothing for every protocol except SMB. Cerno's queries didn't match the schemas NetExec actually creates (e.g. ssh `hosts` has no `hostname`; ldap/mssql/rdp/winrm/nfs/vnc/wmi have `ip` but no `host`; ftp/nfs relations use different column names), and the errors were swallowed. Queries are now built from per-protocol specs matching NetExec 1.5.1 and check optional columns at runtime. Query failures are logged at DEBUG instead of being hidden (`nxc_db.py:_PROTOCOL_SPECS`, `_query_protocol_host()`).
+- NetExec lookups now include every `hosts` row for an IP, not only the first, so services on multiple ports (e.g. SSH on 22 and 2222) and their credentials are no longer dropped.
+- A NetExec credential with repeated admin/logged-in relation rows is listed once instead of repeating.
+- NetExec SMB share counts no longer double-count a host when several users can access the same share (shares are collapsed per name).
+
 ## [1.12.1] - 2026-10-19
 
 ### Added

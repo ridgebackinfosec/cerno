@@ -2131,7 +2131,7 @@ def demo_cmd(
     info("  cerno scan compare Cerno_Demo_Initial_Scan Cerno_Demo_Expanded_Scan")
     info("  cerno review")
     if not no_nxc:
-        info("Open an SMB/SSH/FTP/VNC finding and press [N] for NetExec context.")
+        info("Open an SMB/SSH/FTP/VNC/LDAP/RDP finding and press [N] for NetExec context.")
 
 
 # Version callback for --version flag

@@ -1997,6 +1997,8 @@ def render_nxc_enrichment_summary(hosts: List[str]) -> Optional[Panel]:
             content.append(f" ({cred.credential_type})", style=style_if_enabled("dim"))
             if cred.has_admin:
                 content.append(" - admin", style=style_if_enabled("green"))
+            if cred.pillaged:
+                content.append(" - dumped", style=style_if_enabled("yellow"))
             content.append(f" on {host_count} host{'s' if host_count != 1 else ''}\n",
                            style=style_if_enabled("dim"))
 
@@ -2031,6 +2033,8 @@ def render_nxc_enrichment_summary(hosts: List[str]) -> Optional[Panel]:
             "smbv1_enabled": "SMBv1",
             "zerologon": "Zerologon",
             "petitpotam": "PetitPotam",
+            "ldap_signing_disabled": "LDAP signing not required",
+            "rdp_nla_disabled": "RDP NLA disabled",
         }
         for flag_key, count in summary.security_flag_counts.items():
             label = flag_labels.get(flag_key, flag_key)
@@ -2051,6 +2055,48 @@ def render_nxc_enrichment_summary(hosts: List[str]) -> Optional[Panel]:
     )
 
 
+def _nxc_seen_via(host_data: Any) -> str:
+    """Summarise which protocols NetExec saw a host on, with ports/banners.
+
+    Example: ``SMB, SSH (22, 2222 · SSH-2.0-OpenSSH_9.6), RDP (3389)``.
+    """
+    parts = []
+    for protocol in host_data.protocols_seen:
+        details = host_data.protocol_details.get(protocol, {})
+        extras = []
+        if details.get("ports"):
+            extras.append(", ".join(str(port) for port in details["ports"]))
+        banner = details.get("banner") or details.get("server_banner")
+        if banner:
+            extras.append(str(banner))
+        label = protocol.upper()
+        parts.append(f"{label} ({' · '.join(extras)})" if extras else label)
+    return ", ".join(parts)
+
+
+def _nxc_host_flags(host_data: Any) -> List[str]:
+    """Security issues for one host across all NetExec protocols."""
+    flags: List[str] = []
+    sec = host_data.security_flags
+    if sec:
+        if not sec.signing_required:
+            flags.append("SMB signing disabled")
+        if sec.smbv1_enabled:
+            flags.append("SMBv1 enabled")
+        if sec.zerologon_vulnerable:
+            flags.append("Zerologon vulnerable")
+        if sec.petitpotam_vulnerable:
+            flags.append("PetitPotam vulnerable")
+    ldap = host_data.protocol_details.get("ldap", {})
+    if ldap.get("signing_required") is False:
+        flags.append("LDAP signing not required")
+    if host_data.protocol_details.get("rdp", {}).get("nla") is False:
+        flags.append("RDP NLA disabled")
+    for check in host_data.failed_checks:
+        flags.append(f"{check.name}: {check.reasons}" if check.reasons else check.name)
+    return flags
+
+
 def render_nxc_host_panel(host_ip: str, host_data: Any, has_data: bool = True) -> Panel:
     """Render a single host's NetExec data as a Rich Panel.
 
@@ -2062,207 +2108,95 @@ def render_nxc_host_panel(host_ip: str, host_data: Any, has_data: bool = True) -
     Returns:
         Rich Panel containing the host's NetExec information
     """
-    content = Text()
-
     if not has_data or host_data is None:
-        content.append("  No NetExec data available", style=style_if_enabled("dim italic"))
-    else:
-        sections_added = False
+        return Panel(
+            Text("  No NetExec data available", style=style_if_enabled("dim italic")),
+            title=f"[bold cyan]{host_ip}[/]",
+            title_align="left",
+            border_style=style_if_enabled("dim cyan"),
+            box=box.ROUNDED,
+            padding=(0, 1),
+        )
 
-        # Credentials section
-        if host_data.credentials:
-            sections_added = True
-            content.append("Credentials\n", style=style_if_enabled("cyan"))
+    renderables: List[RenderableType] = []
 
-            # Build credentials table
-            cred_table = Table(
-                box=box.SIMPLE,
-                show_header=True,
-                header_style=style_if_enabled("dim"),
-                padding=(0, 1),
-                expand=False,
+    seen_via = Text()
+    seen_via.append("Seen via: ", style=style_if_enabled("cyan"))
+    seen_via.append(_nxc_seen_via(host_data), style=style_if_enabled("yellow"))
+    renderables.append(seen_via)
+
+    if host_data.credentials:
+        renderables.append(Text())
+        renderables.append(Text("Credentials", style=style_if_enabled("cyan")))
+        cred_table = Table(
+            box=box.SIMPLE,
+            show_header=True,
+            header_style=style_if_enabled("dim"),
+            padding=(0, 1),
+            expand=False,
+        )
+        cred_table.add_column("Protocol", style=style_if_enabled("magenta"))
+        cred_table.add_column("Identity")
+        cred_table.add_column("Type", style=style_if_enabled("dim"))
+        cred_table.add_column("Admin", justify="center")
+
+        for cred in host_data.credentials:
+            identity_text = Text()
+            if cred.domain:
+                identity_text.append(f"{cred.domain}\\", style=style_if_enabled("dim"))
+            identity_text.append(cred.username, style=style_if_enabled("yellow"))
+            if cred.pillaged:
+                identity_text.append(" (dumped from host)", style=style_if_enabled("dim"))
+
+            admin_indicator = Text("✓", style="bold green") if cred.has_admin else Text("")
+
+            cred_table.add_row(
+                cred.protocol.upper(),
+                identity_text,
+                cred.credential_type[:8],  # Truncate long types
+                admin_indicator,
             )
-            cred_table.add_column("Protocol", style=style_if_enabled("magenta"))
-            cred_table.add_column("Identity", style=style_if_enabled("yellow"))
-            cred_table.add_column("Type", style=style_if_enabled("dim"))
-            cred_table.add_column("Admin", justify="center")
+        renderables.append(cred_table)
 
-            for cred in host_data.credentials:
-                # Build identity string
-                identity = ""
-                if cred.domain:
-                    identity = f"[dim]{cred.domain}\\[/dim]"
-                identity += cred.username
+    if host_data.shares:
+        renderables.append(Text("Shares", style=style_if_enabled("cyan")))
+        share_table = Table(
+            box=box.SIMPLE,
+            show_header=True,
+            header_style=style_if_enabled("dim"),
+            padding=(0, 1),
+            expand=False,
+        )
+        share_table.add_column("Name", style=style_if_enabled("yellow"))
+        share_table.add_column("Access", justify="center")
 
-                # Admin indicator
-                admin_indicator = Text("✓", style="bold green") if cred.has_admin else Text("")
+        for share in host_data.shares:
+            if share.read_access and share.write_access:
+                access_text = Text("RW", style="bold green")
+            elif share.read_access:
+                access_text = Text("R", style="cyan")
+            elif share.write_access:
+                access_text = Text("W", style="yellow")
+            else:
+                access_text = Text("-", style="dim")
+            share_table.add_row(share.name, access_text)
+        renderables.append(share_table)
 
-                cred_table.add_row(
-                    cred.protocol.upper(),
-                    Text.from_markup(identity) if cred.domain else Text(cred.username),
-                    cred.credential_type[:8],  # Truncate long types
-                    admin_indicator,
-                )
+    flags = _nxc_host_flags(host_data)
+    if flags:
+        flags_text = Text()
+        flags_text.append("\n⚠ Security Flags\n", style=style_if_enabled("bold red"))
+        for flag in flags:
+            flags_text.append(f"  • {flag}\n", style=style_if_enabled("red"))
+        renderables.append(flags_text)
 
-            # We can't nest a Table directly in Text, so we use Group
-            content.append("\n")
-
-        # Shares section
-        if host_data.shares:
-            if sections_added:
-                content.append("\n")
-            sections_added = True
-            content.append("Shares\n", style=style_if_enabled("cyan"))
-
-            share_table = Table(
-                box=box.SIMPLE,
-                show_header=True,
-                header_style=style_if_enabled("dim"),
-                padding=(0, 1),
-                expand=False,
-            )
-            share_table.add_column("Name", style=style_if_enabled("yellow"))
-            share_table.add_column("Access", justify="center")
-
-            for share in host_data.shares:
-                if share.read_access and share.write_access:
-                    access_text = Text("RW", style="bold green")
-                elif share.read_access:
-                    access_text = Text("R", style="cyan")
-                elif share.write_access:
-                    access_text = Text("W", style="yellow")
-                else:
-                    access_text = Text("-", style="dim")
-
-                share_table.add_row(share.name, access_text)
-
-            content.append("\n")
-
-        # Security flags section
-        if host_data.security_flags:
-            flags = []
-            if not host_data.security_flags.signing_required:
-                flags.append("Signing disabled")
-            if host_data.security_flags.smbv1_enabled:
-                flags.append("SMBv1 enabled")
-            if host_data.security_flags.zerologon_vulnerable:
-                flags.append("Zerologon vulnerable")
-            if host_data.security_flags.petitpotam_vulnerable:
-                flags.append("PetitPotam vulnerable")
-
-            if flags:
-                if sections_added:
-                    content.append("\n")
-                content.append("⚠ Security Flags\n", style=style_if_enabled("bold red"))
-                for flag in flags:
-                    content.append(f"  • {flag}\n", style=style_if_enabled("red"))
-
-        # If no data sections were added but we have a data object
-        if not sections_added and not host_data.credentials and not host_data.shares:
-            if host_data.security_flags is None or (
-                host_data.security_flags.signing_required
-                and not host_data.security_flags.smbv1_enabled
-                and not host_data.security_flags.zerologon_vulnerable
-                and not host_data.security_flags.petitpotam_vulnerable
-            ):
-                content.append("  No credentials, shares, or security issues found",
-                               style=style_if_enabled("dim italic"))
-
-    # Build title with hostname if available
-    if has_data and host_data and host_data.hostname:
+    if host_data.hostname:
         title = f"[bold cyan]{host_ip}[/] [dim]({host_data.hostname})[/]"
     else:
         title = f"[bold cyan]{host_ip}[/]"
 
-    # For panels with tables, we need to use Group to combine content
-    if has_data and host_data and (host_data.credentials or host_data.shares):
-        # Build a list of renderables
-        renderables: List[RenderableType] = []
-
-        if host_data.credentials:
-            renderables.append(Text("Credentials", style=style_if_enabled("cyan")))
-            cred_table = Table(
-                box=box.SIMPLE,
-                show_header=True,
-                header_style=style_if_enabled("dim"),
-                padding=(0, 1),
-                expand=False,
-            )
-            cred_table.add_column("Protocol", style=style_if_enabled("magenta"))
-            cred_table.add_column("Identity")
-            cred_table.add_column("Type", style=style_if_enabled("dim"))
-            cred_table.add_column("Admin", justify="center")
-
-            for cred in host_data.credentials:
-                identity_text = Text()
-                if cred.domain:
-                    identity_text.append(f"{cred.domain}\\", style=style_if_enabled("dim"))
-                identity_text.append(cred.username, style=style_if_enabled("yellow"))
-
-                admin_indicator = Text("✓", style="bold green") if cred.has_admin else Text("")
-
-                cred_table.add_row(
-                    cred.protocol.upper(),
-                    identity_text,
-                    cred.credential_type[:8],
-                    admin_indicator,
-                )
-            renderables.append(cred_table)
-
-        if host_data.shares:
-            if host_data.credentials:
-                renderables.append(Text())  # Spacer
-            renderables.append(Text("Shares", style=style_if_enabled("cyan")))
-            share_table = Table(
-                box=box.SIMPLE,
-                show_header=True,
-                header_style=style_if_enabled("dim"),
-                padding=(0, 1),
-                expand=False,
-            )
-            share_table.add_column("Name", style=style_if_enabled("yellow"))
-            share_table.add_column("Access", justify="center")
-
-            for share in host_data.shares:
-                if share.read_access and share.write_access:
-                    access_text = Text("RW", style="bold green")
-                elif share.read_access:
-                    access_text = Text("R", style="cyan")
-                elif share.write_access:
-                    access_text = Text("W", style="yellow")
-                else:
-                    access_text = Text("-", style="dim")
-                share_table.add_row(share.name, access_text)
-            renderables.append(share_table)
-
-        # Add security flags if present
-        if host_data.security_flags:
-            flags = []
-            if not host_data.security_flags.signing_required:
-                flags.append("Signing disabled")
-            if host_data.security_flags.smbv1_enabled:
-                flags.append("SMBv1 enabled")
-            if host_data.security_flags.zerologon_vulnerable:
-                flags.append("Zerologon vulnerable")
-            if host_data.security_flags.petitpotam_vulnerable:
-                flags.append("PetitPotam vulnerable")
-
-            if flags:
-                if host_data.credentials or host_data.shares:
-                    renderables.append(Text())  # Spacer
-                flags_text = Text()
-                flags_text.append("⚠ Security Flags\n", style=style_if_enabled("bold red"))
-                for flag in flags:
-                    flags_text.append(f"  • {flag}\n", style=style_if_enabled("red"))
-                renderables.append(flags_text)
-
-        panel_content: Group | Text = Group(*renderables)
-    else:
-        # Simple text content for hosts without tables
-        panel_content = content
-
     return Panel(
-        panel_content,
+        Group(*renderables),
         title=title,
         title_align="left",
         border_style=style_if_enabled("dim cyan"),
