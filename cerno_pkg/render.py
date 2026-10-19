@@ -23,6 +23,7 @@ import time
 from .ansi import info, warn, header, get_console, style_if_enabled
 from .config import load_config
 from .constants import (
+    PLUGIN_DETAILS_BASE,
     REVIEW_MOVE_LABELS,
     REVIEW_STATE_DONE,
     REVIEW_STATE_ICONS,
@@ -302,8 +303,9 @@ def render_empty_state(context: str, filter_text: str = "") -> None:
             - "filter_mismatch": No findings match current filter
             - "no_severity": No findings at this severity level
             - "all_completed": All findings have Done status
+            - "status_mismatch": No findings with the [I] status filter's status
             - "no_findings": No findings in scan at all
-        filter_text: Current filter string (if applicable)
+        filter_text: Current filter string, or status label for "status_mismatch"
     """
     if context == "filter_mismatch":
         if filter_text:
@@ -335,6 +337,14 @@ def render_empty_state(context: str, filter_text: str = "") -> None:
         info("  • Press [D] to open the Done list")
         info("  • In the Done list, [M] moves findings back to Unreviewed")
         info("  • All normal menu actions are available below")
+        info("")
+
+    elif context == "status_mismatch":
+        info(f"\nNo {filter_text} findings in this view.")
+        info("")
+        info("Suggestions:")
+        info("  • Press [I] to show all statuses")
+        info("  • Press [C] to clear all filters")
         info("")
 
     elif context == "no_findings":
@@ -801,6 +811,7 @@ def render_actions_footer(
     can_prev: bool,
     has_claude: bool = False,
     claude_installed: bool = False,
+    status_filter_active: bool = False,
 ) -> None:
     """Render action footer with responsive layout based on terminal width.
 
@@ -814,6 +825,7 @@ def render_actions_footer(
         can_next: Whether next page is available
         can_prev: Whether previous page is available
         has_claude: Whether Claude Assistant is available and enabled
+        status_filter_active: Whether the [I] In Progress-only filter is on
     """
     from .ansi import get_terminal_width
 
@@ -836,6 +848,7 @@ def render_actions_footer(
     right_row1 = join_actions_texts(
         [
             key_text("F", "Filter"),
+            key_text("I", "All statuses" if status_filter_active else "In Progress only"),
             key_text("C", "Clear filter"),
             key_text("S", f"Sort: {sort_label}"),
         ]
@@ -1227,6 +1240,7 @@ def show_actions_help(
     sort_mode: str,
     can_next: bool,
     can_prev: bool,
+    status_filter_active: bool = False,
 ) -> None:
     """Render a categorized help panel for main/MSF file lists.
 
@@ -1236,6 +1250,7 @@ def show_actions_help(
         sort_mode: Current sort mode ("hosts" or "name")
         can_next: Whether next page is available
         can_prev: Whether previous page is available
+        status_filter_active: Whether the [I] In Progress-only filter is on
     """
     table = Table.grid(padding=(0, 1))
     table.add_row(
@@ -1248,7 +1263,13 @@ def show_actions_help(
     table.add_row(
         Text("Filtering", style="bold"),
         key_text("F", "Filter - Set a filter to narrow down finding list"),
-        key_text("C", "Clear filter - Remove active filter"),
+        key_text(
+            "I",
+            "All statuses - Turn off the In Progress-only filter"
+            if status_filter_active
+            else "In Progress only - Show only In Progress findings",
+        ),
+        key_text("C", "Clear filter - Remove active name and status filters"),
     )
     table.add_row(
         Text("Sorting", style="bold"),
@@ -1815,7 +1836,7 @@ def display_finding_preview(
         plugin: Plugin metadata object
         finding: Finding database object (required)
         sev_dir: Severity directory path
-        chosen: File path (for URL extraction)
+        chosen: Synthetic finding path (unused; kept for caller compatibility)
         workflow_mapper: Optional workflow mapper to check for workflow availability
     """
 
@@ -1837,19 +1858,13 @@ def display_finding_preview(
     sev_label = pretty_severity_label(sev_dir.name) if sev_dir else f"{plugin.severity_int}_{plugin.severity_label or 'Unknown'}"
     content.append(f"{sev_label}\n", style=severity_style(sev_label))
 
-    # Plugin Details (URL)
-    # Import _plugin_details_line from parsing module if needed
-    # For now, we'll skip this feature until Phase 5 when we move _plugin_details_line
-    # pd_line = _plugin_details_line(chosen)
-    # if pd_line:
-    #     try:
-    #         match = re.search(r"(https?://[^\s)\]\}>,;]+)", pd_line)
-    #         plugin_url = match.group(1) if match else None
-    #         if plugin_url:
-    #             content.append("Plugin Details: ", style=style_if_enabled("cyan"))
-    #             content.append(f"{plugin_url}\n", style=style_if_enabled("blue underline"))
-    #     except Exception:
-    #         pass
+    # Plugin Details (Tenable URL). Display drops "www." to save space; the OSC 8
+    # link target keeps the full URL. The link is applied even when colors are off.
+    plugin_url = plugin.plugin_url or f"{PLUGIN_DETAILS_BASE}{plugin.plugin_id}"
+    display_url = plugin_url.replace("://www.", "://", 1)
+    content.append("Plugin Details: ", style=style_if_enabled("cyan"))
+    link_style = f"{style_if_enabled('blue underline')} link {plugin_url}".strip()
+    content.append(f"{display_url}\n", style=link_style)
 
     # Get port distribution from database
     port_distribution = finding.get_port_distribution()

@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.1] - 2026-10-19
+
+### Added
+- Finding preview panel shows a `Plugin Details:` link to the plugin's Tenable page again (e.g. `https://tenable.com/plugins/nessus/41028`). It is an OSC 8 hyperlink to the full `https://www.tenable.com/...` URL, so Ctrl+click opens it in supporting terminals, and it still appears with `no_color` on. Plugins without a stored URL fall back to one built from the plugin ID (`render.py:display_finding_preview()`).
+
+## [1.12.0] - 2026-10-19
+
+### Added
+- Findings list `[I]` toggle: show only In Progress findings, press again for all statuses. It combines with the name filter (`[F]`), group filters, sorting, paging, and bulk `[M]`, and works in every findings-list scope (single or multi-select severities, Metasploit, Workflow Mapped, multi-scan merged). The status line shows `[FILTER] Status: In Progress` while it is on, and `[V]`/`[A]` scopes include the status. `[C]` now clears both the name and status filters (`cerno.py:browse_file_list()`, `tui.py:filter_finding_candidates()`).
+
+### Fixed
+- README findings-list shortcuts: `[V]` is View hosts, not a severity filter.
+
 ## [1.11.2] - 2026-10-17
 
 ### Fixed

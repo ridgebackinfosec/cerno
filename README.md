@@ -408,8 +408,9 @@ scopes, and management commands.
 **In the findings list view:**
 - `[S]` - Cycle sort modes (severity, plugin ID, name, host count)
 - `[F]` - Filter findings by text (plugin name, description, etc.)
-- `[V]` - Filter findings by severity level
-- `[C]` - Clear active text/severity filter
+- `[I]` - Toggle In Progress only / all statuses
+- `[C]` - Clear active text and status filters
+- `[V]` - View all unique hosts across the filtered findings
 - `[H]` - Compare: group findings by identical host:port combinations
 - `[O]` - Overlapping: find findings whose affected hosts are a superset of another's
 - `[X]` - Clear group filter (when a comparison/overlap group is active)

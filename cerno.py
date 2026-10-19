@@ -54,6 +54,7 @@ from cerno_pkg import (
     natural_key,
     # tui
     parse_severity_selection,
+    filter_finding_candidates,
     handle_finding_list_actions,
     ask_claude_multiline,
     # banner
@@ -459,6 +460,7 @@ def browse_file_list(
     file_filter = ""
     reviewed_filter = ""
     group_filter: Optional[Tuple[int, set, str]] = None
+    status_filter: Optional[str] = None  # [I] toggle: None = all open statuses
     # Default sort: severity for mixed views (Critical at top), plugin_id for single severity
     sort_mode = "plugin_id" if severity_dir_filter is not None else "severity"
 
@@ -557,13 +559,8 @@ def browse_file_list(
             (pf, p) for (pf, p) in all_records if pf.review_state != REVIEW_STATE_DONE
         ]
 
-        # Apply file filter (plugin name search)
-        candidates = [
-            (pf, p)
-            for (pf, p) in unreviewed
-            if (file_filter.lower() in p.plugin_name.lower())
-            and (group_filter is None or f"Plugin {p.plugin_id}: {p.plugin_name}" in group_filter[1])
-        ]
+        # Apply name, group, and status filters
+        candidates = filter_finding_candidates(unreviewed, file_filter, group_filter, status_filter)
 
         # Unique CVE count across all filtered candidates
         unique_cve_count = len({
@@ -638,6 +635,8 @@ def browse_file_list(
             else:
                 _scan_label = scan_dir.name
             filter_info = f"filtered: '{file_filter}'" if file_filter else "Findings"
+            if status_filter:
+                filter_info += f" ({REVIEW_STATE_LABELS[status_filter]} only)"
             bc = breadcrumb(_scan_label, severity_label, filter_info)
             header(bc if bc else f"Severity: {severity_label}")
 
@@ -686,6 +685,16 @@ def browse_file_list(
                 status_parts.append(filter_text)
             else:
                 status_parts.append("Filter: '*'")
+
+            # Status filter ([I] toggle)
+            if status_filter:
+                status_text = Text()
+                status_text.append("[FILTER] ", style="bold cyan")
+                status_text.append(
+                    f"Status: {REVIEW_STATE_LABELS[status_filter]}",
+                    style=style_if_enabled(f"bold {REVIEW_STATE_STYLES[status_filter]}"),
+                )
+                status_parts.append(status_text)
 
             # Group filter with bold visual indicator
             if group_filter:
@@ -787,6 +796,8 @@ def browse_file_list(
                 # Determine context for empty state
                 if file_filter:
                     render_empty_state("filter_mismatch", file_filter)
+                elif status_filter and unreviewed:
+                    render_empty_state("status_mismatch", REVIEW_STATE_LABELS[status_filter])
                 elif all_records and len(all_records) == len(reviewed):
                     render_empty_state("all_completed")
                 elif not all_records:
@@ -838,6 +849,7 @@ def browse_file_list(
                 can_prev=can_prev,
                 has_claude=has_claude,
                 claude_installed=claude_installed,
+                status_filter_active=status_filter is not None,
             )
 
             ans = Prompt.ask("Choose a finding number, or action").strip().lower()
@@ -864,6 +876,8 @@ def browse_file_list(
             scope_parts = [f"Severity: {severity_label}"]
             if file_filter:
                 scope_parts.append(f"filter: {file_filter}")
+            if status_filter:
+                scope_parts.append(f"status: {REVIEW_STATE_LABELS[status_filter]}")
             if group_filter:
                 _, _, group_desc = group_filter
                 scope_parts.append(f"group: {group_desc}")
@@ -932,6 +946,17 @@ def browse_file_list(
 
             continue
 
+        # Toggle In Progress-only status filter (intercept before generic action handler)
+        if ans == "i":
+            if status_filter is None:
+                status_filter = REVIEW_STATE_IN_PROGRESS
+                ok(f"Showing {REVIEW_STATE_LABELS[status_filter]} findings only.")
+            else:
+                status_filter = None
+                ok("Showing all statuses.")
+            page_idx = 0
+            continue
+
         # Handle Claude aggregate chat (intercept before generic action handler)
         if ans == "a":
             if not has_claude and claude_installed:
@@ -943,6 +968,8 @@ def browse_file_list(
                 scope_parts = [f"Severity: {severity_label}"]
                 if file_filter:
                     scope_parts.append(f"filter: {file_filter}")
+                if status_filter:
+                    scope_parts.append(f"status: {REVIEW_STATE_LABELS[status_filter]}")
                 if group_filter:
                     _, _, group_desc = group_filter
                     scope_parts.append(f"group: {group_desc}")
@@ -977,6 +1004,7 @@ def browse_file_list(
             get_counts_for,
             unique_cve_count=unique_cve_count,
             unique_host_count=unique_host_count,
+            status_filter_active=status_filter is not None,
         )
 
         (
@@ -987,6 +1015,9 @@ def browse_file_list(
             sort_mode,
             page_idx,
         ) = action_result
+
+        if ans == "c":
+            status_filter = None  # [C] clears the status filter along with the name filter
 
         if action_type == "back":
             break

@@ -571,6 +571,7 @@ Only after user confirms the changelog content:
 - All TUI status changes go through `fs.py:move_review_state(finding, target=None)` (default = next status in the cycle)
 - UI wording/colours come from `constants.py` (`REVIEW_STATE_LABELS`, `REVIEW_STATE_STYLES`, `REVIEW_STATE_ICONS`, `REVIEW_MOVE_LABELS`): users see "status" and the verb "Move" ("Move to In Progress", "Move to Done", "Move back to Unreviewed", bulk "Move to next status") — reuse these rather than hardcoding strings
 - Finding view `[M]` moves one step; findings list `[M]` moves every filtered finding one step; `[D]` Done list → `[M]` moves Done findings back to Unreviewed (multi-select)
+- Findings list `[I]` toggles an In Progress-only status filter (`tui.py:filter_finding_candidates()` applies name/group/status filters); `[C]` clears it with the name filter
 
 **Database-only**: `findings.review_state` is the sole record (no filename prefixes).
 
