@@ -186,3 +186,68 @@ def test_finding_preview_link_target_is_full_url(monkeypatch):
     assert isinstance(panel.renderable, Text)
     links = {str(span.style) for span in panel.renderable.spans if "link" in str(span.style)}
     assert any("link https://www.tenable.com/plugins/nessus/41028" in s for s in links), links
+
+
+def _panel_text(panel) -> str:
+    from rich.console import Console
+
+    console = Console(record=True, width=160, force_terminal=False)
+    console.print(panel)
+    return console.export_text()
+
+
+@pytest.mark.unit
+def test_nxc_host_panel_presence_only_host_shows_seen_via_and_flags():
+    """A host NetExec only saw on RDP/LDAP (no creds) still renders useful context."""
+    from cerno_pkg.nxc_db import NxcHostData
+    from cerno_pkg.render import render_nxc_host_panel
+
+    data = NxcHostData(
+        host_address="10.0.0.5",
+        hostname="DC01",
+        protocols_seen=["ldap", "rdp"],
+        protocol_details={
+            "ldap": {"signing_required": False},
+            "rdp": {"ports": [3389], "nla": False},
+        },
+    )
+
+    out = _panel_text(render_nxc_host_panel("10.0.0.5", data))
+
+    assert "Seen via: LDAP, RDP (3389)" in out
+    assert "LDAP signing not required" in out
+    assert "RDP NLA disabled" in out
+    assert "DC01" in out
+
+
+@pytest.mark.unit
+def test_nxc_host_panel_marks_dumped_creds_and_failed_checks():
+    from cerno_pkg.nxc_db import NxcConfCheck, NxcCredential, NxcHostData, NxcSecurityFlags
+    from cerno_pkg.render import render_nxc_host_panel
+
+    data = NxcHostData(
+        host_address="10.0.0.5",
+        protocols_seen=["smb", "ssh"],
+        credentials=[
+            NxcCredential(protocol="smb", username="localadmin", domain=".", pillaged=True),
+            NxcCredential(protocol="ssh", username="root", credential_type="key", has_admin=True),
+        ],
+        security_flags=NxcSecurityFlags(signing_required=False),
+        protocol_details={"smb": {}, "ssh": {"ports": [22, 2222], "banner": "SSH-2.0-OpenSSH_9.6"}},
+        failed_checks=[NxcConfCheck(name="LDAP signing", reasons="Not enforced")],
+    )
+
+    out = _panel_text(render_nxc_host_panel("10.0.0.5", data))
+
+    assert "Seen via: SMB, SSH (22, 2222 · SSH-2.0-OpenSSH_9.6)" in out
+    assert "localadmin (dumped from host)" in out
+    assert "root" in out
+    assert "SMB signing disabled" in out
+    assert "LDAP signing: Not enforced" in out
+
+
+@pytest.mark.unit
+def test_nxc_host_panel_no_data():
+    from cerno_pkg.render import render_nxc_host_panel
+
+    assert "No NetExec data available" in _panel_text(render_nxc_host_panel("10.0.0.9", None, False))

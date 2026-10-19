@@ -6,6 +6,7 @@ NetExec protocol databases to enrich Cerno finding displays.
 
 from __future__ import annotations
 
+import shutil
 import sqlite3
 from pathlib import Path
 from typing import Generator
@@ -32,7 +33,7 @@ from cerno_pkg.nxc_db import (
 @pytest.fixture
 def nxc_fixtures_path() -> Path:
     """Path to the NetExec test fixtures directory."""
-    return Path(__file__).parent / "fixtures" / "nxc"
+    return FIXTURES_DIR
 
 
 @pytest.fixture
@@ -43,169 +44,58 @@ def temp_nxc_workspace(tmp_path: Path) -> Path:
     return workspace
 
 
-@pytest.fixture
-def populated_smb_db(temp_nxc_workspace: Path) -> Path:
-    """Create an SMB database with test data."""
-    db_path = temp_nxc_workspace / "smb.db"
+FIXTURES_DIR = Path(__file__).parent / "fixtures" / "nxc"
+
+
+def _copy_fixture_db(protocol: str, workspace: Path) -> Path:
+    """Copy the real (empty) NetExec 1.5.1 schema for ``protocol`` into ``workspace``."""
+    db_path = workspace / f"{protocol}.db"
+    shutil.copyfile(FIXTURES_DIR / f"{protocol}.db", db_path)
+    return db_path
+
+
+def _seed(db_path: Path, sql: str) -> None:
+    """Run seed SQL against a copied fixture database."""
     conn = sqlite3.connect(db_path)
-
-    # Create tables matching NetExec SMB schema
-    conn.executescript("""
-        CREATE TABLE hosts (
-            id INTEGER PRIMARY KEY,
-            ip TEXT,
-            hostname TEXT,
-            domain TEXT,
-            os TEXT,
-            smbv1 INTEGER,
-            signing INTEGER,
-            zerologon INTEGER,
-            petitpotam INTEGER
-        );
-
-        CREATE TABLE users (
-            id INTEGER PRIMARY KEY,
-            domain TEXT,
-            username TEXT,
-            password TEXT,
-            credtype TEXT,
-            pillaged_from_hostid INTEGER
-        );
-
-        CREATE TABLE admin_relations (
-            id INTEGER PRIMARY KEY,
-            userid INTEGER,
-            hostid INTEGER,
-            FOREIGN KEY(userid) REFERENCES users(id),
-            FOREIGN KEY(hostid) REFERENCES hosts(id)
-        );
-
-        CREATE TABLE loggedin_relations (
-            id INTEGER PRIMARY KEY,
-            userid INTEGER,
-            hostid INTEGER,
-            FOREIGN KEY(userid) REFERENCES users(id),
-            FOREIGN KEY(hostid) REFERENCES hosts(id)
-        );
-
-        CREATE TABLE shares (
-            id INTEGER PRIMARY KEY,
-            hostid INTEGER,
-            userid INTEGER,
-            name TEXT,
-            remark TEXT,
-            read INTEGER,
-            write INTEGER,
-            FOREIGN KEY(hostid) REFERENCES hosts(id),
-            FOREIGN KEY(userid) REFERENCES users(id)
-        );
-    """)
-
-    # Insert test data
-    # Host 1: DC01 - has vulnerabilities
-    conn.execute("""
-        INSERT INTO hosts (id, ip, hostname, domain, os, smbv1, signing, zerologon, petitpotam)
-        VALUES (1, '192.168.1.10', 'DC01', 'CORP.LOCAL', 'Windows Server 2019', 0, 0, 1, 1)
-    """)
-
-    # Host 2: WEB01 - no vulnerabilities
-    conn.execute("""
-        INSERT INTO hosts (id, ip, hostname, domain, os, smbv1, signing, zerologon, petitpotam)
-        VALUES (2, '192.168.1.20', 'WEB01', 'CORP.LOCAL', 'Windows Server 2016', 0, 1, 0, 0)
-    """)
-
-    # Users
-    conn.execute("""
-        INSERT INTO users (id, domain, username, password, credtype)
-        VALUES (1, 'CORP', 'admin', 'e3b0c44298fc1c149afbf4c8996fb924', 'hash')
-    """)
-    conn.execute("""
-        INSERT INTO users (id, domain, username, password, credtype)
-        VALUES (2, 'CORP', 'svc_backup', 'password123', 'plaintext')
-    """)
-
-    # Admin relations - admin has admin on DC01
-    conn.execute("INSERT INTO admin_relations (id, userid, hostid) VALUES (1, 1, 1)")
-
-    # Loggedin relations - svc_backup logged into WEB01
-    conn.execute("INSERT INTO loggedin_relations (id, userid, hostid) VALUES (1, 2, 2)")
-
-    # Shares
-    conn.execute("""
-        INSERT INTO shares (id, hostid, name, read, write)
-        VALUES (1, 1, 'C$', 1, 1)
-    """)
-    conn.execute("""
-        INSERT INTO shares (id, hostid, name, read, write)
-        VALUES (2, 1, 'ADMIN$', 1, 0)
-    """)
-    conn.execute("""
-        INSERT INTO shares (id, hostid, name, read, write)
-        VALUES (3, 1, 'SYSVOL', 1, 0)
-    """)
-
+    conn.executescript(sql)
     conn.commit()
     conn.close()
+
+
+@pytest.fixture
+def populated_smb_db(temp_nxc_workspace: Path) -> Path:
+    """SMB database (real NetExec schema) with test data."""
+    db_path = _copy_fixture_db("smb", temp_nxc_workspace)
+    _seed(db_path, """
+        -- DC01 has vulnerabilities; WEB01 has none
+        INSERT INTO hosts (id, ip, hostname, domain, os, smbv1, signing, zerologon, petitpotam)
+        VALUES (1, '192.168.1.10', 'DC01', 'CORP.LOCAL', 'Windows Server 2019', 0, 0, 1, 1),
+               (2, '192.168.1.20', 'WEB01', 'CORP.LOCAL', 'Windows Server 2016', 0, 1, 0, 0);
+
+        INSERT INTO users (id, domain, username, password, credtype)
+        VALUES (1, 'CORP', 'admin', NULL, 'hash'),
+               (2, 'CORP', 'svc_backup', NULL, 'plaintext');
+
+        -- admin has admin on DC01; svc_backup logged into WEB01
+        INSERT INTO admin_relations (id, userid, hostid) VALUES (1, 1, 1);
+        INSERT INTO loggedin_relations (id, userid, hostid) VALUES (1, 2, 2);
+
+        INSERT INTO shares (id, hostid, name, read, write)
+        VALUES (1, 1, 'C$', 1, 1), (2, 1, 'ADMIN$', 1, 0), (3, 1, 'SYSVOL', 1, 0);
+    """)
     return db_path
 
 
 @pytest.fixture
 def populated_ssh_db(temp_nxc_workspace: Path) -> Path:
-    """Create an SSH database with test data."""
-    db_path = temp_nxc_workspace / "ssh.db"
-    conn = sqlite3.connect(db_path)
-
-    # Create tables matching NetExec SSH schema
-    conn.executescript("""
-        CREATE TABLE hosts (
-            id INTEGER PRIMARY KEY,
-            host TEXT,
-            hostname TEXT,
-            port INTEGER,
-            banner TEXT,
-            os TEXT
-        );
-
-        CREATE TABLE credentials (
-            id INTEGER PRIMARY KEY,
-            username TEXT,
-            password TEXT,
-            credtype TEXT
-        );
-
-        CREATE TABLE admin_relations (
-            id INTEGER PRIMARY KEY,
-            credid INTEGER,
-            hostid INTEGER,
-            FOREIGN KEY(credid) REFERENCES credentials(id),
-            FOREIGN KEY(hostid) REFERENCES hosts(id)
-        );
-
-        CREATE TABLE loggedin_relations (
-            id INTEGER PRIMARY KEY,
-            credid INTEGER,
-            hostid INTEGER,
-            shell INTEGER,
-            FOREIGN KEY(credid) REFERENCES credentials(id),
-            FOREIGN KEY(hostid) REFERENCES hosts(id)
-        );
+    """SSH database (real NetExec schema: `host` column, no hostname) with test data."""
+    db_path = _copy_fixture_db("ssh", temp_nxc_workspace)
+    _seed(db_path, """
+        INSERT INTO hosts (id, host, port, banner, os)
+        VALUES (1, '192.168.1.20', 22, 'SSH-2.0-OpenSSH_8.2p1', 'Linux');
+        INSERT INTO credentials (id, username, password, credtype) VALUES (1, 'root', NULL, 'key');
+        INSERT INTO admin_relations (id, credid, hostid) VALUES (1, 1, 1);
     """)
-
-    # Insert test data
-    conn.execute("""
-        INSERT INTO hosts (id, host, hostname, port, banner, os)
-        VALUES (1, '192.168.1.20', 'WEB01', 22, 'SSH-2.0-OpenSSH_8.2p1', 'Linux')
-    """)
-
-    conn.execute("""
-        INSERT INTO credentials (id, username, password, credtype)
-        VALUES (1, 'root', '', 'key')
-    """)
-
-    conn.execute("INSERT INTO admin_relations (id, credid, hostid) VALUES (1, 1, 1)")
-
-    conn.commit()
-    conn.close()
     return db_path
 
 
@@ -576,6 +466,216 @@ class TestBatchEnrichment:
 
 
 # =============================================================================
+# Integration Tests: Real NetExec 1.5.1 Schemas (regression guard)
+# =============================================================================
+
+REAL_IP = "10.0.0.5"
+
+# One seed per protocol, written against the real schemas in tests/fixtures/nxc/.
+# Passwords are NULL: only identities matter for enrichment.
+REAL_SEEDS = {
+    "smb": """
+        INSERT INTO hosts (id, ip, hostname, domain, os, dc, smbv1, signing, spooler, zerologon, petitpotam)
+        VALUES (1, '10.0.0.5', 'DC01', 'corp.local', 'Windows Server 2019', 1, 0, 0, 1, 0, 1);
+        INSERT INTO users (id, domain, username, credtype, pillaged_from_hostid)
+        VALUES (1, 'CORP', 'alice', 'plaintext', NULL),
+               (2, 'CORP', 'bob', 'hash', NULL),
+               (3, '.', 'localadmin', 'hash', 1);
+        -- duplicate relation rows must not duplicate the credential
+        INSERT INTO admin_relations (userid, hostid) VALUES (1, 1), (1, 1);
+        INSERT INTO loggedin_relations (userid, hostid) VALUES (1, 1), (1, 1), (2, 1);
+        -- one share row per user: must collapse to one share per name
+        INSERT INTO shares (hostid, userid, name, read, write)
+        VALUES (1, 1, 'C$', 1, 1), (1, 2, 'C$', 0, 0), (1, 1, 'SYSVOL', 1, 0), (1, 2, 'SYSVOL', 1, 0);
+        INSERT INTO conf_checks (id, name, description) VALUES (1, 'SMBv1', 'd'), (2, 'LDAP signing', 'd');
+        INSERT INTO conf_checks_results (host_id, check_id, secure, reasons)
+        VALUES (1, 1, 1, ''), (1, 2, 0, 'Not enforced');
+    """,
+    "ssh": """
+        -- one hosts row per port
+        INSERT INTO hosts (id, host, port, banner) VALUES
+            (1, '10.0.0.5', 22, 'SSH-2.0-OpenSSH_9.6'), (2, '10.0.0.5', 2222, 'SSH-2.0-dropbear');
+        INSERT INTO credentials (id, username, credtype) VALUES (1, 'root', 'key'), (2, 'deploy', 'plaintext');
+        INSERT INTO admin_relations (credid, hostid) VALUES (1, 1);
+        INSERT INTO loggedin_relations (credid, hostid, shell) VALUES (2, 2, 1);
+    """,
+    "ftp": """
+        INSERT INTO hosts (id, host, port, banner) VALUES (1, '10.0.0.5', 21, 'vsFTPd 3.0.3');
+        INSERT INTO credentials (id, username) VALUES (1, 'anonymous');
+        INSERT INTO loggedin_relations (credid, hostid) VALUES (1, 1);
+    """,
+    "nfs": """
+        INSERT INTO hosts (id, ip, port) VALUES (1, '10.0.0.5', 2049);
+        INSERT INTO credentials (id, username) VALUES (1, 'nobody');
+        INSERT INTO loggedin_relations (cred_id, host_id) VALUES (1, 1);
+    """,
+    "ldap": """
+        INSERT INTO hosts (id, ip, hostname, domain, os, signing_required, channel_binding)
+        VALUES (1, '10.0.0.5', 'DC01', 'corp.local', 'Windows Server 2019', 0, 'Never');
+    """,
+    "mssql": """
+        INSERT INTO hosts (id, ip, hostname, domain, os, instances)
+        VALUES (1, '10.0.0.5', 'DC01', 'CORP', 'Windows Server 2019', 2);
+        INSERT INTO users (id, credtype, domain, username) VALUES (1, 'plaintext', 'CORP', 'sqladmin');
+        INSERT INTO admin_relations (userid, hostid) VALUES (1, 1);
+    """,
+    "winrm": """
+        INSERT INTO hosts (id, ip, port, hostname, domain, os)
+        VALUES (1, '10.0.0.5', 5985, 'DC01', 'CORP', 'Windows Server 2019');
+        INSERT INTO users (id, domain, username, credtype) VALUES (1, 'CORP', 'helpdesk', 'plaintext');
+        INSERT INTO loggedin_relations (userid, hostid) VALUES (1, 1);
+    """,
+    "rdp": """
+        INSERT INTO hosts (id, ip, port, hostname, domain, os, nla)
+        VALUES (1, '10.0.0.5', 3389, 'DC01', 'CORP', 'Windows Server 2019', 0);
+    """,
+    "vnc": """
+        INSERT INTO hosts (id, ip, hostname, port, server_banner) VALUES (1, '10.0.0.5', NULL, 5900, 'RFB 003.008');
+        -- no relations table in the real schema: cannot be tied to the host
+        INSERT INTO credentials (id, username) VALUES (1, 'viewer');
+    """,
+    "wmi": """
+        INSERT INTO hosts (id, ip, hostname, port) VALUES (1, '10.0.0.5', NULL, 135);
+        INSERT INTO credentials (id, username) VALUES (1, 'wmiuser');
+    """,
+}
+
+# protocol -> (expected credential usernames, expected protocol_details subset)
+REAL_EXPECTED: dict[str, tuple[set[str], dict]] = {
+    "smb": ({"alice", "bob", "localadmin"}, {"dc": True, "spooler": True, "signing": False}),
+    "ssh": ({"root", "deploy"}, {"ports": [22, 2222], "banner": "SSH-2.0-OpenSSH_9.6"}),
+    "ftp": ({"anonymous"}, {"ports": [21], "banner": "vsFTPd 3.0.3"}),
+    "nfs": ({"nobody"}, {"ports": [2049]}),
+    "ldap": (set(), {"signing_required": False, "channel_binding": "Never"}),
+    "mssql": ({"sqladmin"}, {"instances": 2}),
+    "winrm": ({"helpdesk"}, {"ports": [5985]}),
+    "rdp": (set(), {"ports": [3389], "nla": False}),
+    "vnc": (set(), {"ports": [5900], "server_banner": "RFB 003.008"}),
+    "wmi": (set(), {"ports": [135]}),
+}
+
+
+@pytest.fixture
+def query_errors(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Capture nxc_db debug logs; a non-empty list means a query hit a schema error."""
+    import cerno_pkg.nxc_db as nxc_db_module
+
+    messages: list[str] = []
+    monkeypatch.setattr(nxc_db_module, "log_debug", messages.append)
+    return messages
+
+
+def _real_workspace(workspace: Path, protocols: list[str]) -> NxcDatabaseManager:
+    for protocol in protocols:
+        _seed(_copy_fixture_db(protocol, workspace), REAL_SEEDS[protocol])
+    return NxcDatabaseManager(workspace)
+
+
+class TestRealSchemas:
+    """Every protocol must enrich against the schemas NetExec actually creates."""
+
+    @pytest.mark.parametrize("protocol", sorted(REAL_SEEDS))
+    def test_protocol_enriches_host(
+        self, protocol: str, temp_nxc_workspace: Path, query_errors: list[str]
+    ) -> None:
+        mgr = _real_workspace(temp_nxc_workspace, [protocol])
+
+        result = mgr.get_host_enrichment(REAL_IP)
+
+        assert query_errors == []
+        assert result is not None, f"{protocol}: host not found"
+        assert result.protocols_seen == [protocol]
+        expected_users, expected_details = REAL_EXPECTED[protocol]
+        usernames = [c.username for c in result.credentials]
+        assert set(usernames) == expected_users
+        assert len(usernames) == len(set(usernames)), "credential duplicated"
+        details = result.protocol_details[protocol]
+        for key, value in expected_details.items():
+            assert details[key] == value, f"{protocol}.{key}"
+
+    def test_all_protocols_merge(self, temp_nxc_workspace: Path, query_errors: list[str]) -> None:
+        mgr = _real_workspace(temp_nxc_workspace, list(REAL_SEEDS))
+
+        result = mgr.get_host_enrichment(REAL_IP)
+
+        assert query_errors == []
+        assert result is not None
+        assert sorted(result.protocols_seen) == sorted(REAL_SEEDS)
+        assert result.hostname == "DC01"
+        assert set(result.protocol_details) == set(REAL_SEEDS)
+
+    def test_smb_admin_loggedin_and_pillaged(self, temp_nxc_workspace: Path) -> None:
+        mgr = _real_workspace(temp_nxc_workspace, ["smb"])
+
+        result = mgr.get_host_enrichment(REAL_IP)
+
+        assert result is not None
+        creds = {c.username: c for c in result.credentials}
+        assert creds["alice"].has_admin is True and creds["alice"].pillaged is False
+        assert creds["bob"].has_admin is False and creds["bob"].pillaged is False
+        assert creds["localadmin"].pillaged is True and creds["localadmin"].has_admin is False
+
+    def test_smb_shares_collapse_per_name(self, temp_nxc_workspace: Path) -> None:
+        mgr = _real_workspace(temp_nxc_workspace, ["smb"])
+
+        result = mgr.get_host_enrichment(REAL_IP)
+        summary = mgr.get_hosts_enrichment([REAL_IP])
+
+        assert result is not None
+        assert [(s.name, s.read_access, s.write_access) for s in result.shares] == [
+            ("C$", True, True),
+            ("SYSVOL", True, False),
+        ]
+        assert summary.shares_summary == {"C$": (1, 1), "SYSVOL": (1, 0)}
+
+    def test_smb_failed_conf_checks(self, temp_nxc_workspace: Path) -> None:
+        mgr = _real_workspace(temp_nxc_workspace, ["smb"])
+
+        result = mgr.get_host_enrichment(REAL_IP)
+
+        assert result is not None
+        assert [(c.name, c.reasons) for c in result.failed_checks] == [("LDAP signing", "Not enforced")]
+
+    def test_ssh_admin_flag(self, temp_nxc_workspace: Path) -> None:
+        mgr = _real_workspace(temp_nxc_workspace, ["ssh"])
+
+        result = mgr.get_host_enrichment(REAL_IP)
+
+        assert result is not None
+        creds = {c.username: c for c in result.credentials}
+        assert creds["root"].has_admin is True and creds["root"].credential_type == "key"
+        assert creds["deploy"].has_admin is False
+
+    def test_summary_flag_counts(self, temp_nxc_workspace: Path) -> None:
+        mgr = _real_workspace(temp_nxc_workspace, list(REAL_SEEDS))
+
+        summary = mgr.get_hosts_enrichment([REAL_IP, "10.0.0.99"])
+
+        assert summary.hosts_with_data == 1
+        assert summary.security_flag_counts == {
+            "signing_disabled": 1,
+            "petitpotam": 1,
+            "ldap_signing_disabled": 1,
+            "rdp_nla_disabled": 1,
+        }
+        pillaged = [c for c, _ in summary.unique_credentials if c.pillaged]
+        assert [c.username for c in pillaged] == ["localadmin"]
+
+    def test_null_flags_not_counted(self, temp_nxc_workspace: Path) -> None:
+        """NULL (unchecked) LDAP signing / RDP NLA must not be reported as disabled."""
+        _seed(_copy_fixture_db("ldap", temp_nxc_workspace),
+              "INSERT INTO hosts (id, ip) VALUES (1, '10.0.0.5');")
+        _seed(_copy_fixture_db("rdp", temp_nxc_workspace),
+              "INSERT INTO hosts (id, ip, port) VALUES (1, '10.0.0.5', 3389);")
+        mgr = NxcDatabaseManager(temp_nxc_workspace)
+
+        summary = mgr.get_hosts_enrichment([REAL_IP])
+
+        assert summary.hosts_with_data == 1
+        assert summary.security_flag_counts == {}
+
+
+# =============================================================================
 # Integration Tests: Using Fixture DBs
 # =============================================================================
 
@@ -598,8 +698,10 @@ class TestWithFixtureDBs:
         assert "smb" in protocols
         # The fixture DBs are empty (schema only) but should still be recognized
 
-    def test_query_empty_fixture_db(self, nxc_fixtures_path: Path) -> None:
-        """Test querying empty fixture DB returns None."""
+    def test_query_empty_fixture_db(
+        self, nxc_fixtures_path: Path, query_errors: list[str]
+    ) -> None:
+        """Querying empty real-schema DBs returns None — because no row matched, not an error."""
         mgr = NxcDatabaseManager(nxc_fixtures_path)
 
         # Fixture DBs have schema but no data
@@ -607,6 +709,7 @@ class TestWithFixtureDBs:
 
         # Should return None since no data
         assert result is None
+        assert query_errors == []
 
 
 class TestDemoNxcWorkspace:
@@ -625,7 +728,7 @@ class TestDemoNxcWorkspace:
         mgr = NxcDatabaseManager(demo_nxc_workspace)
 
         assert mgr.is_available() is True
-        assert mgr.get_available_protocols() == ["smb", "ssh", "ftp", "vnc"]
+        assert mgr.get_available_protocols() == ["smb", "ssh", "ldap", "rdp", "ftp", "vnc"]
 
     def test_demo_workspace_enriches_smb_signing_hosts(self, demo_nxc_workspace: Path) -> None:
         """SMB signing demo hosts have credentials, shares, and security flags."""
@@ -647,7 +750,8 @@ class TestDemoNxcWorkspace:
         )
 
         assert summary.hosts_with_data == 10
-        assert summary.protocols_seen == ["smb"]
+        # DC01 and WIN01-03 also appear in the demo ldap/rdp databases
+        assert summary.protocols_seen == ["ldap", "rdp", "smb"]
         assert summary.security_flag_counts["signing_disabled"] == 9
         assert summary.security_flag_counts["smbv1_enabled"] == 2
         assert summary.security_flag_counts["zerologon"] == 1
@@ -663,13 +767,25 @@ class TestDemoNxcWorkspace:
         legacy = mgr.get_host_enrichment("198.51.100.33")
         assert legacy is not None
         assert legacy.protocols_seen == ["ftp", "vnc"]
-        assert {cred.username for cred in legacy.credentials} == {"anonymous", "none"}
+        # vnc has no relations table in the real schema: presence + banner only
+        assert {cred.username for cred in legacy.credentials} == {"anonymous"}
+        assert legacy.protocol_details["vnc"]["ports"] == [5900]
 
         backup = mgr.get_host_enrichment("203.0.113.63")
         assert backup is not None
         assert "smb" in backup.protocols_seen
         assert "ssh" in backup.protocols_seen
         assert any(cred.protocol == "ssh" and cred.has_admin for cred in backup.credentials)
+
+    def test_demo_workspace_ldap_and_rdp_flags(self, demo_nxc_workspace: Path) -> None:
+        """DC01 shows LDAP signing not required; WIN01/WIN02 have RDP NLA disabled."""
+        mgr = NxcDatabaseManager(demo_nxc_workspace)
+
+        summary = mgr.get_hosts_enrichment(["198.51.100.30", "198.51.100.60", "198.51.100.61"])
+
+        assert summary.security_flag_counts["ldap_signing_disabled"] == 1
+        assert summary.security_flag_counts["rdp_nla_disabled"] == 2
+        assert {"smb", "ldap", "rdp"} <= set(summary.protocols_seen)
 
 
 # =============================================================================
