@@ -67,3 +67,60 @@ def test_render_claude_panel_labels_use_plain_styles():
     assert not any(s in label_styles for s in ("dim cyan", "dim magenta", "bold cyan", "bold magenta")), (
         f"Found bold/dim label styles — should be plain. Got: {label_styles}"
     )
+
+
+def _record_console(monkeypatch, module):
+    """Swap a module's _console_global for a wide recording Console; return it."""
+    from rich.console import Console
+
+    console = Console(record=True, width=200, force_terminal=False)
+    monkeypatch.setattr(module, "_console_global", console)
+    return console
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("active,label", [(False, "In Progress only"), (True, "All statuses")])
+def test_actions_footer_shows_status_toggle(monkeypatch, active, label):
+    """Findings-list footer offers [I] with a label that reflects the toggle state."""
+    from cerno_pkg import ansi, render as render_module
+
+    console = _record_console(monkeypatch, render_module)
+    monkeypatch.setattr(ansi, "get_terminal_width", lambda: 200)
+    render_module.render_actions_footer(
+        group_applied=False,
+        candidates_count=3,
+        sort_mode="severity",
+        can_next=False,
+        can_prev=False,
+        status_filter_active=active,
+    )
+    out = console.export_text()
+    assert "[I]" in out
+    assert label in out
+
+
+@pytest.mark.unit
+def test_actions_help_mentions_status_toggle(monkeypatch):
+    from cerno_pkg import render as render_module
+
+    console = _record_console(monkeypatch, render_module)
+    render_module.show_actions_help(
+        group_applied=False,
+        candidates_count=0,
+        sort_mode="severity",
+        can_next=False,
+        can_prev=False,
+    )
+    assert "[I]" in console.export_text()
+
+
+@pytest.mark.unit
+def test_empty_state_status_mismatch(monkeypatch):
+    from cerno_pkg import render as render_module
+
+    messages: list[str] = []
+    monkeypatch.setattr(render_module, "info", lambda msg="": messages.append(msg))
+    render_module.render_empty_state("status_mismatch", "In Progress")
+    text = "\n".join(messages)
+    assert "In Progress" in text
+    assert "[I]" in text

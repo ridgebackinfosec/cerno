@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-10-19
+
+### Added
+- Findings list `[I]` toggle: show only In Progress findings, press again for all statuses. It combines with the name filter (`[F]`), group filters, sorting, paging, and bulk `[M]`, and works in every findings-list scope (single or multi-select severities, Metasploit, Workflow Mapped, multi-scan merged). The status line shows `[FILTER] Status: In Progress` while it is on, and `[V]`/`[A]` scopes include the status. `[C]` now clears both the name and status filters (`cerno.py:browse_file_list()`, `tui.py:filter_finding_candidates()`).
+
+### Fixed
+- README findings-list shortcuts: `[V]` is View hosts, not a severity filter.
+
 ## [1.11.2] - 2026-10-17
 
 ### Fixed

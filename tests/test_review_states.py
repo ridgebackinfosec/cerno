@@ -207,3 +207,44 @@ def test_status_legend_and_icons():
     assert _status_legend().plain == "Status: ○ Unreviewed  ◐ In Progress"
     assert _review_state_cell("unreviewed").plain == "○"
     assert _review_state_cell("in_progress").plain == "◐"
+
+
+@pytest.mark.unit
+class TestFilterFindingCandidates:
+    """findings-list [I] status filter combined with the name and group filters."""
+
+    @staticmethod
+    def _records():
+        return [
+            (Finding(plugin_id=1, review_state="unreviewed"), Plugin(plugin_id=1, plugin_name="SSL Weak Cipher")),
+            (Finding(plugin_id=2, review_state="in_progress"), Plugin(plugin_id=2, plugin_name="SSL Self-Signed")),
+            (Finding(plugin_id=3, review_state="in_progress"), Plugin(plugin_id=3, plugin_name="SMB Signing")),
+        ]
+
+    @staticmethod
+    def _ids(records):
+        return [p.plugin_id for (_f, p) in records]
+
+    def test_no_filters_returns_all(self):
+        from cerno_pkg.tui import filter_finding_candidates
+
+        assert self._ids(filter_finding_candidates(self._records(), "", None, None)) == [1, 2, 3]
+
+    def test_in_progress_only(self):
+        from cerno_pkg.tui import filter_finding_candidates
+
+        result = filter_finding_candidates(self._records(), "", None, "in_progress")
+        assert self._ids(result) == [2, 3]
+
+    def test_combines_with_name_filter(self):
+        from cerno_pkg.tui import filter_finding_candidates
+
+        result = filter_finding_candidates(self._records(), "ssl", None, "in_progress")
+        assert self._ids(result) == [2]
+
+    def test_combines_with_group_filter(self):
+        from cerno_pkg.tui import filter_finding_candidates
+
+        group = (1, {"Plugin 3: SMB Signing", "Plugin 1: SSL Weak Cipher"}, "desc")
+        assert self._ids(filter_finding_candidates(self._records(), "", group, None)) == [1, 3]
+        assert self._ids(filter_finding_candidates(self._records(), "", group, "in_progress")) == [3]

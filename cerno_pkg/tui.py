@@ -260,6 +260,33 @@ def choose_from_list(
 # ===================================================================
 
 
+def filter_finding_candidates(
+    records: List[Any],  # List of (Finding, Plugin) tuples
+    file_filter: str,
+    group_filter: Optional[Tuple[int, set, str]],
+    status_filter: Optional[str],
+) -> List[Any]:
+    """Apply the findings-list name, group, and status filters.
+
+    Args:
+        records: (Finding, Plugin) tuples to filter (open findings)
+        file_filter: Case-insensitive plugin-name substring ("" = no filter)
+        group_filter: Optional group filter tuple (index, plugin labels, description)
+        status_filter: Review state to keep (e.g. "in_progress"), or None for all
+
+    Returns:
+        Records matching every active filter, in their original order
+    """
+    needle = file_filter.lower()
+    return [
+        (pf, p)
+        for (pf, p) in records
+        if needle in p.plugin_name.lower()
+        and (group_filter is None or f"Plugin {p.plugin_id}: {p.plugin_name}" in group_filter[1])
+        and (status_filter is None or pf.review_state == status_filter)
+    ]
+
+
 def handle_finding_list_actions(
     ans: str,
     candidates: List[Any],  # List of (Finding, Plugin) tuples
@@ -276,6 +303,7 @@ def handle_finding_list_actions(
     get_counts_for: Optional[Callable[["Finding"], Tuple[int, str]]] = None,
     unique_cve_count: int = 0,
     unique_host_count: int = 0,
+    status_filter_active: bool = False,
 ) -> ActionResult:
     """
     Handle file list actions (filter, sort, navigate, group, etc.).
@@ -294,6 +322,7 @@ def handle_finding_list_actions(
         reviewed: List of reviewed records
         sev_map: Map of file to severity dir (deprecated, unused)
         get_counts_for: Function to get host counts for a Finding (database-driven)
+        status_filter_active: Whether the [I] In Progress-only filter is on (help display only)
 
     Returns:
         Tuple of (action_type, file_filter, reviewed_filter,
@@ -309,6 +338,7 @@ def handle_finding_list_actions(
             sort_mode=sort_mode,
             can_next=(page_idx + 1 < total_pages),
             can_prev=(page_idx > 0),
+            status_filter_active=status_filter_active,
         )
         return "help", file_filter, reviewed_filter, group_filter, sort_mode, page_idx
 
