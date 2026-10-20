@@ -43,9 +43,11 @@ from ..logging_setup import log_error, log_info
 _VALID_REVIEW_STATES = set(REVIEW_STATES)
 
 
-# Result shapes for the core read tools. total=False keeps FastMCP's generated
-# output schema lenient (no key is required), so structured output never fails
-# validation when an optional column is absent.
+# Result shapes for the core read tools. Note: FastMCP serializes every
+# declared key into structuredContent, emitting absent keys as null, and then
+# validates against the generated schema. So any key an adapter may omit, or a
+# DB column may leave NULL, must be typed Optional[...] -- and a TypedDict must
+# not be shared between tools that return different key sets.
 class ScanInfo(TypedDict, total=False):
     scan_id: int
     scan_name: str
@@ -111,7 +113,7 @@ class ArtifactInfo(TypedDict, total=False):
     artifact_id: int
     execution_id: Optional[int]
     artifact_path: str
-    artifact_type: str
+    artifact_type: Optional[str]
     file_extension: Optional[str]
     file_size_bytes: Optional[int]
     file_hash: Optional[str]
@@ -127,12 +129,21 @@ class CveAffected(TypedDict, total=False):
     hosts: list[str]
 
 
-class GeneratedCommand(TypedDict, total=False):
-    command: Any
+class NmapCommand(TypedDict):
+    command: list[str]
     ips_file: str
     output_base: str
-    log_path: Optional[str]
+
+
+class NetexecCommand(TypedDict):
+    command: list[str]
+    ips_file: str
+    log_path: str
     relay_path: Optional[str]
+
+
+class MsfSearchCommand(TypedDict):
+    command: Optional[str]
     search_term: str
     has_metasploit: bool
     metasploit_names: list[str]
@@ -1621,10 +1632,10 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         udp: bool = False,
         nse_option: Optional[str] = None,
         use_sudo: bool = False,
-    ) -> GeneratedCommand:
+    ) -> NmapCommand:
         """Build an nmap command for a finding's hosts/ports (does not run it)."""
         return cast(
-            "GeneratedCommand",
+            "NmapCommand",
             tool_generate_nmap_cmd(
                 finding_id,
                 udp=udp,
@@ -1635,17 +1646,17 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         )
 
     @mcp.tool()
-    def generate_netexec_cmd(finding_id: int, protocol: str) -> GeneratedCommand:
+    def generate_netexec_cmd(finding_id: int, protocol: str) -> NetexecCommand:
         """Build a netexec command for a finding's hosts (does not run it)."""
         return cast(
-            "GeneratedCommand",
+            "NetexecCommand",
             tool_generate_netexec_cmd(finding_id, protocol, config=cfg),
         )
 
     @mcp.tool()
-    def generate_msf_search(finding_id: int) -> GeneratedCommand:
+    def generate_msf_search(finding_id: int) -> MsfSearchCommand:
         """Build an msfconsole search command for a finding's Metasploit modules."""
-        return cast("GeneratedCommand", tool_generate_msf_search(finding_id))
+        return cast("MsfSearchCommand", tool_generate_msf_search(finding_id))
 
     # --- Resources (always on; operator-pinnable context) ---
     @mcp.resource("cerno://scans", mime_type="application/json")
