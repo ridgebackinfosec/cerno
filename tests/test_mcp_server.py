@@ -389,6 +389,20 @@ def test_check_tools_shape():
 
 
 @pytest.mark.integration
+def test_check_tools_installed_on_path_without_version():
+    """A tool on PATH whose --version can't be parsed is still installed:true."""
+    from unittest.mock import patch
+
+    with patch("cerno_pkg.ops.resolve_cmd", return_value="/usr/bin/x"):
+        with patch("cerno_pkg.ops.get_tool_version", return_value=None):
+            result = mcp.tool_check_tools()
+
+    for name, entry in result.items():
+        assert entry["installed"] is True, name
+        assert entry["version"] is None, name
+
+
+@pytest.mark.integration
 def test_list_executions_and_artifacts(seeded):
     # Produce one execution to list
     out = mcp.tool_execute_command(
