@@ -16,6 +16,7 @@ import asyncio
 import sqlite3
 
 import pytest
+from mcp.shared.memory import create_connected_server_and_client_session
 
 import cerno_pkg.database as database
 from cerno_pkg.config import CernoConfig
@@ -173,6 +174,23 @@ def _run(coro):
     return asyncio.new_event_loop().run_until_complete(coro)
 
 
+def _client_call_tools(server, calls: dict[str, dict]) -> dict:
+    """Call tools through a real in-memory client session.
+
+    Unlike ``FastMCP.call_tool()``, this goes through the low-level server's
+    request handler, which validates ``structuredContent`` against each tool's
+    output schema — the path real MCP clients (e.g. Claude CLI) hit.
+    """
+
+    async def go():
+        async with create_connected_server_and_client_session(
+            server._mcp_server
+        ) as session:
+            return {name: await session.call_tool(name, kw) for name, kw in calls.items()}
+
+    return _run(go())
+
+
 # ---------------------------------------------------------------------------
 # Inventory tripwire
 # ---------------------------------------------------------------------------
@@ -237,9 +255,40 @@ def test_tools_callable_through_server(contract):
     # execute_command (subprocess/async) and import_nessus (needs a file) are
     # covered by the inventory test + test_mcp_server.py; exercising them here
     # would add platform/side-effect flakiness.
-    for name, kwargs in args.items():
-        result = _run(s.call_tool(name, kwargs))
-        assert result is not None, f"{name} returned nothing"
+    for name, result in _client_call_tools(s, args).items():
+        detail = result.content[0].text if result.content else ""
+        assert not result.isError, f"{name} failed via MCP client: {detail}"
+
+
+@pytest.mark.integration
+def test_generate_tools_structured_output(contract):
+    """Each generate_* tool returns exactly its own keys, with no nulls for
+    required fields (regression: a shared total=False TypedDict made FastMCP
+    emit absent keys as null, failing output validation)."""
+    s, fid = contract["server"], contract["finding_id"]
+    results = _client_call_tools(
+        s,
+        {
+            "generate_nmap_cmd": {"finding_id": fid, "nse_option": "smb-security-mode"},
+            "generate_netexec_cmd": {"finding_id": fid, "protocol": "smb"},
+            "generate_msf_search": {"finding_id": fid},
+        },
+    )
+    nmap = results["generate_nmap_cmd"].structuredContent
+    assert set(nmap) == {"command", "ips_file", "output_base"}
+    assert isinstance(nmap["command"], list) and "nmap" in nmap["command"]
+    # Bare NSE script name must arrive with its --script flag (runnable argv).
+    assert "--script=smb-security-mode" in nmap["command"]
+    assert "smb-security-mode" not in nmap["command"]
+    assert nmap["ips_file"].endswith("targets.txt")
+
+    nxc = results["generate_netexec_cmd"].structuredContent
+    assert set(nxc) == {"command", "ips_file", "log_path", "relay_path"}
+    assert isinstance(nxc["command"], list) and isinstance(nxc["log_path"], str)
+
+    msf = results["generate_msf_search"].structuredContent
+    assert set(msf) == {"command", "search_term", "has_metasploit", "metasploit_names"}
+    assert msf["search_term"] == "ms17_010" and msf["has_metasploit"] is True
 
 
 # ---------------------------------------------------------------------------

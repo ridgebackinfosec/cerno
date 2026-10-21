@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.4] - 2026-10-21
+
+### Fixed
+- MCP `generate_nmap_cmd` put NSE script names into the command without the `--script` flag (e.g. `nmap -A smb-security-mode -iL ...`), so nmap treated them as targets and the command didn't run. `nse_option` now accepts bare script names or categories (comma- or space-separated), `--script=X` or `--script X`, and always produces a single `--script=a,b` argument. Other flags in `nse_option` are rejected with an error (`tools.py:normalize_nse_option()`, used by `build_nmap_cmd()`).
+- MCP `execute_command` ran nmap and logged the execution but never registered the `-oA` output files as artifacts, so `get_finding_artifacts` and `list_artifacts` stayed empty, and `host_count`/`ports` were never recorded. It now registers the nmap `-oA` outputs (via `ops.log_artifacts_for_nmap`) and records `host_count` (from `-iL`) and `ports` (from `-p`), even when no hosts were up. To stop a re-run from silently overwriting a prior run's output, `execute_command` refuses to run when the `-oA` files already exist, and each `generate_nmap_cmd`/`generate_netexec_cmd` call now writes to a unique per-call output directory (`_mcp/<finding_id>/run-XXXXXX/`).
+
+## [1.12.3] - 2026-10-20
+
+### Fixed
+- MCP command builders `generate_nmap_cmd`, `generate_netexec_cmd` and `generate_msf_search` failed on every call from real MCP clients (e.g. Claude CLI) with `Output validation error: None is not of type 'string'`. The three tools shared one output type covering all their fields, and FastMCP sent each tool's missing fields as `null`, which the schema rejected. Each tool now has its own output schema (`NmapCommand`, `NetexecCommand`, `MsfSearchCommand` in `mcp_server/server.py`).
+- MCP `list_artifacts` / `get_finding_artifacts` no longer fail output validation when an artifact has no artifact type (`ArtifactInfo.artifact_type` is now nullable).
+
 ## [1.12.2] - 2026-10-19
 
 ### Added

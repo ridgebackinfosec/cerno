@@ -5,6 +5,7 @@ Adapter functions are exercised directly with the in-memory ``temp_db`` fixture
 """
 
 import asyncio
+from pathlib import Path
 
 import pytest
 
@@ -179,6 +180,16 @@ def test_generate_nmap_cmd_writes_targets(seeded, tmp_path):
 
 
 @pytest.mark.integration
+def test_generate_nmap_cmd_prefixes_bare_nse_script(seeded, tmp_path):
+    cfg = CernoConfig(results_root=str(tmp_path))
+    out = mcp.tool_generate_nmap_cmd(
+        seeded["f1"], nse_option="smb-security-mode", config=cfg, conn=seeded["conn"]
+    )
+    assert "--script=smb-security-mode" in out["command"]
+    assert "smb-security-mode" not in out["command"]
+
+
+@pytest.mark.integration
 def test_generate_netexec_cmd(seeded, tmp_path):
     cfg = CernoConfig(results_root=str(tmp_path))
     out = mcp.tool_generate_netexec_cmd(
@@ -256,6 +267,75 @@ def test_execute_command_captures_and_logs(seeded):
 def test_execute_command_empty_raises(seeded):
     with pytest.raises(ValueError):
         mcp.tool_execute_command([], conn=seeded["conn"])
+
+
+# Command that writes the three nmap -oA outputs to sys.argv[2] (= the -oA base),
+# so a run registers artifacts even with no live hosts. python sets
+# sys.argv = ['-c', '-oA', <base>].
+_WRITE_OA = (
+    "import pathlib,sys;"
+    "[pathlib.Path(sys.argv[2]+e).write_text('x') "
+    "for e in ('.nmap','.gnmap','.xml')]"
+)
+
+
+@pytest.mark.integration
+def test_execute_command_registers_nmap_artifacts_zero_hosts(seeded, tmp_path):
+    base = tmp_path / "scan"
+    out = mcp.tool_execute_command(
+        ["python3", "-c", _WRITE_OA, "-oA", str(base)],
+        tool_name="nmap",
+        finding_id=seeded["f1"],
+        config=CernoConfig(mcp_exec_allowlist=["python3"]),
+        conn=seeded["conn"],
+    )
+    assert out["exit_code"] == 0
+    # Registered against the finding, retrievable even though no hosts were up.
+    arts = mcp.tool_get_finding_artifacts(seeded["f1"], conn=seeded["conn"])
+    exts = {Path(a["artifact_path"]).suffix for a in arts}
+    assert exts == {".nmap", ".gnmap", ".xml"}
+    # Same rows via list_artifacts, filtered by execution.
+    listed = mcp.tool_list_artifacts(
+        execution_id=out["execution_id"], conn=seeded["conn"]
+    )
+    assert {Path(a["artifact_path"]).suffix for a in listed} == exts
+
+
+@pytest.mark.integration
+def test_execute_command_records_host_count_and_ports(seeded, tmp_path):
+    ips = tmp_path / "targets.txt"
+    ips.write_text("10.0.0.1\n10.0.0.2\n10.0.0.3\n")
+    base = tmp_path / "scan"
+    out = mcp.tool_execute_command(
+        ["python3", "-c", _WRITE_OA, "-oA", str(base), "-iL", str(ips), "-p", "445"],
+        tool_name="nmap",
+        finding_id=seeded["f1"],
+        config=CernoConfig(mcp_exec_allowlist=["python3"]),
+        conn=seeded["conn"],
+    )
+    row = (
+        seeded["conn"]
+        .execute(
+            "SELECT host_count, ports FROM tool_executions WHERE execution_id = ?",
+            (out["execution_id"],),
+        )
+        .fetchone()
+    )
+    assert row["host_count"] == 3
+    assert row["ports"] == "445"
+
+
+@pytest.mark.integration
+def test_execute_command_refuses_to_overwrite_existing_output(seeded, tmp_path):
+    base = tmp_path / "scan"
+    argv = ["python3", "-c", _WRITE_OA, "-oA", str(base)]
+    cfg = CernoConfig(mcp_exec_allowlist=["python3"])
+    mcp.tool_execute_command(argv, tool_name="nmap", config=cfg, conn=seeded["conn"])
+    # Second run with the same -oA base would clobber -> refuse.
+    with pytest.raises(ValueError, match="generate_nmap_cmd"):
+        mcp.tool_execute_command(
+            argv, tool_name="nmap", config=cfg, conn=seeded["conn"]
+        )
 
 
 # ---------------------------------------------------------------------------

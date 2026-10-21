@@ -24,6 +24,7 @@ import dataclasses
 import fnmatch
 import json
 import sqlite3
+import tempfile
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -43,9 +44,11 @@ from ..logging_setup import log_error, log_info
 _VALID_REVIEW_STATES = set(REVIEW_STATES)
 
 
-# Result shapes for the core read tools. total=False keeps FastMCP's generated
-# output schema lenient (no key is required), so structured output never fails
-# validation when an optional column is absent.
+# Result shapes for the core read tools. Note: FastMCP serializes every
+# declared key into structuredContent, emitting absent keys as null, and then
+# validates against the generated schema. So any key an adapter may omit, or a
+# DB column may leave NULL, must be typed Optional[...] -- and a TypedDict must
+# not be shared between tools that return different key sets.
 class ScanInfo(TypedDict, total=False):
     scan_id: int
     scan_name: str
@@ -111,7 +114,7 @@ class ArtifactInfo(TypedDict, total=False):
     artifact_id: int
     execution_id: Optional[int]
     artifact_path: str
-    artifact_type: str
+    artifact_type: Optional[str]
     file_extension: Optional[str]
     file_size_bytes: Optional[int]
     file_hash: Optional[str]
@@ -127,12 +130,21 @@ class CveAffected(TypedDict, total=False):
     hosts: list[str]
 
 
-class GeneratedCommand(TypedDict, total=False):
-    command: Any
+class NmapCommand(TypedDict):
+    command: list[str]
     ips_file: str
     output_base: str
-    log_path: Optional[str]
+
+
+class NetexecCommand(TypedDict):
+    command: list[str]
+    ips_file: str
+    log_path: str
     relay_path: Optional[str]
+
+
+class MsfSearchCommand(TypedDict):
+    command: Optional[str]
     search_term: str
     has_metasploit: bool
     metasploit_names: list[str]
@@ -873,12 +885,17 @@ def tool_list_nxc_credentials(
 
 
 def _targets_dir(finding_id: int, config: Optional[CernoConfig]) -> Path:
-    """Directory under results_root where a finding's target/output files live."""
+    """Fresh, unique per-call run directory for a finding's target/output files.
+
+    Each call creates a new ``_mcp/<finding_id>/run-XXXXXX/`` directory so that
+    successive ``generate_*`` calls (and the runs built from them) never share an
+    output base and cannot clobber each other on disk.
+    """
     from ..constants import get_results_root
 
-    d = get_results_root(config) / "_mcp" / str(finding_id)
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+    parent = get_results_root(config) / "_mcp" / str(finding_id)
+    parent.mkdir(parents=True, exist_ok=True)
+    return Path(tempfile.mkdtemp(prefix="run-", dir=parent))
 
 
 def _write_targets_file(
@@ -1151,6 +1168,41 @@ def _check_exec_policy(
     return target
 
 
+def _flag_value(command: Sequence[Any], flag: str) -> Optional[str]:
+    """Return the token following ``flag`` in ``command``, or None."""
+    argv = [str(x) for x in command]
+    for i, tok in enumerate(argv):
+        if tok == flag and i + 1 < len(argv):
+            return argv[i + 1]
+    return None
+
+
+def _parse_nmap_output(
+    command: Sequence[Any],
+) -> tuple[Optional[Path], Optional[int], Optional[str]]:
+    """Extract nmap output metadata from an argv list.
+
+    Returns ``(oabase, host_count, ports)``. ``oabase`` is the ``-oA`` base path
+    (the signal that this is an nmap run whose outputs should be registered);
+    ``host_count`` is the non-empty line count of the ``-iL`` targets file when
+    readable; ``ports`` is the ``-p`` value. All are None when absent.
+    """
+    oa = _flag_value(command, "-oA")
+    if oa is None:
+        return None, None, None
+
+    host_count: Optional[int] = None
+    ips = _flag_value(command, "-iL")
+    if ips:
+        try:
+            with open(ips, encoding="utf-8") as fh:
+                host_count = sum(1 for line in fh if line.strip())
+        except OSError:
+            host_count = None
+
+    return Path(oa), host_count, _flag_value(command, "-p")
+
+
 def tool_execute_command(
     command: list[str],
     *,
@@ -1170,8 +1222,19 @@ def tool_execute_command(
     is clamped to [1, 3600] seconds. Output is captured and returned; nothing is
     written to stdout. The run is recorded in ``tool_executions`` via
     ``ops.log_tool_execution``, attributed to ``finding_id`` when supplied.
+
+    For an nmap command (``-oA <base>`` present), the ``-oA`` output files are
+    registered as artifacts after the run (even when no hosts were up), and
+    ``host_count`` (from ``-iL``) / ``ports`` (from ``-p``) are recorded. To avoid
+    silently overwriting a prior logged run, the call is refused if those output
+    files already exist; call ``generate_nmap_cmd`` for a fresh output path.
     """
-    from ..ops import ProxyConfig, log_tool_execution, run_command_captured
+    from ..ops import (
+        ProxyConfig,
+        log_artifacts_for_nmap,
+        log_tool_execution,
+        run_command_captured,
+    )
 
     if not command:
         raise ValueError("command must be a non-empty list of arguments")
@@ -1181,6 +1244,20 @@ def tool_execute_command(
     _check_exec_policy(command, cfg.mcp_exec_allowlist, cfg.mcp_exec_denylist)
 
     timeout = max(1, min(int(timeout), _MAX_EXEC_TIMEOUT))
+
+    oabase, host_count, ports = _parse_nmap_output(command)
+    if oabase is not None:
+        existing = [
+            str(p)
+            for ext in (".xml", ".nmap", ".gnmap")
+            if (p := Path(str(oabase) + ext)).exists()
+        ]
+        if existing:
+            raise ValueError(
+                f"nmap output already exists at {oabase!r} ({', '.join(existing)}); "
+                "refusing to overwrite a prior run. Call generate_nmap_cmd to get a "
+                "fresh output path."
+            )
 
     proxy = None
     if use_proxy and cfg.proxychains_enabled:
@@ -1201,9 +1278,13 @@ def tool_execute_command(
             tool_name,
             command_text,
             meta,
+            host_count=host_count,
+            ports=ports,
             finding_id=finding_id,
             conn=c,
         )
+        if oabase is not None and execution_id is not None:
+            log_artifacts_for_nmap(execution_id, oabase, conn=c)
 
     return {
         "exit_code": meta.exit_code,
@@ -1621,10 +1702,15 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         udp: bool = False,
         nse_option: Optional[str] = None,
         use_sudo: bool = False,
-    ) -> GeneratedCommand:
-        """Build an nmap command for a finding's hosts/ports (does not run it)."""
+    ) -> NmapCommand:
+        """Build an nmap command for a finding's hosts/ports (does not run it).
+
+        nse_option: NSE script names or categories, comma-separated (e.g.
+        "smb-security-mode,smb2-security-mode" or "vuln"); a "--script=" prefix
+        is optional. Other nmap flags are rejected.
+        """
         return cast(
-            "GeneratedCommand",
+            "NmapCommand",
             tool_generate_nmap_cmd(
                 finding_id,
                 udp=udp,
@@ -1635,17 +1721,17 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         )
 
     @mcp.tool()
-    def generate_netexec_cmd(finding_id: int, protocol: str) -> GeneratedCommand:
+    def generate_netexec_cmd(finding_id: int, protocol: str) -> NetexecCommand:
         """Build a netexec command for a finding's hosts (does not run it)."""
         return cast(
-            "GeneratedCommand",
+            "NetexecCommand",
             tool_generate_netexec_cmd(finding_id, protocol, config=cfg),
         )
 
     @mcp.tool()
-    def generate_msf_search(finding_id: int) -> GeneratedCommand:
+    def generate_msf_search(finding_id: int) -> MsfSearchCommand:
         """Build an msfconsole search command for a finding's Metasploit modules."""
-        return cast("GeneratedCommand", tool_generate_msf_search(finding_id))
+        return cast("MsfSearchCommand", tool_generate_msf_search(finding_id))
 
     # --- Resources (always on; operator-pinnable context) ---
     @mcp.resource("cerno://scans", mime_type="application/json")

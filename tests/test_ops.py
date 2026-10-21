@@ -890,6 +890,38 @@ class TestBuildNmapCmd:
         cmd = build_nmap_cmd(False, None, ips, "", False, out)
         assert "-p" not in cmd
 
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "nse_option, expected",
+        [
+            ("smb-security-mode", "--script=smb-security-mode"),
+            ("smb-security-mode,smb2-security-mode", "--script=smb-security-mode,smb2-security-mode"),
+            ("ssl-cert ssl-date", "--script=ssl-cert,ssl-date"),
+            ("--script ssl-cert", "--script=ssl-cert"),
+            ("--script=vuln", "--script=vuln"),
+            ("--script=a,b --script c a", "--script=a,b,c"),
+        ],
+    )
+    def test_nse_option_gets_single_script_flag(self, tmp_path, nse_option, expected):
+        """Bare NSE names/lists get the --script= prefix, as one argv token before -iL."""
+        ips = tmp_path / "ips.txt"
+        cmd = build_nmap_cmd(False, nse_option, ips, "445", False, tmp_path / "out")
+        assert cmd[2] == expected
+        assert cmd[3] == "-iL"
+        assert len([t for t in cmd if "script" in t]) == 1
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("nse_option", [None, "", "   ", "--script="])
+    def test_empty_nse_option_adds_no_flag(self, tmp_path, nse_option):
+        cmd = build_nmap_cmd(False, nse_option, tmp_path / "ips.txt", "", False, tmp_path / "out")
+        assert not any("script" in t for t in cmd)
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("nse_option", ["--script-args=user=x", "smb-os-discovery -oN /tmp/x", "-sV"])
+    def test_nse_option_rejects_other_flags(self, tmp_path, nse_option):
+        with pytest.raises(ValueError, match="nse_option"):
+            build_nmap_cmd(False, nse_option, tmp_path / "ips.txt", "", False, tmp_path / "out")
+
 
 class TestRunCommandWithProgressProxy:
     """Tests for proxy wrapping in run_command_with_progress."""

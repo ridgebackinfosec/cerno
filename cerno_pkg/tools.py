@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -366,6 +367,47 @@ def configure_nmap_options(config: Optional["CernoConfig"] = None) -> Optional[t
 
 # ========== Command Builders ==========
 
+def normalize_nse_option(nse_option: Optional[str]) -> str:
+    """
+    Normalize an NSE selection into a single ``--script=...`` argv token.
+
+    Accepts bare script names or categories (comma- or whitespace-separated),
+    ``--script=X`` and ``--script X``, in any mix. Duplicates are dropped,
+    keeping the first occurrence's order.
+
+    Args:
+        nse_option: NSE selection, e.g. ``"smb-security-mode,smb2-security-mode"``,
+            ``"vuln"`` or ``"--script=ssl-cert"``; None/empty for no scripts
+
+    Returns:
+        ``"--script=<s1>,<s2>,..."``, or ``""`` when no scripts are given
+
+    Raises:
+        ValueError: If the value contains any flag other than ``--script``
+    """
+    tokens = shlex.split(nse_option or "")
+    scripts: list[str] = []
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        if token.startswith("--script="):
+            value = token[len("--script="):]
+        elif token == "--script":
+            i += 1
+            value = tokens[i] if i < len(tokens) else ""
+        elif token.startswith("-"):
+            raise ValueError(
+                f"nse_option accepts only NSE script names/categories or --script; "
+                f"got flag {token!r}"
+            )
+        else:
+            value = token
+        scripts.extend(s.strip() for s in value.split(",") if s.strip())
+        i += 1
+    unique = list(dict.fromkeys(scripts))
+    return f"--script={','.join(unique)}" if unique else ""
+
+
 def build_nmap_cmd(
     udp: bool,
     nse_option: Optional[str],
@@ -380,7 +422,8 @@ def build_nmap_cmd(
 
     Args:
         udp: Whether to perform UDP scanning
-        nse_option: NSE script option string (e.g., "--script=...")
+        nse_option: NSE scripts, normalized by normalize_nse_option()
+            (e.g., "smb-security-mode" or "--script=a,b")
         ips_file: Path to file containing IP addresses
         ports_str: Port specification string
         use_sudo: Whether to run with sudo (ignored when use_proxy=True)
@@ -403,8 +446,9 @@ def build_nmap_cmd(
     if use_proxy:
         cmd.append("-Pn")
 
-    if nse_option:
-        cmd.append(nse_option)
+    nse = normalize_nse_option(nse_option)
+    if nse:
+        cmd.append(nse)
 
     cmd.extend(["-iL", str(ips_file)])
 
