@@ -239,7 +239,11 @@ cerno_pkg/
   │                        #   setsid/ionice/time unwrapped (_EXEC_WRAPPERS), chain checked
   │                        #   against mcp_exec_denylist then target against mcp_exec_allowlist
   │                        #   via _check_exec_policy, timeout clamped, optional
-  │                        #   finding_id threaded to ops.log_tool_execution for attribution);
+  │                        #   finding_id threaded to ops.log_tool_execution for attribution;
+  │                        #   nmap runs (-oA present) register -oA artifacts via
+  │                        #   ops.log_artifacts_for_nmap + record host_count/ports, and refuse
+  │                        #   to overwrite existing -oA output; generate_* write unique
+  │                        #   _mcp/<fid>/run-XXXX/ dirs so runs don't clobber);
   │                        #   set_review_state/import_nessus gated by mcp_allow_mutations.
   │                        #   Core read tools declare TypedDict output schemas. stdout is the
   │                        #   JSON-RPC channel, so adapters never print (exec uses

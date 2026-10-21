@@ -269,7 +269,7 @@ def test_generate_tools_structured_output(contract):
     results = _client_call_tools(
         s,
         {
-            "generate_nmap_cmd": {"finding_id": fid},
+            "generate_nmap_cmd": {"finding_id": fid, "nse_option": "smb-security-mode"},
             "generate_netexec_cmd": {"finding_id": fid, "protocol": "smb"},
             "generate_msf_search": {"finding_id": fid},
         },
@@ -277,6 +277,9 @@ def test_generate_tools_structured_output(contract):
     nmap = results["generate_nmap_cmd"].structuredContent
     assert set(nmap) == {"command", "ips_file", "output_base"}
     assert isinstance(nmap["command"], list) and "nmap" in nmap["command"]
+    # Bare NSE script name must arrive with its --script flag (runnable argv).
+    assert "--script=smb-security-mode" in nmap["command"]
+    assert "smb-security-mode" not in nmap["command"]
     assert nmap["ips_file"].endswith("targets.txt")
 
     nxc = results["generate_netexec_cmd"].structuredContent

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.4] - 2026-10-21
+
+### Fixed
+- MCP `generate_nmap_cmd` put NSE script names into the command without the `--script` flag (e.g. `nmap -A smb-security-mode -iL ...`), so nmap treated them as targets and the command didn't run. `nse_option` now accepts bare script names or categories (comma- or space-separated), `--script=X` or `--script X`, and always produces a single `--script=a,b` argument. Other flags in `nse_option` are rejected with an error (`tools.py:normalize_nse_option()`, used by `build_nmap_cmd()`).
+- MCP `execute_command` ran nmap and logged the execution but never registered the `-oA` output files as artifacts, so `get_finding_artifacts` and `list_artifacts` stayed empty, and `host_count`/`ports` were never recorded. It now registers the nmap `-oA` outputs (via `ops.log_artifacts_for_nmap`) and records `host_count` (from `-iL`) and `ports` (from `-p`), even when no hosts were up. To stop a re-run from silently overwriting a prior run's output, `execute_command` refuses to run when the `-oA` files already exist, and each `generate_nmap_cmd`/`generate_netexec_cmd` call now writes to a unique per-call output directory (`_mcp/<finding_id>/run-XXXXXX/`).
+
 ## [1.12.3] - 2026-10-20
 
 ### Fixed
