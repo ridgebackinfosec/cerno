@@ -199,6 +199,26 @@ def test_generate_netexec_cmd(seeded, tmp_path):
     assert out["relay_path"]  # smb produces a relay list path
 
 
+@pytest.mark.integration
+def test_generate_netexec_cmd_rejects_invalid_protocol(seeded, tmp_path):
+    cfg = CernoConfig(results_root=str(tmp_path))
+    with pytest.raises(ValueError, match="protocol"):
+        mcp.tool_generate_netexec_cmd(
+            seeded["f1"], "bogus_proto", config=cfg, conn=seeded["conn"]
+        )
+
+
+@pytest.mark.integration
+def test_generate_netexec_cmd_normalizes_protocol_case(seeded, tmp_path):
+    cfg = CernoConfig(results_root=str(tmp_path))
+    out = mcp.tool_generate_netexec_cmd(
+        seeded["f1"], "SSH", config=cfg, conn=seeded["conn"]
+    )
+    # Accepted case-insensitively and lowercased for the command.
+    assert "ssh" in out["command"]
+    assert "SSH" not in out["command"]
+
+
 # ---------------------------------------------------------------------------
 # Mutations
 # ---------------------------------------------------------------------------
@@ -336,6 +356,46 @@ def test_execute_command_refuses_to_overwrite_existing_output(seeded, tmp_path):
         mcp.tool_execute_command(
             argv, tool_name="nmap", config=cfg, conn=seeded["conn"]
         )
+
+
+# Command that writes a netexec-style --log file to sys.argv[2] (= the --log path).
+_WRITE_LOG = (
+    "import pathlib,sys;pathlib.Path(sys.argv[2]).write_text('creds-here')"
+)
+
+
+@pytest.mark.integration
+def test_execute_command_registers_log_artifact(seeded, tmp_path):
+    logp = tmp_path / "scan.nxc.ssh.log"
+    out = mcp.tool_execute_command(
+        ["python3", "-c", _WRITE_LOG, "--log", str(logp)],
+        tool_name="netexec",
+        finding_id=seeded["f1"],
+        config=CernoConfig(mcp_exec_allowlist=["python3"]),
+        conn=seeded["conn"],
+    )
+    arts = mcp.tool_get_finding_artifacts(seeded["f1"], conn=seeded["conn"])
+    assert len(arts) == 1
+    assert arts[0]["artifact_type"] == "log"
+    listed = mcp.tool_list_artifacts(
+        execution_id=out["execution_id"], conn=seeded["conn"]
+    )
+    assert [a["artifact_id"] for a in listed] == [arts[0]["artifact_id"]]
+    body = mcp.tool_read_artifact(arts[0]["artifact_id"], conn=seeded["conn"])
+    assert body["content"] == "creds-here"
+
+
+@pytest.mark.integration
+def test_execute_command_no_output_flag_registers_nothing(seeded):
+    out = mcp.tool_execute_command(
+        ["python3", "-c", "print('x')"],
+        tool_name="probe",
+        finding_id=seeded["f1"],
+        config=CernoConfig(mcp_exec_allowlist=["python3"]),
+        conn=seeded["conn"],
+    )
+    assert out["exit_code"] == 0
+    assert mcp.tool_get_finding_artifacts(seeded["f1"], conn=seeded["conn"]) == []
 
 
 # ---------------------------------------------------------------------------

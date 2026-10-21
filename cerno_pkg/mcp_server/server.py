@@ -941,10 +941,22 @@ def tool_generate_netexec_cmd(
     config: Optional[CernoConfig] = None,
     conn: Optional[sqlite3.Connection] = None,
 ) -> dict:
-    """Build (but do not run) a netexec command targeting a finding's hosts."""
+    """Build (but do not run) a netexec command targeting a finding's hosts.
+
+    ``protocol`` is case-insensitive and normalized to lowercase; it must be one
+    of ``constants.NETEXEC_PROTOCOLS`` (the source of truth), else ValueError.
+    """
+    from ..constants import NETEXEC_PROTOCOLS
     from ..models import Finding
     from ..ops import resolve_cmd
     from ..tools import build_netexec_cmd
+
+    proto = protocol.strip().lower()
+    if proto not in NETEXEC_PROTOCOLS:
+        raise ValueError(
+            f"Unknown netexec protocol {protocol!r}; valid protocols: "
+            f"{', '.join(NETEXEC_PROTOCOLS)}"
+        )
 
     with _db(conn) as c:
         finding = Finding.get_by_id(finding_id, c)
@@ -955,7 +967,7 @@ def tool_generate_netexec_cmd(
     exec_bin = resolve_cmd(["nxc", "netexec"]) or "nxc"
     ips_file, output_base = _write_targets_file(finding_id, hosts, config)
     cmd, log_path, relay_path = build_netexec_cmd(
-        exec_bin, protocol, ips_file, output_base
+        exec_bin, proto, ips_file, output_base
     )
     return {
         "command": cmd,
@@ -1205,6 +1217,11 @@ def _parse_nmap_output(
     return Path(oa), host_count, _flag_value(command, "-p")
 
 
+def _parse_log_flag(command: Sequence[Any]) -> Optional[str]:
+    """Return the ``--log <path>`` value from an argv list (e.g. netexec), or None."""
+    return _flag_value(command, "--log")
+
+
 def tool_execute_command(
     command: list[str],
     *,
@@ -1233,6 +1250,7 @@ def tool_execute_command(
     """
     from ..ops import (
         ProxyConfig,
+        log_artifact,
         log_artifacts_for_nmap,
         log_tool_execution,
         run_command_captured,
@@ -1287,6 +1305,10 @@ def tool_execute_command(
         )
         if oabase is not None and execution_id is not None:
             log_artifacts_for_nmap(execution_id, oabase, conn=c)
+        # Generic single-file outputs (e.g. netexec --log) → 'log' artifact type.
+        log_file = _parse_log_flag(command)
+        if log_file and execution_id is not None and Path(log_file).exists():
+            log_artifact(execution_id, Path(log_file), "log", conn=c)
 
     return {
         "exit_code": meta.exit_code,
@@ -1724,7 +1746,11 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
 
     @mcp.tool()
     def generate_netexec_cmd(finding_id: int, protocol: str) -> NetexecCommand:
-        """Build a netexec command for a finding's hosts (does not run it)."""
+        """Build a netexec command for a finding's hosts (does not run it).
+
+        protocol is case-insensitive; valid values: mssql, smb, ftp, ldap, nfs,
+        rdp, ssh, vnc, winrm, wmi. An unknown protocol is rejected with an error.
+        """
         return cast(
             "NetexecCommand",
             tool_generate_netexec_cmd(finding_id, protocol, config=cfg),
