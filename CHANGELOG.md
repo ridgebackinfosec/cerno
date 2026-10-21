@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.6] - 2026-10-21
+
+### Fixed
+- MCP `generate_netexec_cmd` accepted any `protocol` string and emitted an unrunnable command (e.g. `nxc bogus_proto ...`). It now validates against `constants.NETEXEC_PROTOCOLS` (case-insensitive, normalized to lowercase) and raises a clear error listing the valid protocols.
+- MCP `execute_command` only registered nmap `-oA` outputs as artifacts; a netexec run's `--log` file was never captured, so `get_finding_artifacts`/`list_artifacts` stayed empty and `read_artifact` couldn't retrieve it. Post-run registration now also records a `--log <path>` file as a `log` artifact (nmap handling unchanged). `host_count`/`ports` remain null for non-nmap runs (no equivalent flags to parse).
+
 ## [1.12.5] - 2026-10-21
 
 ### Fixed
