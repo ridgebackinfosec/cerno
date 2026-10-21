@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.5] - 2026-10-21
+
+### Fixed
+- MCP `check_tools` reported installed tools (`msfconsole`, `proxychains4`) as `installed:false` despite being on PATH, disagreeing with the TUI. Two causes: `ops.get_tool_version()` ignored stderr on a zero exit (e.g. `msfconsole --version` exits 0 and prints the version only to stderr), so it now always parses combined stdout+stderr; and `check_tools` tied install status to version parsing, so it now derives `installed` from PATH presence (`ops.resolve_cmd`) with `version` best-effort, matching the TUI's availability check.
+
 ## [1.12.4] - 2026-10-21
 
 ### Fixed

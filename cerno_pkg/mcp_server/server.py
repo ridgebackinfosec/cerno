@@ -572,7 +572,7 @@ def tool_list_hosts(
 
 def tool_check_tools() -> dict:
     """Report which security tools are installed and their detected versions."""
-    from ..ops import get_tool_version
+    from ..ops import get_tool_version, resolve_cmd
 
     specs = {
         "nmap": ["nmap"],
@@ -582,8 +582,10 @@ def tool_check_tools() -> dict:
     }
     result: dict[str, dict] = {}
     for name, candidates in specs.items():
+        # Install status is PATH presence (matches the TUI); version is best-effort.
+        installed = resolve_cmd(candidates) is not None
         version = get_tool_version(name, candidates)
-        result[name] = {"installed": version is not None, "version": version}
+        result[name] = {"installed": installed, "version": version}
     return result
 
 

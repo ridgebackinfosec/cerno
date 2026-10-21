@@ -459,11 +459,9 @@ def get_tool_version(
                 check=False,
             )
 
-            if result.returncode != 0:
-                # Some tools output version to stderr
-                output = result.stdout + result.stderr
-            else:
-                output = result.stdout
+            # Always parse combined output: some tools (e.g. msfconsole) exit 0
+            # but print the version only to stderr.
+            output = (result.stdout or "") + (result.stderr or "")
 
             # Parse version from output using regex patterns
             # Pattern 1: "Nmap version 7.92" or "version 1.2.1"

@@ -682,6 +682,22 @@ class TestCommandAvailability:
 
         assert version == "4.5.6"
 
+    def test_get_tool_version_stderr_on_zero_exit(self):
+        """Version on stderr with empty stdout and exit 0 (e.g. msfconsole)."""
+        from cerno_pkg.ops import get_tool_version
+        from unittest.mock import Mock, patch
+
+        mock_result = Mock()
+        mock_result.returncode = 0  # success, but version only on stderr
+        mock_result.stdout = ""
+        mock_result.stderr = "Framework Version: 6.4.135-dev\n"
+
+        with patch('subprocess.run', return_value=mock_result):
+            with patch('shutil.which', return_value='/usr/bin/msfconsole'):
+                version = get_tool_version("msfconsole", ["msfconsole"])
+
+        assert version == "6.4.135"
+
 
 class TestGetInterfaceIp:
     """Tests for get_interface_ip()."""
