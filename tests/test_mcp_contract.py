@@ -51,6 +51,7 @@ EXPECTED_TOOLS = {
     "top_hosts",
     "get_capabilities",
     "get_finding_artifacts",
+    "get_finding_verdict",
     # netexec (always on)
     "get_host_nxc",
     "list_nxc_credentials",
@@ -62,6 +63,8 @@ EXPECTED_TOOLS = {
     "execute_command",  # mcp_allow_execution
     "set_review_state",
     "import_nessus",  # mcp_allow_mutations
+    "ingest_results",  # mcp_allow_mutations
+    "set_finding_verdict",  # mcp_allow_mutations
 }
 EXPECTED_STATIC_RESOURCES = {"cerno://scans", "cerno://config"}
 EXPECTED_RESOURCE_TEMPLATES = {
@@ -69,6 +72,8 @@ EXPECTED_RESOURCE_TEMPLATES = {
     "cerno://scan/{scan_id}/cves",
     "cerno://finding/{finding_id}/output",
     "cerno://finding/{finding_id}/workflow",
+    "cerno://finding/{finding_id}/verdict",
+    "cerno://finding/{finding_id}/results",
     "cerno://host/{host_ip}/nxc",
 }
 EXPECTED_PROMPTS = {"triage_finding", "exploit_plan", "triage_scope"}
@@ -97,6 +102,20 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     conn.executemany(
         "INSERT INTO artifact_types (type_name, file_extension, description) VALUES (?, ?, ?)",
         [("nmap_xml", ".xml", "Nmap XML output"), ("log", ".log", "Tool log")],
+    )
+    conn.executemany(
+        "INSERT INTO verdict_types (label, description) VALUES (?, ?)",
+        [("confirmed", "true positive"), ("false_positive", "false positive"),
+         ("unable", "unable to verify")],
+    )
+    conn.executemany(
+        "INSERT INTO nse_verdicts (label) VALUES (?)",
+        [("VULNERABLE",), ("NOT_VULNERABLE",), ("LIKELY_VULNERABLE",), ("UNKNOWN",)],
+    )
+    conn.executemany(
+        "INSERT INTO port_states (label) VALUES (?)",
+        [("open",), ("closed",), ("filtered",),
+         ("open|filtered",), ("closed|filtered",), ("unfiltered",)],
     )
     conn.executescript(database.SCHEMA_SQL_VIEWS)
     conn.commit()
@@ -166,6 +185,7 @@ def contract(tmp_path, monkeypatch):
         "finding_id": finding_id,
         "plugin_id": 100,
         "artifact_id": artifact_id,
+        "execution_id": exec_id,
         "host_ip": "10.0.0.1",
     }
 
@@ -249,8 +269,11 @@ def test_tools_callable_through_server(contract):
         "generate_nmap_cmd": {"finding_id": fid},
         "generate_netexec_cmd": {"finding_id": fid, "protocol": "smb"},
         "generate_msf_search": {"finding_id": fid},
-        # mutation (safe): flips review state in the seeded temp DB
+        "get_finding_verdict": {"finding_id": fid},
+        # mutations (safe against the seeded temp DB)
         "set_review_state": {"finding_id": fid, "new_state": "in_progress"},
+        "set_finding_verdict": {"finding_id": fid, "verdict": "confirmed"},
+        "ingest_results": {"execution_id": contract["execution_id"]},
     }
     # execute_command (subprocess/async) and import_nessus (needs a file) are
     # covered by the inventory test + test_mcp_server.py; exercising them here

@@ -17,8 +17,8 @@ from typing import Any, Generator, Optional, cast
 
 from .logging_setup import log_error, log_info
 
-
 # ========== Database Configuration ==========
+
 
 def get_database_path() -> Path:
     """Get path to cerno database file.
@@ -37,7 +37,7 @@ DATABASE_PATH = get_database_path()
 
 # ========== Schema ==========
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 """Schema version, stored in ``PRAGMA user_version``.
 
 Note: Database is created directly in normalized structure.
@@ -50,6 +50,12 @@ History:
 - 1: Initial normalized schema
 - 2: Review states renamed to pending / in_progress / done
 - 3: 'pending' renamed to 'unreviewed'; transitions enforced in the app layer
+- 4: Execution->data loop: verified_ports / nse_script_results /
+     nxc_flag_observations fact tables (provenance = execution_id),
+     finding_verdicts / verdict_evidence (verification verdict + evidence),
+     verdict_types / nse_verdicts / port_states lookup tables, and the
+     v_finding_current_verdict / v_finding_verified_stats /
+     v_nse_results_with_verdict views
 
 Schema features:
 - Normalized host and port tables (cross-scan tracking)
@@ -60,7 +66,6 @@ Schema features:
 Note: SCHEMA_SQL has been split into SCHEMA_SQL_TABLES and SCHEMA_SQL_VIEWS
       for organization purposes.
 """
-
 
 
 class SchemaVersionError(RuntimeError):
@@ -319,6 +324,119 @@ CREATE TABLE IF NOT EXISTS claude_aggregate_conversations (
 
 CREATE INDEX IF NOT EXISTS idx_claude_aggregate_context
     ON claude_aggregate_conversations(context_key);
+
+-- ========== Execution -> Data Loop (schema v4) ==========
+
+-- Lookup: verification verdict types (truth, distinct from review_state)
+CREATE TABLE IF NOT EXISTS verdict_types (
+    verdict_type_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    label           TEXT NOT NULL UNIQUE,
+    description     TEXT
+);
+
+-- Lookup: NSE vuln-script verdict classifications
+CREATE TABLE IF NOT EXISTS nse_verdicts (
+    nse_verdict_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    label          TEXT NOT NULL UNIQUE
+);
+
+-- Lookup: nmap port states
+CREATE TABLE IF NOT EXISTS port_states (
+    port_state_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    label         TEXT NOT NULL UNIQUE
+);
+
+-- Live-verified open ports from a tool run (provenance = execution_id)
+CREATE TABLE IF NOT EXISTS verified_ports (
+    verified_port_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    execution_id     INTEGER NOT NULL,
+    host_id          INTEGER NOT NULL,
+    port_number      INTEGER,
+    protocol         TEXT NOT NULL DEFAULT 'tcp',
+    port_state_id    INTEGER,
+    service_name     TEXT,
+    created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (execution_id) REFERENCES tool_executions(execution_id) ON DELETE CASCADE,
+    FOREIGN KEY (host_id) REFERENCES hosts(host_id),
+    FOREIGN KEY (port_number) REFERENCES ports(port_number),
+    FOREIGN KEY (port_state_id) REFERENCES port_states(port_state_id),
+    UNIQUE (execution_id, host_id, port_number, protocol)
+);
+
+CREATE INDEX IF NOT EXISTS idx_verified_ports_execution ON verified_ports(execution_id);
+CREATE INDEX IF NOT EXISTS idx_verified_ports_host ON verified_ports(host_id);
+CREATE INDEX IF NOT EXISTS idx_verified_ports_port ON verified_ports(port_number);
+
+-- NSE script results, especially vuln-script verdicts (provenance = execution_id)
+-- port_number NULL marks a host script (vs a port script)
+CREATE TABLE IF NOT EXISTS nse_script_results (
+    nse_result_id  INTEGER PRIMARY KEY AUTOINCREMENT,
+    execution_id   INTEGER NOT NULL,
+    host_id        INTEGER NOT NULL,
+    port_number    INTEGER,
+    script_id      TEXT NOT NULL,
+    nse_verdict_id INTEGER,
+    output         TEXT,
+    created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (execution_id) REFERENCES tool_executions(execution_id) ON DELETE CASCADE,
+    FOREIGN KEY (host_id) REFERENCES hosts(host_id),
+    FOREIGN KEY (port_number) REFERENCES ports(port_number),
+    FOREIGN KEY (nse_verdict_id) REFERENCES nse_verdicts(nse_verdict_id),
+    UNIQUE (execution_id, host_id, port_number, script_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_nse_results_execution ON nse_script_results(execution_id);
+CREATE INDEX IF NOT EXISTS idx_nse_results_host ON nse_script_results(host_id);
+CREATE INDEX IF NOT EXISTS idx_nse_results_verdict ON nse_script_results(nse_verdict_id);
+
+-- Point-in-time snapshot of nxc security flags (provenance = execution_id).
+-- Credentials and shares are NOT duplicated here; they stay live-read via nxc_db.
+CREATE TABLE IF NOT EXISTS nxc_flag_observations (
+    nxc_flag_id  INTEGER PRIMARY KEY AUTOINCREMENT,
+    execution_id INTEGER NOT NULL,
+    host_id      INTEGER NOT NULL,
+    protocol     TEXT NOT NULL,
+    flag_name    TEXT NOT NULL,
+    flag_value   INTEGER NOT NULL CHECK(flag_value IN (0, 1)),
+    created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (execution_id) REFERENCES tool_executions(execution_id) ON DELETE CASCADE,
+    FOREIGN KEY (host_id) REFERENCES hosts(host_id),
+    UNIQUE (execution_id, host_id, protocol, flag_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_nxc_flags_execution ON nxc_flag_observations(execution_id);
+CREATE INDEX IF NOT EXISTS idx_nxc_flags_host ON nxc_flag_observations(host_id);
+
+-- Finding verification verdicts (append-only history; current = latest created_at)
+CREATE TABLE IF NOT EXISTS finding_verdicts (
+    verdict_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    finding_id      INTEGER NOT NULL,
+    verdict_type_id INTEGER NOT NULL,
+    note            TEXT,
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_by      TEXT,
+    FOREIGN KEY (finding_id) REFERENCES findings(finding_id) ON DELETE CASCADE,
+    FOREIGN KEY (verdict_type_id) REFERENCES verdict_types(verdict_type_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_finding_verdicts_finding ON finding_verdicts(finding_id);
+CREATE INDEX IF NOT EXISTS idx_finding_verdicts_created ON finding_verdicts(created_at);
+
+-- Evidence backing a verdict (links to the execution/artifact/NSE result that proves it)
+CREATE TABLE IF NOT EXISTS verdict_evidence (
+    evidence_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    verdict_id    INTEGER NOT NULL,
+    execution_id  INTEGER,
+    artifact_id   INTEGER,
+    nse_result_id INTEGER,
+    note          TEXT,
+    FOREIGN KEY (verdict_id) REFERENCES finding_verdicts(verdict_id) ON DELETE CASCADE,
+    FOREIGN KEY (execution_id) REFERENCES tool_executions(execution_id) ON DELETE SET NULL,
+    FOREIGN KEY (artifact_id) REFERENCES artifacts(artifact_id) ON DELETE SET NULL,
+    FOREIGN KEY (nse_result_id) REFERENCES nse_script_results(nse_result_id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_verdict_evidence_verdict ON verdict_evidence(verdict_id);
 """
 
 SCHEMA_SQL_VIEWS = """
@@ -491,6 +609,61 @@ FROM host_services hs
 JOIN hosts h ON hs.host_id = h.host_id
 WHERE hs.svc_name IN ('www', 'http?', 'https?', 'http', 'https')
    OR hs.port_number IN (80, 443, 8080, 8443);
+
+-- ========== Execution -> Data Loop views (schema v4) ==========
+
+-- Current (latest) verdict per finding
+CREATE VIEW IF NOT EXISTS v_finding_current_verdict AS
+SELECT
+    fv.finding_id,
+    fv.verdict_id,
+    fv.verdict_type_id,
+    vt.label AS verdict_label,
+    fv.note,
+    fv.created_at,
+    fv.created_by
+FROM finding_verdicts fv
+JOIN verdict_types vt ON fv.verdict_type_id = vt.verdict_type_id
+WHERE fv.created_at = (
+    SELECT MAX(fv2.created_at)
+    FROM finding_verdicts fv2
+    WHERE fv2.finding_id = fv.finding_id
+)
+AND fv.verdict_id = (
+    SELECT MAX(fv3.verdict_id)
+    FROM finding_verdicts fv3
+    WHERE fv3.finding_id = fv.finding_id
+      AND fv3.created_at = fv.created_at
+);
+
+-- NSE script results with their verdict label resolved
+CREATE VIEW IF NOT EXISTS v_nse_results_with_verdict AS
+SELECT
+    nsr.nse_result_id,
+    nsr.execution_id,
+    nsr.host_id,
+    nsr.port_number,
+    nsr.script_id,
+    nsr.nse_verdict_id,
+    nv.label AS verdict_label,
+    nsr.output,
+    nsr.created_at
+FROM nse_script_results nsr
+LEFT JOIN nse_verdicts nv ON nsr.nse_verdict_id = nv.nse_verdict_id;
+
+-- Live-verified fact counts per finding (via the execution's finding_id)
+CREATE VIEW IF NOT EXISTS v_finding_verified_stats AS
+SELECT
+    te.finding_id,
+    COUNT(DISTINCT vp.verified_port_id) AS verified_port_count,
+    COUNT(DISTINCT nsr.nse_result_id) AS nse_result_count,
+    COUNT(DISTINCT CASE WHEN nv.label = 'VULNERABLE' THEN nsr.nse_result_id END) AS vulnerable_count
+FROM tool_executions te
+LEFT JOIN verified_ports vp ON vp.execution_id = te.execution_id
+LEFT JOIN nse_script_results nsr ON nsr.execution_id = te.execution_id
+LEFT JOIN nse_verdicts nv ON nsr.nse_verdict_id = nv.nse_verdict_id
+WHERE te.finding_id IS NOT NULL
+GROUP BY te.finding_id;
 """
 
 # Combined schema for backward compatibility (if needed)
@@ -499,6 +672,7 @@ SCHEMA_SQL = SCHEMA_SQL_TABLES + "\n" + SCHEMA_SQL_VIEWS
 
 
 # ========== Connection Management ==========
+
 
 def get_connection(database_path: Optional[Path] = None) -> sqlite3.Connection:
     """Get SQLite connection with optimizations enabled.
@@ -516,7 +690,7 @@ def get_connection(database_path: Optional[Path] = None) -> sqlite3.Connection:
 
     # Enable optimizations
     conn.execute("PRAGMA journal_mode=WAL")  # Write-Ahead Logging
-    conn.execute("PRAGMA foreign_keys=ON")   # Referential integrity
+    conn.execute("PRAGMA foreign_keys=ON")  # Referential integrity
     conn.execute("PRAGMA synchronous=NORMAL")  # Performance
     conn.execute("PRAGMA temp_store=MEMORY")  # Temp tables in memory
     conn.execute("PRAGMA cache_size=-64000")  # 64MB cache
@@ -526,8 +700,7 @@ def get_connection(database_path: Optional[Path] = None) -> sqlite3.Connection:
 
 @contextmanager
 def db_transaction(
-    conn: Optional[sqlite3.Connection] = None,
-    database_path: Optional[Path] = None
+    conn: Optional[sqlite3.Connection] = None, database_path: Optional[Path] = None
 ) -> Generator[sqlite3.Connection, None, None]:
     """Context manager for database transactions with auto-commit/rollback.
 
@@ -563,6 +736,7 @@ def db_transaction(
 
 
 # ========== Schema Initialization ==========
+
 
 def _check_schema_version(conn: sqlite3.Connection, db_path: Path) -> None:
     """Reject databases created by an older schema version.
@@ -619,23 +793,57 @@ def initialize_database(database_path: Optional[Path] = None) -> bool:
             conn.executemany(
                 "INSERT OR IGNORE INTO severity_levels VALUES (?, ?, ?, ?)",
                 [
-                    (4, 'Critical', 4, '#8B0000'),
-                    (3, 'High', 3, '#FF4500'),
-                    (2, 'Medium', 2, '#FFA500'),
-                    (1, 'Low', 1, '#FFD700'),
-                    (0, 'Info', 0, '#4682B4'),
-                ]
+                    (4, "Critical", 4, "#8B0000"),
+                    (3, "High", 3, "#FF4500"),
+                    (2, "Medium", 2, "#FFA500"),
+                    (1, "Low", 1, "#FFD700"),
+                    (0, "Info", 0, "#4682B4"),
+                ],
             )
 
             conn.executemany(
                 "INSERT OR IGNORE INTO artifact_types (type_name, file_extension, description) VALUES (?, ?, ?)",
                 [
-                    ('nmap_xml', '.xml', 'Nmap XML output'),
-                    ('nmap_gnmap', '.gnmap', 'Nmap greppable output'),
-                    ('nmap_nmap', '.nmap', 'Nmap normal output'),
-                    ('netexec_txt', '.txt', 'NetExec text output'),
-                    ('log', '.log', 'Tool execution log'),
-                ]
+                    ("nmap_xml", ".xml", "Nmap XML output"),
+                    ("nmap_gnmap", ".gnmap", "Nmap greppable output"),
+                    ("nmap_nmap", ".nmap", "Nmap normal output"),
+                    ("netexec_txt", ".txt", "NetExec text output"),
+                    ("log", ".log", "Tool execution log"),
+                ],
+            )
+
+            # Verification verdict types (truth, distinct from review_state)
+            conn.executemany(
+                "INSERT OR IGNORE INTO verdict_types (label, description) VALUES (?, ?)",
+                [
+                    ("confirmed", "Finding verified as a true positive"),
+                    ("false_positive", "Finding verified as a false positive"),
+                    ("unable", "Unable to verify the finding"),
+                ],
+            )
+
+            # NSE vuln-script verdict classifications
+            conn.executemany(
+                "INSERT OR IGNORE INTO nse_verdicts (label) VALUES (?)",
+                [
+                    ("VULNERABLE",),
+                    ("NOT_VULNERABLE",),
+                    ("LIKELY_VULNERABLE",),
+                    ("UNKNOWN",),
+                ],
+            )
+
+            # Nmap port states
+            conn.executemany(
+                "INSERT OR IGNORE INTO port_states (label) VALUES (?)",
+                [
+                    ("open",),
+                    ("closed",),
+                    ("filtered",),
+                    ("open|filtered",),
+                    ("closed|filtered",),
+                    ("unfiltered",),
+                ],
             )
 
             # Create views
@@ -655,6 +863,7 @@ def initialize_database(database_path: Optional[Path] = None) -> bool:
 
 # ========== Utility Functions ==========
 
+
 def compute_file_hash(file_path: Path) -> str:
     """Compute SHA256 hash of a file.
 
@@ -666,17 +875,15 @@ def compute_file_hash(file_path: Path) -> str:
     """
     sha256 = hashlib.sha256()
 
-    with open(file_path, 'rb') as f:
-        for chunk in iter(lambda: f.read(8192), b''):
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
             sha256.update(chunk)
 
     return sha256.hexdigest()
 
 
 def query_one(
-    conn: sqlite3.Connection,
-    query: str,
-    params: tuple[Any, ...] = ()
+    conn: sqlite3.Connection, query: str, params: tuple[Any, ...] = ()
 ) -> Optional[sqlite3.Row]:
     """Execute query and return single row.
 
@@ -693,9 +900,7 @@ def query_one(
 
 
 def query_all(
-    conn: sqlite3.Connection,
-    query: str,
-    params: tuple[Any, ...] = ()
+    conn: sqlite3.Connection, query: str, params: tuple[Any, ...] = ()
 ) -> list[sqlite3.Row]:
     """Execute query and return all rows.
 
@@ -712,6 +917,7 @@ def query_all(
 
 
 # ========== Database Health Checks ==========
+
 
 def check_database_health(database_path: Optional[Path] = None) -> bool:
     """Check database integrity and connectivity.
@@ -739,8 +945,12 @@ def check_database_health(database_path: Optional[Path] = None) -> bool:
                 "SELECT name FROM sqlite_master WHERE type='table' AND name='scans'"
             )
             if not cursor.fetchone():
-                log_error("Database health check failed: missing required 'scans' table")
-                log_error("This is non-fatal - initialization will attempt to repair the schema")
+                log_error(
+                    "Database health check failed: missing required 'scans' table"
+                )
+                log_error(
+                    "This is non-fatal - initialization will attempt to repair the schema"
+                )
                 return False
 
         return True

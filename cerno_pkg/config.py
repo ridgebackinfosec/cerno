@@ -123,8 +123,16 @@ class CernoConfig:
     tools are exposed."""
 
     mcp_allow_mutations: bool = False
-    """Allow the `cerno mcp` server to MUTATE state — update review state, import scans (default: False).
+    """Allow the `cerno mcp` server to MUTATE state — update review state, import scans,
+    ingest results, set verdicts (default: False).
     When False, those tools are not registered and the server is effectively read-only."""
+
+    mcp_allow_cred_injection: bool = False
+    """Allow execute_command to resolve @cred:<ref>@ placeholders to real NetExec
+    secrets server-side at run time (default: False). When False, a command still
+    carrying a credential placeholder is refused. Independent of mcp_allow_execution
+    so an operator can permit tool execution while forbidding secret substitution.
+    The resolved secret is never logged, returned, or written to an artifact."""
 
     mcp_exec_allowlist: list[str] = field(
         default_factory=lambda: list(DEFAULT_MCP_EXEC_ALLOWLIST)

@@ -559,6 +559,56 @@ def log_tool_execution(
         return None
 
 
+#: Flags whose immediately-following token is a secret, masked before logging.
+_SECRET_FLAG_TOKENS = {"-p", "--password", "-H", "--hash"}
+_SECRET_MASK = "********"
+
+
+def mask_auth_flags(command_text: str) -> str:
+    """Mask secret values after auth flags in a command string (defense-in-depth).
+
+    Replaces the token after ``-p``/``--password``/``-H``/``--hash`` with
+    ``********`` so a cleartext password/hash is never persisted in
+    ``tool_executions.command_text`` even if a caller passes one directly.
+
+    Caller must scope this to credential-bearing tools: ``-p`` is nxc's password
+    flag but also nmap's ports flag, so applying it to nmap would corrupt the
+    audited ports (see ``_mask_if_credential_tool``).
+    """
+    tokens = command_text.split(" ")
+    masked: list[str] = []
+    mask_next = False
+    for tok in tokens:
+        if mask_next and tok != "":
+            masked.append(_SECRET_MASK)
+            mask_next = False
+            continue
+        masked.append(tok)
+        if tok in _SECRET_FLAG_TOKENS:
+            mask_next = True
+    return " ".join(masked)
+
+
+def _mask_if_credential_tool(command_text: str) -> str:
+    """Mask auth flags only when the command's target binary is nxc/netexec.
+
+    Resolves the real binary via the shared ``exec_chain`` resolver (same view the
+    MCP exec policy uses) so nmap's ``-p <ports>`` is never masked while nxc's
+    ``-p <password>`` / ``-H <hash>`` is.
+    """
+    import shlex
+
+    from . import exec_chain
+
+    try:
+        argv = shlex.split(command_text)
+    except ValueError:
+        return command_text
+    if exec_chain.effective_tool(argv) == "nxc":
+        return mask_auth_flags(command_text)
+    return command_text
+
+
 def _log_tool_execution_impl(
     conn: sqlite3.Connection,
     tool_name: str,
@@ -615,7 +665,7 @@ def _log_tool_execution_impl(
             finding_id=finding_id,
             tool_name=tool_name,
             tool_protocol=tool_protocol,
-            command_text=command_text,
+            command_text=_mask_if_credential_tool(command_text),
             executed_at=now_iso(),
             exit_code=execution_metadata.exit_code,
             duration_seconds=execution_metadata.duration_seconds,

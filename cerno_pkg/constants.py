@@ -32,6 +32,7 @@ def get_results_root(config: Optional["CernoConfig"] = None) -> Path:
     if _results_root_cache is None:
         if config is None:
             from .config import load_config
+
             config = load_config()
 
         if config.results_root:
@@ -46,6 +47,7 @@ def reset_results_root_cache() -> None:
     """Reset cached results root (for testing)."""
     global _results_root_cache
     _results_root_cache = None
+
 
 SCANS_ROOT: Path = Path.home() / ".cerno" / "scans"
 """Root directory for scan exports (plugin host lists)."""
@@ -109,6 +111,29 @@ REVIEW_MOVE_LABELS: dict[str, str] = {
 }
 """[M] action labels keyed by *target* status (past tense: replace "Move" with "Moved")."""
 
+# Verification verdicts (truth, distinct from review state). Mirrors the
+# verdict_types lookup table seeded in database.py.
+VERDICT_LABELS: dict[str, str] = {
+    "confirmed": "Confirmed",
+    "false_positive": "False Positive",
+    "unable": "Unable to Verify",
+}
+"""Display labels for verification verdicts."""
+
+VERDICT_STYLES: dict[str, str] = {
+    "confirmed": "bold red",
+    "false_positive": "green",
+    "unable": "yellow",
+}
+"""Rich styles for verdicts (Confirmed = risk red, False Positive = cleared green)."""
+
+VERDICT_ICONS: dict[str, str] = {
+    "confirmed": "✓",
+    "false_positive": "✗",
+    "unable": "?",
+}
+"""Compact verdict indicators: ✓ Confirmed, ✗ False Positive, ? Unable."""
+
 
 # ========== Plugin details configuration ==========
 PLUGIN_DETAILS_BASE: str = "https://www.tenable.com/plugins/nessus/"
@@ -133,9 +158,24 @@ NETEXEC_PROTOCOLS: list[str] = [
 
 # ========== NSE (Nmap Scripting Engine) profiles ==========
 NSE_PROFILES: list[tuple[str, str, list[str], bool]] = [
-    ("Crypto", "Check SSL/TLS cipher suites and certificates", ["ssl-enum-ciphers", "ssl-cert", "ssl-date"], False),
-    ("SSH", "Enumerate SSH algorithms and authentication methods", ["ssh2-enum-algos", "ssh-auth-methods"], False),
-    ("SMB", "Check SMB security modes and signing", ["smb-security-mode", "smb2-security-mode"], False),
+    (
+        "Crypto",
+        "Check SSL/TLS cipher suites and certificates",
+        ["ssl-enum-ciphers", "ssl-cert", "ssl-date"],
+        False,
+    ),
+    (
+        "SSH",
+        "Enumerate SSH algorithms and authentication methods",
+        ["ssh2-enum-algos", "ssh-auth-methods"],
+        False,
+    ),
+    (
+        "SMB",
+        "Check SMB security modes and signing",
+        ["smb-security-mode", "smb2-security-mode"],
+        False,
+    ),
     ("SNMP", "Enumerate SNMP information (requires UDP)", ["snmp*"], True),
     ("IPMI", "Check IPMI version information (requires UDP)", ["ipmi-version"], True),
 ]

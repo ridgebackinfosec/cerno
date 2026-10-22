@@ -51,6 +51,24 @@ def temp_db() -> Generator[sqlite3.Connection, None, None]:
             ('log', '.log', 'Tool execution log'),
         ]
     )
+    # Execution->data loop lookup tables (schema v4)
+    conn.executemany(
+        "INSERT INTO verdict_types (label, description) VALUES (?, ?)",
+        [
+            ('confirmed', 'Finding verified as a true positive'),
+            ('false_positive', 'Finding verified as a false positive'),
+            ('unable', 'Unable to verify the finding'),
+        ]
+    )
+    conn.executemany(
+        "INSERT INTO nse_verdicts (label) VALUES (?)",
+        [('VULNERABLE',), ('NOT_VULNERABLE',), ('LIKELY_VULNERABLE',), ('UNKNOWN',)]
+    )
+    conn.executemany(
+        "INSERT INTO port_states (label) VALUES (?)",
+        [('open',), ('closed',), ('filtered',),
+         ('open|filtered',), ('closed|filtered',), ('unfiltered',)]
+    )
 
     # Create views
     conn.executescript(SCHEMA_SQL_VIEWS)

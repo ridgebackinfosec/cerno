@@ -33,6 +33,9 @@ from .constants import (
     REVIEW_STATE_UNREVIEWED,
     REVIEW_TRANSITIONS,
     SEVERITY_COLORS,
+    VERDICT_ICONS,
+    VERDICT_LABELS,
+    VERDICT_STYLES,
 )
 from .fs import default_page_size, pretty_severity_label
 from .logging_setup import log_timing, log_debug
@@ -171,7 +174,7 @@ def _get_renderable_height(console: Any, renderable: RenderableType) -> int:
         height = 1  # Start with 1 for the first line
         for segment in segments:
             if segment.text:
-                height += segment.text.count('\n')
+                height += segment.text.count("\n")
         return max(height, 1)
     except Exception:
         return 6  # Fallback estimate for error cases
@@ -331,6 +334,7 @@ def render_empty_state(context: str, filter_text: str = "") -> None:
 
     elif context == "all_completed":
         from .ansi import ok
+
         ok("\n✓ All findings are Done!")
         info("")
         info("Next steps:")
@@ -357,9 +361,7 @@ def render_empty_state(context: str, filter_text: str = "") -> None:
 
 
 def render_pagination_indicator(
-    current_page: int,
-    total_pages: int,
-    total_items: int
+    current_page: int, total_pages: int, total_items: int
 ) -> str:
     """Generate pagination indicator with visual progress bar.
 
@@ -413,7 +415,8 @@ def render_scan_context_header(scan: Any, scan_id: int) -> None:
 
     # Query database for finding counts by review state
     with get_connection() as conn:
-        cursor = conn.execute("""
+        cursor = conn.execute(
+            """
             SELECT
                 SUM(CASE WHEN review_state = 'unreviewed' THEN 1 ELSE 0 END) as unreviewed,
                 SUM(CASE WHEN review_state = 'in_progress' THEN 1 ELSE 0 END) as in_progress,
@@ -421,7 +424,9 @@ def render_scan_context_header(scan: Any, scan_id: int) -> None:
                 COUNT(*) as total
             FROM findings
             WHERE scan_id = ?
-        """, (scan_id,))
+        """,
+            (scan_id,),
+        )
         row = cursor.fetchone()
         unreviewed_count = row[0] if row else 0
         in_progress_count = row[1] if row else 0
@@ -432,11 +437,17 @@ def render_scan_context_header(scan: Any, scan_id: int) -> None:
     if scan.imported_at:
         try:
             if isinstance(scan.imported_at, str):
-                imported_dt = datetime.fromisoformat(scan.imported_at.replace('Z', '+00:00'))
+                imported_dt = datetime.fromisoformat(
+                    scan.imported_at.replace("Z", "+00:00")
+                )
             else:
                 imported_dt = scan.imported_at
 
-            now = datetime.now(imported_dt.tzinfo) if imported_dt.tzinfo else datetime.now()
+            now = (
+                datetime.now(imported_dt.tzinfo)
+                if imported_dt.tzinfo
+                else datetime.now()
+            )
             delta = now - imported_dt
             delta_seconds = delta.total_seconds()
 
@@ -473,9 +484,13 @@ def render_scan_context_header(scan: Any, scan_id: int) -> None:
         header_text.append(" | ", style=style_if_enabled("dim"))
         header_text.append(f"Imported: {time_ago}", style=None)
         header_text.append(" | ", style=style_if_enabled("dim"))
-        header_text.append(f"Total: {total_count} plugins", style=style_if_enabled("bold"))
+        header_text.append(
+            f"Total: {total_count} plugins", style=style_if_enabled("bold")
+        )
         header_text.append(" | ", style=style_if_enabled("dim"))
-        _append_status_counts(header_text, unreviewed_count, in_progress_count, done_count)
+        _append_status_counts(
+            header_text, unreviewed_count, in_progress_count, done_count
+        )
 
         _console_global.print(header_text)
     else:
@@ -504,9 +519,7 @@ def render_scan_table(scans: list[Path]) -> None:
     Args:
         scans: List of scan directory paths to display
     """
-    table = Table(
-        title=None, box=box.SIMPLE, show_lines=False, pad_edge=False
-    )
+    table = Table(title=None, box=box.SIMPLE, show_lines=False, pad_edge=False)
     table.add_column("#", justify="right", no_wrap=True, max_width=5)
     table.add_column("Scan", overflow="fold")
     for i, scan_dir in enumerate(scans, 1):
@@ -539,21 +552,23 @@ def render_severity_table(
         plugin_ids: Optional list of plugin IDs to filter counts by (for host filtering)
         scan_ids: Optional list of scan IDs for multi-scan queries (overrides scan_id)
     """
-    table = Table(
-        title=None, box=box.SIMPLE, show_lines=False, pad_edge=False
-    )
+    table = Table(title=None, box=box.SIMPLE, show_lines=False, pad_edge=False)
     table.add_column("#", justify="right", no_wrap=True, max_width=5)
     table.add_column("Severity", no_wrap=True, max_width=20)
     # Headers indicate percent (cells contain N (P%))
     for state in (REVIEW_STATE_UNREVIEWED, REVIEW_STATE_IN_PROGRESS, REVIEW_STATE_DONE):
         table.add_column(
-            f"{REVIEW_STATE_LABELS[state]} (%)", justify="right", no_wrap=True, max_width=17
+            f"{REVIEW_STATE_LABELS[state]} (%)",
+            justify="right",
+            no_wrap=True,
+            max_width=17,
         )
     table.add_column("Total", justify="right", no_wrap=True, max_width=8)
 
     if scan_id is None and not scan_ids:
         # scan_id should always be provided in DB-only mode, but handle gracefully
         from .ansi import warn
+
         warn("scan_id not provided - cannot render severity table")
         return
 
@@ -561,7 +576,10 @@ def render_severity_table(
 
     for i, severity_dir in enumerate(severities, 1):
         counts = count_severity_findings(
-            severity_dir, scan_id=effective_scan_id, plugin_ids=plugin_ids, scan_ids=scan_ids
+            severity_dir,
+            scan_id=effective_scan_id,
+            plugin_ids=plugin_ids,
+            scan_ids=scan_ids,
         )
         label = pretty_severity_label(severity_dir.name)
         table.add_row(str(i), severity_cell(label), *review_count_cells(counts))
@@ -588,7 +606,9 @@ def render_severity_table(
     _console_global.print(table)
 
 
-def _append_status_counts(text: Text, unreviewed: int, in_progress: int, done: int) -> None:
+def _append_status_counts(
+    text: Text, unreviewed: int, in_progress: int, done: int
+) -> None:
     """Append "Unreviewed: N | In Progress: N | Done: N" in status colours to ``text``."""
     counts = {
         REVIEW_STATE_UNREVIEWED: unreviewed,
@@ -639,9 +659,7 @@ def render_finding_list_table(
     """
     show_ai_column = bool(chat_history_finding_ids)
 
-    table = Table(
-        title=None, box=box.SIMPLE, show_lines=False, pad_edge=False
-    )
+    table = Table(title=None, box=box.SIMPLE, show_lines=False, pad_edge=False)
     table.add_column("#", justify="right", no_wrap=True, max_width=5)
     table.add_column("Severity", justify="left", no_wrap=True, max_width=10)
     table.add_column("Plugin ID", justify="right", no_wrap=True, max_width=10)
@@ -666,6 +684,7 @@ def render_finding_list_table(
         # Get severity from plugin metadata
         from .nessus_import import severity_label_from_int
         from .ansi import get_terminal_width
+
         label = severity_label_from_int(plugin.severity_int)
 
         # Adaptive severity labels based on terminal width
@@ -681,7 +700,7 @@ def render_finding_list_table(
                 "High": "High",
                 "Medium": "Med",
                 "Low": "Low",
-                "Info": "Info"
+                "Info": "Info",
             }.get(label, label)
         else:
             # Narrow terminal: single-character indicators
@@ -690,7 +709,7 @@ def render_finding_list_table(
                 "High": "H",
                 "Medium": "M",
                 "Low": "L",
-                "Info": "I"
+                "Info": "I",
             }.get(label, label[0] if label else "?")
 
         # Color-code the severity label using severity_cell
@@ -721,7 +740,9 @@ def render_finding_list_table(
 
 
 def render_compare_tables(
-    parsed: list[tuple[Union[Path, str], list[str], set[str], dict[str, set[str]], bool]],
+    parsed: list[
+        tuple[Union[Path, str], list[str], set[str], dict[str, set[str]], bool]
+    ],
     host_intersection: set[str],
     host_union: set[str],
     port_intersection: set[str],
@@ -749,13 +770,17 @@ def render_compare_tables(
     if num_groups > 1:
         header(f"Found {num_groups} groups with identical host:port combinations")
         info("")
-        info("What this means: Findings in the same group affect the exact same systems.")
+        info(
+            "What this means: Findings in the same group affect the exact same systems."
+        )
         info("You might want to review them together or choose one as representative.")
         info("")
     else:
         header("Comparison Results - All findings in single group")
         info("")
-        info("What this means: All filtered findings affect identical host:port combinations.")
+        info(
+            "What this means: All filtered findings affect identical host:port combinations."
+        )
         info("")
 
     if len(groups_sorted) > 1:
@@ -763,7 +788,7 @@ def render_compare_tables(
             title="Identical Host:Port Groups",
             box=box.SIMPLE,
             show_lines=False,
-            pad_edge=False
+            pad_edge=False,
         )
         groups_table.add_column("#", justify="right", no_wrap=True, max_width=5)
         groups_table.add_column("Count", justify="right", no_wrap=True, max_width=12)
@@ -778,11 +803,16 @@ def render_compare_tables(
         # Offer details view for large groups
         if any(len(names) > 8 for names in groups_sorted):
             from rich.prompt import Prompt
+
             try:
-                detail_choice = Prompt.ask(
-                    "\nPress [D] for full group details, or [Enter] to continue",
-                    default=""
-                ).strip().lower()
+                detail_choice = (
+                    Prompt.ask(
+                        "\nPress [D] for full group details, or [Enter] to continue",
+                        default="",
+                    )
+                    .strip()
+                    .lower()
+                )
 
                 if detail_choice == "d":
                     # Display full group details using pager
@@ -842,13 +872,15 @@ def render_actions_footer(
         "severity": "Severity",
         "plugin_id": "Plugin ID",
         "hosts": "Hosts",
-        "name": "Name"
+        "name": "Name",
     }.get(sort_mode, "Severity")
 
     right_row1 = join_actions_texts(
         [
             key_text("F", "Filter"),
-            key_text("I", "All statuses" if status_filter_active else "In Progress only"),
+            key_text(
+                "I", "All statuses" if status_filter_active else "In Progress only"
+            ),
             key_text("C", "Clear filter"),
             key_text("S", f"Sort: {sort_label}"),
         ]
@@ -942,14 +974,18 @@ def render_finding_actions_footer(
     from .ansi import get_terminal_width
 
     # Row 1: Information actions (always present)
-    left_row1 = join_actions_texts([
-        key_text("I", "Finding Info"),
-        key_text("D", "Finding Details"),
-    ])
-    right_row1 = join_actions_texts([
-        key_text("V", "View host(s)"),
-        key_text("E", "CVE info"),
-    ])
+    left_row1 = join_actions_texts(
+        [
+            key_text("I", "Finding Info"),
+            key_text("D", "Finding Details"),
+        ]
+    )
+    right_row1 = join_actions_texts(
+        [
+            key_text("V", "View host(s)"),
+            key_text("E", "CVE info"),
+        ]
+    )
 
     # Row 2: External tools (conditional + run tool)
     left_items_row2 = []
@@ -1079,7 +1115,9 @@ def render_claude_panel(
                 age_str = f"{delta_secs // 86400}d ago"
         except Exception:
             pass
-        summary = f"resumed · {exchange_count} exchange{'s' if exchange_count != 1 else ''}"
+        summary = (
+            f"resumed · {exchange_count} exchange{'s' if exchange_count != 1 else ''}"
+        )
         if age_str:
             summary += f" · {age_str}"
         title = Text()
@@ -1096,12 +1134,14 @@ def render_claude_panel(
 
     # Controls hint below the bottom Rule
     hint = Text("  ")
-    for i, (key, label) in enumerate([
-        ("Enter", "new line"),
-        ("Alt+Enter", "submit"),
-        ("/clear", "clear history"),
-        ("Ctrl+C", "back"),
-    ]):
+    for i, (key, label) in enumerate(
+        [
+            ("Enter", "new line"),
+            ("Alt+Enter", "submit"),
+            ("/clear", "clear history"),
+            ("Ctrl+C", "back"),
+        ]
+    ):
         if i > 0:
             hint.append("  ", style=None)
         hint.append(f"[{key}]", style=style_if_enabled("cyan"))
@@ -1195,15 +1235,14 @@ def render_tool_availability_table(include_unavailable: bool = True) -> None:
     if include_unavailable or pc4_available:
         if pc4_available:
             if _proxy_cfg.proxychains_enabled:
-                pc4_details_str = (
-                    f"SOCKS5 {_proxy_cfg.proxychains_host}:{_proxy_cfg.proxychains_port} (active)"
-                )
+                pc4_details_str = f"SOCKS5 {_proxy_cfg.proxychains_host}:{_proxy_cfg.proxychains_port} (active)"
             else:
                 pc4_version = get_tool_version("proxychains4")
                 pc4_details_str = f"v{pc4_version}" if pc4_version else "Available"
             pc4_details_text = Text(pc4_details_str)
             pc4_details_text.stylize(
-                style_if_enabled("magenta") if _proxy_cfg.proxychains_enabled
+                style_if_enabled("magenta")
+                if _proxy_cfg.proxychains_enabled
                 else style_if_enabled("green")
             )
         else:
@@ -1220,12 +1259,18 @@ def render_tool_availability_table(include_unavailable: bool = True) -> None:
     if include_unavailable or claude_available:
         if claude_available:
             claude_version = get_tool_version("claude")
-            claude_details_text = Text(f"v{claude_version}" if claude_version else "Available")
+            claude_details_text = Text(
+                f"v{claude_version}" if claude_version else "Available"
+            )
             claude_details_text.stylize(style_if_enabled("green"))
         else:
             claude_details_text = Text("Not found in PATH")
             claude_details_text.stylize(style_if_enabled("red"))
-        table.add_row("claude (assistant)", "✅" if claude_available else "❌", claude_details_text)
+        table.add_row(
+            "claude (assistant)",
+            "✅" if claude_available else "❌",
+            claude_details_text,
+        )
 
     # Print table
     _console_global.print(table)
@@ -1265,9 +1310,11 @@ def show_actions_help(
         key_text("F", "Filter - Set a filter to narrow down finding list"),
         key_text(
             "I",
-            "All statuses - Turn off the In Progress-only filter"
-            if status_filter_active
-            else "In Progress only - Show only In Progress findings",
+            (
+                "All statuses - Turn off the In Progress-only filter"
+                if status_filter_active
+                else "In Progress only - Show only In Progress findings"
+            ),
         ),
         key_text("C", "Clear filter - Remove active name and status filters"),
     )
@@ -1284,19 +1331,28 @@ def show_actions_help(
             "M",
             f"Move to next status ({candidates_count}) - Unreviewed → In Progress, In Progress → Done",
         ),
-        key_text("D", "Done list - Findings with Done status; [M] there moves them back to Unreviewed"),
+        key_text(
+            "D",
+            "Done list - Findings with Done status; [M] there moves them back to Unreviewed",
+        ),
     )
     table.add_row(
         Text("Analysis", style="bold"),
         key_text("H", "Compare - Find findings with identical host:port combinations"),
-        key_text("O", "Overlapping - Find findings that cover all affected systems of another finding"),
-        key_text("V", f"View hosts ({unique_host_count}) - Show all unique hosts across filtered findings"),
-        key_text("E", f"CVEs ({unique_cve_count}) - Extract CVEs for all filtered findings"),
+        key_text(
+            "O",
+            "Overlapping - Find findings that cover all affected systems of another finding",
+        ),
+        key_text(
+            "V",
+            f"View hosts ({unique_host_count}) - Show all unique hosts across filtered findings",
+        ),
+        key_text(
+            "E", f"CVEs ({unique_cve_count}) - Extract CVEs for all filtered findings"
+        ),
     )
     if group_applied:
-        table.add_row(
-            Text("Groups", style="bold"), key_text("X", "Clear group filter")
-        )
+        table.add_row(Text("Groups", style="bold"), key_text("X", "Clear group filter"))
     panel = Panel(table, title="Actions", border_style=style_if_enabled("cyan"))
     _console_global.print(panel)
 
@@ -1308,15 +1364,20 @@ def show_reviewed_help() -> None:
     table.add_column()
 
     table.add_row("Purpose", "Findings with Done status")
-    table.add_row("Move", f"Press [M] to {REVIEW_MOVE_LABELS[REVIEW_STATE_UNREVIEWED].lower()}")
+    table.add_row(
+        "Move", f"Press [M] to {REVIEW_MOVE_LABELS[REVIEW_STATE_UNREVIEWED].lower()}"
+    )
     table.add_row("Filter", "Press [F] to filter by plugin name")
     table.add_row("", "")
-    table.add_row("Note", "This is a management view - select findings in main list to work with them")
+    table.add_row(
+        "Note",
+        "This is a management view - select findings in main list to work with them",
+    )
 
     panel = Panel(
         table,
         title="[bold cyan]Done List Help[/]",
-        border_style=style_if_enabled("cyan")
+        border_style=style_if_enabled("cyan"),
     )
     _console_global.print(panel)
 
@@ -1396,8 +1457,7 @@ def render_responsive_action_menu(
                 grid.add_row(key_text(row[0][0], row[0][1]), Text())
             else:
                 grid.add_row(
-                    key_text(row[0][0], row[0][1]),
-                    key_text(row[1][0], row[1][1])
+                    key_text(row[0][0], row[0][1]), key_text(row[1][0], row[1][1])
                 )
         _console_global.print(grid)
     else:
@@ -1429,8 +1489,11 @@ def count_severity_findings(
         Tuple of (unreviewed, in_progress, done, total)
     """
     from .models import Finding
+
     severity_dir_name = directory.name
-    return Finding.count_by_scan_severity(scan_id, severity_dir_name, plugin_ids=plugin_ids, scan_ids=scan_ids)
+    return Finding.count_by_scan_severity(
+        scan_id, severity_dir_name, plugin_ids=plugin_ids, scan_ids=scan_ids
+    )
 
 
 def severity_cell(label: str) -> Any:
@@ -1490,7 +1553,10 @@ def _status_legend() -> Text:
     for i, state in enumerate(states):
         if i:
             legend.append("  ")
-        legend.append(REVIEW_STATE_ICONS[state], style=style_if_enabled(REVIEW_STATE_STYLES[state]))
+        legend.append(
+            REVIEW_STATE_ICONS[state],
+            style=style_if_enabled(REVIEW_STATE_STYLES[state]),
+        )
         legend.append(f" {REVIEW_STATE_LABELS[state]}", style=style_if_enabled("dim"))
     return legend
 
@@ -1577,7 +1643,7 @@ def file_raw_paged_text(finding: "Finding", plugin: "Plugin") -> str:
 
     # Get content from database
     content = file_raw_payload_text(finding)
-    size_bytes = len(content.encode('utf-8'))
+    size_bytes = len(content.encode("utf-8"))
 
     lines = [f"Showing: {display_name} ({size_bytes} bytes from database)"]
     lines.append(content)
@@ -1610,6 +1676,7 @@ def grouped_payload_text(finding: "Finding") -> str:
 
     # Group ports by host
     from collections import defaultdict
+
     host_ports: defaultdict[str, list[str | None]] = defaultdict(list)
 
     for line in lines:
@@ -1619,7 +1686,7 @@ def grouped_payload_text(finding: "Finding") -> str:
                 # IPv6 format: [2001:db8::1]:80
                 host_end = line.index("]")
                 host = line[1:host_end]  # Remove brackets
-                port = line[host_end+2:]  # Skip ']:'
+                port = line[host_end + 2 :]  # Skip ']:'
             else:
                 # IPv4 or hostname: host:port
                 host, port = line.rsplit(":", 1)
@@ -1694,6 +1761,7 @@ def hosts_only_paged_text(finding: "Finding", plugin: "Plugin") -> str:
 # These operate across multiple (Finding, Plugin) tuples rather than one finding.
 # ---------------------------------------------------------------------------
 
+
 def _collect_aggregate_host_ports(
     findings_with_plugins: list,
     conn: Any,
@@ -1704,6 +1772,7 @@ def _collect_aggregate_host_ports(
         (host_ports dict mapping host → set[int], sorted_hosts list)
     """
     from collections import defaultdict
+
     host_ports: dict = defaultdict(set)
     for finding, _plugin in findings_with_plugins:
         for hp in finding.get_all_host_port_lines(conn):
@@ -1732,7 +1801,9 @@ def aggregate_grouped_payload_text(host_ports: dict, sorted_hosts: list) -> str:
     return "\n".join(out) + ("\n" if out else "")
 
 
-def aggregate_grouped_paged_text(host_ports: dict, sorted_hosts: list, scope_label: str) -> str:
+def aggregate_grouped_paged_text(
+    host_ports: dict, sorted_hosts: list, scope_label: str
+) -> str:
     """Grouped view with header for paged display."""
     return f"Grouped view: {scope_label}\n{aggregate_grouped_payload_text(host_ports, sorted_hosts)}"
 
@@ -1760,15 +1831,14 @@ def aggregate_raw_payload_text(host_ports: dict, sorted_hosts: list) -> str:
     return "\n".join(out) + ("\n" if out else "")
 
 
-def aggregate_raw_paged_text(host_ports: dict, sorted_hosts: list, scope_label: str) -> str:
+def aggregate_raw_paged_text(
+    host_ports: dict, sorted_hosts: list, scope_label: str
+) -> str:
     """Raw view with header for paged display."""
     return f"Raw view: {scope_label}\n{aggregate_raw_payload_text(host_ports, sorted_hosts)}"
 
 
-def build_plugin_output_details(
-    finding: "Finding",
-    plugin: "Plugin"
-) -> Optional[str]:
+def build_plugin_output_details(finding: "Finding", plugin: "Plugin") -> Optional[str]:
     """Build formatted text for plugin output details display.
 
     Shows plugin_output data for each affected host:port combination.
@@ -1792,7 +1862,8 @@ def build_plugin_output_details(
 
     # Filter out entries with no plugin_output (None or empty)
     outputs_with_data = [
-        (host, port, output) for (host, port, output) in outputs
+        (host, port, output)
+        for (host, port, output) in outputs
         if output is not None and output.strip()
     ]
 
@@ -1855,7 +1926,11 @@ def display_finding_preview(
 
     # Severity
     content.append("Severity: ", style=style_if_enabled("cyan"))
-    sev_label = pretty_severity_label(sev_dir.name) if sev_dir else f"{plugin.severity_int}_{plugin.severity_label or 'Unknown'}"
+    sev_label = (
+        pretty_severity_label(sev_dir.name)
+        if sev_dir
+        else f"{plugin.severity_int}_{plugin.severity_label or 'Unknown'}"
+    )
     content.append(f"{sev_label}\n", style=severity_style(sev_label))
 
     # Plugin Details (Tenable URL). Display drops "www." to save space; the OSC 8
@@ -1866,6 +1941,27 @@ def display_finding_preview(
     link_style = f"{style_if_enabled('blue underline')} link {plugin_url}".strip()
     content.append(f"{display_url}\n", style=link_style)
 
+    # Verification verdict (read-only; truth, distinct from review status).
+    # Only shown once a verdict has been recorded. Best-effort: a verdict-lookup
+    # failure must never break the finding preview.
+    verdict = None
+    _fid = getattr(finding, "finding_id", None)
+    if isinstance(_fid, int):
+        try:
+            from .models import FindingVerdict
+
+            verdict = FindingVerdict.get_current(_fid)
+        except Exception:
+            verdict = None
+    if verdict is not None:
+        label = VERDICT_LABELS.get(verdict.verdict_label, verdict.verdict_label)
+        icon = VERDICT_ICONS.get(verdict.verdict_label, "")
+        content.append("Verdict: ", style=style_if_enabled("cyan"))
+        content.append(
+            f"{icon} {label}\n".lstrip(),
+            style=style_if_enabled(VERDICT_STYLES.get(verdict.verdict_label, "")),
+        )
+
     # Get port distribution from database
     port_distribution = finding.get_port_distribution()
 
@@ -1873,7 +1969,10 @@ def display_finding_preview(
     content.append("Unique hosts: ", style=style_if_enabled("cyan"))
     if port_distribution and len(port_distribution) > 0:
         port_list = ", ".join(sorted(port_distribution.keys(), key=lambda x: int(x)))
-        content.append(f"{len(hosts)} across {len(port_distribution)} port(s) ({port_list})\n", style=style_if_enabled("yellow"))
+        content.append(
+            f"{len(hosts)} across {len(port_distribution)} port(s) ({port_list})\n",
+            style=style_if_enabled("yellow"),
+        )
     else:
         content.append(f"{len(hosts)}\n", style=style_if_enabled("yellow"))
 
@@ -1892,7 +1991,9 @@ def display_finding_preview(
         # Show example host with first port if available
         if port_distribution:
             first_port = sorted(port_distribution.keys(), key=lambda x: int(x))[0]
-            content.append(f"{hosts[0]}:{first_port}\n", style=style_if_enabled("yellow"))
+            content.append(
+                f"{hosts[0]}:{first_port}\n", style=style_if_enabled("yellow")
+            )
         else:
             content.append(f"{hosts[0]}\n", style=style_if_enabled("yellow"))
 
@@ -1933,7 +2034,7 @@ def display_finding_preview(
         subtitle=subtitle,
         subtitle_align="center",
         title_align="center",
-        border_style=style_if_enabled("cyan")
+        border_style=style_if_enabled("cyan"),
     )
 
     _console_global.print()  # Blank line before panel
@@ -1977,20 +2078,29 @@ def render_nxc_enrichment_summary(hosts: List[str]) -> Optional[Panel]:
 
     # Header line: protocols and host coverage
     content.append("Protocols: ", style=style_if_enabled("cyan"))
-    content.append(", ".join(summary.protocols_seen).upper(), style=style_if_enabled("yellow"))
+    content.append(
+        ", ".join(summary.protocols_seen).upper(), style=style_if_enabled("yellow")
+    )
     content.append(" | ", style=style_if_enabled("dim"))
-    content.append(f"{summary.hosts_with_data}/{summary.total_hosts_queried} hosts have NXC data\n",
-                   style=style_if_enabled("dim"))
+    content.append(
+        f"{summary.hosts_with_data}/{summary.total_hosts_queried} hosts have NXC data\n",
+        style=style_if_enabled("dim"),
+    )
 
     # Credentials section
     if summary.unique_credentials:
         content.append("\nCredentials ", style=style_if_enabled("cyan"))
-        content.append(f"({len(summary.unique_credentials)} unique):\n", style=style_if_enabled("dim"))
+        content.append(
+            f"({len(summary.unique_credentials)} unique):\n",
+            style=style_if_enabled("dim"),
+        )
 
         for cred, host_count in summary.unique_credentials[:5]:  # Limit to top 5
             # Format: [SMB] DOMAIN\user (type) - admin on N hosts
             content.append("  ")
-            content.append(f"[{cred.protocol.upper()}] ", style=style_if_enabled("magenta"))
+            content.append(
+                f"[{cred.protocol.upper()}] ", style=style_if_enabled("magenta")
+            )
             if cred.domain:
                 content.append(f"{cred.domain}\\", style=style_if_enabled("dim"))
             content.append(cred.username, style=style_if_enabled("yellow"))
@@ -1999,12 +2109,16 @@ def render_nxc_enrichment_summary(hosts: List[str]) -> Optional[Panel]:
                 content.append(" - admin", style=style_if_enabled("green"))
             if cred.pillaged:
                 content.append(" - dumped", style=style_if_enabled("yellow"))
-            content.append(f" on {host_count} host{'s' if host_count != 1 else ''}\n",
-                           style=style_if_enabled("dim"))
+            content.append(
+                f" on {host_count} host{'s' if host_count != 1 else ''}\n",
+                style=style_if_enabled("dim"),
+            )
 
         if len(summary.unique_credentials) > 5:
-            content.append(f"  ... and {len(summary.unique_credentials) - 5} more\n",
-                           style=style_if_enabled("dim"))
+            content.append(
+                f"  ... and {len(summary.unique_credentials) - 5} more\n",
+                style=style_if_enabled("dim"),
+            )
 
     # Shares section (compact format)
     if summary.shares_summary:
@@ -2021,7 +2135,10 @@ def render_nxc_enrichment_summary(hosts: List[str]) -> Optional[Panel]:
             share_parts.append(f"{name} ({access_str})")
         content.append(", ".join(share_parts[:5]), style=style_if_enabled("yellow"))
         if len(summary.shares_summary) > 5:
-            content.append(f" +{len(summary.shares_summary) - 5} more", style=style_if_enabled("dim"))
+            content.append(
+                f" +{len(summary.shares_summary) - 5} more",
+                style=style_if_enabled("dim"),
+            )
         content.append("\n")
 
     # Security flags section (compact format)
@@ -2146,9 +2263,13 @@ def render_nxc_host_panel(host_ip: str, host_data: Any, has_data: bool = True) -
                 identity_text.append(f"{cred.domain}\\", style=style_if_enabled("dim"))
             identity_text.append(cred.username, style=style_if_enabled("yellow"))
             if cred.pillaged:
-                identity_text.append(" (dumped from host)", style=style_if_enabled("dim"))
+                identity_text.append(
+                    " (dumped from host)", style=style_if_enabled("dim")
+                )
 
-            admin_indicator = Text("✓", style="bold green") if cred.has_admin else Text("")
+            admin_indicator = (
+                Text("✓", style="bold green") if cred.has_admin else Text("")
+            )
 
             cred_table.add_row(
                 cred.protocol.upper(),
@@ -2286,7 +2407,9 @@ def bulk_extract_cves_for_plugins(plugins: List[tuple[int, str]]) -> None:
 
     # Report failures if any
     if failed_count > 0:
-        warn(f"CVE extraction failed for {failed_count} plugin(s). Check logs for details.")
+        warn(
+            f"CVE extraction failed for {failed_count} plugin(s). Check logs for details."
+        )
 
     # Display results
     display_bulk_cve_results(results)
@@ -2329,7 +2452,9 @@ def bulk_extract_cves_for_findings(files: List[Path]) -> None:
 
     # Report failures if any
     if failed_count > 0:
-        warn(f"CVE extraction failed for {failed_count} finding(s). Check logs for details.")
+        warn(
+            f"CVE extraction failed for {failed_count} finding(s). Check logs for details."
+        )
 
     # Display results
     display_bulk_cve_results(results)
@@ -2345,6 +2470,7 @@ def display_bulk_cve_results(results: dict[str, list[str]]) -> None:
         results: Dictionary mapping plugin name/filename to list of CVEs
     """
     from rich.prompt import Prompt
+
     # Display results
     if results:
         # Count total findings and unique CVEs
@@ -2355,13 +2481,17 @@ def display_bulk_cve_results(results: dict[str, list[str]]) -> None:
         total_unique_cves = len(all_cves)
 
         # Show enhanced preview with CVE distribution
-        info(f"\nFound {total_unique_cves} unique CVE(s) across {total_findings} finding(s):")
+        info(
+            f"\nFound {total_unique_cves} unique CVE(s) across {total_findings} finding(s):"
+        )
 
         # Show CVE count per finding (limit to first 10 findings for readability)
         findings_to_show = list(results.items())[:10]
         for plugin_name, cves in findings_to_show:
             # Truncate long plugin names
-            display_name = plugin_name if len(plugin_name) <= 60 else plugin_name[:57] + "..."
+            display_name = (
+                plugin_name if len(plugin_name) <= 60 else plugin_name[:57] + "..."
+            )
             info(f"  {display_name}: {len(cves)} CVE(s)")
 
         if len(results) > 10:
@@ -2374,16 +2504,15 @@ def display_bulk_cve_results(results: dict[str, list[str]]) -> None:
 
         # Ask user for display format with smart default
         info("")  # Blank line for spacing
-        print_action_menu([
-            ("S", "Separated (by finding)"),
-            ("C", "Combined (all unique CVEs)"),
-            ("", f"[Enter] for {default_label}")
-        ])
+        print_action_menu(
+            [
+                ("S", "Separated (by finding)"),
+                ("C", "Combined (all unique CVEs)"),
+                ("", f"[Enter] for {default_label}"),
+            ]
+        )
         try:
-            format_choice = Prompt.ask(
-                "Choose format",
-                default=default_format
-            ).lower()
+            format_choice = Prompt.ask("Choose format", default=default_format).lower()
         except KeyboardInterrupt:
             return
 
@@ -2432,6 +2561,7 @@ def color_unreviewed(count: int) -> str:
 # Cross-Scan Comparison Rendering
 # ===================================================================
 
+
 def _severity_label_for_int(severity_int: int) -> str:
     """Get severity label for severity integer."""
     labels = {0: "Info", 1: "Low", 2: "Medium", 3: "High", 4: "Critical"}
@@ -2469,10 +2599,12 @@ def render_scan_comparison(result: "ScanComparisonResult") -> None:
     Args:
         result: ScanComparisonResult from compare_scans()
     """
+
     # Format dates for display
     def format_date(dt_str: str) -> str:
         try:
             from datetime import datetime
+
             dt = datetime.fromisoformat(dt_str)
             return dt.strftime("%Y-%m-%d")
         except Exception:
@@ -2486,9 +2618,15 @@ def render_scan_comparison(result: "ScanComparisonResult") -> None:
 
     # Finding changes section
     summary_lines.append("[bold]Finding Changes[/bold]")
-    summary_lines.append(f"  [green]New findings:[/green]        {result.total_new:>4}   ({_format_severity_breakdown(result.new_by_severity)})")
-    summary_lines.append(f"  [red]Resolved findings:[/red]   {result.total_resolved:>4}   ({_format_severity_breakdown(result.resolved_by_severity)})")
-    summary_lines.append(f"  [yellow]Persistent findings:[/yellow] {result.total_persistent:>4}   ({_format_severity_breakdown(result.persistent_by_severity)})")
+    summary_lines.append(
+        f"  [green]New findings:[/green]        {result.total_new:>4}   ({_format_severity_breakdown(result.new_by_severity)})"
+    )
+    summary_lines.append(
+        f"  [red]Resolved findings:[/red]   {result.total_resolved:>4}   ({_format_severity_breakdown(result.resolved_by_severity)})"
+    )
+    summary_lines.append(
+        f"  [yellow]Persistent findings:[/yellow] {result.total_persistent:>4}   ({_format_severity_breakdown(result.persistent_by_severity)})"
+    )
 
     summary_lines.append("")
 
@@ -2501,9 +2639,19 @@ def render_scan_comparison(result: "ScanComparisonResult") -> None:
     if len(result.removed_hosts) > 5:
         removed_host_ips += f", ... (+{len(result.removed_hosts) - 5} more)"
 
-    summary_lines.append(f"  [green]New hosts:[/green]      {len(result.new_hosts):>4}   ({new_host_ips})" if result.new_hosts else f"  [green]New hosts:[/green]      {len(result.new_hosts):>4}")
-    summary_lines.append(f"  [red]Removed hosts:[/red]  {len(result.removed_hosts):>4}   ({removed_host_ips})" if result.removed_hosts else f"  [red]Removed hosts:[/red]  {len(result.removed_hosts):>4}")
-    summary_lines.append(f"  [yellow]Persistent:[/yellow]     {len(result.persistent_hosts):>4}")
+    summary_lines.append(
+        f"  [green]New hosts:[/green]      {len(result.new_hosts):>4}   ({new_host_ips})"
+        if result.new_hosts
+        else f"  [green]New hosts:[/green]      {len(result.new_hosts):>4}"
+    )
+    summary_lines.append(
+        f"  [red]Removed hosts:[/red]  {len(result.removed_hosts):>4}   ({removed_host_ips})"
+        if result.removed_hosts
+        else f"  [red]Removed hosts:[/red]  {len(result.removed_hosts):>4}"
+    )
+    summary_lines.append(
+        f"  [yellow]Persistent:[/yellow]     {len(result.persistent_hosts):>4}"
+    )
 
     summary_text = "\n".join(summary_lines)
     summary_panel = Panel(
@@ -2518,9 +2666,7 @@ def render_scan_comparison(result: "ScanComparisonResult") -> None:
     # New findings table
     if result.new_findings:
         _render_findings_change_table(
-            result.new_findings,
-            f"New Findings ({result.total_new})",
-            "green"
+            result.new_findings, f"New Findings ({result.total_new})", "green"
         )
         _console_global.print()
 
@@ -2529,7 +2675,7 @@ def render_scan_comparison(result: "ScanComparisonResult") -> None:
         _render_findings_change_table(
             result.resolved_findings,
             f"Resolved Findings ({result.total_resolved})",
-            "red"
+            "red",
         )
         _console_global.print()
 
@@ -2539,9 +2685,7 @@ def render_scan_comparison(result: "ScanComparisonResult") -> None:
 
 
 def _render_findings_change_table(
-    findings: list[dict],
-    title: str,
-    title_color: str
+    findings: list[dict], title: str, title_color: str
 ) -> None:
     """Render a table of changed findings.
 
@@ -2585,10 +2729,12 @@ def render_host_history(history: "HostVulnerabilityHistory") -> None:
     Args:
         history: HostVulnerabilityHistory from get_host_vulnerability_history()
     """
+
     # Format dates for display
     def format_date(dt_str: str) -> str:
         try:
             from datetime import datetime
+
             dt = datetime.fromisoformat(dt_str)
             return dt.strftime("%Y-%m-%d")
         except Exception:
@@ -2669,6 +2815,8 @@ def render_host_history(history: "HostVulnerabilityHistory") -> None:
         if total_change > 0:
             info(f"Overall trend: [red]+{total_change} findings[/red] since first scan")
         elif total_change < 0:
-            info(f"Overall trend: [green]{total_change} findings[/green] since first scan")
+            info(
+                f"Overall trend: [green]{total_change} findings[/green] since first scan"
+            )
         else:
             info("Overall trend: [yellow]No change[/yellow] in finding count")

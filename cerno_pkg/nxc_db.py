@@ -18,7 +18,18 @@ from typing import Any, Dict, FrozenSet, List, Optional, Tuple
 from .logging_setup import log_debug
 
 # Supported protocol databases
-SUPPORTED_PROTOCOLS = ["smb", "ssh", "ldap", "mssql", "rdp", "winrm", "ftp", "nfs", "vnc", "wmi"]
+SUPPORTED_PROTOCOLS = [
+    "smb",
+    "ssh",
+    "ldap",
+    "mssql",
+    "rdp",
+    "winrm",
+    "ftp",
+    "nfs",
+    "vnc",
+    "wmi",
+]
 
 
 @dataclass(frozen=True)
@@ -51,17 +62,33 @@ class _ProtocolSpec:
 _PROTOCOL_SPECS: Dict[str, _ProtocolSpec] = {
     "smb": _ProtocolSpec(
         "ip",
-        ("hostname", "domain", "os", "dc", "smbv1", "signing", "spooler", "zerologon", "petitpotam"),
+        (
+            "hostname",
+            "domain",
+            "os",
+            "dc",
+            "smbv1",
+            "signing",
+            "spooler",
+            "zerologon",
+            "petitpotam",
+        ),
         "users",
     ),
     "mssql": _ProtocolSpec("ip", ("hostname", "domain", "os", "instances"), "users"),
     "winrm": _ProtocolSpec("ip", ("port", "hostname", "domain", "os"), "users"),
     "ldap": _ProtocolSpec(
-        "ip", ("hostname", "domain", "os", "signing_required", "channel_binding"), "users"
+        "ip",
+        ("hostname", "domain", "os", "signing_required", "channel_binding"),
+        "users",
     ),
-    "ssh": _ProtocolSpec("host", ("port", "banner", "os"), "credentials", "credid", "hostid"),
+    "ssh": _ProtocolSpec(
+        "host", ("port", "banner", "os"), "credentials", "credid", "hostid"
+    ),
     "ftp": _ProtocolSpec("host", ("port", "banner"), "credentials", "credid", "hostid"),
-    "nfs": _ProtocolSpec("ip", ("hostname", "port"), "credentials", "cred_id", "host_id"),
+    "nfs": _ProtocolSpec(
+        "ip", ("hostname", "port"), "credentials", "cred_id", "host_id"
+    ),
     "rdp": _ProtocolSpec("ip", ("port", "hostname", "domain", "os", "nla")),
     "vnc": _ProtocolSpec("ip", ("hostname", "port", "server_banner"), "credentials"),
     "wmi": _ProtocolSpec("ip", ("hostname", "port"), "credentials"),
@@ -69,7 +96,16 @@ _PROTOCOL_SPECS: Dict[str, _ProtocolSpec] = {
 
 # hosts columns declared BOOLEAN by NetExec; normalised to Python bools.
 _BOOLEAN_ATTRS = frozenset(
-    {"dc", "smbv1", "signing", "spooler", "zerologon", "petitpotam", "signing_required", "nla"}
+    {
+        "dc",
+        "smbv1",
+        "signing",
+        "spooler",
+        "zerologon",
+        "petitpotam",
+        "signing_required",
+        "nla",
+    }
 )
 
 
@@ -185,10 +221,53 @@ class NxcEnrichmentSummary:
     total_hosts_queried: int
     hosts_with_data: int
     protocols_seen: List[str] = field(default_factory=list)
-    unique_credentials: List[tuple[NxcCredential, int]] = field(default_factory=list)  # (cred, host_count)
-    shares_summary: Dict[str, tuple[int, int]] = field(default_factory=dict)  # name -> (read_count, write_count)
-    security_flag_counts: Dict[str, int] = field(default_factory=dict)  # flag_name -> count
+    unique_credentials: List[tuple[NxcCredential, int]] = field(
+        default_factory=list
+    )  # (cred, host_count)
+    shares_summary: Dict[str, tuple[int, int]] = field(
+        default_factory=dict
+    )  # name -> (read_count, write_count)
+    security_flag_counts: Dict[str, int] = field(
+        default_factory=dict
+    )  # flag_name -> count
     per_host_data: Dict[str, NxcHostData] = field(default_factory=dict)  # ip -> data
+
+
+@dataclass(frozen=True)
+class NxcCredentialRef:
+    """A non-secret reference to a credential stored in the NetExec workspace.
+
+    The actual password/hash value is NEVER included here; only ``secret_kind``
+    says whether a usable secret exists. The opaque ``ref`` (``"<protocol>:<id>"``)
+    is passed back to :meth:`NxcDatabaseManager.resolve_credential_secret` to
+    obtain the secret server-side, at execution time only.
+    """
+
+    ref: str
+    protocol: str
+    username: str
+    domain: Optional[str] = None
+    credential_type: Optional[str] = None
+    secret_kind: Optional[str] = None  # 'password' | 'hash' | None (no usable secret)
+
+
+@dataclass(frozen=True)
+class ResolvedSecret:
+    """A resolved credential secret. Handle server-side only; never log or return."""
+
+    username: str
+    domain: Optional[str]
+    secret_kind: str  # 'password' | 'hash'
+    secret_value: str
+
+
+def _classify_secret_kind(
+    credtype: Optional[str], password: Optional[str]
+) -> Optional[str]:
+    """Derive secret_kind from a nxc credtype + stored password/hash value."""
+    if not password:
+        return None
+    return "hash" if (credtype or "").strip().lower() == "hash" else "password"
 
 
 def _placeholders(n: int) -> str:
@@ -282,7 +361,9 @@ class NxcDatabaseManager:
         self._connection_cache.clear()
         self._columns_cache.clear()
 
-    def _columns(self, protocol: str, conn: sqlite3.Connection, table: str) -> FrozenSet[str]:
+    def _columns(
+        self, protocol: str, conn: sqlite3.Connection, table: str
+    ) -> FrozenSet[str]:
         """Return the column names of ``table`` (empty if the table is missing).
 
         Args:
@@ -322,7 +403,9 @@ class NxcDatabaseManager:
         try:
             host_cols = self._columns(protocol, conn, "hosts")
             if spec.address_col not in host_cols:
-                log_debug(f"nxc {protocol}.db: hosts.{spec.address_col} missing; skipping")
+                log_debug(
+                    f"nxc {protocol}.db: hosts.{spec.address_col} missing; skipping"
+                )
                 return None
             attrs = [a for a in spec.host_attrs if a in host_cols]
             select_cols = ", ".join(["id", *attrs])
@@ -395,7 +478,9 @@ class NxcDatabaseManager:
         in_ids = _placeholders(len(host_ids))
 
         def rel_exists(rel_table: str) -> Optional[str]:
-            if {spec.rel_cred_col, spec.rel_host_col} <= self._columns(protocol, conn, rel_table):
+            if {spec.rel_cred_col, spec.rel_host_col} <= self._columns(
+                protocol, conn, rel_table
+            ):
                 return (
                     f"EXISTS (SELECT 1 FROM {rel_table} r WHERE r.{spec.rel_cred_col} = c.id "
                     f"AND r.{spec.rel_host_col} IN ({in_ids}))"
@@ -458,7 +543,11 @@ class NxcDatabaseManager:
                 host_ids,
             ):
                 data.shares.append(
-                    NxcShare(name=row["name"], read_access=bool(row["r"]), write_access=bool(row["w"]))
+                    NxcShare(
+                        name=row["name"],
+                        read_access=bool(row["r"]),
+                        write_access=bool(row["w"]),
+                    )
                 )
 
         if {"host_id", "check_id", "secure"} <= self._columns(
@@ -470,7 +559,9 @@ class NxcDatabaseManager:
                 f"WHERE r.host_id IN ({in_ids}) AND r.secure = 0 ORDER BY r.id",
                 host_ids,
             ):
-                data.failed_checks.append(NxcConfCheck(name=row["name"], reasons=row["reasons"] or None))
+                data.failed_checks.append(
+                    NxcConfCheck(name=row["name"], reasons=row["reasons"] or None)
+                )
 
     def get_host_enrichment(self, host_ip: str) -> Optional[NxcHostData]:
         """Get aggregated NetExec data for a single host.
@@ -520,8 +611,12 @@ class NxcDatabaseManager:
         """
         per_host_data: Dict[str, NxcHostData] = {}
         all_protocols: set[str] = set()
-        credential_counts: Dict[tuple[str, str, Optional[str], str], int] = {}  # (proto, user, domain, type) -> count
-        shares_summary: Dict[str, tuple[int, int]] = {}  # name -> (read_count, write_count)
+        credential_counts: Dict[tuple[str, str, Optional[str], str], int] = (
+            {}
+        )  # (proto, user, domain, type) -> count
+        shares_summary: Dict[str, tuple[int, int]] = (
+            {}
+        )  # name -> (read_count, write_count)
         security_flag_counts: Dict[str, int] = {
             "signing_disabled": 0,
             "smbv1_enabled": 0,
@@ -539,7 +634,12 @@ class NxcDatabaseManager:
 
                 # Count credentials
                 for cred in data.credentials:
-                    key = (cred.protocol, cred.username, cred.domain, cred.credential_type)
+                    key = (
+                        cred.protocol,
+                        cred.username,
+                        cred.domain,
+                        cred.credential_type,
+                    )
                     credential_counts[key] = credential_counts.get(key, 0) + 1
 
                 # Aggregate shares
@@ -562,7 +662,10 @@ class NxcDatabaseManager:
                     if data.security_flags.petitpotam_vulnerable:
                         security_flag_counts["petitpotam"] += 1
                 # Only explicit False counts; NULL (not checked) is absent from details.
-                if data.protocol_details.get("ldap", {}).get("signing_required") is False:
+                if (
+                    data.protocol_details.get("ldap", {}).get("signing_required")
+                    is False
+                ):
                     security_flag_counts["ldap_signing_disabled"] += 1
                 if data.protocol_details.get("rdp", {}).get("nla") is False:
                     security_flag_counts["rdp_nla_disabled"] += 1
@@ -575,7 +678,9 @@ class NxcDatabaseManager:
                 cred
                 for data in per_host_data.values()
                 for cred in data.credentials
-                if cred.protocol == proto and cred.username == user and cred.domain == domain
+                if cred.protocol == proto
+                and cred.username == user
+                and cred.domain == domain
             ]
             has_admin = any(cred.has_admin for cred in instances)
             pillaged = any(cred.pillaged for cred in instances)
@@ -607,6 +712,103 @@ class NxcDatabaseManager:
             shares_summary=shares_summary,
             security_flag_counts=security_flag_counts,
             per_host_data=per_host_data,
+        )
+
+    def list_credential_refs(self) -> List[NxcCredentialRef]:
+        """List non-secret references to every stored credential in the workspace.
+
+        Reads each protocol's credential table (``users``/``credentials``) for its
+        rowid, username, domain and credtype — never the password/hash value. The
+        rowid-based ``ref`` is stable within the workspace and is what
+        :meth:`resolve_credential_secret` consumes.
+        """
+        refs: List[NxcCredentialRef] = []
+        for protocol, spec in _PROTOCOL_SPECS.items():
+            if not spec.cred_table:
+                continue
+            conn = self._get_connection(protocol)
+            if conn is None:
+                continue
+            cols = self._columns(protocol, conn, spec.cred_table)
+            if "username" not in cols:
+                continue
+            select_domain = "domain" in cols
+            select_credtype = "credtype" in cols
+            fields = ["id", "username", "password"]
+            if select_domain:
+                fields.append("domain")
+            if select_credtype:
+                fields.append("credtype")
+            try:
+                rows = conn.execute(
+                    f'SELECT {", ".join(fields)} FROM "{spec.cred_table}" ORDER BY id'
+                ).fetchall()
+            except sqlite3.Error:
+                continue
+            for row in rows:
+                username = row["username"]
+                if not username:
+                    continue
+                credtype = row["credtype"] if select_credtype else None
+                refs.append(
+                    NxcCredentialRef(
+                        ref=f"{protocol}:{row['id']}",
+                        protocol=protocol,
+                        username=username,
+                        domain=row["domain"] if select_domain else None,
+                        credential_type=credtype,
+                        secret_kind=_classify_secret_kind(credtype, row["password"]),
+                    )
+                )
+        return refs
+
+    def resolve_credential_secret(self, ref: str) -> Optional[ResolvedSecret]:
+        """Resolve a credential ``ref`` to its real secret (server-side use only).
+
+        Returns None if the ref is malformed, the protocol/row is gone, or the
+        credential has no usable secret. The returned value must never be logged,
+        returned to a client, or written to an artifact.
+        """
+        try:
+            protocol, rowid_str = ref.split(":", 1)
+            rowid = int(rowid_str)
+        except (ValueError, AttributeError):
+            return None
+        spec = _PROTOCOL_SPECS.get(protocol)
+        if spec is None or not spec.cred_table:
+            return None
+        conn = self._get_connection(protocol)
+        if conn is None:
+            return None
+        cols = self._columns(protocol, conn, spec.cred_table)
+        if "username" not in cols or "password" not in cols:
+            return None
+        select_domain = "domain" in cols
+        select_credtype = "credtype" in cols
+        fields = ["username", "password"]
+        if select_domain:
+            fields.append("domain")
+        if select_credtype:
+            fields.append("credtype")
+        try:
+            row = conn.execute(
+                f'SELECT {", ".join(fields)} FROM "{spec.cred_table}" WHERE id = ?',
+                (rowid,),
+            ).fetchone()
+        except sqlite3.Error:
+            return None
+        if row is None:
+            return None
+        password = row["password"]
+        credtype = row["credtype"] if select_credtype else None
+        kind = _classify_secret_kind(credtype, password)
+        if kind is None:
+            return None
+        return ResolvedSecret(
+            username=row["username"],
+            domain=row["domain"] if select_domain else None,
+            secret_kind=kind,
+            secret_value=password,
         )
 
 
@@ -666,3 +868,19 @@ def reset_nxc_manager() -> None:
     if _nxc_manager:
         _nxc_manager.close()
     _nxc_manager = None
+
+
+def list_credential_refs() -> List[NxcCredentialRef]:
+    """List non-secret credential references from the NetExec workspace (or [])."""
+    manager = get_nxc_manager()
+    if manager is None:
+        return []
+    return manager.list_credential_refs()
+
+
+def resolve_credential_secret(ref: str) -> Optional[ResolvedSecret]:
+    """Resolve a credential ``ref`` to its secret server-side (or None)."""
+    manager = get_nxc_manager()
+    if manager is None:
+        return None
+    return manager.resolve_credential_secret(ref)

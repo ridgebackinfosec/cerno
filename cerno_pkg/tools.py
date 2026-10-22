@@ -33,6 +33,7 @@ from .tool_context import ToolContext, CommandResult
 
 from .ansi import get_console
 from .render import print_action_menu, render_responsive_action_menu
+
 _console = get_console()
 
 
@@ -49,7 +50,10 @@ MSF_PATTERN = re.compile(r"Metasploit[:\-\s]*\(?([^)]+)\)?", re.IGNORECASE)
 
 # ========== NSE Profile Selection ==========
 
-def choose_nse_profile(config: Optional["CernoConfig"] = None) -> tuple[list[str], bool]:
+
+def choose_nse_profile(
+    config: Optional["CernoConfig"] = None,
+) -> tuple[list[str], bool]:
     """
     Prompt user to select an NSE (Nmap Scripting Engine) profile.
 
@@ -64,12 +68,16 @@ def choose_nse_profile(config: Optional["CernoConfig"] = None) -> tuple[list[str
     # Load config if not provided
     if config is None:
         from .config import load_config
+
         config = load_config()
 
     header("NSE Profiles")
     for index, (name, description, scripts, _) in enumerate(NSE_PROFILES, 1):
         # Highlight config default if it matches
-        if config.nmap_default_profile and name.lower() == config.nmap_default_profile.lower():
+        if (
+            config.nmap_default_profile
+            and name.lower() == config.nmap_default_profile.lower()
+        ):
             print(f"[{index}] {name} - {description} (default)")
         else:
             print(f"[{index}] {name} - {description}")
@@ -93,7 +101,9 @@ def choose_nse_profile(config: Optional["CernoConfig"] = None) -> tuple[list[str
         # Handle default selection (Enter key) if config has default
         if answer == "" and config.nmap_default_profile:
             # Find matching profile by name
-            for index, (name, description, scripts, needs_udp) in enumerate(NSE_PROFILES):
+            for index, (name, description, scripts, needs_udp) in enumerate(
+                NSE_PROFILES
+            ):
                 if name.lower() == config.nmap_default_profile.lower():
                     ok(
                         f"Selected profile: {name} — "
@@ -109,16 +119,15 @@ def choose_nse_profile(config: Optional["CernoConfig"] = None) -> tuple[list[str
             profile_index = int(answer)
             if 1 <= profile_index <= len(NSE_PROFILES):
                 name, description, scripts, needs_udp = NSE_PROFILES[profile_index - 1]
-                ok(
-                    f"Selected profile: {name} — "
-                    f"including: {', '.join(scripts)}"
-                )
+                ok(f"Selected profile: {name} — " f"including: {', '.join(scripts)}")
                 return scripts[:], needs_udp
 
         warn("Invalid choice.")
 
 
-def configure_nmap_options(config: Optional["CernoConfig"] = None) -> Optional[tuple[list[str], bool, bool]]:
+def configure_nmap_options(
+    config: Optional["CernoConfig"] = None,
+) -> Optional[tuple[list[str], bool, bool]]:
     """
     Consolidated nmap configuration screen.
 
@@ -137,6 +146,7 @@ def configure_nmap_options(config: Optional["CernoConfig"] = None) -> Optional[t
     # Load config if not provided
     if config is None:
         from .config import load_config
+
         config = load_config()
 
     # Initialize state
@@ -192,7 +202,9 @@ def configure_nmap_options(config: Optional["CernoConfig"] = None) -> Optional[t
 
         if force_udp or auto_udp:
             if auto_udp and not force_udp:
-                summary.append("Yes (auto-enabled for selected scripts)\n", style="yellow")
+                summary.append(
+                    "Yes (auto-enabled for selected scripts)\n", style="yellow"
+                )
             else:
                 summary.append("Yes\n", style="yellow")
         else:
@@ -202,6 +214,7 @@ def configure_nmap_options(config: Optional["CernoConfig"] = None) -> Optional[t
         summary.append("\nRemote Mode: ", style="cyan")
         if remote_mode:
             from .ops import get_interface_ip
+
             iface = config.pivot_interface or "?"
             ip = get_interface_ip(iface) if config.pivot_interface else None
             addr = f"{iface} → {ip}" if ip else iface
@@ -213,11 +226,16 @@ def configure_nmap_options(config: Optional["CernoConfig"] = None) -> Optional[t
         _console.print(panel)
 
         # Show menu options with responsive layout
-        render_responsive_action_menu([
-            [("P", "Select NSE Profile"), ("S", "Add/Edit Custom Scripts")],
-            [("U", f"Toggle UDP ({'ON' if force_udp else 'OFF'})"), ("R", f"Toggle Remote Mode ({'ON' if remote_mode else 'OFF'})")],
-            [("Enter", "Continue"), ("B", "Back/Cancel")],
-        ])
+        render_responsive_action_menu(
+            [
+                [("P", "Select NSE Profile"), ("S", "Add/Edit Custom Scripts")],
+                [
+                    ("U", f"Toggle UDP ({'ON' if force_udp else 'OFF'})"),
+                    ("R", f"Toggle Remote Mode ({'ON' if remote_mode else 'OFF'})"),
+                ],
+                [("Enter", "Continue"), ("B", "Back/Cancel")],
+            ]
+        )
 
         try:
             answer = Prompt.ask("Choose", default="").strip().lower()
@@ -244,13 +262,16 @@ def configure_nmap_options(config: Optional["CernoConfig"] = None) -> Optional[t
             # Check if custom scripts imply UDP
             if custom_scripts:
                 extras_imply_udp = any(
-                    script.lower().startswith("snmp") or script.lower() == "ipmi-version"
+                    script.lower().startswith("snmp")
+                    or script.lower() == "ipmi-version"
                     for script in custom_scripts
                 )
                 final_needs_udp = final_needs_udp or extras_imply_udp
 
             if final_scripts:
-                ok(f"Configuration saved: {len(final_scripts)} script(s), UDP={'Yes' if final_needs_udp else 'No'}")
+                ok(
+                    f"Configuration saved: {len(final_scripts)} script(s), UDP={'Yes' if final_needs_udp else 'No'}"
+                )
             else:
                 ok("Configuration saved: No NSE scripts selected")
 
@@ -293,13 +314,15 @@ def configure_nmap_options(config: Optional["CernoConfig"] = None) -> Optional[t
             try:
                 scripts_input = Prompt.ask(
                     "Enter custom NSE scripts (comma-separated, or Enter to clear)",
-                    default=current_value
+                    default=current_value,
                 ).strip()
             except KeyboardInterrupt:
                 continue
 
             if scripts_input:
-                custom_scripts = [s.strip() for s in scripts_input.split(",") if s.strip()]
+                custom_scripts = [
+                    s.strip() for s in scripts_input.split(",") if s.strip()
+                ]
                 ok(f"Custom scripts updated: {len(custom_scripts)} script(s)")
             else:
                 custom_scripts = []
@@ -319,6 +342,7 @@ def configure_nmap_options(config: Optional["CernoConfig"] = None) -> Optional[t
                 # No interface configured — show picker
                 from .ops import list_interfaces, get_interface_ip
                 from .config import save_config
+
                 ifaces = list_interfaces()
                 if not ifaces:
                     warn("No network interfaces with IPv4 addresses found.")
@@ -350,7 +374,9 @@ def configure_nmap_options(config: Optional["CernoConfig"] = None) -> Optional[t
                         if detected:
                             chosen_interface = manual
                         else:
-                            warn(f"Could not detect IP for interface '{manual}'. Try another.")
+                            warn(
+                                f"Could not detect IP for interface '{manual}'. Try another."
+                            )
                 elif iface_answer.isdigit():
                     pick = int(iface_answer) - 1
                     if 0 <= pick < len(ifaces):
@@ -366,6 +392,7 @@ def configure_nmap_options(config: Optional["CernoConfig"] = None) -> Optional[t
 
 
 # ========== Command Builders ==========
+
 
 def normalize_nse_option(nse_option: Optional[str]) -> str:
     """
@@ -391,7 +418,7 @@ def normalize_nse_option(nse_option: Optional[str]) -> str:
     while i < len(tokens):
         token = tokens[i]
         if token.startswith("--script="):
-            value = token[len("--script="):]
+            value = token[len("--script=") :]
         elif token == "--script":
             i += 1
             value = tokens[i] if i < len(tokens) else ""
@@ -463,34 +490,69 @@ def build_nmap_cmd(
     return cmd
 
 
+def credential_placeholder(ref: str) -> str:
+    """Return the server-side substitution token for a credential ``ref``.
+
+    The token ``@cred:<ref>@`` is what ``build_netexec_cmd`` emits in place of a
+    real secret; the MCP ``execute_command`` handler resolves it to the actual
+    password/hash just before running, so no secret ever appears in the generated
+    command, the logged command_text, or an artifact.
+    """
+    return f"@cred:{ref}@"
+
+
 def build_netexec_cmd(
     exec_bin: str,
     protocol: str,
     ips_file: Path,
     output_base: Path,
+    credential: Optional[dict] = None,
 ) -> tuple[list[str], str, Optional[str]]:
     """
     Build a netexec command for the specified protocol.
-    
+
     Args:
         exec_bin: Path to netexec binary
         protocol: Protocol to scan (e.g., 'smb', 'ssh')
         ips_file: Path to file containing IP addresses
         output_base: Base path for output files
-        
+        credential: Optional non-secret credential spec with keys ``username``,
+            ``domain`` (optional), ``secret_kind`` ('password'|'hash') and ``ref``.
+            When given, auth flags are injected using a ``@cred:<ref>@`` PLACEHOLDER
+            for the secret (never the real value).
+
     Returns:
         Tuple of (command, log_path, relay_path) where relay_path
         is only set for SMB protocol
     """
     log_path = f"{str(output_base)}.nxc.{protocol}.log"
     relay_path = None
-    
+
+    auth: list[str] = []
+    if credential:
+        username = credential.get("username")
+        if not username:
+            raise ValueError("credential spec requires a 'username'")
+        secret_kind = credential.get("secret_kind")
+        ref = credential.get("ref")
+        if secret_kind not in ("password", "hash") or not ref:
+            raise ValueError(
+                "credential spec requires a usable 'secret_kind' ('password'|'hash') and 'ref'"
+            )
+        auth += ["-u", username]
+        domain = credential.get("domain")
+        if domain:
+            auth += ["-d", domain]
+        secret_flag = "-H" if secret_kind == "hash" else "-p"
+        auth += [secret_flag, credential_placeholder(ref)]
+
     if protocol == "smb":
         relay_path = f"{str(output_base)}.SMB_Signing_not_required_targets.txt"
         cmd = [
             exec_bin,
             "smb",
             str(ips_file),
+            *auth,
             "--gen-relay-list",
             relay_path,
             "--shares",
@@ -498,12 +560,13 @@ def build_netexec_cmd(
             log_path,
         ]
     else:
-        cmd = [exec_bin, protocol, str(ips_file), "--log", log_path]
-    
+        cmd = [exec_bin, protocol, str(ips_file), *auth, "--log", log_path]
+
     return cmd, log_path, relay_path
 
 
 # ========== Tool Selection ==========
+
 
 def choose_tool(config: Optional["CernoConfig"] = None) -> Optional[str]:
     """
@@ -524,6 +587,7 @@ def choose_tool(config: Optional["CernoConfig"] = None) -> Optional[str]:
     # Load config if not provided
     if config is None:
         from .config import load_config
+
         config = load_config()
 
     # Get all registered tools sorted by menu_order
@@ -615,6 +679,7 @@ def choose_netexec_protocol(config: Optional["CernoConfig"] = None) -> Optional[
     # Load config if not provided
     if config is None:
         from .config import load_config
+
         config = load_config()
 
     # Use config default or fall back to 'smb'
@@ -628,43 +693,43 @@ def choose_netexec_protocol(config: Optional["CernoConfig"] = None) -> Optional[
 
     while True:
         try:
-            answer = Prompt.ask("Choose protocol", default=default_proto).strip().lower()
+            answer = (
+                Prompt.ask("Choose protocol", default=default_proto).strip().lower()
+            )
         except KeyboardInterrupt:
             warn("\nInterrupted — returning to finding menu.")
             return None
 
         if answer == "":
             return default_proto
-        
+
         if answer in ("b", "back", "q"):
             return None
-        
+
         if answer.isdigit():
             protocol_index = int(answer)
             if 1 <= protocol_index <= len(NETEXEC_PROTOCOLS):
                 return NETEXEC_PROTOCOLS[protocol_index - 1]
-        
+
         if answer in NETEXEC_PROTOCOLS:
             return answer
-        
+
         warn("Invalid choice.")
 
 
 # ========== Custom Command Handling ==========
 
+
 def custom_command_help(placeholder_mapping: dict[str, str]) -> None:
     """
     Display help information for custom command placeholders.
-    
+
     Args:
         placeholder_mapping: Dictionary mapping placeholder names to
             their expanded values
     """
     header("Custom command")
-    info(
-        "You can type any shell command. "
-        "The placeholders below will be expanded:"
-    )
+    info("You can type any shell command. " "The placeholders below will be expanded:")
     for placeholder, value in placeholder_mapping.items():
         info(f"  {placeholder:14s} -> {value}")
     print()
@@ -677,11 +742,11 @@ def custom_command_help(placeholder_mapping: dict[str, str]) -> None:
 def render_placeholders(template: str, mapping: dict[str, str]) -> str:
     """
     Replace placeholders in template string with their values.
-    
+
     Args:
         template: String containing placeholders in {PLACEHOLDER} format
         mapping: Dictionary mapping placeholder names to values
-        
+
     Returns:
         Template string with placeholders replaced
     """
@@ -693,11 +758,12 @@ def render_placeholders(template: str, mapping: dict[str, str]) -> str:
 
 # ========== Command Review ==========
 
+
 def command_review_menu(
     cmd_list_or_str: list[str] | str,
     ctx: Optional["ToolContext"] = None,
     tool_name: Optional[str] = None,
-    nse_scripts: Optional[list[str]] = None
+    nse_scripts: Optional[list[str]] = None,
 ) -> str:
     """
     Display command review menu with pre-flight summary and get user action.
@@ -755,9 +821,7 @@ def command_review_menu(
             summary.append(f"{ctx.results_dir}\n", style="yellow")
 
         panel = Panel(
-            summary,
-            title="[bold cyan]Execution Summary[/]",
-            border_style="cyan"
+            summary, title="[bold cyan]Execution Summary[/]", border_style="cyan"
         )
         _console.print(panel)
         _console.print()
@@ -771,10 +835,12 @@ def command_review_menu(
     info("Command:")
     print(cmd_str)
     print()
-    render_responsive_action_menu([
-        [("1", "Run now"), ("2", "Copy to clipboard")],
-        [("B", "Back")],
-    ])
+    render_responsive_action_menu(
+        [
+            [("1", "Run now"), ("2", "Copy to clipboard")],
+            [("B", "Back")],
+        ]
+    )
 
     while True:
         try:
@@ -797,16 +863,17 @@ def command_review_menu(
 
 # ========== Clipboard Operations ==========
 
+
 def copy_to_clipboard(text: str) -> tuple[bool, str]:
     """
     Copy text to clipboard using available methods.
-    
+
     Tries pyperclip first, then falls back to OS-specific tools
     (pbcopy, clip, xclip, wl-copy, xsel).
-    
+
     Args:
         text: Text to copy to clipboard
-        
+
     Returns:
         Tuple of (success, message) indicating whether copy succeeded
         and describing the method used or error encountered
@@ -817,19 +884,19 @@ def copy_to_clipboard(text: str) -> tuple[bool, str]:
         return True, "Copied using pyperclip."
     except Exception:
         pass
-    
+
     # Fall back to OS-specific tools
     encoded_text = text.encode("utf-8")
     clipboard_tools = []
-    
+
     # macOS
     if sys.platform.startswith("darwin") and shutil.which("pbcopy"):
         clipboard_tools.append(("pbcopy", ["pbcopy"]))
-    
+
     # Windows
     if os.name == "nt" and shutil.which("clip"):
         clipboard_tools.append(("clip", ["clip"]))
-    
+
     # Linux/Unix
     for tool, args in [
         ("xclip", ["xclip", "-selection", "clipboard"]),
@@ -838,7 +905,7 @@ def copy_to_clipboard(text: str) -> tuple[bool, str]:
     ]:
         if shutil.which(tool):
             clipboard_tools.append((tool, args))
-    
+
     # Try each available tool
     errors: list[str] = []
     for tool_name, tool_args in clipboard_tools:
@@ -857,7 +924,7 @@ def copy_to_clipboard(text: str) -> tuple[bool, str]:
 
     if errors:
         return False, "Clipboard tools failed: " + "; ".join(errors)
-    
+
     # Provide platform-specific installation guidance
     if sys.platform.startswith("linux"):
         return False, (
@@ -867,14 +934,21 @@ def copy_to_clipboard(text: str) -> tuple[bool, str]:
             "    Arch: sudo pacman -S xclip"
         )
     elif sys.platform.startswith("darwin"):
-        return False, "Clipboard not available. pbcopy should be pre-installed on macOS."
+        return (
+            False,
+            "Clipboard not available. pbcopy should be pre-installed on macOS.",
+        )
     elif os.name == "nt":
-        return False, "Clipboard not available. clip should be pre-installed on Windows."
+        return (
+            False,
+            "Clipboard not available. clip should be pre-installed on Windows.",
+        )
     else:
         return False, "No suitable clipboard method found for your platform."
 
 
 # ========== Metasploit Helpers ==========
+
 
 def _build_msfconsole_commands(term: str) -> list[str]:
     """
@@ -906,10 +980,7 @@ def show_msf_available(plugin_url: str) -> None:
             compatibility)
     """
     header("Metasploit module available!")
-    info(
-        'Select "metasploit" in the tool menu to search for '
-        "available modules.\n"
-    )
+    info('Select "metasploit" in the tool menu to search for ' "available modules.\n")
 
 
 # ===================================================================
@@ -994,12 +1065,23 @@ def build_nmap_workflow(ctx: "ToolContext") -> Optional["CommandResult"]:
 
     if ctx.use_proxy:
         from .ansi import warn as _proxy_warn
+
         _proxy_warn("[!] Proxy mode: nmap adjustments applied")
         print("    \u2022 -Pn added (ICMP does not traverse SOCKS)")
-        print("    \u2022 SYN scan (-sS) unavailable \u2014 proxychains4 forces TCP connect")
+        print(
+            "    \u2022 SYN scan (-sS) unavailable \u2014 proxychains4 forces TCP connect"
+        )
         print("    \u2022 UDP scanning not supported through SOCKS proxy")
 
-    cmd = build_nmap_cmd(effective_udp, nse_option, ips_file, ctx.ports_str, ctx.use_sudo, ctx.oabase, use_proxy=ctx.use_proxy)
+    cmd = build_nmap_cmd(
+        effective_udp,
+        nse_option,
+        ips_file,
+        ctx.ports_str,
+        ctx.use_sudo,
+        ctx.oabase,
+        use_proxy=ctx.use_proxy,
+    )
 
     return CommandResult(
         command=cmd,
@@ -1034,7 +1116,9 @@ def build_netexec_workflow(ctx: "ToolContext") -> Optional["CommandResult"]:
         info("Skipping run; returning to tool menu.")
         return None
 
-    cmd, nxc_log, relay_path = build_netexec_cmd(exec_bin, protocol, ctx.tcp_ips, ctx.oabase)
+    cmd, nxc_log, relay_path = build_netexec_cmd(
+        exec_bin, protocol, ctx.tcp_ips, ctx.oabase
+    )
 
     return CommandResult(
         command=cmd,
@@ -1070,9 +1154,7 @@ def build_custom_workflow(ctx: "ToolContext") -> Optional["CommandResult"]:
     custom_command_help(mapping)
 
     try:
-        template = Prompt.ask(
-            "\nEnter your command (placeholders allowed)"
-        ).strip()
+        template = Prompt.ask("\nEnter your command (placeholders allowed)").strip()
     except KeyboardInterrupt:
         return None
 
@@ -1127,7 +1209,11 @@ def run_tool_workflow(
     from .ansi import warn, ok, err, info, header, get_console
     from .constants import SAMPLE_THRESHOLD, get_results_root
     from .fs import build_results_paths, pretty_severity_label, write_work_files
-    from .ops import run_command_with_progress, log_tool_execution, log_artifacts_for_nmap
+    from .ops import (
+        run_command_with_progress,
+        log_tool_execution,
+        log_artifacts_for_nmap,
+    )
     from .tool_registry import get_tool
     from .tool_context import ToolContext
 
@@ -1147,8 +1233,7 @@ def run_tool_workflow(
             while True:
                 try:
                     sample_count = IntPrompt.ask(
-                        "How many hosts to sample?",
-                        default=min(10, len(hosts))
+                        "How many hosts to sample?", default=min(10, len(hosts))
                     )
                 except KeyboardInterrupt:
                     warn("\nInterrupted — not sampling.")
@@ -1178,7 +1263,9 @@ def run_tool_workflow(
 
     # Create synthetic filename for output directory structure
     # Format: {plugin_id}_{plugin_name}
-    synthetic_filename = f"{plugin.plugin_id}_{plugin.plugin_name.replace(' ', '_').replace('/', '_')}"
+    synthetic_filename = (
+        f"{plugin.plugin_id}_{plugin.plugin_name.replace(' ', '_').replace('/', '_')}"
+    )
 
     out_dir_static = (
         get_results_root()
@@ -1192,6 +1279,7 @@ def run_tool_workflow(
 
     # Get plugin details directly from Plugin object
     from .constants import PLUGIN_DETAILS_BASE
+
     plugin_url = f"{PLUGIN_DETAILS_BASE}{plugin.plugin_id}"
     plugin_id = str(plugin.plugin_id)
 
@@ -1202,11 +1290,12 @@ def run_tool_workflow(
     # not re-evaluated per tool dispatch.
     from .ops import ProxyConfig
     from .config import load_config as _load_config_for_proxy
+
     _initial_config = _load_config_for_proxy()
     _proxy_enabled = _initial_config.proxychains_enabled
-    if getattr(args, 'proxy', False):
+    if getattr(args, "proxy", False):
         _proxy_enabled = True
-    elif getattr(args, 'no_proxy', False):
+    elif getattr(args, "no_proxy", False):
         _proxy_enabled = False
     proxy_config = ProxyConfig(
         enabled=_proxy_enabled,
@@ -1219,6 +1308,7 @@ def run_tool_workflow(
     while True:
 
         from .config import load_config
+
         config = load_config()
         tool_choice = choose_tool(config)
         if tool_choice is None:
@@ -1231,7 +1321,9 @@ def run_tool_workflow(
             warn(f"Unknown tool selection: {tool_choice}")
             continue
 
-        _tmp_dir, oabase = build_results_paths(scan_dir, sev_dir, f"{synthetic_filename}.txt")
+        _tmp_dir, oabase = build_results_paths(
+            scan_dir, sev_dir, f"{synthetic_filename}.txt"
+        )
         results_dir = out_dir_static
 
         # ====================================================================
@@ -1284,8 +1376,7 @@ def run_tool_workflow(
 
                     try:
                         answer = Prompt.ask(
-                            "\nRun which command? (number or [N] None)",
-                            default="n"
+                            "\nRun which command? (number or [N] None)", default="n"
                         )
 
                         if answer and answer.strip().lower() != "n":
@@ -1297,7 +1388,9 @@ def run_tool_workflow(
                                     # Execute command with confirmation
                                     info(f"\nExecuting: {selected_cmd}\n")
                                     if Confirm.ask("Confirm?", default=False):
-                                        shell_exec = shutil.which("bash") or shutil.which("sh")
+                                        shell_exec = shutil.which(
+                                            "bash"
+                                        ) or shutil.which("sh")
                                         if shell_exec:
                                             run_command_with_progress(
                                                 selected_cmd,
@@ -1311,22 +1404,30 @@ def run_tool_workflow(
                                             _console_global.print()
                                             module_path = Prompt.ask(
                                                 "[cyan]>>[/cyan] Get info on a module? (paste path or Enter to skip)",
-                                                default=""
+                                                default="",
                                             ).strip()
 
                                             if module_path:
                                                 info_cmd = f"msfconsole -q -x 'info {module_path}; exit'"
-                                                _console_global.print(f"\n[cyan]>>[/cyan] Info command:")
+                                                _console_global.print(
+                                                    f"\n[cyan]>>[/cyan] Info command:"
+                                                )
                                                 _console_global.print(f"  {info_cmd}")
 
-                                                action = Prompt.ask(
-                                                    "\n[R]un, [C]opy to clipboard, or Enter to skip",
-                                                    default=""
-                                                ).strip().lower()
+                                                action = (
+                                                    Prompt.ask(
+                                                        "\n[R]un, [C]opy to clipboard, or Enter to skip",
+                                                        default="",
+                                                    )
+                                                    .strip()
+                                                    .lower()
+                                                )
 
                                                 if action in ("r", "run"):
                                                     info(f"\nExecuting: {info_cmd}\n")
-                                                    if Confirm.ask("Confirm?", default=False):
+                                                    if Confirm.ask(
+                                                        "Confirm?", default=False
+                                                    ):
                                                         run_command_with_progress(
                                                             info_cmd,
                                                             shell=True,
@@ -1337,7 +1438,9 @@ def run_tool_workflow(
                                                     else:
                                                         info("Execution skipped.")
                                                 elif action in ("c", "copy"):
-                                                    success, msg = copy_to_clipboard(info_cmd)
+                                                    success, msg = copy_to_clipboard(
+                                                        info_cmd
+                                                    )
                                                     if success:
                                                         ok("Copied to clipboard.")
                                                     else:
@@ -1395,6 +1498,7 @@ def run_tool_workflow(
         # ── Remote scan mode ─────────────────────────────────────
         if result.is_remote:
             from .ansi import warn as _warn, ok as _ok
+
             print()
             _warn("[!] Remote scan mode — HTTPS server running (serving target list)")
             print()
@@ -1403,10 +1507,12 @@ def run_tool_workflow(
             print(result.display_command)
             print("─" * 70)
             print()
-            print_action_menu([
-                ("C", "Copy to clipboard"),
-                ("Enter", "Done (stops server)"),
-            ])
+            print_action_menu(
+                [
+                    ("C", "Copy to clipboard"),
+                    ("Enter", "Done (stops server)"),
+                ]
+            )
             while True:
                 try:
                     remote_answer = Prompt.ask("Choose", default="").strip().lower()
@@ -1423,7 +1529,9 @@ def run_tool_workflow(
                 fname = result.remote_output_path.split("/")[-1]
                 print()
                 _ok("When complete, retrieve and import results:")
-                print(f"  scp pivot:{result.remote_output_path}.xml ~/.cerno/artifacts/")
+                print(
+                    f"  scp pivot:{result.remote_output_path}.xml ~/.cerno/artifacts/"
+                )
                 print(f"  cerno import nmap ~/.cerno/artifacts/{fname}.xml")
                 print()
             continue  # back to tool menu — no execution, no artifact logging
@@ -1440,19 +1548,22 @@ def run_tool_workflow(
         if tool_choice == "nmap" and isinstance(display_cmd, str):
             # Try to extract script names from command
             import re
-            script_match = re.search(r'--script[= ]([^\s]+)', display_cmd)
+
+            script_match = re.search(r"--script[= ]([^\s]+)", display_cmd)
             if script_match:
-                nse_scripts_list = script_match.group(1).split(',')
+                nse_scripts_list = script_match.group(1).split(",")
 
         action = command_review_menu(
             display_cmd,
             ctx=ctx,
             tool_name=selected_tool.name if selected_tool else tool_choice,
-            nse_scripts=nse_scripts_list
+            nse_scripts=nse_scripts_list,
         )
 
         if action == "copy":
-            cmd_str = display_cmd if isinstance(display_cmd, str) else " ".join(display_cmd)
+            cmd_str = (
+                display_cmd if isinstance(display_cmd, str) else " ".join(display_cmd)
+            )
             if copy_to_clipboard(cmd_str)[0]:
                 ok("Command copied to clipboard.")
             else:
@@ -1469,13 +1580,24 @@ def run_tool_workflow(
 
                 # Execute command and capture metadata
                 if isinstance(cmd, list):
-                    exec_metadata = run_command_with_progress(cmd, shell=False, proxy_config=proxy_config)
+                    exec_metadata = run_command_with_progress(
+                        cmd, shell=False, proxy_config=proxy_config
+                    )
                 else:
                     shell_exec = shutil.which("bash") or shutil.which("sh")
-                    exec_metadata = run_command_with_progress(cmd, shell=True, executable=shell_exec, proxy_config=proxy_config)
+                    exec_metadata = run_command_with_progress(
+                        cmd,
+                        shell=True,
+                        executable=shell_exec,
+                        proxy_config=proxy_config,
+                    )
 
                 # Log execution to database
-                cmd_str = display_cmd if isinstance(display_cmd, str) else " ".join(str(x) for x in display_cmd)
+                cmd_str = (
+                    display_cmd
+                    if isinstance(display_cmd, str)
+                    else " ".join(str(x) for x in display_cmd)
+                )
 
                 # Count hosts for metadata
                 host_count = None
@@ -1490,11 +1612,11 @@ def run_tool_workflow(
                     tool_name=selected_tool.name,
                     command_text=cmd_str,
                     execution_metadata=exec_metadata,
-                    tool_protocol=getattr(selected_tool, 'protocol', None),
+                    tool_protocol=getattr(selected_tool, "protocol", None),
                     host_count=host_count,
                     ports=ports_str if ports_str else None,
                     file_path=synthetic_path,
-                    scan_dir=scan_dir
+                    scan_dir=scan_dir,
                 )
 
                 # Track artifacts (nmap outputs, etc.)
@@ -1514,7 +1636,7 @@ def run_tool_workflow(
             continue
 
         # Show post-execution summary if command was run
-        if action == "run" and 'exec_metadata' in locals():
+        if action == "run" and "exec_metadata" in locals():
 
             from rich.panel import Panel
             from rich.text import Text
@@ -1522,7 +1644,7 @@ def run_tool_workflow(
             summary = Text()
 
             # Duration
-            if exec_metadata and hasattr(exec_metadata, 'duration_seconds'):
+            if exec_metadata and hasattr(exec_metadata, "duration_seconds"):
                 duration = exec_metadata.duration_seconds
                 minutes = int(duration // 60)
                 seconds = int(duration % 60)
@@ -1534,7 +1656,7 @@ def run_tool_workflow(
                 summary.append(f"{duration_str}\n", style="yellow")
 
             # Exit code
-            if exec_metadata and hasattr(exec_metadata, 'exit_code'):
+            if exec_metadata and hasattr(exec_metadata, "exit_code"):
                 exit_code = exec_metadata.exit_code
                 summary.append("Exit code: ", style="cyan")
                 if exit_code == 0:
@@ -1547,7 +1669,7 @@ def run_tool_workflow(
             total_size = 0
             generated_files: list[str] = []
             if results_dir and results_dir.exists():
-                for file in results_dir.rglob('*'):
+                for file in results_dir.rglob("*"):
                     if file.is_file():
                         file_count += 1
                         total_size += file.stat().st_size
@@ -1569,16 +1691,17 @@ def run_tool_workflow(
                     summary.append(f"{file_line}\n", style="dim")
 
                 if file_count > len(generated_files):
-                    summary.append(f"  ... and {file_count - len(generated_files)} more\n", style="dim")
+                    summary.append(
+                        f"  ... and {file_count - len(generated_files)} more\n",
+                        style="dim",
+                    )
 
             # Results directory location
             summary.append("\nResults directory: ", style="cyan")
             summary.append(f"{results_dir}", style="yellow")
 
             panel = Panel(
-                summary,
-                title="[bold green]Execution Complete[/]",
-                border_style="green"
+                summary, title="[bold green]Execution Complete[/]", border_style="green"
             )
             _console.print()
             _console.print(panel)
@@ -1596,7 +1719,9 @@ def run_tool_workflow(
             info(f" - Relay targets: {nxc_relay_path}")
 
         try:
-            again = Confirm.ask("\nRun another command for this finding?", default=False)
+            again = Confirm.ask(
+                "\nRun another command for this finding?", default=False
+            )
         except KeyboardInterrupt:
             break
         if not again:

@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-10-22
+
+### Added
+- **Result ingestion (MCP):** tool output is now parsed back into the database as structured, provenance-stamped facts. A new `ingest_results(execution_id)` tool (gated by `mcp_allow_mutations`) parses an nmap run's XML artifact into open ports (`verified_ports`) and NSE vuln-script verdicts (`nse_script_results`, e.g. `smb-vuln-ms17-010` = VULNERABLE), and re-reads the NetExec workspace into a security-flag snapshot (`nxc_flag_observations`). `execute_command` auto-ingests best-effort when both execution and mutations are enabled (and returns an `ingest_hint` otherwise). Ingestion is idempotent per execution and never errors on empty/partial/failed runs. New module `cerno_pkg/ingest.py` + pure parser `cerno_pkg/nmap_parse.py`.
+- **Finding verdicts + evidence (MCP):** a verification verdict (`confirmed` / `false_positive` / `unable`), distinct from `review_state`, recorded with history and linked to the execution/artifact/NSE result that proves it. New tools `set_finding_verdict(...)` (gated by `mcp_allow_mutations`) and `get_finding_verdict(finding_id)` (read); `get_finding_detail` now carries the current `verdict`, a non-binding `suggested_verdict` derived from ingested NSE evidence (never auto-applied), and live-verified fact counts. New resources `cerno://finding/{id}/verdict` and `cerno://finding/{id}/results`.
+- **Credential-aware generation (MCP):** `generate_netexec_cmd(finding_id, protocol, use_credential=<ref>)` injects a known NetExec credential, emitting a `@cred:<ref>@` placeholder for the secret. `list_nxc_credentials` now returns a non-secret `ref` + `secret_kind` per credential. The real password/hash is resolved **server-side at execution time only** (`nxc_db.resolve_credential_secret`), never returned by generation or stored; it is masked in the logged `command_text` and scrubbed from returned stdout/stderr. New config `mcp_allow_cred_injection` (default `false`) gates the substitution independently of `mcp_allow_execution`; `get_capabilities` reports it.
+
+### Changed
+- **BREAKING:** database schema bumped to version 4 (new `verified_ports`, `nse_script_results`, `nxc_flag_observations`, `finding_verdicts`, `verdict_evidence` tables; `verdict_types` / `nse_verdicts` / `port_states` lookup tables; `v_finding_current_verdict` / `v_finding_verified_stats` / `v_nse_results_with_verdict` views). No migration system — existing users must back up and delete `~/.cerno/cerno.db`, then re-import their scans (`initialize_database()` raises `SchemaVersionError` on an older DB with re-import instructions).
+
+### Security
+- `tool_executions.command_text` masks a literal secret after an auth flag (`-p`/`--password`/`-H`/`--hash`) as defense-in-depth, but **only for nxc/netexec runs** (resolved via the shared `exec_chain` binary resolver), so a cleartext password/hash is never persisted while nmap's `-p <ports>` is left intact.
+
+### Fixed
+- MCP result ingestion never ran: `ingest_execution` dispatched on `tool_executions.tool_name`, but the MCP server logs every `execute_command` run as `tool_name="mcp"`, so ingestion always hit the "no ingester" branch and populated nothing. Dispatch now resolves the real target binary from `command_text` (unwrapping sudo/proxychains4/etc. via the new shared `cerno_pkg/exec_chain` resolver), so an `mcp`-labelled `nmap`/`nxc` run ingests correctly; an empty run returns a benign skip. The same resolver now backs the `execute_command` allow/deny policy so the two cannot drift.
+- MCP execution audit corrupted nmap's ports: `command_text` masking blanket-masked the token after `-p`, which is nxc's password flag but also nmap's ports flag, so `nmap ... -p 445` was logged as `-p ********`. Masking now targets only the `@cred:<ref>@` placeholder (the sole secret-bearing token before resolution) plus the nxc/netexec-scoped literal-secret masking above; nmap port specs are preserved.
+- Re-ingesting an execution reassigned fact-row primary keys and silently nulled verdict evidence: ingestion deleted-and-reinserted `verified_ports`/`nse_script_results`/`nxc_flag_observations`, so a `verdict_evidence.nse_result_id` citation was nulled (ON DELETE SET NULL) on the next `ingest_results` of the same execution. Ingestion now reconciles rows in place keyed on their logical UNIQUE columns — matched rows are updated (PK preserved), new rows inserted, and only rows absent from the current output are pruned — so evidence links survive and re-ingest stays idempotent (`ingest.py:_reconcile_execution_rows`).
+
 ## [1.12.6] - 2026-10-21
 
 ### Fixed

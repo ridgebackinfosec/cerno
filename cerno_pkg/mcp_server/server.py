@@ -23,6 +23,7 @@ import asyncio
 import dataclasses
 import fnmatch
 import json
+import re
 import sqlite3
 import tempfile
 import time
@@ -38,6 +39,7 @@ from mcp.server.fastmcp import Context, FastMCP
 
 from ..config import CernoConfig, load_config
 from ..constants import REVIEW_STATES
+from ..exec_chain import EXEC_WRAPPERS, command_chain
 from ..logging_setup import log_error, log_info
 
 # Valid review states (mirrors the findings.review_state CHECK constraint).
@@ -84,6 +86,11 @@ class FindingDetail(FindingSummary, total=False):
     affected: list[dict]
     affected_total: int
     affected_truncated: bool
+    verdict: Optional[str]
+    suggested_verdict: Optional[str]
+    verified_port_count: int
+    nse_result_count: int
+    vulnerable_count: int
 
 
 class FindingSearchResult(FindingSummary, total=False):
@@ -153,6 +160,7 @@ class MsfSearchCommand(TypedDict):
 class Capabilities(TypedDict, total=False):
     execution_enabled: bool
     mutations_enabled: bool
+    cred_injection_enabled: bool
     exec_allowlist: list[str]
     exec_denylist: list[str]
     nxc_available: bool
@@ -182,6 +190,33 @@ class ServiceInfo(TypedDict, total=False):
 class CveEntry(TypedDict, total=False):
     cve: str
     plugins: list[dict]
+
+
+class IngestResult(TypedDict, total=False):
+    execution_id: int
+    tool_name: str
+    verified_ports: int
+    nse_results: int
+    nxc_flags: int
+    nse_verdicts: dict
+    skipped_reason: Optional[str]
+
+
+class VerdictInfo(TypedDict, total=False):
+    verdict_id: int
+    finding_id: int
+    verdict: str
+    note: Optional[str]
+    created_at: Optional[str]
+    created_by: Optional[str]
+
+
+class VerdictResult(TypedDict, total=False):
+    finding_id: int
+    current: Optional[VerdictInfo]
+    suggested_verdict: Optional[str]
+    history: list[VerdictInfo]
+    evidence: list[dict]
 
 
 @contextmanager
@@ -376,6 +411,7 @@ def tool_get_capabilities(config: Optional[CernoConfig] = None) -> dict:
     return {
         "execution_enabled": cfg.mcp_allow_execution,
         "mutations_enabled": cfg.mcp_allow_mutations,
+        "cred_injection_enabled": cfg.mcp_allow_cred_injection,
         "exec_allowlist": list(cfg.mcp_exec_allowlist),
         "exec_denylist": list(cfg.mcp_exec_denylist),
         "nxc_available": get_nxc_manager() is not None,
@@ -498,7 +534,7 @@ def tool_get_finding_detail(
     caller's context on large scans; ``affected_total`` gives the true count and
     ``affected_truncated`` flags when the list was cut.
     """
-    from ..models import Finding, Plugin, SeverityLevel
+    from ..models import Finding, FindingVerdict, Plugin, SeverityLevel
 
     with _db(conn) as c:
         finding = Finding.get_by_id(finding_id, c)
@@ -509,6 +545,9 @@ def tool_get_finding_detail(
             raise ValueError(f"No plugin with id {finding.plugin_id}")
         sev = SeverityLevel.get_by_int(plugin.severity_int, c)
         outputs = finding.get_plugin_outputs_by_host(c)
+        current = FindingVerdict.get_current(finding_id, c)
+        stats = _finding_verified_stats(finding_id, c)
+        suggested = _suggested_verdict(finding_id, c)
 
     total = len(outputs)
     capped = outputs[:max_hosts] if max_hosts >= 0 else outputs
@@ -532,6 +571,112 @@ def tool_get_finding_detail(
         ],
         "affected_total": total,
         "affected_truncated": max_hosts >= 0 and total > max_hosts,
+        "verdict": current.verdict_label if current is not None else None,
+        "suggested_verdict": suggested,
+        "verified_port_count": stats["verified_port_count"],
+        "nse_result_count": stats["nse_result_count"],
+        "vulnerable_count": stats["vulnerable_count"],
+    }
+
+
+def _finding_verified_stats(finding_id: int, conn: sqlite3.Connection) -> dict:
+    """Live-verified fact counts for a finding (from v_finding_verified_stats)."""
+    from ..database import query_one
+
+    row = query_one(
+        conn,
+        "SELECT * FROM v_finding_verified_stats WHERE finding_id = ?",
+        (finding_id,),
+    )
+    if row is None:
+        return {"verified_port_count": 0, "nse_result_count": 0, "vulnerable_count": 0}
+    return {
+        "verified_port_count": row["verified_port_count"],
+        "nse_result_count": row["nse_result_count"],
+        "vulnerable_count": row["vulnerable_count"],
+    }
+
+
+def _suggested_verdict(finding_id: int, conn: sqlite3.Connection) -> Optional[str]:
+    """Non-binding verdict suggestion from NSE evidence (never auto-applied).
+
+    VULNERABLE evidence suggests ``confirmed``; otherwise NOT_VULNERABLE-only
+    evidence suggests ``false_positive``. No evidence -> no suggestion.
+    """
+    from ..database import query_all
+
+    rows = query_all(
+        conn,
+        """
+        SELECT nv.label AS label, COUNT(*) AS n
+        FROM nse_script_results nsr
+        JOIN tool_executions te ON nsr.execution_id = te.execution_id
+        LEFT JOIN nse_verdicts nv ON nsr.nse_verdict_id = nv.nse_verdict_id
+        WHERE te.finding_id = ?
+        GROUP BY nv.label
+        """,
+        (finding_id,),
+    )
+    counts = {r["label"]: r["n"] for r in rows}
+    if counts.get("VULNERABLE") or counts.get("LIKELY_VULNERABLE"):
+        return "confirmed"
+    if counts.get("NOT_VULNERABLE"):
+        return "false_positive"
+    return None
+
+
+def _verdict_info(v: Any) -> dict:
+    """Serialize a FindingVerdict to a JSON-friendly dict."""
+    return {
+        "verdict_id": v.verdict_id,
+        "finding_id": v.finding_id,
+        "verdict": v.verdict_label,
+        "note": v.note,
+        "created_at": v.created_at,
+        "created_by": v.created_by,
+    }
+
+
+def tool_get_finding_verdict(
+    finding_id: int, conn: Optional[sqlite3.Connection] = None
+) -> dict:
+    """Return a finding's current verdict, full history, evidence, and a suggestion.
+
+    The verdict is a verification truth value (confirmed / false_positive /
+    unable), distinct from review_state. ``suggested_verdict`` is a non-binding
+    hint derived from ingested NSE evidence; it is never applied automatically.
+    """
+    from ..models import Finding, FindingVerdict, VerdictEvidence
+
+    with _db(conn) as c:
+        finding = Finding.get_by_id(finding_id, c)
+        if finding is None:
+            raise ValueError(f"No finding with id {finding_id}")
+        current = FindingVerdict.get_current(finding_id, c)
+        history = FindingVerdict.get_history(finding_id, c)
+        suggested = _suggested_verdict(finding_id, c)
+        evidence: list[dict] = []
+        for v in history:
+            if v.verdict_id is None:
+                continue
+            for ev in VerdictEvidence.get_by_verdict(v.verdict_id, c):
+                evidence.append(
+                    {
+                        "evidence_id": ev.evidence_id,
+                        "verdict_id": ev.verdict_id,
+                        "execution_id": ev.execution_id,
+                        "artifact_id": ev.artifact_id,
+                        "nse_result_id": ev.nse_result_id,
+                        "note": ev.note,
+                    }
+                )
+
+    return {
+        "finding_id": finding_id,
+        "current": _verdict_info(current) if current is not None else None,
+        "suggested_verdict": suggested,
+        "history": [_verdict_info(v) for v in history],
+        "evidence": evidence,
     }
 
 
@@ -869,10 +1014,18 @@ def tool_list_nxc_credentials(
         with _db(conn) as c:
             host_ips = [h["ip_address"] for h in Host.get_all_with_stats(c)]
     summary = mgr.get_hosts_enrichment(host_ips)
-    credentials = [
-        {**dataclasses.asdict(cred), "host_count": count}
-        for cred, count in summary.unique_credentials
-    ]
+    # Attach a non-secret credential ref + secret_kind by matching on
+    # (protocol, username, domain). The secret value itself is never included.
+    ref_index = {
+        (r.protocol, r.username, r.domain or ""): r for r in mgr.list_credential_refs()
+    }
+    credentials = []
+    for cred, count in summary.unique_credentials:
+        entry = {**dataclasses.asdict(cred), "host_count": count}
+        match = ref_index.get((cred.protocol, cred.username, cred.domain or ""))
+        entry["ref"] = match.ref if match else None
+        entry["secret_kind"] = match.secret_kind if match else None
+        credentials.append(entry)
     return {
         "available": True,
         "hosts_queried": summary.total_hosts_queried,
@@ -938,6 +1091,7 @@ def tool_generate_netexec_cmd(
     finding_id: int,
     protocol: str,
     *,
+    use_credential: Optional[str] = None,
     config: Optional[CernoConfig] = None,
     conn: Optional[sqlite3.Connection] = None,
 ) -> dict:
@@ -945,9 +1099,15 @@ def tool_generate_netexec_cmd(
 
     ``protocol`` is case-insensitive and normalized to lowercase; it must be one
     of ``constants.NETEXEC_PROTOCOLS`` (the source of truth), else ValueError.
+
+    ``use_credential`` is a credential ``ref`` from ``list_nxc_credentials``. When
+    given, auth flags are injected using a ``@cred:<ref>@`` PLACEHOLDER — the real
+    secret is resolved server-side only at execution time, never placed in the
+    returned command. The ref must exist and have a usable secret, else ValueError.
     """
     from ..constants import NETEXEC_PROTOCOLS
     from ..models import Finding
+    from ..nxc_db import get_nxc_manager
     from ..ops import resolve_cmd
     from ..tools import build_netexec_cmd
 
@@ -958,6 +1118,28 @@ def tool_generate_netexec_cmd(
             f"{', '.join(NETEXEC_PROTOCOLS)}"
         )
 
+    credential = None
+    if use_credential:
+        mgr = get_nxc_manager()
+        ref_obj = None
+        if mgr is not None:
+            ref_obj = next(
+                (r for r in mgr.list_credential_refs() if r.ref == use_credential),
+                None,
+            )
+        if ref_obj is None:
+            raise ValueError(f"Unknown credential ref {use_credential!r}")
+        if ref_obj.secret_kind not in ("password", "hash"):
+            raise ValueError(
+                f"Credential {use_credential!r} has no usable secret (password/hash)"
+            )
+        credential = {
+            "username": ref_obj.username,
+            "domain": ref_obj.domain,
+            "secret_kind": ref_obj.secret_kind,
+            "ref": ref_obj.ref,
+        }
+
     with _db(conn) as c:
         finding = Finding.get_by_id(finding_id, c)
         if finding is None:
@@ -967,7 +1149,7 @@ def tool_generate_netexec_cmd(
     exec_bin = resolve_cmd(["nxc", "netexec"]) or "nxc"
     ips_file, output_base = _write_targets_file(finding_id, hosts, config)
     cmd, log_path, relay_path = build_netexec_cmd(
-        exec_bin, proto, ips_file, output_base
+        exec_bin, proto, ips_file, output_base, credential=credential
     )
     return {
         "command": cmd,
@@ -1015,133 +1197,11 @@ def tool_generate_msf_search(
 _MAX_EXEC_TIMEOUT = 3600
 
 
-@dataclasses.dataclass(frozen=True)
-class _WrapperSpec:
-    """How to step past a wrapper binary's own arguments to its wrapped command.
-
-    ``short_val`` are short option letters that consume a value; ``long_val`` are
-    ``--long`` options whose value is a separate argument. ``skip_positionals``
-    is the count of positional arguments before the command (e.g. ``timeout``'s
-    DURATION), and ``assignments`` skips leading ``NAME=VALUE`` tokens (``env``).
-    """
-
-    short_val: frozenset[str] = frozenset()
-    long_val: frozenset[str] = frozenset()
-    skip_positionals: int = 0
-    assignments: bool = False
-
-
-#: Wrapper binaries that run another command. The wrapped target is unwrapped so
-#: policy applies to what actually runs — e.g. ``env rm`` or ``timeout 5 rm``
-#: must expose ``rm`` to the denylist, not hide it behind the wrapper. The
-#: positional-mask wrappers ``taskset`` / ``chrt`` are deliberately omitted (their
-#: grammar is ambiguous to parse without running them).
-_EXEC_WRAPPERS: dict[str, _WrapperSpec] = {
-    "sudo": _WrapperSpec(
-        short_val=frozenset("ugCDhprtUT"),
-        long_val=frozenset(
-            {
-                "--user",
-                "--group",
-                "--close-from",
-                "--chdir",
-                "--host",
-                "--prompt",
-                "--role",
-                "--type",
-                "--other-user",
-                "--command-timeout",
-            }
-        ),
-    ),
-    # doas takes a subset of sudo's value options; overmatching is harmless here.
-    "doas": _WrapperSpec(short_val=frozenset("uCa")),
-    "proxychains4": _WrapperSpec(short_val=frozenset("f")),
-    "proxychains": _WrapperSpec(short_val=frozenset("f")),
-    "env": _WrapperSpec(
-        short_val=frozenset("uCS"),
-        long_val=frozenset({"--unset", "--chdir", "--split-string"}),
-        assignments=True,
-    ),
-    "nice": _WrapperSpec(short_val=frozenset("n")),
-    "timeout": _WrapperSpec(
-        short_val=frozenset("sk"),
-        long_val=frozenset({"--signal", "--kill-after"}),
-        skip_positionals=1,  # DURATION
-    ),
-    "stdbuf": _WrapperSpec(short_val=frozenset("ioe")),
-    "ionice": _WrapperSpec(short_val=frozenset("cnp")),
-    "setsid": _WrapperSpec(),
-    "nohup": _WrapperSpec(),
-    # /usr/bin/time (the shell builtin never reaches an argv list).
-    "time": _WrapperSpec(
-        short_val=frozenset("of"),
-        long_val=frozenset({"--output", "--format"}),
-    ),
-}
-
-
-def _skip_wrapper_options(command: Sequence[Any], i: int, spec: _WrapperSpec) -> int:
-    """Return the index of the wrapper's command, stepping past its arguments.
-
-    Handles getopt-style options (short flags may be clustered as ``-Eu root`` or
-    carry an attached value as ``-uroot``; ``--`` ends option parsing), then any
-    ``NAME=VALUE`` assignments (``env``), then ``skip_positionals`` positionals
-    (``timeout`` DURATION).
-    """
-    short_vals, long_vals = spec.short_val, spec.long_val
-    while i < len(command):
-        arg = str(command[i])
-        if arg == "--":
-            i += 1
-            break
-        if not arg.startswith("-") or arg == "-":
-            break
-        if arg.startswith("--"):
-            i += 2 if arg in long_vals else 1
-            continue
-        i += 1
-        for pos, letter in enumerate(arg[1:], start=1):
-            if letter in short_vals:
-                if pos == len(arg) - 1:  # value is the next argument
-                    i += 1
-                break  # anything after the letter is its attached value
-
-    if spec.assignments:
-        while i < len(command):
-            arg = str(command[i])
-            if "=" in arg and not arg.startswith("-"):
-                i += 1
-            else:
-                break
-
-    i += spec.skip_positionals
-    return i
-
-
-def _command_chain(command: Sequence[Any]) -> list[str]:
-    """Basenames of every binary in ``command``, unwrapping known wrappers.
-
-    ``["sudo", "-u", "root", "proxychains4", "-q", "nmap", ...]`` yields
-    ``["sudo", "proxychains4", "nmap"]``; the last entry is the real target. Known
-    wrappers (``_EXEC_WRAPPERS``) such as sudo, env, timeout and nice are stepped
-    past so the wrapped command is exposed. Raises ValueError if a wrapper is left
-    with no command to run (fail closed).
-    """
-    chain: list[str] = []
-    i = 0
-    while i < len(command):
-        name = Path(str(command[i])).name
-        chain.append(name)
-        spec = _EXEC_WRAPPERS.get(name)
-        if spec is None:
-            return chain
-        i = _skip_wrapper_options(command, i + 1, spec)
-    raise ValueError(
-        f"{chain[-1]!r} does not wrap a command to run"
-        if chain
-        else "command must be a non-empty list of arguments"
-    )
+# Command → target-binary resolution lives in the shared ``exec_chain`` module so
+# the exec policy here, ingestion dispatch, and auth-flag masking never drift.
+# ``_command_chain``/``_EXEC_WRAPPERS`` are kept as aliases for existing callers.
+_command_chain = command_chain
+_EXEC_WRAPPERS = EXEC_WRAPPERS
 
 
 def _matches_any(name: str, patterns: Sequence[str]) -> bool:
@@ -1222,6 +1282,64 @@ def _parse_log_flag(command: Sequence[Any]) -> Optional[str]:
     return _flag_value(command, "--log")
 
 
+#: Matches a credential placeholder token ``@cred:<ref>@`` emitted by generation.
+_CRED_PLACEHOLDER_RE = re.compile(r"@cred:([^@]+)@")
+
+_SECRET_MASK = "********"
+
+
+def _has_cred_placeholder(command: Sequence[Any]) -> bool:
+    return any(_CRED_PLACEHOLDER_RE.search(str(arg)) for arg in command)
+
+
+def _resolve_cred_placeholders(command: Sequence[Any]) -> tuple[list[str], list[str]]:
+    """Substitute ``@cred:<ref>@`` tokens with real secrets, server-side.
+
+    Returns ``(resolved_argv, secret_values)``. ``resolved_argv`` is for
+    ``subprocess`` only; ``secret_values`` are collected so they can be scrubbed
+    from any logged/returned output. Raises ValueError if a ref cannot be
+    resolved to a usable secret.
+    """
+    from ..nxc_db import resolve_credential_secret
+
+    resolved: list[str] = []
+    secrets: list[str] = []
+    for arg in command:
+        text = str(arg)
+        match = _CRED_PLACEHOLDER_RE.fullmatch(text)
+        if match is None:
+            resolved.append(text)
+            continue
+        ref = match.group(1)
+        secret = resolve_credential_secret(ref)
+        if secret is None:
+            raise ValueError(f"Could not resolve credential {ref!r} to a usable secret")
+        resolved.append(secret.secret_value)
+        secrets.append(secret.secret_value)
+    return resolved, secrets
+
+
+def _mask_command_text(command: Sequence[Any]) -> str:
+    """Build a loggable command string with only the @cred:<ref>@ placeholder masked.
+
+    The real secret is never present in the pre-resolution command (generation
+    emits a placeholder, resolution happens later for subprocess only), so masking
+    the placeholder is sufficient and correct. Flag-value masking is deliberately
+    NOT done here: ``-p`` is nxc's password flag but also nmap's ports flag, and
+    blanket masking corrupted ``nmap -p 445``. Belt-and-suspenders masking of a
+    literal secret is applied downstream in ``ops`` scoped to nxc/netexec only.
+    """
+    return " ".join(_CRED_PLACEHOLDER_RE.sub(_SECRET_MASK, str(arg)) for arg in command)
+
+
+def _scrub_secrets(text: str, secrets: Sequence[str]) -> str:
+    """Replace any occurrence of a resolved secret in text with the mask."""
+    for secret in secrets:
+        if secret:
+            text = text.replace(secret, _SECRET_MASK)
+    return text
+
+
 def tool_execute_command(
     command: list[str],
     *,
@@ -1279,6 +1397,19 @@ def tool_execute_command(
                 "fresh output path."
             )
 
+    # Resolve credential placeholders server-side (gated, separate from execution).
+    # run_command carries the real secret for subprocess; `command` keeps the
+    # placeholder so nothing secret is ever logged or returned.
+    run_command = list(command)
+    secrets: list[str] = []
+    if _has_cred_placeholder(command):
+        if not cfg.mcp_allow_cred_injection:
+            raise ValueError(
+                "command contains a @cred:...@ placeholder but credential injection "
+                "is disabled; set mcp_allow_cred_injection to allow it."
+            )
+        run_command, secrets = _resolve_cred_placeholders(command)
+
     proxy = None
     if use_proxy and cfg.proxychains_enabled:
         proxy = ProxyConfig(
@@ -1289,10 +1420,15 @@ def tool_execute_command(
         )
 
     meta, stdout, stderr = run_command_captured(
-        command, timeout=timeout, proxy_config=proxy
+        run_command, timeout=timeout, proxy_config=proxy
     )
 
-    command_text = " ".join(str(x) for x in command)
+    # Never persist or return a resolved secret: log the masked placeholder form
+    # and scrub any secret value that leaked into captured output.
+    command_text = _mask_command_text(command)
+    if secrets:
+        stdout = _scrub_secrets(stdout, secrets)
+        stderr = _scrub_secrets(stderr, secrets)
     with _db(conn) as c:
         execution_id = log_tool_execution(
             tool_name,
@@ -1310,7 +1446,7 @@ def tool_execute_command(
         if log_file and execution_id is not None and Path(log_file).exists():
             log_artifact(execution_id, Path(log_file), "log", conn=c)
 
-    return {
+    result: dict = {
         "exit_code": meta.exit_code,
         "duration_seconds": round(meta.duration_seconds, 3),
         "used_sudo": meta.used_sudo,
@@ -1318,6 +1454,25 @@ def tool_execute_command(
         "stdout": stdout,
         "stderr": stderr,
     }
+
+    # Best-effort auto-ingest: only when mutations are also allowed (writing
+    # structured facts is a mutation). Never fail the exec over ingestion.
+    if execution_id is not None:
+        if cfg.mcp_allow_mutations:
+            try:
+                from ..ingest import ingest_execution
+
+                result["ingested"] = ingest_execution(execution_id, conn=conn).as_dict()
+            except Exception as exc:  # ingestion must never break the run
+                log_error(f"auto-ingest failed for execution {execution_id}: {exc}")
+                result["ingested"] = None
+        else:
+            result["ingest_hint"] = (
+                "Enable mcp_allow_mutations and call ingest_results"
+                f"({execution_id}) to persist structured results."
+            )
+
+    return result
 
 
 # ========== Mutations (gated by mcp_allow_mutations) ==========
@@ -1350,6 +1505,72 @@ def tool_set_review_state(
         finding.transition_review_state(new_state, notes=notes, conn=c)
         c.commit()
     return {"finding_id": finding_id, "review_state": new_state}
+
+
+def tool_ingest_results(
+    execution_id: int, conn: Optional[sqlite3.Connection] = None
+) -> dict:
+    """Parse a completed execution's output into structured facts (idempotent).
+
+    Reads the execution's nmap XML artifact (open ports + NSE vuln verdicts) or
+    re-reads the NetExec workspace (security flags), persisting the results keyed
+    to ``execution_id``. Re-running on the same execution never duplicates rows.
+    Returns counts plus ``skipped_reason`` for empty/partial/unknown runs.
+    """
+    from ..ingest import ingest_execution
+
+    with _db(conn) as c:
+        summary = ingest_execution(execution_id, conn=c)
+    return summary.as_dict()
+
+
+def tool_set_finding_verdict(
+    finding_id: int,
+    verdict: str,
+    *,
+    note: Optional[str] = None,
+    execution_id: Optional[int] = None,
+    artifact_id: Optional[int] = None,
+    nse_result_id: Optional[int] = None,
+    created_by: Optional[str] = None,
+    conn: Optional[sqlite3.Connection] = None,
+) -> dict:
+    """Record a verification verdict for a finding (truth, not workflow state).
+
+    ``verdict`` must be one of confirmed / false_positive / unable. Optional
+    evidence (execution_id / artifact_id / nse_result_id) links the proof. This
+    appends to the finding's verdict history; the latest becomes current.
+    """
+    from ..models import Finding, FindingVerdict, VerdictEvidence
+
+    with _db(conn) as c:
+        finding = Finding.get_by_id(finding_id, c)
+        if finding is None:
+            raise ValueError(f"No finding with id {finding_id}")
+        evidence: list[VerdictEvidence] = []
+        if (
+            execution_id is not None
+            or artifact_id is not None
+            or nse_result_id is not None
+        ):
+            evidence.append(
+                VerdictEvidence(
+                    execution_id=execution_id,
+                    artifact_id=artifact_id,
+                    nse_result_id=nse_result_id,
+                )
+            )
+        # FindingVerdict.set validates the label (raises InvalidVerdict/ValueError).
+        FindingVerdict.set(
+            finding_id,
+            verdict,
+            note=note,
+            created_by=created_by,
+            evidence=evidence or None,
+            conn=c,
+        )
+        c.commit()
+    return tool_get_finding_verdict(finding_id, conn=conn)
 
 
 def tool_import_nessus(nessus_path: str) -> dict:
@@ -1446,6 +1667,56 @@ def resource_finding_workflow(
         lines.append("References:")
         lines.extend(f"  - {ref}" for ref in workflow["references"])
     return "\n".join(lines).rstrip()
+
+
+def resource_finding_verdict(
+    finding_id: int, conn: Optional[sqlite3.Connection] = None
+) -> str:
+    """`cerno://finding/{finding_id}/verdict` — JSON verification verdict + evidence."""
+    return json.dumps(tool_get_finding_verdict(finding_id, conn=conn), indent=2)
+
+
+def resource_finding_results(
+    finding_id: int, conn: Optional[sqlite3.Connection] = None
+) -> str:
+    """`cerno://finding/{finding_id}/results` — JSON live-verified ports + NSE verdicts."""
+    from ..database import query_all
+
+    with _db(conn) as c:
+        ports = query_all(
+            c,
+            """
+            SELECT h.ip_address AS host, vp.port_number, vp.protocol,
+                   ps.label AS state, vp.service_name, vp.execution_id
+            FROM verified_ports vp
+            JOIN tool_executions te ON vp.execution_id = te.execution_id
+            JOIN hosts h ON vp.host_id = h.host_id
+            LEFT JOIN port_states ps ON vp.port_state_id = ps.port_state_id
+            WHERE te.finding_id = ?
+            ORDER BY h.ip_address, vp.port_number
+            """,
+            (finding_id,),
+        )
+        scripts = query_all(
+            c,
+            """
+            SELECT h.ip_address AS host, nsr.port_number, nsr.script_id,
+                   nv.label AS verdict, nsr.output, nsr.execution_id
+            FROM nse_script_results nsr
+            JOIN tool_executions te ON nsr.execution_id = te.execution_id
+            JOIN hosts h ON nsr.host_id = h.host_id
+            LEFT JOIN nse_verdicts nv ON nsr.nse_verdict_id = nv.nse_verdict_id
+            WHERE te.finding_id = ?
+            ORDER BY h.ip_address, nsr.script_id
+            """,
+            (finding_id,),
+        )
+    payload = {
+        "finding_id": finding_id,
+        "verified_ports": [dict(r) for r in ports],
+        "nse_results": [dict(r) for r in scripts],
+    }
+    return json.dumps(payload, indent=2)
 
 
 # ========== Prompts (read-only triage/report templates) ==========
@@ -1634,10 +1905,24 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
 
     @mcp.tool()
     def get_finding_detail(finding_id: int, max_hosts: int = 100) -> FindingDetail:
-        """Get full detail for a finding: plugin metadata + per-host plugin output (capped)."""
+        """Get full detail for a finding: plugin metadata + per-host plugin output (capped).
+
+        Also carries the current verification verdict, a non-binding
+        suggested_verdict from ingested NSE evidence, and live-verified fact counts.
+        """
         return cast(
             "FindingDetail", tool_get_finding_detail(finding_id, max_hosts=max_hosts)
         )
+
+    @mcp.tool()
+    def get_finding_verdict(finding_id: int) -> VerdictResult:
+        """Get a finding's verification verdict (current + history + evidence + suggestion).
+
+        The verdict (confirmed / false_positive / unable) is a truth value, distinct
+        from review_state. suggested_verdict is a non-binding hint from ingested NSE
+        evidence and is never applied automatically.
+        """
+        return cast("VerdictResult", tool_get_finding_verdict(finding_id))
 
     @mcp.tool()
     def list_hosts(scan_id: Optional[int] = None) -> list[HostInfo]:
@@ -1745,15 +2030,24 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         )
 
     @mcp.tool()
-    def generate_netexec_cmd(finding_id: int, protocol: str) -> NetexecCommand:
+    def generate_netexec_cmd(
+        finding_id: int, protocol: str, use_credential: Optional[str] = None
+    ) -> NetexecCommand:
         """Build a netexec command for a finding's hosts (does not run it).
 
         protocol is case-insensitive; valid values: mssql, smb, ftp, ldap, nfs,
         rdp, ssh, vnc, winrm, wmi. An unknown protocol is rejected with an error.
+
+        use_credential is a credential ref from list_nxc_credentials; when given,
+        auth is injected via a @cred:<ref>@ placeholder (the secret is resolved
+        server-side at run time, never placed in the returned command). Running
+        the command requires mcp_allow_cred_injection to also be enabled.
         """
         return cast(
             "NetexecCommand",
-            tool_generate_netexec_cmd(finding_id, protocol, config=cfg),
+            tool_generate_netexec_cmd(
+                finding_id, protocol, use_credential=use_credential, config=cfg
+            ),
         )
 
     @mcp.tool()
@@ -1796,6 +2090,16 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
     def host_nxc_resource(host_ip: str) -> str:
         """NetExec enrichment for a host (credentials, shares, security flags)."""
         return resource_host_nxc(host_ip)
+
+    @mcp.resource("cerno://finding/{finding_id}/verdict", mime_type="application/json")
+    def finding_verdict_resource(finding_id: int) -> str:
+        """Verification verdict + evidence for a finding."""
+        return resource_finding_verdict(finding_id)
+
+    @mcp.resource("cerno://finding/{finding_id}/results", mime_type="application/json")
+    def finding_results_resource(finding_id: int) -> str:
+        """Live-verified ports + NSE verdicts ingested for a finding."""
+        return resource_finding_results(finding_id)
 
     # --- Prompts (always on; triage/report templates) ---
     @mcp.prompt()
@@ -1885,6 +2189,41 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         def import_nessus(nessus_path: str) -> dict:
             """Import a .nessus file into the database."""
             return tool_import_nessus(nessus_path)
+
+        @mcp.tool()
+        def ingest_results(execution_id: int) -> IngestResult:
+            """Parse a completed execution's output into structured facts (idempotent).
+
+            nmap: open ports + NSE vuln verdicts; nxc: security-flag snapshot. Safe
+            to re-run; empty/partial runs return a skipped_reason instead of erroring.
+            """
+            return cast("IngestResult", tool_ingest_results(execution_id))
+
+        @mcp.tool()
+        def set_finding_verdict(
+            finding_id: int,
+            verdict: str,
+            note: Optional[str] = None,
+            execution_id: Optional[int] = None,
+            artifact_id: Optional[int] = None,
+            nse_result_id: Optional[int] = None,
+        ) -> VerdictResult:
+            """Record a verification verdict (confirmed / false_positive / unable) for a finding.
+
+            This is the truth value, distinct from review_state. Optional
+            execution_id/artifact_id/nse_result_id link the evidence that proves it.
+            """
+            return cast(
+                "VerdictResult",
+                tool_set_finding_verdict(
+                    finding_id,
+                    verdict,
+                    note=note,
+                    execution_id=execution_id,
+                    artifact_id=artifact_id,
+                    nse_result_id=nse_result_id,
+                ),
+            )
 
     else:
         log_info(
