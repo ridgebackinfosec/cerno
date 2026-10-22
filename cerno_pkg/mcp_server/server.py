@@ -97,6 +97,11 @@ class FindingSearchResult(FindingSummary, total=False):
     scan_name: str
 
 
+class QueryFindingResult(FindingSummary, total=False):
+    scan_name: str
+    has_workflow: bool
+
+
 class FindingHosts(TypedDict, total=False):
     finding_id: int
     hosts: list[str]
@@ -382,6 +387,67 @@ def tool_search_findings(
                 results.append(row)
                 if len(results) >= limit >= 0:
                     return results
+    return results
+
+
+def tool_query_findings(
+    *,
+    scan_ids: Optional[list[int]] = None,
+    severity_int: Optional[int] = None,
+    severity_min: Optional[int] = None,
+    review_state: Optional[str] = None,
+    verdict: Optional[str] = None,
+    cve: Optional[str] = None,
+    port: Optional[int] = None,
+    service: Optional[str] = None,
+    host: Optional[str] = None,
+    plugin_name: Optional[str] = None,
+    has_metasploit: Optional[bool] = None,
+    has_workflow: Optional[bool] = None,
+    merged: bool = False,
+    limit: int = 500,
+    offset: int = 0,
+    conn: Optional[sqlite3.Connection] = None,
+) -> list[dict]:
+    """Query findings with AND-combined predicates (the composite superset tool).
+
+    Every predicate is optional and parameterized (no free-form SQL). ``scan_ids``
+    None spans all scans; ``verdict`` accepts confirmed/false_positive/unable or
+    "none" (no verdict yet); ``cve`` is an exact, case-insensitive CVE id;
+    ``has_workflow`` consults the workflow mapper, not the DB. Each row carries its
+    ``scan_name`` and ``has_workflow`` flag.
+    """
+    from ..models import Scan
+    from ..query import FindingQuery, run_finding_query
+    from ..workflow_mapper import WorkflowMapper
+
+    q = FindingQuery(
+        scan_ids=scan_ids,
+        severity_int=severity_int,
+        severity_min=severity_min,
+        review_state=review_state,
+        verdict=verdict,
+        cve=cve,
+        port=port,
+        service=service,
+        host=host,
+        plugin_name=plugin_name,
+        has_metasploit=has_metasploit,
+        has_workflow=has_workflow,
+        merged=merged,
+        limit=limit,
+        offset=offset,
+    )
+    mapper = WorkflowMapper()
+    with _db(conn) as c:
+        rows = run_finding_query(q, c, workflow_mapper=mapper)
+        scan_names = {s["scan_id"]: s["scan_name"] for s in Scan.get_all_with_stats(c)}
+        results: list[dict] = []
+        for finding, plugin in rows:
+            row = _finding_plugin_to_dict(finding, plugin)
+            row["scan_name"] = scan_names.get(finding.scan_id)
+            row["has_workflow"] = mapper.has_workflow(str(plugin.plugin_id))
+            results.append(row)
     return results
 
 
@@ -1931,6 +1997,52 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
                 severity_int=severity_int,
                 has_metasploit=has_metasploit,
                 limit=limit,
+            ),
+        )
+
+    @mcp.tool()
+    def query_findings(
+        scan_ids: Optional[list[int]] = None,
+        severity_int: Optional[int] = None,
+        severity_min: Optional[int] = None,
+        review_state: Optional[str] = None,
+        verdict: Optional[str] = None,
+        cve: Optional[str] = None,
+        port: Optional[int] = None,
+        service: Optional[str] = None,
+        host: Optional[str] = None,
+        plugin_name: Optional[str] = None,
+        has_metasploit: Optional[bool] = None,
+        has_workflow: Optional[bool] = None,
+        merged: bool = False,
+        limit: int = 500,
+        offset: int = 0,
+    ) -> list[QueryFindingResult]:
+        """Query findings with AND-combined predicates (composite superset of list/search).
+
+        All predicates optional. scan_ids=None spans all scans. verdict is
+        confirmed/false_positive/unable or "none" (no verdict yet). cve is an exact
+        CVE id (case-insensitive). has_workflow consults the workflow mapper. Each
+        row carries scan_name and has_workflow. merged dedups by plugin across scans.
+        """
+        return cast(
+            "list[QueryFindingResult]",
+            tool_query_findings(
+                scan_ids=scan_ids,
+                severity_int=severity_int,
+                severity_min=severity_min,
+                review_state=review_state,
+                verdict=verdict,
+                cve=cve,
+                port=port,
+                service=service,
+                host=host,
+                plugin_name=plugin_name,
+                has_metasploit=has_metasploit,
+                has_workflow=has_workflow,
+                merged=merged,
+                limit=limit,
+                offset=offset,
             ),
         )
 

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Composite finding query (MCP):** a new always-on `query_findings` tool with AND-combined predicates — `scan_ids`, `severity_int`, `severity_min`, `review_state`, `verdict` (`confirmed`/`false_positive`/`unable`/`none`), `cve`, `port`, `service`, `host`, `plugin_name`, `has_metasploit`, `has_workflow`, `merged`, plus `limit`/`offset`. It answers multi-predicate intents (e.g. "unreviewed criticals with an MSF module on port 23, not yet verdicted") in one call instead of several `list_findings`/`search_findings` calls with client-side joining; each row carries its `scan_name` and a `has_workflow` flag. Predicates are a fixed, parameterized set (no free-form SQL): most compile to bound WHERE clauses over the normalized host/port/service tables and the current-verdict view, while `cve` uses a SQL pre-filter with an exact case-insensitive Python confirm (so `CVE-2021-1` never matches `CVE-2021-10`) and `has_workflow` consults the workflow mapper (resolving grouped comma-separated plugin keys). New shared module `cerno_pkg/query.py` (`FindingQuery` + `run_finding_query`), reused by the MCP adapter and available to the TUI. `list_findings`/`search_findings` are retained as conveniences.
+
 ## [2.1.0] - 2026-10-22
 
 ### Added

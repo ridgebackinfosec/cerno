@@ -225,6 +225,9 @@ cerno_pkg/
   │                        # nxc workspace re-read -> nxc_flag_observations); idempotent per
   │                        # execution_id, forgiving of empty/partial/failed runs
   ├── parsing.py           # Host:port parsing (canonical parser, ParsedHostsPorts model)
+  ├── query.py             # Composite finding query (FindingQuery + run_finding_query)
+  │                        # AND-combined, parameterized predicate set shared by MCP
+  │                        # query_findings and (future) TUI finding-list filtering
   ├── analysis.py          # Cross-file comparison, superset analysis
   ├── claude_assistant.py  # Claude Assistant integration
   │                        # check_claude_available(), build_finding_context(), run_exchange()
@@ -241,6 +244,11 @@ cerno_pkg/
   │                        #   get_capabilities + get_finding_artifacts + get_finding_verdict
   │                        #   also always on. Resources add cerno://finding/{id}/verdict and
   │                        #   cerno://finding/{id}/results.
+  │                        #   query_findings (composite AND-predicates:
+  │                        #   severity/verdict/cve/port/service/host/review_state/
+  │                        #   has_workflow/has_metasploit/plugin_name/scan_ids; cve exact-
+  │                        #   confirmed, has_workflow via mapper; shared cerno_pkg/query.py)
+  │                        #   also always on.
   │                        #   list_findings supports merged/limit/offset; get_finding_detail
   │                        #   caps per-host output via max_hosts. execute_command gated by
   │                        #   mcp_allow_execution (async w/ progress heartbeats; common

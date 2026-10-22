@@ -48,6 +48,7 @@ EXPECTED_TOOLS = {
     "read_artifact",
     "get_config",
     "search_findings",
+    "query_findings",
     "top_hosts",
     "get_capabilities",
     "get_finding_artifacts",
@@ -262,6 +263,7 @@ def test_tools_callable_through_server(contract):
     args = {
         "list_scans": {},
         "list_findings": {"scan_ids": [sid]},
+        "query_findings": {"scan_ids": [sid], "severity_int": 4, "has_metasploit": True},
         "get_finding_detail": {"finding_id": fid},
         "get_finding_hosts": {"finding_id": fid},
         "list_hosts": {},
