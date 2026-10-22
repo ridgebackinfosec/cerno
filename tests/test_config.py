@@ -1,5 +1,7 @@
 """Tests for CernoConfig fields, focused on the MCP exec allow/deny lists."""
 
+import dataclasses
+
 import pytest
 
 import cerno_pkg.config as config_mod
@@ -7,7 +9,10 @@ from cerno_pkg.config import (
     DEFAULT_MCP_EXEC_ALLOWLIST,
     DEFAULT_MCP_EXEC_DENYLIST,
     CernoConfig,
+    build_config_rows,
     coerce_str_list,
+    config_field_kind,
+    iter_config_fields,
     load_config,
     save_config,
 )
@@ -129,3 +134,70 @@ def test_scalar_yaml_allowlist_is_coerced_to_list(config_path):
 )
 def test_coerce_str_list(value, expected):
     assert coerce_str_list(value, ("dflt",)) == expected
+
+
+# ---------------------------------------------------------------------------
+# Single-source-of-truth guards: a new CernoConfig field must carry the
+# metadata that makes it load/save/show/set-able, or these fail.
+# ---------------------------------------------------------------------------
+
+_VALID_KINDS = {"str", "path", "int", "bool", "list"}
+
+
+@pytest.mark.unit
+def test_every_field_has_required_metadata():
+    missing = []
+    for f in iter_config_fields():
+        meta = f.metadata
+        if not ({"section", "help", "kind"} <= set(meta)):
+            missing.append(f.name)
+        elif meta["kind"] not in _VALID_KINDS:
+            missing.append(f"{f.name} (bad kind {meta.get('kind')!r})")
+    assert not missing, f"fields missing/invalid metadata: {missing}"
+
+
+@pytest.mark.unit
+def test_config_show_renders_every_field():
+    rendered = {key for _section, key, _v, _d, _h in build_config_rows(CernoConfig())}
+    all_fields = {f.name for f in iter_config_fields()}
+    assert rendered == all_fields
+
+
+@pytest.mark.unit
+def test_config_set_kind_defined_for_every_field():
+    # config set coercion dispatches on kind; every field must resolve one.
+    for f in iter_config_fields():
+        assert config_field_kind(f.name) in _VALID_KINDS
+
+
+@pytest.mark.integration
+def test_every_field_round_trips_through_save_load(config_path):
+    """Set every field to a non-default sentinel, save, reload, assert preserved."""
+    cfg = CernoConfig()
+    sentinels: dict[str, object] = {}
+    for f in iter_config_fields():
+        kind = f.metadata["kind"]
+        if kind == "bool":
+            value: object = not getattr(cfg, f.name)
+        elif kind == "int":
+            value = 4242
+        elif kind == "list":
+            value = ["sentinel-a", "sentinel-b"]
+        else:  # str / path
+            value = f"sentinel-{f.name}"
+        setattr(cfg, f.name, value)
+        sentinels[f.name] = value
+
+    assert save_config(cfg)
+    loaded = load_config()
+    for name, value in sentinels.items():
+        assert getattr(loaded, name) == value, f"{name} did not round-trip"
+
+
+@pytest.mark.integration
+def test_mcp_allow_cred_injection_round_trip(config_path):
+    assert save_config(CernoConfig(mcp_allow_cred_injection=True))
+    assert load_config().mcp_allow_cred_injection is True
+    # Absent from YAML -> default False
+    config_path.write_text("mcp_allow_execution: true\n", encoding="utf-8")
+    assert load_config().mcp_allow_cred_injection is False

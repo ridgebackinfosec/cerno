@@ -24,7 +24,6 @@ from cerno_pkg.nxc_db import (
     reset_nxc_manager,
 )
 
-
 # =============================================================================
 # Fixtures
 # =============================================================================
@@ -66,7 +65,9 @@ def _seed(db_path: Path, sql: str) -> None:
 def populated_smb_db(temp_nxc_workspace: Path) -> Path:
     """SMB database (real NetExec schema) with test data."""
     db_path = _copy_fixture_db("smb", temp_nxc_workspace)
-    _seed(db_path, """
+    _seed(
+        db_path,
+        """
         -- DC01 has vulnerabilities; WEB01 has none
         INSERT INTO hosts (id, ip, hostname, domain, os, smbv1, signing, zerologon, petitpotam)
         VALUES (1, '192.168.1.10', 'DC01', 'CORP.LOCAL', 'Windows Server 2019', 0, 0, 1, 1),
@@ -82,7 +83,8 @@ def populated_smb_db(temp_nxc_workspace: Path) -> Path:
 
         INSERT INTO shares (id, hostid, name, read, write)
         VALUES (1, 1, 'C$', 1, 1), (2, 1, 'ADMIN$', 1, 0), (3, 1, 'SYSVOL', 1, 0);
-    """)
+    """,
+    )
     return db_path
 
 
@@ -90,12 +92,15 @@ def populated_smb_db(temp_nxc_workspace: Path) -> Path:
 def populated_ssh_db(temp_nxc_workspace: Path) -> Path:
     """SSH database (real NetExec schema: `host` column, no hostname) with test data."""
     db_path = _copy_fixture_db("ssh", temp_nxc_workspace)
-    _seed(db_path, """
+    _seed(
+        db_path,
+        """
         INSERT INTO hosts (id, host, port, banner, os)
         VALUES (1, '192.168.1.20', 22, 'SSH-2.0-OpenSSH_8.2p1', 'Linux');
         INSERT INTO credentials (id, username, password, credtype) VALUES (1, 'root', NULL, 'key');
         INSERT INTO admin_relations (id, credid, hostid) VALUES (1, 1, 1);
-    """)
+    """,
+    )
     return db_path
 
 
@@ -542,7 +547,10 @@ REAL_SEEDS = {
 
 # protocol -> (expected credential usernames, expected protocol_details subset)
 REAL_EXPECTED: dict[str, tuple[set[str], dict]] = {
-    "smb": ({"alice", "bob", "localadmin"}, {"dc": True, "spooler": True, "signing": False}),
+    "smb": (
+        {"alice", "bob", "localadmin"},
+        {"dc": True, "spooler": True, "signing": False},
+    ),
     "ssh": ({"root", "deploy"}, {"ports": [22, 2222], "banner": "SSH-2.0-OpenSSH_9.6"}),
     "ftp": ({"anonymous"}, {"ports": [21], "banner": "vsFTPd 3.0.3"}),
     "nfs": ({"nobody"}, {"ports": [2049]}),
@@ -593,7 +601,9 @@ class TestRealSchemas:
         for key, value in expected_details.items():
             assert details[key] == value, f"{protocol}.{key}"
 
-    def test_all_protocols_merge(self, temp_nxc_workspace: Path, query_errors: list[str]) -> None:
+    def test_all_protocols_merge(
+        self, temp_nxc_workspace: Path, query_errors: list[str]
+    ) -> None:
         mgr = _real_workspace(temp_nxc_workspace, list(REAL_SEEDS))
 
         result = mgr.get_host_enrichment(REAL_IP)
@@ -613,7 +623,10 @@ class TestRealSchemas:
         creds = {c.username: c for c in result.credentials}
         assert creds["alice"].has_admin is True and creds["alice"].pillaged is False
         assert creds["bob"].has_admin is False and creds["bob"].pillaged is False
-        assert creds["localadmin"].pillaged is True and creds["localadmin"].has_admin is False
+        assert (
+            creds["localadmin"].pillaged is True
+            and creds["localadmin"].has_admin is False
+        )
 
     def test_smb_shares_collapse_per_name(self, temp_nxc_workspace: Path) -> None:
         mgr = _real_workspace(temp_nxc_workspace, ["smb"])
@@ -634,7 +647,9 @@ class TestRealSchemas:
         result = mgr.get_host_enrichment(REAL_IP)
 
         assert result is not None
-        assert [(c.name, c.reasons) for c in result.failed_checks] == [("LDAP signing", "Not enforced")]
+        assert [(c.name, c.reasons) for c in result.failed_checks] == [
+            ("LDAP signing", "Not enforced")
+        ]
 
     def test_ssh_admin_flag(self, temp_nxc_workspace: Path) -> None:
         mgr = _real_workspace(temp_nxc_workspace, ["ssh"])
@@ -643,7 +658,9 @@ class TestRealSchemas:
 
         assert result is not None
         creds = {c.username: c for c in result.credentials}
-        assert creds["root"].has_admin is True and creds["root"].credential_type == "key"
+        assert (
+            creds["root"].has_admin is True and creds["root"].credential_type == "key"
+        )
         assert creds["deploy"].has_admin is False
 
     def test_summary_flag_counts(self, temp_nxc_workspace: Path) -> None:
@@ -663,10 +680,14 @@ class TestRealSchemas:
 
     def test_null_flags_not_counted(self, temp_nxc_workspace: Path) -> None:
         """NULL (unchecked) LDAP signing / RDP NLA must not be reported as disabled."""
-        _seed(_copy_fixture_db("ldap", temp_nxc_workspace),
-              "INSERT INTO hosts (id, ip) VALUES (1, '10.0.0.5');")
-        _seed(_copy_fixture_db("rdp", temp_nxc_workspace),
-              "INSERT INTO hosts (id, ip, port) VALUES (1, '10.0.0.5', 3389);")
+        _seed(
+            _copy_fixture_db("ldap", temp_nxc_workspace),
+            "INSERT INTO hosts (id, ip) VALUES (1, '10.0.0.5');",
+        )
+        _seed(
+            _copy_fixture_db("rdp", temp_nxc_workspace),
+            "INSERT INTO hosts (id, ip, port) VALUES (1, '10.0.0.5', 3389);",
+        )
         mgr = NxcDatabaseManager(temp_nxc_workspace)
 
         summary = mgr.get_hosts_enrichment([REAL_IP])
@@ -728,9 +749,18 @@ class TestDemoNxcWorkspace:
         mgr = NxcDatabaseManager(demo_nxc_workspace)
 
         assert mgr.is_available() is True
-        assert mgr.get_available_protocols() == ["smb", "ssh", "ldap", "rdp", "ftp", "vnc"]
+        assert mgr.get_available_protocols() == [
+            "smb",
+            "ssh",
+            "ldap",
+            "rdp",
+            "ftp",
+            "vnc",
+        ]
 
-    def test_demo_workspace_enriches_smb_signing_hosts(self, demo_nxc_workspace: Path) -> None:
+    def test_demo_workspace_enriches_smb_signing_hosts(
+        self, demo_nxc_workspace: Path
+    ) -> None:
         """SMB signing demo hosts have credentials, shares, and security flags."""
         mgr = NxcDatabaseManager(demo_nxc_workspace)
 
@@ -758,9 +788,13 @@ class TestDemoNxcWorkspace:
         assert summary.security_flag_counts["petitpotam"] == 2
         assert "C$" in summary.shares_summary
         assert "SYSVOL" in summary.shares_summary
-        assert any(cred.username == "svc_deploy" for cred, _ in summary.unique_credentials)
+        assert any(
+            cred.username == "svc_deploy" for cred, _ in summary.unique_credentials
+        )
 
-    def test_demo_workspace_enriches_multi_protocol_hosts(self, demo_nxc_workspace: Path) -> None:
+    def test_demo_workspace_enriches_multi_protocol_hosts(
+        self, demo_nxc_workspace: Path
+    ) -> None:
         """Legacy and backup hosts show non-SMB and merged protocol context."""
         mgr = NxcDatabaseManager(demo_nxc_workspace)
 
@@ -775,13 +809,17 @@ class TestDemoNxcWorkspace:
         assert backup is not None
         assert "smb" in backup.protocols_seen
         assert "ssh" in backup.protocols_seen
-        assert any(cred.protocol == "ssh" and cred.has_admin for cred in backup.credentials)
+        assert any(
+            cred.protocol == "ssh" and cred.has_admin for cred in backup.credentials
+        )
 
     def test_demo_workspace_ldap_and_rdp_flags(self, demo_nxc_workspace: Path) -> None:
         """DC01 shows LDAP signing not required; WIN01/WIN02 have RDP NLA disabled."""
         mgr = NxcDatabaseManager(demo_nxc_workspace)
 
-        summary = mgr.get_hosts_enrichment(["198.51.100.30", "198.51.100.60", "198.51.100.61"])
+        summary = mgr.get_hosts_enrichment(
+            ["198.51.100.30", "198.51.100.60", "198.51.100.61"]
+        )
 
         assert summary.security_flag_counts["ldap_signing_disabled"] == 1
         assert summary.security_flag_counts["rdp_nla_disabled"] == 2
@@ -840,3 +878,113 @@ class TestModuleFunctions:
         result = get_nxc_manager()
         assert result is not None
         assert result.is_available() is True
+
+
+# =============================================================================
+# Thread safety: the MCP server runs tool bodies on asyncio.to_thread workers,
+# so workspace reads must not reuse a connection bound to another thread.
+# =============================================================================
+
+
+def _smb_workspace_with_secret(tmp_path: Path) -> Path:
+    """A workspace whose smb.db has one host and one password credential."""
+    workspace = tmp_path / "nxc_ws"
+    workspace.mkdir()
+    db_path = _copy_fixture_db("smb", workspace)
+    _seed(
+        db_path,
+        """
+        INSERT INTO hosts (id, ip, hostname, domain, os, smbv1, signing, zerologon, petitpotam)
+        VALUES (1, '10.0.0.1', 'DC01', 'CORP', 'Windows', 0, 0, 0, 0);
+        INSERT INTO users (id, domain, username, password, credtype)
+        VALUES (1, 'CORP', 'alice', 'Sup3rSecret!', 'plaintext');
+    """,
+    )
+    return workspace
+
+
+@pytest.mark.integration
+class TestThreadSafety:
+    def _in_worker(self, fn):
+        import concurrent.futures
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(fn).result()
+
+    def test_resolve_credential_secret_from_worker_thread(self, tmp_path: Path) -> None:
+        mgr = NxcDatabaseManager(_smb_workspace_with_secret(tmp_path))
+        # Prime any caching on the MAIN thread (this is what used to bind a
+        # connection to this thread and break the worker below).
+        assert mgr.list_credential_refs()[0].secret_kind == "password"
+        secret = self._in_worker(lambda: mgr.resolve_credential_secret("smb:1"))
+        assert secret is not None
+        assert secret.secret_value == "Sup3rSecret!"
+
+    def test_list_credential_refs_from_worker_thread(self, tmp_path: Path) -> None:
+        mgr = NxcDatabaseManager(_smb_workspace_with_secret(tmp_path))
+        mgr.list_credential_refs()  # prime on main thread
+        refs = self._in_worker(mgr.list_credential_refs)
+        assert [r.ref for r in refs] == ["smb:1"]
+
+    def test_get_host_enrichment_from_worker_thread(self, tmp_path: Path) -> None:
+        mgr = NxcDatabaseManager(_smb_workspace_with_secret(tmp_path))
+        mgr.get_host_enrichment("10.0.0.1")  # prime on main thread
+        data = self._in_worker(lambda: mgr.get_host_enrichment("10.0.0.1"))
+        assert data is not None
+        assert data.host_address == "10.0.0.1"
+
+
+@pytest.mark.integration
+class TestErrorHandlingNoMasquerade:
+    def test_genuinely_secretless_credential_returns_none(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "nxc_ws"
+        workspace.mkdir()
+        db_path = _copy_fixture_db("smb", workspace)
+        _seed(
+            db_path,
+            """
+            INSERT INTO users (id, domain, username, password, credtype)
+            VALUES (1, 'CORP', 'nopw', NULL, 'plaintext');
+        """,
+        )
+        mgr = NxcDatabaseManager(workspace)
+        assert mgr.list_credential_refs()[0].secret_kind is None
+        assert mgr.resolve_credential_secret("smb:1") is None
+
+    def test_db_error_surfaces_not_masquerades_as_no_secret(
+        self, tmp_path: Path
+    ) -> None:
+        workspace = tmp_path / "nxc_ws"
+        workspace.mkdir()
+        _copy_fixture_db("smb", workspace)
+        mgr = NxcDatabaseManager(workspace)
+
+        # A connection where PRAGMA table_info succeeds (so column detection
+        # passes) but the credential SELECT raises — the error must propagate,
+        # not be swallowed into a misleading "no secret" (None).
+        class _Cur:
+            def __init__(self, rows):
+                self._rows = rows
+
+            def fetchall(self):
+                return self._rows
+
+            def fetchone(self):
+                return self._rows[0] if self._rows else None
+
+        class _BoomConn:
+            def execute(self, sql, params=()):
+                if sql.strip().upper().startswith("PRAGMA"):
+                    return _Cur([(0, "username"), (1, "password"), (2, "credtype")])
+                raise sqlite3.OperationalError("disk I/O error")
+
+            def close(self) -> None:
+                pass
+
+        import types
+
+        mgr._get_connection = types.MethodType(  # type: ignore[method-assign]
+            lambda self, protocol: _BoomConn(), mgr
+        )
+        with pytest.raises(sqlite3.Error):
+            mgr.resolve_credential_secret("smb:1")

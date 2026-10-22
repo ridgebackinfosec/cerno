@@ -161,6 +161,7 @@ class Capabilities(TypedDict, total=False):
     execution_enabled: bool
     mutations_enabled: bool
     cred_injection_enabled: bool
+    cred_reveal_enabled: bool
     exec_allowlist: list[str]
     exec_denylist: list[str]
     nxc_available: bool
@@ -412,6 +413,7 @@ def tool_get_capabilities(config: Optional[CernoConfig] = None) -> dict:
         "execution_enabled": cfg.mcp_allow_execution,
         "mutations_enabled": cfg.mcp_allow_mutations,
         "cred_injection_enabled": cfg.mcp_allow_cred_injection,
+        "cred_reveal_enabled": cfg.mcp_allow_cred_reveal,
         "exec_allowlist": list(cfg.mcp_exec_allowlist),
         "exec_denylist": list(cfg.mcp_exec_denylist),
         "nxc_available": get_nxc_manager() is not None,
@@ -1340,6 +1342,29 @@ def _scrub_secrets(text: str, secrets: Sequence[str]) -> str:
     return text
 
 
+def _scrub_file_secrets(path: Path, secrets: Sequence[str]) -> bool:
+    """Rewrite ``path`` in place with every resolved secret masked.
+
+    A cred-injected tool (e.g. nxc with ``--log``) writes its own argv — including
+    the resolved ``-H <hash>`` — to its output file, which Cerno registers as an
+    artifact. This masks those before registration so the persisted file (and its
+    stored hash/size) never carries the cleartext secret. Fail-closed: returns
+    False on any error so the caller skips registering a file it couldn't scrub (a
+    missing artifact beats a leaked one).
+    """
+    if not secrets:
+        return True
+    try:
+        original = path.read_text(errors="surrogateescape")
+        scrubbed = _scrub_secrets(original, secrets)
+        if scrubbed != original:
+            path.write_text(scrubbed, errors="surrogateescape")
+        return True
+    except OSError as exc:
+        log_error(f"failed to scrub secrets from {path}: {exc}")
+        return False
+
+
 def tool_execute_command(
     command: list[str],
     *,
@@ -1440,11 +1465,21 @@ def tool_execute_command(
             conn=c,
         )
         if oabase is not None and execution_id is not None:
-            log_artifacts_for_nmap(execution_id, oabase, conn=c)
+            # Defensive: scrub any resolved secret from the -oA outputs before
+            # registering (nmap runs carry no @cred today, so this is usually a
+            # no-op, but never register a file we couldn't scrub).
+            if not secrets or all(
+                _scrub_file_secrets(p, secrets)
+                for ext in (".xml", ".nmap", ".gnmap")
+                if (p := Path(str(oabase) + ext)).exists()
+            ):
+                log_artifacts_for_nmap(execution_id, oabase, conn=c)
         # Generic single-file outputs (e.g. netexec --log) → 'log' artifact type.
+        # nxc writes the resolved -H/-p into this file, so scrub before registering.
         log_file = _parse_log_flag(command)
         if log_file and execution_id is not None and Path(log_file).exists():
-            log_artifact(execution_id, Path(log_file), "log", conn=c)
+            if _scrub_file_secrets(Path(log_file), secrets):
+                log_artifact(execution_id, Path(log_file), "log", conn=c)
 
     result: dict = {
         "exit_code": meta.exit_code,
@@ -1588,6 +1623,29 @@ def tool_import_nessus(nessus_path: str) -> dict:
         "plugins_exported": result.plugins_exported,
         "total_hosts": result.total_hosts,
         "severities": result.severities,
+    }
+
+
+def tool_reveal_credential(ref: str, conn: Optional[sqlite3.Connection] = None) -> dict:
+    """Return a credential's CLEARTEXT secret (audited). SENSITIVE — do not persist.
+
+    Resolves ``ref`` (from ``list_nxc_credentials``) to its real password/hash via
+    the shared ``creds.reveal_credential`` (which records a ``cred_reveal`` audit
+    row with the ref, never the value). Raises ValueError when the ref has no
+    usable secret. Only registered when ``mcp_allow_cred_reveal`` is enabled.
+    """
+    from ..creds import reveal_credential
+
+    with _db(conn) as c:
+        secret = reveal_credential(ref, conn=c)
+    if secret is None:
+        raise ValueError(f"No usable secret for credential ref {ref!r}")
+    return {
+        "username": secret.username,
+        "domain": secret.domain,
+        "secret_kind": secret.secret_kind,
+        "secret_value": secret.secret_value,
+        "warning": "SENSITIVE — do not persist this value or write it to a file/log.",
     }
 
 
@@ -2229,6 +2287,22 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         log_info(
             "mcp: set_review_state/import_nessus not registered (mcp_allow_mutations=false)"
         )
+
+    # --- Credential reveal (gated separately; strictly more sensitive) ---
+    if cfg.mcp_allow_cred_reveal:
+
+        @mcp.tool()
+        def reveal_credential(ref: str) -> dict:
+            """Return a NetExec credential's CLEARTEXT secret. SENSITIVE — do not persist.
+
+            ref comes from list_nxc_credentials. Returns username/domain/secret_kind/
+            secret_value; the reveal is audited (ref only, never the value). Available
+            only because mcp_allow_cred_reveal is enabled.
+            """
+            return tool_reveal_credential(ref)
+
+    else:
+        log_info("mcp: reveal_credential not registered (mcp_allow_cred_reveal=false)")
 
     return mcp
 

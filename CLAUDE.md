@@ -133,6 +133,8 @@ cerno scan list                   # List all scans (compact; --wide = all severi
 cerno scan delete <scan_name>     # Delete scan from database
 cerno scan compare <s1> <s2>      # Compare findings between two scans
 cerno scan history <host_ip>      # Show vulnerability timeline for a host
+cerno creds list                  # List NetExec credential refs (never shows secret values)
+cerno creds reveal <ref>          # Reveal a credential's cleartext (SENSITIVE, local, audited)
 cerno mcp                         # Run the MCP server over stdio (launched by an MCP client)
 ```
 
@@ -257,6 +259,9 @@ cerno_pkg/
   │                        #   set_review_state/import_nessus/ingest_results/set_finding_verdict
   │                        #   gated by mcp_allow_mutations. generate_netexec_cmd takes
   │                        #   use_credential=<ref> (placeholder injection via nxc_db).
+  │                        #   reveal_credential gated by mcp_allow_cred_reveal (returns
+  │                        #   cleartext; audited via cerno_pkg/creds.py, shared with the
+  │                        #   `cerno creds` CLI).
   │                        #   Core read tools declare TypedDict output schemas. stdout is the
   │                        #   JSON-RPC channel, so adapters never print (exec uses
   │                        #   ops.run_command_captured)
@@ -546,7 +551,8 @@ Only after user confirms the changelog content:
 - `claude_assistant_enabled` - Enable/disable Claude Assistant (default: `false`, opt-in). Pressing `[A]` while installed-but-disabled shows a data-path disclosure (`claude_assistant.CONSENT_DISCLOSURE`) and persists consent via `claude_assistant.ensure_enabled()`; `claude_assistant.claude_enabled(config)` is the single availability gate. `[A]` is hidden only when `claude` is not on PATH
 - `mcp_allow_execution` - Allow the `cerno mcp` server to execute tool commands via `execute_command` (default: `false`)
 - `mcp_allow_mutations` - Allow the `cerno mcp` server to mutate state (`set_review_state`, `import_nessus`, `ingest_results`, `set_finding_verdict`) (default: `false`)
-- `mcp_allow_cred_injection` - Allow `execute_command` to resolve `@cred:<ref>@` placeholders to real NetExec secrets server-side at run time (default: `false`). Independent of `mcp_allow_execution`; the resolved secret is never logged, returned, or written to an artifact (masked in `command_text`, scrubbed from stdout/stderr)
+- `mcp_allow_cred_injection` - Allow `execute_command` to resolve `@cred:<ref>@` placeholders to real NetExec secrets server-side at run time (default: `false`). Independent of `mcp_allow_execution`; the resolved secret is never logged, returned, or written to an artifact (masked in `command_text`, scrubbed from stdout/stderr **and from registered `--log`/`-oA` artifact files**)
+- `mcp_allow_cred_reveal` - Allow the MCP `reveal_credential` tool to return a credential's **cleartext** secret to the caller (default: `false`). Strictly more sensitive than injection (reveal hands the secret back), gated independently — injection being on does NOT enable reveal. The local `cerno creds reveal <ref>` CLI works regardless of this flag; every reveal is audited to `tool_executions` (`tool_name='cred_reveal'`, ref only, never the value)
 - `mcp_exec_allowlist` - Glob patterns for the binaries the MCP `execute_command` tool may run, matched on the basename of the target binary after unwrapping `sudo`/`proxychains4` (default: `config.DEFAULT_MCP_EXEC_ALLOWLIST` = `nmap, nxc, netexec, msfconsole`). `*` = any binary not denied; **empty list = deny all**. Only consulted when `mcp_allow_execution` is on. Set via CSV: `cerno config set mcp_exec_allowlist "nmap,nxc"`
 - `mcp_exec_denylist` - Glob patterns for binaries `execute_command` may never run, checked against every binary in the chain including wrappers; always wins over the allowlist (default: `config.DEFAULT_MCP_EXEC_DENYLIST`, destructive commands like `rm, dd, mkfs*`). A guardrail, not a security boundary. Both list keys go through `config.coerce_str_list()` on load and `config set`, so YAML scalars and CSV strings become lists
 

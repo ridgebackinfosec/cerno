@@ -65,6 +65,7 @@ EXPECTED_TOOLS = {
     "import_nessus",  # mcp_allow_mutations
     "ingest_results",  # mcp_allow_mutations
     "set_finding_verdict",  # mcp_allow_mutations
+    "reveal_credential",  # mcp_allow_cred_reveal
 }
 EXPECTED_STATIC_RESOURCES = {"cerno://scans", "cerno://config"}
 EXPECTED_RESOURCE_TEMPLATES = {
@@ -105,8 +106,11 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     )
     conn.executemany(
         "INSERT INTO verdict_types (label, description) VALUES (?, ?)",
-        [("confirmed", "true positive"), ("false_positive", "false positive"),
-         ("unable", "unable to verify")],
+        [
+            ("confirmed", "true positive"),
+            ("false_positive", "false positive"),
+            ("unable", "unable to verify"),
+        ],
     )
     conn.executemany(
         "INSERT INTO nse_verdicts (label) VALUES (?)",
@@ -114,8 +118,14 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     )
     conn.executemany(
         "INSERT INTO port_states (label) VALUES (?)",
-        [("open",), ("closed",), ("filtered",),
-         ("open|filtered",), ("closed|filtered",), ("unfiltered",)],
+        [
+            ("open",),
+            ("closed",),
+            ("filtered",),
+            ("open|filtered",),
+            ("closed|filtered",),
+            ("unfiltered",),
+        ],
     )
     conn.executescript(database.SCHEMA_SQL_VIEWS)
     conn.commit()
@@ -177,6 +187,7 @@ def contract(tmp_path, monkeypatch):
         results_root=str(tmp_path / "artifacts"),
         mcp_allow_execution=True,
         mcp_allow_mutations=True,
+        mcp_allow_cred_reveal=True,
     )
     srv = build_server(cfg)
     return {
@@ -206,7 +217,9 @@ def _client_call_tools(server, calls: dict[str, dict]) -> dict:
         async with create_connected_server_and_client_session(
             server._mcp_server
         ) as session:
-            return {name: await session.call_tool(name, kw) for name, kw in calls.items()}
+            return {
+                name: await session.call_tool(name, kw) for name, kw in calls.items()
+            }
 
     return _run(go())
 

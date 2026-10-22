@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-10-22
+
+### Added
+- Audited credential reveal, a deliberate opt-in path to a credential's cleartext now that injected secrets are masked everywhere else. Local CLI: `cerno creds list` (refs/usernames/`secret_kind`, never values) and `cerno creds reveal <ref>` (prints cleartext behind a SENSITIVE warning, works on the operator's own box regardless of MCP flags). MCP tool `reveal_credential(ref)` is registered only when the new `mcp_allow_cred_reveal` config is enabled (default `false`, independent of `mcp_allow_cred_injection`); `get_capabilities` reports `cred_reveal_enabled`. Every reveal (CLI or MCP) writes a `cred_reveal` audit row to `tool_executions` recording the ref + timestamp — never the secret value (`cerno_pkg/creds.py`).
+
+### Security
+- `execute_command` now scrubs resolved credential secrets from the on-disk output files it registers as artifacts. A cred-injected nxc run writes its full argv — including the resolved `-H <hash>`/`-p <pass>` — into its `--log` file, which was registered unscrubbed and recoverable via `read_artifact`; the secret is now masked in that file (and defensively in nmap `-oA` outputs) before registration, fail-closed (a file that can't be scrubbed is not registered). `command_text` masking and stdout/stderr scrubbing are unchanged. Known limitation: the secret is still present in the tool's argv in the process table (`ps`) for the run's duration — nxc accepts credentials only via argv.
+
+### Fixed
+- NetExec workspace reads are now thread-safe. The MCP server runs each tool body on an `asyncio.to_thread` worker, but `nxc_db` cached SQLite connections on a module-level singleton and a connection may only be used on its creating thread — so credential resolution and host enrichment (`resolve_credential_secret`, `list_credential_refs`, `get_host_nxc`, `list_nxc_credentials`) intermittently raised `ProgrammingError`, which was swallowed and surfaced as a false "Could not resolve credential … to a usable secret". Connections are now opened per call (the workspace DBs are tiny), and a real DB/access error during resolution is logged and raised instead of being misreported as "no secret" (`nxc_db.py`).
+- `cerno config show` and `config set` now derive every setting from the `CernoConfig` dataclass fields + per-field metadata (section/help/kind) instead of hand-maintained key lists. This fixes `mcp_allow_cred_injection` being invisible in `config show` and silently dropped by `config set`/`save_config`, and the latent `pivot_http_port` miscoercion (stored as a string). Adding a config field now surfaces it in load/save/show/set automatically; a drift-guard test fails if a new field lacks the required metadata (`config.py:iter_config_fields`/`build_config_rows`, `tests/test_config.py`).
+
 ## [2.0.0] - 2026-10-22
 
 ### Added

@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, FrozenSet, List, Optional, Tuple
 
-from .logging_setup import log_debug
+from .logging_setup import log_debug, log_error
 
 # Supported protocol databases
 SUPPORTED_PROTOCOLS = [
@@ -293,7 +293,10 @@ class NxcDatabaseManager:
                            (e.g., ~/.nxc/workspaces/default/)
         """
         self.workspace_path = workspace_path
-        self._connection_cache: Dict[str, sqlite3.Connection] = {}
+        # Connections are opened per call (not cached): the MCP server dispatches
+        # tool bodies across asyncio.to_thread worker threads, and a SQLite
+        # connection may only be used on its creating thread. Only thread-safe
+        # column metadata (immutable frozensets) is cached on the instance.
         self._columns_cache: Dict[Tuple[str, str], FrozenSet[str]] = {}
 
     def is_available(self) -> bool:
@@ -326,17 +329,19 @@ class NxcDatabaseManager:
         return available
 
     def _get_connection(self, protocol: str) -> Optional[sqlite3.Connection]:
-        """Get a cached read-only connection to a protocol database.
+        """Open a FRESH read-only connection to a protocol database.
+
+        A new connection is returned on every call and the caller owns it (must
+        close it). Connections are deliberately not cached: they are thread-bound
+        and the MCP server queries from worker threads. The databases are tiny, so
+        per-call connect is negligible.
 
         Args:
             protocol: Protocol name (e.g., "smb")
 
         Returns:
-            SQLite connection or None if database doesn't exist
+            SQLite connection or None if the database doesn't exist / can't open.
         """
-        if protocol in self._connection_cache:
-            return self._connection_cache[protocol]
-
         db_path = self.workspace_path / f"{protocol}.db"
         if not db_path.exists():
             return None
@@ -346,19 +351,13 @@ class NxcDatabaseManager:
             uri = f"file:{db_path}?mode=ro"
             conn = sqlite3.connect(uri, uri=True, timeout=1.0)
             conn.row_factory = sqlite3.Row
-            self._connection_cache[protocol] = conn
             return conn
-        except sqlite3.Error:
+        except sqlite3.Error as exc:
+            log_error(f"nxc: failed to open {db_path}: {exc}")
             return None
 
     def close(self) -> None:
-        """Close all cached database connections."""
-        for conn in self._connection_cache.values():
-            try:
-                conn.close()
-            except sqlite3.Error:
-                pass
-        self._connection_cache.clear()
+        """Clear cached column metadata (no connections are cached)."""
         self._columns_cache.clear()
 
     def _columns(
@@ -581,7 +580,10 @@ class NxcDatabaseManager:
             if not conn:
                 continue
 
-            data = self._query_protocol_host(conn, host_ip, protocol)
+            try:
+                data = self._query_protocol_host(conn, host_ip, protocol)
+            finally:
+                conn.close()
             if not data:
                 continue
             if merged_data is None:
@@ -729,22 +731,27 @@ class NxcDatabaseManager:
             conn = self._get_connection(protocol)
             if conn is None:
                 continue
-            cols = self._columns(protocol, conn, spec.cred_table)
-            if "username" not in cols:
-                continue
-            select_domain = "domain" in cols
-            select_credtype = "credtype" in cols
-            fields = ["id", "username", "password"]
-            if select_domain:
-                fields.append("domain")
-            if select_credtype:
-                fields.append("credtype")
             try:
-                rows = conn.execute(
-                    f'SELECT {", ".join(fields)} FROM "{spec.cred_table}" ORDER BY id'
-                ).fetchall()
-            except sqlite3.Error:
-                continue
+                cols = self._columns(protocol, conn, spec.cred_table)
+                if "username" not in cols:
+                    continue
+                select_domain = "domain" in cols
+                select_credtype = "credtype" in cols
+                fields = ["id", "username", "password"]
+                if select_domain:
+                    fields.append("domain")
+                if select_credtype:
+                    fields.append("credtype")
+                try:
+                    rows = conn.execute(
+                        f'SELECT {", ".join(fields)} FROM "{spec.cred_table}" ORDER BY id'
+                    ).fetchall()
+                except sqlite3.Error as exc:
+                    # Best-effort listing: skip this protocol DB but don't hide it.
+                    log_error(f"nxc: failed to read {protocol} credentials: {exc}")
+                    continue
+            finally:
+                conn.close()
             for row in rows:
                 username = row["username"]
                 if not username:
@@ -780,23 +787,29 @@ class NxcDatabaseManager:
         conn = self._get_connection(protocol)
         if conn is None:
             return None
-        cols = self._columns(protocol, conn, spec.cred_table)
-        if "username" not in cols or "password" not in cols:
-            return None
-        select_domain = "domain" in cols
-        select_credtype = "credtype" in cols
-        fields = ["username", "password"]
-        if select_domain:
-            fields.append("domain")
-        if select_credtype:
-            fields.append("credtype")
         try:
-            row = conn.execute(
-                f'SELECT {", ".join(fields)} FROM "{spec.cred_table}" WHERE id = ?',
-                (rowid,),
-            ).fetchone()
-        except sqlite3.Error:
-            return None
+            cols = self._columns(protocol, conn, spec.cred_table)
+            if "username" not in cols or "password" not in cols:
+                return None
+            select_domain = "domain" in cols
+            select_credtype = "credtype" in cols
+            fields = ["username", "password"]
+            if select_domain:
+                fields.append("domain")
+            if select_credtype:
+                fields.append("credtype")
+            try:
+                row = conn.execute(
+                    f'SELECT {", ".join(fields)} FROM "{spec.cred_table}" WHERE id = ?',
+                    (rowid,),
+                ).fetchone()
+            except sqlite3.Error as exc:
+                # A DB/access error must NOT masquerade as "no usable secret":
+                # surface it so the caller sees a real failure, not a credential one.
+                log_error(f"nxc: error reading credential {ref!r}: {exc}")
+                raise
+        finally:
+            conn.close()
         if row is None:
             return None
         password = row["password"]

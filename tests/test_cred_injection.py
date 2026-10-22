@@ -173,3 +173,86 @@ class TestExecuteGating:
                 config=cfg,
                 conn=temp_db,
             )
+
+
+@pytest.mark.integration
+class TestLogArtifactScrub:
+    """Part D: a resolved secret must never survive in a registered artifact file."""
+
+    def _point_singleton_at(self, workspace_path, monkeypatch):
+        from cerno_pkg import config as config_mod
+
+        monkeypatch.setattr(
+            config_mod,
+            "load_config",
+            lambda: CernoConfig(
+                nxc_workspace_path=str(workspace_path), nxc_enrichment_enabled=True
+            ),
+        )
+        nxc_db.reset_nxc_manager()
+
+    def test_nxc_log_artifact_is_scrubbed(
+        self, temp_db, nxc_workspace, monkeypatch, tmp_path
+    ):
+        self._point_singleton_at(nxc_workspace.workspace_path, monkeypatch)
+        from cerno_pkg import ops
+        from cerno_pkg.ops import ExecutionMetadata
+
+        secret = "aad3b435b51404eeaad3b435b51404ee"  # smb:2 (hash) value
+        log_path = tmp_path / "scan.nxc.smb.log"
+
+        def fake_run(cmd, timeout=300, proxy_config=None):
+            # nxc writes its full (resolved) argv to the --log file.
+            resolved = cmd[cmd.index("-H") + 1]
+            log_path.write_text(f"SMB 10.0.0.1 nxc -u admin -H {resolved} --shares\n")
+            return (
+                ExecutionMetadata(0, 0.1, False),
+                f"authenticated with {resolved}",
+                "",
+            )
+
+        monkeypatch.setattr(ops, "run_command_captured", fake_run)
+
+        cfg = CernoConfig(
+            mcp_allow_execution=True,
+            mcp_allow_cred_injection=True,
+            mcp_exec_allowlist=["nxc"],
+        )
+        cmd = [
+            "nxc",
+            "smb",
+            "targets",
+            "-u",
+            "admin",
+            "-H",
+            "@cred:smb:2@",
+            "--shares",
+            "--log",
+            str(log_path),
+        ]
+        result = mcp.tool_execute_command(cmd, config=cfg, conn=temp_db)
+
+        # stdout/command_text already scrubbed/masked...
+        assert secret not in result["stdout"]
+        assert "********" in result["stdout"]
+        # ...and the ON-DISK log file no longer contains the cleartext secret.
+        on_disk = log_path.read_text()
+        assert secret not in on_disk
+        assert "********" in on_disk
+
+        # ...and reading it back through the registered artifact shows the mask.
+        row = temp_db.execute(
+            "SELECT artifact_id FROM artifacts WHERE execution_id = ?",
+            (result["execution_id"],),
+        ).fetchone()
+        assert row is not None
+        art = mcp.tool_read_artifact(row["artifact_id"], conn=temp_db)
+        assert secret not in (art["content"] or "")
+        assert "********" in (art["content"] or "")
+
+        # command_text persisted with the placeholder masked, no secret.
+        ct = temp_db.execute(
+            "SELECT command_text FROM tool_executions WHERE execution_id = ?",
+            (result["execution_id"],),
+        ).fetchone()["command_text"]
+        assert secret not in ct and "@cred" not in ct
