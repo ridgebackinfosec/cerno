@@ -16,6 +16,7 @@ must not raise.
 from __future__ import annotations
 
 import dataclasses
+import fnmatch
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
@@ -168,6 +169,44 @@ def resolve_target_binary(command: Sequence[Any]) -> Optional[str]:
     except ValueError:
         return None
     return chain[-1] if chain else None
+
+
+def matches_any(name: str, patterns: Sequence[str]) -> bool:
+    """True if ``name`` matches any glob pattern (``*`` matches everything).
+
+    The single source of truth for allow/deny glob matching, shared by the
+    execute_command policy (``mcp_server/server.py``), workflow-command
+    eligibility (``workflow_prep.py``) and batch generation (``batch.py``).
+    """
+    return any(fnmatch.fnmatchcase(name, p) for p in patterns)
+
+
+def is_runnable(
+    command: Sequence[Any],
+    allowlist: Sequence[str],
+    denylist: Sequence[str],
+) -> tuple[bool, Optional[str]]:
+    """Non-raising allow/deny check: ``(ok, reason_if_not_runnable)``.
+
+    Mirrors ``_check_exec_policy`` semantics (every binary in the unwrapped chain
+    is checked against the denylist, which always wins; the target must then match
+    the allowlist; an empty allowlist denies everything) but returns a reason
+    instead of raising, for callers (workflow prep, batch planning) that classify
+    commands as executable-vs-manual rather than aborting.
+    """
+    try:
+        chain = command_chain(command)
+    except ValueError:
+        return False, "command does not resolve to a runnable binary"
+    for name in chain:
+        if matches_any(name, denylist):
+            return False, f"{name!r} is in the exec denylist"
+    target = chain[-1]
+    if not allowlist:
+        return False, "exec allowlist is empty (all commands denied)"
+    if not matches_any(target, allowlist):
+        return False, f"{target!r} is not in the exec allowlist"
+    return True, None
 
 
 def effective_tool(command: Sequence[Any]) -> Optional[str]:

@@ -60,6 +60,7 @@ EXPECTED_TOOLS = {
     "generate_nmap_cmd",
     "generate_netexec_cmd",
     "generate_msf_search",
+    "prepare_workflow",
     # gated
     "execute_command",  # mcp_allow_execution
     "set_review_state",
@@ -284,6 +285,7 @@ def test_tools_callable_through_server(contract):
         "generate_nmap_cmd": {"finding_id": fid},
         "generate_netexec_cmd": {"finding_id": fid, "protocol": "smb"},
         "generate_msf_search": {"finding_id": fid},
+        "prepare_workflow": {"finding_id": fid},
         "get_finding_verdict": {"finding_id": fid},
         # mutations (safe against the seeded temp DB)
         "set_review_state": {"finding_id": fid, "new_state": "in_progress"},

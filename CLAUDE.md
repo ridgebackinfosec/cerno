@@ -228,6 +228,11 @@ cerno_pkg/
   ├── query.py             # Composite finding query (FindingQuery + run_finding_query)
   │                        # AND-combined, parameterized predicate set shared by MCP
   │                        # query_findings and (future) TUI finding-list filtering
+  ├── workflow_prep.py     # prepare_workflow(): fill a mapped workflow's placeholders
+  │                        # (canonical <TARGET>/<PORT>/<USERNAME>/<PASSWORD>/<INTERFACE>
+  │                        # + variant map) from a finding's hosts/ports/@cred placeholder
+  │                        # and classify each command executable-vs-manual (exec_chain
+  │                        # is_runnable + PATH-installed check)
   ├── analysis.py          # Cross-file comparison, superset analysis
   ├── claude_assistant.py  # Claude Assistant integration
   │                        # check_claude_available(), build_finding_context(), run_exchange()
@@ -266,7 +271,12 @@ cerno_pkg/
   │                        #   masks command_text + scrubs stdout/stderr);
   │                        #   set_review_state/import_nessus/ingest_results/set_finding_verdict
   │                        #   gated by mcp_allow_mutations. generate_netexec_cmd takes
-  │                        #   use_credential=<ref> (placeholder injection via nxc_db).
+  │                        #   use_credential=<ref> (placeholder injection via nxc_db;
+  │                        #   ref->spec resolved by shared _resolve_credential_ref).
+  │                        #   prepare_workflow (always on) fills a finding's mapped
+  │                        #   workflow via cerno_pkg/workflow_prep.py and marks each
+  │                        #   command executable/manual (allow/deny glob + is_runnable
+  │                        #   shared through exec_chain.matches_any).
   │                        #   reveal_credential gated by mcp_allow_cred_reveal (returns
   │                        #   cleartext; audited via cerno_pkg/creds.py, shared with the
   │                        #   `cerno creds` CLI).

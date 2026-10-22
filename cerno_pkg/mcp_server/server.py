@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
-import fnmatch
 import json
 import re
 import sqlite3
@@ -39,7 +38,7 @@ from mcp.server.fastmcp import Context, FastMCP
 
 from ..config import CernoConfig, load_config
 from ..constants import REVIEW_STATES
-from ..exec_chain import EXEC_WRAPPERS, command_chain
+from ..exec_chain import EXEC_WRAPPERS, command_chain, matches_any
 from ..logging_setup import log_error, log_info
 
 # Valid review states (mirrors the findings.review_state CHECK constraint).
@@ -1155,6 +1154,39 @@ def tool_generate_nmap_cmd(
     return {"command": cmd, "ips_file": str(ips_file), "output_base": str(output_base)}
 
 
+def _resolve_credential_ref(use_credential: Optional[str]) -> Optional[dict]:
+    """Resolve a credential ref to a non-secret spec, or None when ref is falsy.
+
+    Returns ``{username, domain, secret_kind, ref}`` (never a secret). Raises
+    ValueError if the ref is unknown or lacks a usable password/hash. Shared by
+    ``generate_netexec_cmd`` and ``prepare_workflow`` so credential handling and
+    its error messages never drift.
+    """
+    if not use_credential:
+        return None
+    from ..nxc_db import get_nxc_manager
+
+    mgr = get_nxc_manager()
+    ref_obj = None
+    if mgr is not None:
+        ref_obj = next(
+            (r for r in mgr.list_credential_refs() if r.ref == use_credential),
+            None,
+        )
+    if ref_obj is None:
+        raise ValueError(f"Unknown credential ref {use_credential!r}")
+    if ref_obj.secret_kind not in ("password", "hash"):
+        raise ValueError(
+            f"Credential {use_credential!r} has no usable secret (password/hash)"
+        )
+    return {
+        "username": ref_obj.username,
+        "domain": ref_obj.domain,
+        "secret_kind": ref_obj.secret_kind,
+        "ref": ref_obj.ref,
+    }
+
+
 def tool_generate_netexec_cmd(
     finding_id: int,
     protocol: str,
@@ -1175,7 +1207,6 @@ def tool_generate_netexec_cmd(
     """
     from ..constants import NETEXEC_PROTOCOLS
     from ..models import Finding
-    from ..nxc_db import get_nxc_manager
     from ..ops import resolve_cmd
     from ..tools import build_netexec_cmd
 
@@ -1186,27 +1217,7 @@ def tool_generate_netexec_cmd(
             f"{', '.join(NETEXEC_PROTOCOLS)}"
         )
 
-    credential = None
-    if use_credential:
-        mgr = get_nxc_manager()
-        ref_obj = None
-        if mgr is not None:
-            ref_obj = next(
-                (r for r in mgr.list_credential_refs() if r.ref == use_credential),
-                None,
-            )
-        if ref_obj is None:
-            raise ValueError(f"Unknown credential ref {use_credential!r}")
-        if ref_obj.secret_kind not in ("password", "hash"):
-            raise ValueError(
-                f"Credential {use_credential!r} has no usable secret (password/hash)"
-            )
-        credential = {
-            "username": ref_obj.username,
-            "domain": ref_obj.domain,
-            "secret_kind": ref_obj.secret_kind,
-            "ref": ref_obj.ref,
-        }
+    credential = _resolve_credential_ref(use_credential)
 
     with _db(conn) as c:
         finding = Finding.get_by_id(finding_id, c)
@@ -1258,6 +1269,36 @@ def tool_generate_msf_search(
     }
 
 
+def tool_prepare_workflow(
+    finding_id: int,
+    *,
+    use_credential: Optional[str] = None,
+    config: Optional[CernoConfig] = None,
+    conn: Optional[sqlite3.Connection] = None,
+) -> Optional[dict]:
+    """Fill the verification workflow mapped to a finding's plugin, marking each
+    filled command executable-via-execute_command or manual-only.
+
+    Placeholders (<TARGET>/<PORT>/<USERNAME>/<PASSWORD>/<INTERFACE>, plus
+    historical variants) are filled from the finding's real hosts/ports. When
+    ``use_credential`` (a ref from ``list_nxc_credentials``) is given, <USERNAME>
+    is filled and <PASSWORD> becomes a ``@cred:<ref>@`` placeholder (resolved
+    server-side only at run time, never a real secret here). Each command reports
+    ``executable`` + ``manual_reason`` (allowlist/denylist + installed check), so
+    non-cerno-runnable steps (responder, ssh-audit, uninstalled tools, prose) are
+    clearly flagged. Returns None if no workflow is mapped to the plugin.
+    """
+    from ..workflow_prep import prepare_workflow
+
+    cfg = config or load_config()
+    credential = _resolve_credential_ref(use_credential)
+    with _db(conn) as c:
+        prepared = prepare_workflow(
+            finding_id, credential=credential, config=cfg, conn=c
+        )
+    return dataclasses.asdict(prepared) if prepared is not None else None
+
+
 # ========== Execution (gated by mcp_allow_execution) ==========
 
 
@@ -1272,9 +1313,9 @@ _command_chain = command_chain
 _EXEC_WRAPPERS = EXEC_WRAPPERS
 
 
-def _matches_any(name: str, patterns: Sequence[str]) -> bool:
-    """True if ``name`` matches any glob pattern (``*`` matches everything)."""
-    return any(fnmatch.fnmatchcase(name, p) for p in patterns)
+# Shared with workflow_prep/batch via exec_chain so allow/deny glob matching
+# cannot drift between the execute_command policy and the eligibility checks.
+_matches_any = matches_any
 
 
 def _check_exec_policy(
@@ -2224,6 +2265,23 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
     def generate_msf_search(finding_id: int) -> MsfSearchCommand:
         """Build an msfconsole search command for a finding's Metasploit modules."""
         return cast("MsfSearchCommand", tool_generate_msf_search(finding_id))
+
+    @mcp.tool()
+    def prepare_workflow(
+        finding_id: int, use_credential: Optional[str] = None
+    ) -> Optional[dict]:
+        """Fill the finding's mapped verification workflow and flag runnable commands.
+
+        Substitutes <TARGET>/<PORT>/<USERNAME>/<PASSWORD>/<INTERFACE> (and historical
+        variants) with the finding's real hosts/ports; use_credential (a ref from
+        list_nxc_credentials) fills <USERNAME> and turns <PASSWORD> into a
+        @cred:<ref>@ placeholder (secret resolved only at run time). Each command
+        reports executable + manual_reason so non-runnable steps are clear. Returns
+        None when no workflow is mapped to the plugin.
+        """
+        return tool_prepare_workflow(
+            finding_id, use_credential=use_credential, config=cfg
+        )
 
     # --- Resources (always on; operator-pinnable context) ---
     @mcp.resource("cerno://scans", mime_type="application/json")
