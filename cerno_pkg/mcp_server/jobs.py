@@ -118,12 +118,15 @@ class JobRegistry:
         finding_id: Optional[int] = None,
         use_proxy: bool = False,
         timeout: int = 300,
+        gate: Optional[threading.Semaphore] = None,
     ) -> Job:
         """Validate, register, and launch a job; returns immediately with the Job.
 
         The exec policy / cred-gate is checked synchronously (so a bad command
         fails fast here, before scheduling). The run itself executes on the event
-        loop via ``asyncio.to_thread`` and is not awaited.
+        loop via ``asyncio.to_thread`` and is not awaited. ``gate`` (a shared
+        ``threading.Semaphore``) caps how many jobs run their subprocess at once —
+        used by ``execute_batch`` to bound concurrency across a batch.
         """
         from .server import _mask_command_text, _preflight_exec
 
@@ -147,6 +150,7 @@ class JobRegistry:
                 timeout,
                 finding_id,
                 config,
+                gate,
             )
         )
         return job
@@ -223,11 +227,19 @@ class JobRegistry:
         timeout: int,
         finding_id: Optional[int],
         config: CernoConfig,
+        gate: Optional[threading.Semaphore] = None,
     ) -> None:
         # Imported lazily to avoid a jobs<->server import cycle at module load.
         from .server import _run_and_record
 
+        # A cancel that arrived while queued on the gate should skip the run.
+        if gate is not None:
+            gate.acquire()
         try:
+            if job._cancel_requested:
+                with self._lock:
+                    job.ended_at = time.time()
+                return
             result = _run_and_record(
                 command,
                 tool_name=tool_name,
@@ -253,6 +265,9 @@ class JobRegistry:
                 job.ended_at = time.time()
                 if job.status != "cancelled":
                     job.status = "failed"
+        finally:
+            if gate is not None:
+                gate.release()
 
 
 _REGISTRY: Optional[JobRegistry] = None

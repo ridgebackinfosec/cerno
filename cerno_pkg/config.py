@@ -302,6 +302,44 @@ class CernoConfig:
     over mcp_exec_allowlist. A guardrail, not a security boundary: under ``*``,
     shells/interpreters can still run denied programs unless they are denied too."""
 
+    mcp_allow_batch: bool = field(
+        default=False,
+        metadata={
+            "section": "MCP Server",
+            "kind": "bool",
+            "help": "Allow execute_batch to run a whole query's commands",
+        },
+    )
+    """Allow the `cerno mcp` server's execute_batch tool to RUN the generated command
+    for every finding matched by a query (default: False). plan_batch (the reviewable
+    dry run) is always available; execution additionally requires mcp_allow_execution,
+    and every command still passes the allow/deny policy, cred gate, and timeout — this
+    flag only authorizes the fan-out across a query. Strictly opt-in beyond single
+    execute_command because a batch amplifies blast radius."""
+
+    mcp_batch_concurrency: int = field(
+        default=1,
+        metadata={
+            "section": "MCP Server",
+            "kind": "int",
+            "help": "Max commands execute_batch runs at once",
+        },
+    )
+    """Maximum number of batch commands execute_batch runs concurrently (default: 1 =
+    sequential). nmap/nxc are already internally parallel, so keep this small (2-3) to
+    avoid overwhelming the host/network."""
+
+    mcp_batch_timeout: int = field(
+        default=300,
+        metadata={
+            "section": "MCP Server",
+            "kind": "int",
+            "help": "Per-command timeout (s) for execute_batch",
+        },
+    )
+    """Per-command timeout in seconds for each command in an execute_batch run
+    (default: 300), clamped to the same [1, 3600] ceiling as execute_command."""
+
     # Proxychains
     proxychains_enabled: bool = field(
         default=False,

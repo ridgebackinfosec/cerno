@@ -1299,6 +1299,98 @@ def tool_prepare_workflow(
     return dataclasses.asdict(prepared) if prepared is not None else None
 
 
+def _batch_query(
+    *,
+    scan_ids: Optional[list[int]],
+    severity_int: Optional[int],
+    severity_min: Optional[int],
+    review_state: Optional[str],
+    verdict: Optional[str],
+    cve: Optional[str],
+    port: Optional[int],
+    service: Optional[str],
+    host: Optional[str],
+    plugin_name: Optional[str],
+    has_metasploit: Optional[bool],
+    has_workflow: Optional[bool],
+    limit: int,
+) -> Any:
+    """Build a FindingQuery for a batch from the MCP predicate kwargs."""
+    from ..query import FindingQuery
+
+    return FindingQuery(
+        scan_ids=scan_ids,
+        severity_int=severity_int,
+        severity_min=severity_min,
+        review_state=review_state,
+        verdict=verdict,
+        cve=cve,
+        port=port,
+        service=service,
+        host=host,
+        plugin_name=plugin_name,
+        has_metasploit=has_metasploit,
+        has_workflow=has_workflow,
+        limit=limit,
+    )
+
+
+def tool_plan_batch(
+    strategy: str,
+    *,
+    scan_ids: Optional[list[int]] = None,
+    severity_int: Optional[int] = None,
+    severity_min: Optional[int] = None,
+    review_state: Optional[str] = None,
+    verdict: Optional[str] = None,
+    cve: Optional[str] = None,
+    port: Optional[int] = None,
+    service: Optional[str] = None,
+    host: Optional[str] = None,
+    plugin_name: Optional[str] = None,
+    has_metasploit: Optional[bool] = None,
+    has_workflow: Optional[bool] = None,
+    limit: int = 500,
+    use_credential: Optional[str] = None,
+    skip_done: bool = True,
+    config: Optional[CernoConfig] = None,
+    conn: Optional[sqlite3.Connection] = None,
+) -> dict:
+    """Build a reviewable batch plan (read-only dry run) over a finding query.
+
+    For each matched finding, generates the command for ``strategy`` ("nmap",
+    "netexec:<proto>", "msf", "workflow") and classifies it executable vs manual.
+    Already-resolved findings (done, or confirmed/false_positive verdict) are
+    skipped when ``skip_done``. Nothing is executed.
+    """
+    from ..batch import plan_batch
+
+    q = _batch_query(
+        scan_ids=scan_ids,
+        severity_int=severity_int,
+        severity_min=severity_min,
+        review_state=review_state,
+        verdict=verdict,
+        cve=cve,
+        port=port,
+        service=service,
+        host=host,
+        plugin_name=plugin_name,
+        has_metasploit=has_metasploit,
+        has_workflow=has_workflow,
+        limit=limit,
+    )
+    with _db(conn) as c:
+        return plan_batch(
+            q,
+            strategy,
+            use_credential=use_credential,
+            skip_done=skip_done,
+            config=config,
+            conn=c,
+        ).as_dict()
+
+
 # ========== Execution (gated by mcp_allow_execution) ==========
 
 
@@ -2343,6 +2435,52 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
             finding_id, use_credential=use_credential, config=cfg
         )
 
+    @mcp.tool()
+    def plan_batch(
+        strategy: str,
+        scan_ids: Optional[list[int]] = None,
+        severity_int: Optional[int] = None,
+        severity_min: Optional[int] = None,
+        review_state: Optional[str] = None,
+        verdict: Optional[str] = None,
+        cve: Optional[str] = None,
+        port: Optional[int] = None,
+        service: Optional[str] = None,
+        host: Optional[str] = None,
+        plugin_name: Optional[str] = None,
+        has_metasploit: Optional[bool] = None,
+        has_workflow: Optional[bool] = None,
+        limit: int = 500,
+        use_credential: Optional[str] = None,
+        skip_done: bool = True,
+    ) -> dict:
+        """Build a reviewable batch plan (dry run) over a finding query (no execution).
+
+        strategy is "nmap", "netexec:<proto>", "msf", or "workflow". Predicates are
+        the same AND-combined set as query_findings. Each item reports the generated
+        command and whether it is executable-via-execute_command or manual; already-
+        resolved findings are skipped when skip_done. Review this, then execute_batch.
+        """
+        return tool_plan_batch(
+            strategy,
+            scan_ids=scan_ids,
+            severity_int=severity_int,
+            severity_min=severity_min,
+            review_state=review_state,
+            verdict=verdict,
+            cve=cve,
+            port=port,
+            service=service,
+            host=host,
+            plugin_name=plugin_name,
+            has_metasploit=has_metasploit,
+            has_workflow=has_workflow,
+            limit=limit,
+            use_credential=use_credential,
+            skip_done=skip_done,
+            config=cfg,
+        )
+
     # --- Resources (always on; operator-pinnable context) ---
     @mcp.resource("cerno://scans", mime_type="application/json")
     def scans_resource() -> str:
@@ -2515,6 +2653,72 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
 
     else:
         log_info("mcp: execute_command not registered (mcp_allow_execution=false)")
+
+    # --- Scoped batch execution (gated by execution AND batch) ---
+    if cfg.mcp_allow_execution and cfg.mcp_allow_batch:
+
+        @mcp.tool()
+        async def execute_batch(
+            strategy: str,
+            scan_ids: Optional[list[int]] = None,
+            severity_int: Optional[int] = None,
+            severity_min: Optional[int] = None,
+            review_state: Optional[str] = None,
+            verdict: Optional[str] = None,
+            cve: Optional[str] = None,
+            port: Optional[int] = None,
+            service: Optional[str] = None,
+            host: Optional[str] = None,
+            plugin_name: Optional[str] = None,
+            has_metasploit: Optional[bool] = None,
+            has_workflow: Optional[bool] = None,
+            limit: int = 500,
+            use_credential: Optional[str] = None,
+            skip_done: bool = True,
+            concurrency: Optional[int] = None,
+            per_command_timeout: Optional[int] = None,
+        ) -> dict:
+            """Run the runnable commands of a batch plan over a finding query.
+
+            Builds the same plan as plan_batch, then runs each runnable, non-skipped
+            item as a tracked, cancellable job attributed to its finding (and auto-
+            ingested), capped at mcp_batch_concurrency with an mcp_batch_timeout per
+            command. Every command is re-validated against the exec policy at run
+            time. Returns the plan plus per-item results. Registered only when both
+            mcp_allow_execution and mcp_allow_batch are set.
+            """
+            from ..batch import execute_batch as _execute_batch
+
+            q = _batch_query(
+                scan_ids=scan_ids,
+                severity_int=severity_int,
+                severity_min=severity_min,
+                review_state=review_state,
+                verdict=verdict,
+                cve=cve,
+                port=port,
+                service=service,
+                host=host,
+                plugin_name=plugin_name,
+                has_metasploit=has_metasploit,
+                has_workflow=has_workflow,
+                limit=limit,
+            )
+            return await _execute_batch(
+                q,
+                strategy,
+                use_credential=use_credential,
+                skip_done=skip_done,
+                concurrency=concurrency,
+                per_command_timeout=per_command_timeout,
+                config=cfg,
+            )
+
+    else:
+        log_info(
+            "mcp: execute_batch not registered "
+            "(requires mcp_allow_execution and mcp_allow_batch)"
+        )
 
     # --- Mutations (gated) ---
     if cfg.mcp_allow_mutations:

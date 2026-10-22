@@ -61,12 +61,14 @@ EXPECTED_TOOLS = {
     "generate_netexec_cmd",
     "generate_msf_search",
     "prepare_workflow",
+    "plan_batch",
     # gated
     "execute_command",  # mcp_allow_execution
     "start_execution",  # mcp_allow_execution
     "get_execution_status",  # mcp_allow_execution
     "cancel_execution",  # mcp_allow_execution
     "list_jobs",  # mcp_allow_execution
+    "execute_batch",  # mcp_allow_execution AND mcp_allow_batch
     "set_review_state",
     "import_nessus",  # mcp_allow_mutations
     "ingest_results",  # mcp_allow_mutations
@@ -194,6 +196,7 @@ def contract(tmp_path, monkeypatch):
         mcp_allow_execution=True,
         mcp_allow_mutations=True,
         mcp_allow_cred_reveal=True,
+        mcp_allow_batch=True,
     )
     srv = build_server(cfg)
     return {
@@ -269,6 +272,7 @@ def test_tools_callable_through_server(contract):
         "list_scans": {},
         "list_findings": {"scan_ids": [sid]},
         "query_findings": {"scan_ids": [sid], "severity_int": 4, "has_metasploit": True},
+        "plan_batch": {"strategy": "nmap", "scan_ids": [sid], "skip_done": False},
         "get_finding_detail": {"finding_id": fid},
         "get_finding_hosts": {"finding_id": fid},
         "list_hosts": {},

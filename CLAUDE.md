@@ -233,6 +233,10 @@ cerno_pkg/
   │                        # + variant map) from a finding's hosts/ports/@cred placeholder
   │                        # and classify each command executable-vs-manual (exec_chain
   │                        # is_runnable + PATH-installed check)
+  ├── batch.py             # Scoped batch: plan_batch (reviewable dry run) + async
+  │                        # execute_batch over a FindingQuery; per-finding command
+  │                        # generation (nmap/netexec/msf/workflow) + skip_done,
+  │                        # runs via the job registry (bounded concurrency)
   ├── analysis.py          # Cross-file comparison, superset analysis
   ├── claude_assistant.py  # Claude Assistant integration
   │                        # check_claude_available(), build_finding_context(), run_exchange()
@@ -261,7 +265,9 @@ cerno_pkg/
   │                        #   caps per-host output via max_hosts. execute_command +
   │                        #   async job tools (start_execution/get_execution_status/
   │                        #   cancel_execution/list_jobs via mcp_server/jobs.py) gated by
-  │                        #   mcp_allow_execution (async w/ progress heartbeats; common
+  │                        #   mcp_allow_execution; plan_batch always on + execute_batch
+  │                        #   gated by mcp_allow_execution AND mcp_allow_batch (cerno_pkg/
+  │                        #   batch.py). (async w/ progress heartbeats; common
   │                        #   wrappers sudo/doas/proxychains4/env/nice/nohup/timeout/stdbuf/
   │                        #   setsid/ionice/time unwrapped (_EXEC_WRAPPERS), chain checked
   │                        #   against mcp_exec_denylist then target against mcp_exec_allowlist
@@ -578,6 +584,9 @@ Only after user confirms the changelog content:
 - `mcp_allow_cred_reveal` - Allow the MCP `reveal_credential` tool to return a credential's **cleartext** secret to the caller (default: `false`). Strictly more sensitive than injection (reveal hands the secret back), gated independently — injection being on does NOT enable reveal. The local `cerno creds reveal <ref>` CLI works regardless of this flag; every reveal is audited to `tool_executions` (`tool_name='cred_reveal'`, ref only, never the value)
 - `mcp_exec_allowlist` - Glob patterns for the binaries the MCP `execute_command` tool may run, matched on the basename of the target binary after unwrapping `sudo`/`proxychains4` (default: `config.DEFAULT_MCP_EXEC_ALLOWLIST` = `nmap, nxc, netexec, msfconsole`). `*` = any binary not denied; **empty list = deny all**. Only consulted when `mcp_allow_execution` is on. Set via CSV: `cerno config set mcp_exec_allowlist "nmap,nxc"`
 - `mcp_exec_denylist` - Glob patterns for binaries `execute_command` may never run, checked against every binary in the chain including wrappers; always wins over the allowlist (default: `config.DEFAULT_MCP_EXEC_DENYLIST`, destructive commands like `rm, dd, mkfs*`). A guardrail, not a security boundary. Both list keys go through `config.coerce_str_list()` on load and `config set`, so YAML scalars and CSV strings become lists
+- `mcp_allow_batch` - Allow the MCP `execute_batch` tool to RUN the generated command for every finding matched by a query (default: `false`). `plan_batch` (the reviewable dry run) is always available; `execute_batch` is registered only when BOTH `mcp_allow_execution` and `mcp_allow_batch` are on, and every command still passes `_check_exec_policy`, the cred gate, and the per-command timeout — this flag only authorizes the fan-out across a query
+- `mcp_batch_concurrency` - Max commands `execute_batch` runs concurrently (default: `1` = sequential; keep small, 2-3, since nmap/nxc are already internally parallel). Implemented via a shared semaphore gate on the job registry
+- `mcp_batch_timeout` - Per-command timeout in seconds for each `execute_batch` command (default: `300`), clamped to the same [1, 3600] ceiling as `execute_command`
 
 **NSE profiles** (`constants.py:NSE_PROFILES`): Pre-configured nmap script sets (SMB, SSL, HTTP, etc.)
 
