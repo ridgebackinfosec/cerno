@@ -270,6 +270,72 @@ def run_command_with_progress(
 
 
 @log_timing
+def _sudo_guard(cmd: list[str]) -> bool:
+    """Return True if ``cmd`` runs under sudo, refusing an interactive prompt.
+
+    Non-interactive contexts (MCP) must never hang on a password prompt: if the
+    command starts with ``sudo`` and the sudo timestamp is not already valid, a
+    PermissionError is raised instead.
+    """
+    used_sudo = len(cmd) > 0 and os.path.basename(str(cmd[0])) == "sudo"
+    if used_sudo:
+        try:
+            check = subprocess.run(
+                ["sudo", "-vn"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            if check.returncode != 0:
+                raise PermissionError(
+                    "sudo requires a password; refusing to prompt in non-interactive "
+                    "mode. Pre-authenticate with `sudo -v` or run without sudo."
+                )
+        except FileNotFoundError:
+            raise PermissionError("sudo not found on PATH")
+    return used_sudo
+
+
+def _wrap_proxy(cmd: list[str], proxy_config: Optional[ProxyConfig]) -> list[str]:
+    """Prefix ``cmd`` with proxychains4 when a proxy config is enabled."""
+    if proxy_config is not None and proxy_config.enabled:
+        conf_path = Path.home() / ".cerno" / "proxychains4.conf"
+        write_proxychains_config(proxy_config, conf_path)
+        prefix = ["proxychains4"]
+        if proxy_config.quiet:
+            prefix.append("-q")
+        prefix.extend(["-f", str(conf_path)])
+        return prefix + cmd
+    return cmd
+
+
+def start_process(
+    cmd: list[str],
+    *,
+    proxy_config: Optional[ProxyConfig] = None,
+) -> tuple["subprocess.Popen[str]", bool]:
+    """Spawn ``cmd`` in its own process group, capturing stdout/stderr.
+
+    Like :func:`run_command_captured` (same non-interactive sudo guard and
+    proxychains wrapping) but returns the live ``Popen`` so a caller can cancel
+    the run: ``start_new_session=True`` puts the child in a new process group, so
+    ``os.killpg(os.getpgid(proc.pid), ...)`` terminates the tool and its children
+    cleanly. The caller is responsible for ``communicate()`` and timeout handling.
+
+    Returns ``(proc, used_sudo)``.
+    """
+    used_sudo = _sudo_guard(cmd)
+    run_cmd = _wrap_proxy(cmd, proxy_config)
+    log_info(f"Spawning (captured): {' '.join(str(x) for x in run_cmd)}")
+    proc = subprocess.Popen(
+        run_cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    return proc, used_sudo
+
+
 def run_command_captured(
     cmd: list[str],
     *,
@@ -300,32 +366,8 @@ def run_command_captured(
         PermissionError: If the command needs an interactive sudo password.
         subprocess.TimeoutExpired: If the command exceeds ``timeout``.
     """
-    used_sudo = len(cmd) > 0 and os.path.basename(str(cmd[0])) == "sudo"
-
-    if used_sudo:
-        try:
-            check = subprocess.run(
-                ["sudo", "-vn"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            if check.returncode != 0:
-                raise PermissionError(
-                    "sudo requires a password; refusing to prompt in non-interactive "
-                    "mode. Pre-authenticate with `sudo -v` or run without sudo."
-                )
-        except FileNotFoundError:
-            raise PermissionError("sudo not found on PATH")
-
-    run_cmd: list[str] = cmd
-    if proxy_config is not None and proxy_config.enabled:
-        conf_path = Path.home() / ".cerno" / "proxychains4.conf"
-        write_proxychains_config(proxy_config, conf_path)
-        prefix = ["proxychains4"]
-        if proxy_config.quiet:
-            prefix.append("-q")
-        prefix.extend(["-f", str(conf_path)])
-        run_cmd = prefix + cmd
+    used_sudo = _sudo_guard(cmd)
+    run_cmd = _wrap_proxy(cmd, proxy_config)
 
     log_info(f"Executing (captured): {' '.join(str(x) for x in run_cmd)}")
     start_time = time.time()

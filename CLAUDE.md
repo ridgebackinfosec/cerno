@@ -240,6 +240,9 @@ cerno_pkg/
   │                        # load_skill_prompt() (loads .claude/skills/cerno-assistant.md or fallback)
   ├── mcp_server/          # MCP server (BETA) — `cerno mcp` command, stdio transport
   │   ├── __init__.py      #   build_server(), main()
+  │   ├── jobs.py          #   In-memory async job registry (start/status/cancel/
+  │   │                    #   list_jobs); cancellable ops.start_process runner
+  │   │                    #   (killpg); shares server._run_and_record for logging/ingest
   │   └── server.py        #   Pure tool_*/resource_*/prompt_* adapters (testable w/ conn)
   │                        #   + FastMCP registration. Read/generate tools, resources
   │                        #   (cerno:// URIs incl. config + host/{ip}/nxc), and prompts
@@ -255,7 +258,9 @@ cerno_pkg/
   │                        #   confirmed, has_workflow via mapper; shared cerno_pkg/query.py)
   │                        #   also always on.
   │                        #   list_findings supports merged/limit/offset; get_finding_detail
-  │                        #   caps per-host output via max_hosts. execute_command gated by
+  │                        #   caps per-host output via max_hosts. execute_command +
+  │                        #   async job tools (start_execution/get_execution_status/
+  │                        #   cancel_execution/list_jobs via mcp_server/jobs.py) gated by
   │                        #   mcp_allow_execution (async w/ progress heartbeats; common
   │                        #   wrappers sudo/doas/proxychains4/env/nice/nohup/timeout/stdbuf/
   │                        #   setsid/ionice/time unwrapped (_EXEC_WRAPPERS), chain checked

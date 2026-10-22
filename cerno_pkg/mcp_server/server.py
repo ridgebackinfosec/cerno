@@ -28,7 +28,7 @@ import tempfile
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Generator, Optional, Sequence, cast
+from typing import Any, Callable, Generator, Optional, Sequence, cast
 
 # Pydantic (via FastMCP output schemas) requires typing_extensions.TypedDict on
 # Python < 3.12; typing_extensions ships with mcp/pydantic, so always use it.
@@ -1472,38 +1472,62 @@ def _scrub_file_secrets(path: Path, secrets: Sequence[str]) -> bool:
         return False
 
 
-def tool_execute_command(
+# A runner executes the resolved argv and returns (ExecutionMetadata, stdout,
+# stderr). The sync path uses ops.run_command_captured; the async job path
+# injects a cancellable spawn+communicate runner (see mcp_server/jobs.py), so
+# both share the identical policy / cred-masking / logging / ingest body below.
+_Runner = Callable[[list, int, "Optional[Any]"], "tuple[Any, str, str]"]
+
+
+def _default_runner(
+    run_command: list, timeout: int, proxy: Any
+) -> tuple[Any, str, str]:
+    from ..ops import run_command_captured
+
+    return run_command_captured(run_command, timeout=timeout, proxy_config=proxy)
+
+
+def _preflight_exec(command: list[str], config: Optional[CernoConfig]) -> None:
+    """Validate a command before launching an async job (fail fast at start).
+
+    Runs the same empty-command check, allow/deny policy, and cred-injection gate
+    that ``_run_and_record`` enforces, so ``start_execution`` rejects a bad command
+    immediately rather than reporting it only once the job has been scheduled.
+    """
+    if not command:
+        raise ValueError("command must be a non-empty list of arguments")
+    cfg = config or load_config()
+    _check_exec_policy(command, cfg.mcp_exec_allowlist, cfg.mcp_exec_denylist)
+    if _has_cred_placeholder(command) and not cfg.mcp_allow_cred_injection:
+        raise ValueError(
+            "command contains a @cred:...@ placeholder but credential injection "
+            "is disabled; set mcp_allow_cred_injection to allow it."
+        )
+
+
+def _run_and_record(
     command: list[str],
     *,
-    tool_name: str = "mcp",
-    use_proxy: bool = False,
-    timeout: int = 300,
-    finding_id: Optional[int] = None,
-    config: Optional[CernoConfig] = None,
-    conn: Optional[sqlite3.Connection] = None,
+    tool_name: str,
+    use_proxy: bool,
+    timeout: int,
+    finding_id: Optional[int],
+    config: Optional[CernoConfig],
+    conn: Optional[sqlite3.Connection],
+    runner: _Runner,
 ) -> dict:
-    """Execute a command non-interactively, capture output, and log the run.
+    """Policy-check, run (via ``runner``), log, register artifacts, and auto-ingest.
 
-    The command is run with ``shell=False`` (argv list). Leading ``sudo`` /
-    ``proxychains4`` wrappers are unwrapped; no binary in the chain may match
-    ``mcp_exec_denylist``, and the target must match ``mcp_exec_allowlist``
-    (glob patterns, ``*`` = anything; empty = deny all). ``timeout``
-    is clamped to [1, 3600] seconds. Output is captured and returned; nothing is
-    written to stdout. The run is recorded in ``tool_executions`` via
-    ``ops.log_tool_execution``, attributed to ``finding_id`` when supplied.
-
-    For an nmap command (``-oA <base>`` present), the ``-oA`` output files are
-    registered as artifacts after the run (even when no hosts were up), and
-    ``host_count`` (from ``-iL``) / ``ports`` (from ``-p``) are recorded. To avoid
-    silently overwriting a prior logged run, the call is refused if those output
-    files already exist; call ``generate_nmap_cmd`` for a fresh output path.
+    The single shared implementation behind synchronous ``execute_command`` and
+    the async job model: everything except the actual subprocess call, which is
+    the injected ``runner`` (so cancellation can wrap the spawn without
+    duplicating the masking/logging/ingest logic).
     """
     from ..ops import (
         ProxyConfig,
         log_artifact,
         log_artifacts_for_nmap,
         log_tool_execution,
-        run_command_captured,
     )
 
     if not command:
@@ -1551,9 +1575,7 @@ def tool_execute_command(
             quiet=True,
         )
 
-    meta, stdout, stderr = run_command_captured(
-        run_command, timeout=timeout, proxy_config=proxy
-    )
+    meta, stdout, stderr = runner(run_command, timeout, proxy)
 
     # Never persist or return a resolved secret: log the masked placeholder form
     # and scrub any secret value that leaked into captured output.
@@ -1615,6 +1637,44 @@ def tool_execute_command(
             )
 
     return result
+
+
+def tool_execute_command(
+    command: list[str],
+    *,
+    tool_name: str = "mcp",
+    use_proxy: bool = False,
+    timeout: int = 300,
+    finding_id: Optional[int] = None,
+    config: Optional[CernoConfig] = None,
+    conn: Optional[sqlite3.Connection] = None,
+) -> dict:
+    """Execute a command non-interactively, capture output, and log the run.
+
+    The command is run with ``shell=False`` (argv list). Leading ``sudo`` /
+    ``proxychains4`` wrappers are unwrapped; no binary in the chain may match
+    ``mcp_exec_denylist``, and the target must match ``mcp_exec_allowlist``
+    (glob patterns, ``*`` = anything; empty = deny all). ``timeout``
+    is clamped to [1, 3600] seconds. Output is captured and returned; nothing is
+    written to stdout. The run is recorded in ``tool_executions`` via
+    ``ops.log_tool_execution``, attributed to ``finding_id`` when supplied.
+
+    For an nmap command (``-oA <base>`` present), the ``-oA`` output files are
+    registered as artifacts after the run (even when no hosts were up), and
+    ``host_count`` (from ``-iL``) / ``ports`` (from ``-p``) are recorded. To avoid
+    silently overwriting a prior logged run, the call is refused if those output
+    files already exist; call ``generate_nmap_cmd`` for a fresh output path.
+    """
+    return _run_and_record(
+        command,
+        tool_name=tool_name,
+        use_proxy=use_proxy,
+        timeout=timeout,
+        finding_id=finding_id,
+        config=config,
+        conn=conn,
+        runner=_default_runner,
+    )
 
 
 # ========== Mutations (gated by mcp_allow_mutations) ==========
@@ -2399,6 +2459,59 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
                     except Exception:  # progress is best-effort
                         pass
             return task.result()
+
+        @mcp.tool()
+        async def start_execution(
+            command: list[str],
+            tool_name: str = "mcp",
+            use_proxy: bool = False,
+            timeout: int = 300,
+            finding_id: Optional[int] = None,
+        ) -> dict:
+            """Start a command as a background job and return its job_id immediately.
+
+            For long scans/batches that should not block the tool call. The exec
+            policy (allow/denylist) and cred-injection gate are checked up front, so
+            a disallowed command fails here. Poll get_execution_status(job_id) and
+            cancel_execution(job_id). Jobs are in-memory and lost on server restart,
+            but every completed run is still logged to tool_executions.
+            """
+            from .jobs import get_registry
+
+            job = get_registry().start(
+                command=command,
+                tool_name=tool_name,
+                config=cfg,
+                finding_id=finding_id,
+                use_proxy=use_proxy,
+                timeout=timeout,
+            )
+            return {"job_id": job.job_id, "status": job.status}
+
+        @mcp.tool()
+        def get_execution_status(job_id: str) -> dict:
+            """Return a background job's status (running/done/failed/cancelled) + tail."""
+            from .jobs import get_registry
+
+            job = get_registry().get(job_id)
+            if job is None:
+                raise ValueError(f"No job with id {job_id!r}")
+            return job.status_dict()
+
+        @mcp.tool()
+        def cancel_execution(job_id: str) -> dict:
+            """Cancel a running job, killing its process group (no-op if finished)."""
+            from .jobs import get_registry
+
+            job = get_registry().cancel(job_id)
+            return {"job_id": job.job_id, "status": job.status}
+
+        @mcp.tool()
+        def list_jobs(limit: int = 50) -> list[dict]:
+            """List background jobs (newest first) for this server process."""
+            from .jobs import get_registry
+
+            return [j.status_dict() for j in get_registry().list_jobs(limit)]
 
     else:
         log_info("mcp: execute_command not registered (mcp_allow_execution=false)")

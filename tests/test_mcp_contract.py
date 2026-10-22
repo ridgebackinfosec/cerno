@@ -63,6 +63,10 @@ EXPECTED_TOOLS = {
     "prepare_workflow",
     # gated
     "execute_command",  # mcp_allow_execution
+    "start_execution",  # mcp_allow_execution
+    "get_execution_status",  # mcp_allow_execution
+    "cancel_execution",  # mcp_allow_execution
+    "list_jobs",  # mcp_allow_execution
     "set_review_state",
     "import_nessus",  # mcp_allow_mutations
     "ingest_results",  # mcp_allow_mutations
@@ -292,9 +296,10 @@ def test_tools_callable_through_server(contract):
         "set_finding_verdict": {"finding_id": fid, "verdict": "confirmed"},
         "ingest_results": {"execution_id": contract["execution_id"]},
     }
-    # execute_command (subprocess/async) and import_nessus (needs a file) are
-    # covered by the inventory test + test_mcp_server.py; exercising them here
-    # would add platform/side-effect flakiness.
+    # execute_command + the async job tools (start/get/cancel/list_jobs are
+    # subprocess/async) and import_nessus (needs a file) are covered by the
+    # inventory test + test_mcp_server.py/test_jobs.py; exercising them here would
+    # add platform/side-effect flakiness.
     for name, result in _client_call_tools(s, args).items():
         detail = result.content[0].text if result.content else ""
         assert not result.isError, f"{name} failed via MCP client: {detail}"
