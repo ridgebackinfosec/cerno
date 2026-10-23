@@ -53,6 +53,8 @@ EXPECTED_TOOLS = {
     "get_capabilities",
     "get_finding_artifacts",
     "get_finding_verdict",
+    "list_workflow_gaps",
+    "get_notes",
     # netexec (always on)
     "get_host_nxc",
     "list_nxc_credentials",
@@ -70,6 +72,7 @@ EXPECTED_TOOLS = {
     "list_jobs",  # mcp_allow_execution
     "execute_batch",  # mcp_allow_execution AND mcp_allow_batch
     "set_review_state",
+    "add_note",  # mcp_allow_mutations
     "import_nessus",  # mcp_allow_mutations
     "ingest_results",  # mcp_allow_mutations
     "set_finding_verdict",  # mcp_allow_mutations
@@ -295,8 +298,11 @@ def test_tools_callable_through_server(contract):
         "generate_msf_search": {"finding_id": fid},
         "prepare_workflow": {"finding_id": fid},
         "get_finding_verdict": {"finding_id": fid},
+        "list_workflow_gaps": {"scan_ids": [sid]},
+        "get_notes": {"finding_id": fid},
         # mutations (safe against the seeded temp DB)
         "set_review_state": {"finding_id": fid, "new_state": "in_progress"},
+        "add_note": {"finding_id": fid, "note": "t"},
         "set_finding_verdict": {"finding_id": fid, "verdict": "confirmed"},
         "ingest_results": {"execution_id": contract["execution_id"]},
     }

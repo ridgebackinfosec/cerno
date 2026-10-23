@@ -253,7 +253,10 @@ cerno_pkg/
   │                        #   always on; NetExec enrichment (get_host_nxc/
   │                        #   list_nxc_credentials) + find_affected_by_cve + read_artifact +
   │                        #   get_config + search_findings (all scans) + top_hosts +
-  │                        #   get_capabilities + get_finding_artifacts + get_finding_verdict
+  │                        #   get_capabilities + get_finding_artifacts + get_finding_verdict +
+  │                        #   list_workflow_gaps (findings with NO mapped workflow, worst-first;
+  │                        #   complement of query_findings has_workflow) + get_notes (read
+  │                        #   append-only findings.review_notes as entries+raw)
   │                        #   also always on. Resources add cerno://finding/{id}/verdict and
   │                        #   cerno://finding/{id}/results.
   │                        #   query_findings (composite AND-predicates:
@@ -280,8 +283,10 @@ cerno_pkg/
   │                        #   best-effort when mutations also on; resolves @cred:<ref>@
   │                        #   placeholders server-side (gated by mcp_allow_cred_injection),
   │                        #   masks command_text + scrubs stdout/stderr);
-  │                        #   set_review_state/import_nessus/ingest_results/set_finding_verdict
-  │                        #   gated by mcp_allow_mutations. generate_netexec_cmd takes
+  │                        #   set_review_state/add_note/import_nessus/ingest_results/
+  │                        #   set_finding_verdict gated by mcp_allow_mutations (add_note appends
+  │                        #   a timestamped note to review_notes, never clobbering prior notes;
+  │                        #   set_review_state notes now append too). generate_netexec_cmd takes
   │                        #   use_credential=<ref> (placeholder injection via nxc_db;
   │                        #   ref->spec resolved by shared _resolve_credential_ref).
   │                        #   prepare_workflow (always on) fills a finding's mapped

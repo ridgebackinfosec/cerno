@@ -548,8 +548,30 @@ class Finding:
         self.review_state = new_state
         self.reviewed_at = now_iso()
         if notes:
-            self.review_notes = notes
+            self.review_notes = self._with_appended_note(notes)
 
+        self.save(conn)
+
+    def _with_appended_note(self, note: str) -> str:
+        """Return ``review_notes`` with a timestamped ``note`` appended.
+
+        Pure string helper (does not persist). Existing notes are preserved so
+        callers never clobber prior entries.
+        """
+        prefix = (self.review_notes + "\n") if self.review_notes else ""
+        return prefix + f"[{now_iso()}] {note}"
+
+    def append_note(self, note: str, conn: Optional[sqlite3.Connection] = None) -> None:
+        """Append a timestamped note to ``review_notes`` and persist.
+
+        Unlike ``update_review_state``, this does not touch the review state;
+        it only accumulates notes without overwriting existing ones.
+
+        Args:
+            note: Note text to append
+            conn: Database connection
+        """
+        self.review_notes = self._with_appended_note(note)
         self.save(conn)
 
     @classmethod

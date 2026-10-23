@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-10-23
+
+### Added
+- **Workflow-gap report (MCP):** a new always-on `list_workflow_gaps(scan_ids, severity_min=None)` read tool answering "which findings have NO verification workflow?" — the complement of `query_findings(has_workflow=True)`. It reuses the composite query layer (`FindingQuery(has_workflow=False, merged=True)`) and the workflow mapper (no new query logic), returning one representative row per unmapped plugin, worst-first (severity desc, then Metasploit-backed first) so MSF-backed criticals like MS17-010 surface at the top of the triage list.
+- **Findings notes (MCP):** `review_notes` is now readable and append-only. New always-on `get_notes(finding_id)` returns the notes as timestamped `entries` plus the `raw` string; new `add_note(finding_id, note)` (gated by `mcp_allow_mutations`) appends a timestamped note and returns the full list. `Finding.update_review_state(notes=…)` / `set_review_state(notes=…)` now **append** rather than overwrite, so manual notes and review-state notes no longer clobber each other (`models.py` gains `Finding.append_note`). No schema change — reuses the existing `findings.review_notes` column (no re-import).
+
 ## [2.2.0] - 2026-10-23
 
 ### Added

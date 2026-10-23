@@ -101,6 +101,18 @@ class QueryFindingResult(FindingSummary, total=False):
     has_workflow: bool
 
 
+class WorkflowGapResult(FindingSummary, total=False):
+    # Findings with NO mapped verification workflow; distinct TypedDict (not
+    # QueryFindingResult) so the contract-test schema guard stays happy.
+    scan_name: str
+
+
+class NotesResult(TypedDict):
+    finding_id: int
+    entries: list[str]
+    raw: Optional[str]
+
+
 class FindingHosts(TypedDict, total=False):
     finding_id: int
     hosts: list[str]
@@ -447,6 +459,44 @@ def tool_query_findings(
             row["scan_name"] = scan_names.get(finding.scan_id)
             row["has_workflow"] = mapper.has_workflow(str(plugin.plugin_id))
             results.append(row)
+    return results
+
+
+def tool_list_workflow_gaps(
+    *,
+    scan_ids: Optional[list[int]] = None,
+    severity_min: Optional[int] = None,
+    conn: Optional[sqlite3.Connection] = None,
+) -> list[dict]:
+    """List findings with NO mapped verification workflow (triage gaps).
+
+    Reuses the composite query layer (``has_workflow=False``) and the workflow
+    mapper; adds no new query logic. Returns one representative row per unmapped
+    plugin (merged), worst-first (severity desc, then Metasploit-backed first).
+    """
+    from ..models import Scan
+    from ..query import FindingQuery, run_finding_query
+    from ..workflow_mapper import WorkflowMapper
+
+    q = FindingQuery(
+        scan_ids=scan_ids,
+        severity_min=severity_min,
+        has_workflow=False,  # the gap predicate
+        merged=True,  # one representative per unmapped plugin
+    )
+    mapper = WorkflowMapper()
+    with _db(conn) as c:
+        rows = run_finding_query(q, c, workflow_mapper=mapper)
+        scan_names = {s["scan_id"]: s["scan_name"] for s in Scan.get_all_with_stats(c)}
+        results: list[dict] = []
+        for finding, plugin in rows:
+            row = _finding_plugin_to_dict(finding, plugin)
+            row["scan_name"] = scan_names.get(finding.scan_id)
+            results.append(row)
+    # MSF-backed criticals first: severity desc, then has_metasploit desc.
+    results.sort(
+        key=lambda r: (r["severity_int"], bool(r["has_metasploit"])), reverse=True
+    )
     return results
 
 
@@ -1769,6 +1819,23 @@ def tool_execute_command(
     )
 
 
+def tool_get_notes(finding_id: int, conn: Optional[sqlite3.Connection] = None) -> dict:
+    """Read a finding's review notes as timestamped entries plus raw text.
+
+    ``review_notes`` is append-only (see ``add_note`` / ``set_review_state``);
+    ``entries`` are its non-empty lines, ``raw`` the full stored string.
+    """
+    from ..models import Finding
+
+    with _db(conn) as c:
+        finding = Finding.get_by_id(finding_id, c)
+        if finding is None:
+            raise ValueError(f"No finding with id {finding_id}")
+        raw = finding.review_notes
+        entries = [ln for ln in (raw or "").splitlines() if ln.strip()]
+    return {"finding_id": finding_id, "entries": entries, "raw": raw}
+
+
 # ========== Mutations (gated by mcp_allow_mutations) ==========
 
 
@@ -1799,6 +1866,26 @@ def tool_set_review_state(
         finding.transition_review_state(new_state, notes=notes, conn=c)
         c.commit()
     return {"finding_id": finding_id, "review_state": new_state}
+
+
+def tool_add_note(
+    finding_id: int, note: str, conn: Optional[sqlite3.Connection] = None
+) -> dict:
+    """Append a timestamped note to a finding, then return all its notes.
+
+    Non-destructive: existing notes (from prior ``add_note`` or
+    ``set_review_state`` calls) are preserved. Returns the fresh ``get_notes``
+    read so callers see the accumulated list.
+    """
+    from ..models import Finding
+
+    with _db(conn) as c:
+        finding = Finding.get_by_id(finding_id, c)
+        if finding is None:
+            raise ValueError(f"No finding with id {finding_id}")
+        finding.append_note(note, c)
+        c.commit()
+        return tool_get_notes(finding_id, conn=c)
 
 
 def tool_ingest_results(
@@ -2267,6 +2354,28 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         return tool_get_workflow(plugin_id)
 
     @mcp.tool()
+    def list_workflow_gaps(
+        scan_ids: list[int], severity_min: Optional[int] = None
+    ) -> list[WorkflowGapResult]:
+        """List findings with no mapped verification workflow (triage gaps), worst first.
+
+        The complement of query_findings(has_workflow=True): MSF-backed criticals
+        appear first. Use it to see what still needs a manual verification path.
+        """
+        return cast(
+            "list[WorkflowGapResult]",
+            tool_list_workflow_gaps(scan_ids=scan_ids, severity_min=severity_min),
+        )
+
+    @mcp.tool()
+    def get_notes(finding_id: int) -> NotesResult:
+        """Read a finding's review notes (timestamped entries + raw text).
+
+        Notes are append-only; written via add_note or set_review_state(notes=...).
+        """
+        return cast("NotesResult", tool_get_notes(finding_id))
+
+    @mcp.tool()
     def get_finding_detail(finding_id: int, max_hosts: int = 100) -> FindingDetail:
         """Get full detail for a finding: plugin metadata + per-host plugin output (capped).
 
@@ -2729,6 +2838,11 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         ) -> dict:
             """Move a finding's review state: unreviewed -> in_progress -> done; done -> unreviewed."""
             return tool_set_review_state(finding_id, new_state, notes=notes)
+
+        @mcp.tool()
+        def add_note(finding_id: int, note: str) -> NotesResult:
+            """Append a timestamped note to a finding (non-destructive); returns all notes."""
+            return cast("NotesResult", tool_add_note(finding_id, note))
 
         @mcp.tool()
         def import_nessus(nessus_path: str) -> dict:
