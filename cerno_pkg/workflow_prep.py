@@ -85,33 +85,79 @@ def _default_is_installed(name: str) -> bool:
     return resolve_cmd([name]) is not None
 
 
-def _fill_command(
-    raw: str, values: dict[str, Optional[str]]
-) -> tuple[str, list[str], bool]:
-    """Substitute placeholder tokens in ``raw``.
+#: Binaries that accept multiple targets on one command line. A multi-host finding
+#: fills <TARGET> with the hosts space-joined for these; every other (single-target)
+#: binary expands to one command per host, so a step never emits
+#: ``telnet h1 h2 23``. Conservative by design: the safe direction is to expand
+#: (more, still-valid commands) rather than join (one malformed command).
+_MULTI_TARGET_BINARIES = {"nmap", "masscan", "nxc", "netexec"}
 
-    Returns ``(filled, unresolved_canonical_tokens, needs_credential)``. A role
-    whose value is None (no data) is normalized to its canonical token and
-    recorded as unresolved, so the operator sees exactly what to fill in.
+#: Roles filled with a single scalar value (everything except the host target).
+_SCALAR_ROLES = ("PORT", "USERNAME", "PASSWORD", "INTERFACE")
+
+
+def _sub_target(text: str, value: str) -> str:
+    """Replace every <TARGET> variant token in ``text`` with ``value``."""
+    for tok in _VARIANT_TOKENS["TARGET"]:
+        text = text.replace(tok, value)
+    return text
+
+
+def _safe_split(text: str) -> list[str]:
+    try:
+        return shlex.split(text)
+    except ValueError:
+        return []
+
+
+def _fill_command(
+    raw: str, hosts: list[str], scalars: dict[str, Optional[str]]
+) -> tuple[list[str], list[str], bool]:
+    """Substitute placeholder tokens in ``raw``, expanding <TARGET> over hosts.
+
+    Returns ``(filled_commands, unresolved_canonical_tokens, needs_credential)``.
+    Scalar roles (PORT/USERNAME/PASSWORD/INTERFACE) are substituted first; a role
+    whose value is None is normalized to its canonical token and recorded
+    unresolved. <TARGET> then fills from ``hosts``: no hosts leaves the canonical
+    marker (unresolved); a single host substitutes directly; multiple hosts join
+    for a multi-target binary (or an unparseable/prose command) and otherwise
+    expand to one command per host.
     """
-    filled = raw
     unresolved: list[str] = []
     needs_credential = any(
         tok in raw for role in ("USERNAME", "PASSWORD") for tok in _VARIANT_TOKENS[role]
     )
-    for role, tokens in _VARIANT_TOKENS.items():
-        if not any(tok in filled for tok in tokens):
+
+    partial = raw
+    for role in _SCALAR_ROLES:
+        tokens = _VARIANT_TOKENS[role]
+        if not any(tok in partial for tok in tokens):
             continue
-        value = values.get(role)
+        value = scalars.get(role)
         if value is None:
-            # Normalize any variant to the canonical marker; leave it in place.
             for tok in tokens:
-                filled = filled.replace(tok, _CANONICAL[role])
+                partial = partial.replace(tok, _CANONICAL[role])
             unresolved.append(_CANONICAL[role])
         else:
             for tok in tokens:
-                filled = filled.replace(tok, value)
-    return filled, unresolved, needs_credential
+                partial = partial.replace(tok, value)
+
+    if not any(tok in partial for tok in _VARIANT_TOKENS["TARGET"]):
+        return [partial], unresolved, needs_credential
+    if not hosts:
+        return (
+            [_sub_target(partial, _CANONICAL["TARGET"])],
+            unresolved + [_CANONICAL["TARGET"]],
+            needs_credential,
+        )
+    if len(hosts) == 1:
+        return [_sub_target(partial, hosts[0])], unresolved, needs_credential
+
+    # Multiple hosts: join for multi-target binaries, else expand per host.
+    binary = resolve_target_binary(_safe_split(_sub_target(partial, hosts[0])))
+    if binary in _MULTI_TARGET_BINARIES or binary is None:
+        return [_sub_target(partial, " ".join(hosts))], unresolved, needs_credential
+    return [_sub_target(partial, h) for h in hosts], unresolved, needs_credential
 
 
 def _classify(
@@ -187,8 +233,7 @@ def prepare_workflow(
         allowlist = cfg.mcp_exec_allowlist if allowlist is None else allowlist
         denylist = cfg.mcp_exec_denylist if denylist is None else denylist
 
-    values: dict[str, Optional[str]] = {
-        "TARGET": " ".join(hosts) if hosts else None,
+    scalars: dict[str, Optional[str]] = {
         "PORT": ports_str or None,
         "USERNAME": credential.get("username") if credential else None,
         "PASSWORD": (
@@ -204,23 +249,26 @@ def prepare_workflow(
     for step in workflow.steps:
         prepared_cmds: list[PreparedCommand] = []
         for raw in step.commands:
-            filled, unresolved, needs_cred = _fill_command(raw, values)
-            executable, reason, target = _classify(
-                filled, unresolved, allowlist, denylist, checker
-            )
+            filled_list, unresolved, needs_cred = _fill_command(raw, hosts, scalars)
             for tok in unresolved:
                 if tok not in unresolved_all:
                     unresolved_all.append(tok)
-            prepared_cmds.append(
-                PreparedCommand(
-                    raw=raw,
-                    filled=filled,
-                    executable=executable,
-                    manual_reason=reason,
-                    target_binary=target,
-                    needs_credential=needs_cred,
+            # A multi-host single-target command expands to one entry per host;
+            # each is classified independently.
+            for filled in filled_list:
+                executable, reason, target = _classify(
+                    filled, unresolved, allowlist, denylist, checker
                 )
-            )
+                prepared_cmds.append(
+                    PreparedCommand(
+                        raw=raw,
+                        filled=filled,
+                        executable=executable,
+                        manual_reason=reason,
+                        target_binary=target,
+                        needs_credential=needs_cred,
+                    )
+                )
         steps.append(
             PreparedStep(title=step.title, notes=step.notes, commands=prepared_cmds)
         )

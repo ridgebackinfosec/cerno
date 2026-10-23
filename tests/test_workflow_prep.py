@@ -42,6 +42,76 @@ def finding(temp_db):
     return {"conn": c, "finding_id": fid}
 
 
+@pytest.fixture
+def finding_multi(temp_db):
+    """A finding affecting two hosts on port 23 (for <TARGET> expansion tests)."""
+    c = temp_db
+    scan = Scan(scan_name="engagement", export_root="/tmp").save(c)
+    Plugin(
+        plugin_id=42263, plugin_name="Unencrypted Telnet Server", severity_int=2
+    ).save(c)
+    fid = Finding(scan_id=scan, plugin_id=42263).save(c)
+    Port.get_or_create(23, conn=c)
+    for ip in ("10.0.0.1", "10.0.0.2"):
+        h = Host.get_or_create(ip, ip, "ipv4", conn=c)
+        c.execute(
+            "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, plugin_output) "
+            "VALUES (?, ?, 23, 'x')",
+            (fid, h),
+        )
+    c.commit()
+    return {"conn": c, "finding_id": fid}
+
+
+# nmap (multi-target) + telnet (single-target) in one step.
+_MIXED_STEPS = [
+    {
+        "title": "verify",
+        "commands": [
+            "nmap -A -p <PORT> <TARGET>",
+            "telnet <TARGET> 23",
+        ],
+        "notes": "",
+    }
+]
+
+
+def test_multi_host_joins_multi_target_and_expands_single_target(
+    finding_multi, tmp_path
+):
+    mapper = _mapper_with(
+        tmp_path,
+        [
+            {
+                "plugin_id": "42263",
+                "workflow_name": "Telnet",
+                "description": "d",
+                "steps": _MIXED_STEPS,
+            }
+        ],
+    )
+    prepared = prepare_workflow(
+        finding_multi["finding_id"],
+        workflow_mapper=mapper,
+        allowlist=["nmap", "telnet"],
+        denylist=[],
+        is_installed=lambda n: True,
+        conn=finding_multi["conn"],
+    )
+    cmds = prepared.steps[0].commands
+    filled = [c.filled for c in cmds]
+
+    # nmap stays one multi-target command containing both hosts.
+    nmap_cmds = [f for f in filled if f.startswith("nmap")]
+    assert len(nmap_cmds) == 1
+    assert "10.0.0.1" in nmap_cmds[0] and "10.0.0.2" in nmap_cmds[0]
+
+    # telnet expands to one command per host, never joined.
+    telnet_cmds = sorted(f for f in filled if f.startswith("telnet"))
+    assert telnet_cmds == ["telnet 10.0.0.1 23", "telnet 10.0.0.2 23"]
+    assert not any("10.0.0.1 10.0.0.2" in f for f in telnet_cmds)
+
+
 # A workflow exercising every placeholder + each executability outcome.
 _STEPS = [
     {
