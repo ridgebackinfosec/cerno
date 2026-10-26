@@ -2776,6 +2776,8 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
             chain may match mcp_exec_denylist, and the target binary's basename
             must match mcp_exec_allowlist (globs; "*" = anything not denied; an
             empty allowlist denies all). Call get_capabilities to see both lists.
+            use_proxy=true routes the run through proxychains4 (requires the
+            proxychains_enabled config key; Cerno's ~/.cerno/proxychains4.conf).
             timeout is clamped to [1, 3600]s. Pass finding_id to attribute the run
             to a finding (so get_finding_artifacts can later find its output).
 

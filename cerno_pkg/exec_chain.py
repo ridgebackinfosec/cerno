@@ -63,6 +63,8 @@ EXEC_WRAPPERS: dict[str, _WrapperSpec] = {
     # doas takes a subset of sudo's value options; overmatching is harmless here.
     "doas": _WrapperSpec(short_val=frozenset("uCa")),
     "proxychains4": _WrapperSpec(short_val=frozenset("f")),
+    # Cerno only runs proxychains4; the legacy name is still unwrapped so it
+    # can't hide a denied target (e.g. `proxychains rm ...`).
     "proxychains": _WrapperSpec(short_val=frozenset("f")),
     "env": _WrapperSpec(
         short_val=frozenset("uCS"),

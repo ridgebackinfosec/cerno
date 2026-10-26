@@ -2421,7 +2421,7 @@ def review(
     no_proxy: bool = typer.Option(
         False,
         "--no-proxy",
-        help="Force-disable proxy routing for this session (overrides config).",
+        help="Force-disable proxychains4 routing for this session (overrides config).",
     ),
 ) -> None:
     """

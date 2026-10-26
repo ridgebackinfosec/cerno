@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.2] - 2026-10-26
+
+### Changed
+- **Proxy settings say `proxychains4`:** `cerno config show` now labels the proxy section **Proxychains4**, and the help text for `proxychains_enabled`/`proxychains_host`/`proxychains_port` names `proxychains4`, the binary Cerno actually runs. The key names are unchanged, so existing `config.yaml` files keep working. `--no-proxy` help, proxy config error messages, the MCP `execute_command` description (`use_proxy`), README and `docs/MCP.md` (new config-table row for the proxy keys) also name `proxychains4` explicitly.
+
+### Fixed
+- **proxychains4 version not shown:** the proxychains4 row in the Tool Availability table showed a generic "Available", and MCP `check_tools` reported `version: null`. proxychains4 has no `--version` flag (it tried to exec a program named `--version`), so Cerno now reads the proxychains-ng version from its startup banner via the new `ops.get_proxychains4_version()`. The probe runs the Python interpreter under a throwaway config and opens no network connections. When proxy mode is active, the row shows both, e.g. `v4.17 · SOCKS5 127.0.0.1:9000 (active)`.
+
 ## [2.3.1] - 2026-10-26
 
 ### Fixed
@@ -137,7 +145,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **An empty `mcp_exec_allowlist` now denies every command.** Previously it silently fell back to the default set.
-- `proxychains4` was removed from the default `mcp_exec_allowlist`. Wrappers are now unwrapped and the target is checked; `use_proxy=true` still routes through proxychains.
+- `proxychains4` was removed from the default `mcp_exec_allowlist`. Wrappers are now unwrapped and the target is checked; `use_proxy=true` still routes through proxychains4.
 - The default allow/deny lists are defined once (`config.DEFAULT_MCP_EXEC_ALLOWLIST` / `DEFAULT_MCP_EXEC_DENYLIST`).
 
 ### Fixed
@@ -237,7 +245,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - MCP output-schema `TypedDict`s now import from `typing_extensions`, fixing a `PydanticUserError` that broke `build_server` on Python 3.11 (`cerno_pkg/mcp_server/server.py`).
   - `build_aggregate_context()` accepts an optional `conn`, and the MCP `triage_scope` prompt threads it through, so host/port lookups use the caller's connection instead of the default database (fixes `no such table` under tests/CI; `cerno_pkg/claude_assistant.py`).
   - `get_interface_ip()` degrades gracefully where `fcntl` is unavailable (Windows) instead of raising `ModuleNotFoundError` (`cerno_pkg/ops.py`).
-  - Marked the Unix-only `get_interface_ip` dotted-quad and proxychains shell-wrap tests `skipif(win32)` (`tests/test_ops.py`).
+  - Marked the Unix-only `get_interface_ip` dotted-quad and proxychains4 shell-wrap tests `skipif(win32)` (`tests/test_ops.py`).
 
 ## [1.6.1] - 2026-10-16
 
@@ -324,7 +332,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Re-importing or overwriting a scan with the same name now refreshes scan metadata and replaces scan-derived findings/host services cleanly instead of silently failing on duplicate finding rows.
 - Nessus imports now preserve bare IPv6 scan targets instead of misparsing the final IPv6 segment as a port.
-- Nmap proxy mode now suppresses UDP scanning and uses TCP targets so generated proxychains commands match the UI warning that UDP is unsupported through SOCKS.
+- Nmap proxy mode now suppresses UDP scanning and uses TCP targets so generated proxychains4 commands match the UI warning that UDP is unsupported through SOCKS.
 - Clipboard copy fallback now tries every available platform tool before reporting failure, so one broken backend no longer blocks later working backends.
 - Scan deletion wording now accurately states that tool execution and artifact history is retained with deleted links cleared.
 
@@ -501,11 +509,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.3.11] - 2026-04-16
 
 ### Added
-- Remote Scan Mode for nmap: `[R] Toggle Remote Mode` in the nmap options menu hosts the target list via a temporary HTTP server and generates a `curl | sudo nmap -sS` one-liner for the operator to run directly on a pivot host — enabling full SYN scans without proxychains constraints (`tools.py`, `ops.py`)
+- Remote Scan Mode for nmap: `[R] Toggle Remote Mode` in the nmap options menu hosts the target list via a temporary HTTP server and generates a `curl | sudo nmap -sS` one-liner for the operator to run directly on a pivot host — enabling full SYN scans without proxychains4 constraints (`tools.py`, `ops.py`)
 - Interface picker: on first remote mode activation with no `pivot_interface` configured, prompts user to select from detected network interfaces and saves the choice to `~/.cerno/config.yaml` automatically (`tools.py`)
 - `get_interface_ip(interface)` and `list_interfaces()` utilities in `ops.py` for detecting IPv4 address from a named network interface using `fcntl`/`socket`
 - `start_ips_server(ips_path, port)` in `ops.py`: minimal HTTP server serving only `GET /ips.txt` — no directory listing, 404 for all other paths, request logging suppressed
-- `build_nmap_remote_oneliner()` in `ops.py`: constructs the `curl -s http://<ip>:<port>/ips.txt | sudo nmap -sS -A -iL -` one-liner with optional port and NSE flags; no `-Pn` (not needed without proxychains)
+- `build_nmap_remote_oneliner()` in `ops.py`: constructs the `curl -s http://<ip>:<port>/ips.txt | sudo nmap -sS -A -iL -` one-liner with optional port and NSE flags; no `-Pn` (not needed without proxychains4)
 - `pivot_interface` (default: `null`) and `pivot_http_port` (default: `8877`) config fields (`config.py`)
 - `CommandResult.is_remote`, `CommandResult.cleanup`, `CommandResult.remote_output_path` fields for display-only remote workflow results that cerno shows but does not execute (`tool_context.py`)
 - Post-scan guidance: after the operator dismisses the remote command screen, cerno prints `scp` and `cerno import nmap` commands to retrieve and import results

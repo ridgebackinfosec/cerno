@@ -340,26 +340,34 @@ class CernoConfig:
     """Per-command timeout in seconds for each command in an execute_batch run
     (default: 300), clamped to the same [1, 3600] ceiling as execute_command."""
 
-    # Proxychains
+    # Proxychains4
     proxychains_enabled: bool = field(
         default=False,
         metadata={
-            "section": "Proxychains",
+            "section": "Proxychains4",
             "kind": "bool",
-            "help": "Route tools through SOCKS5 proxy",
+            "help": "Route tools through proxychains4 (SOCKS5)",
         },
     )
     """Route all tool executions through proxychains4 SOCKS5 proxy (default: False)."""
 
     proxychains_host: str = field(
         default="127.0.0.1",
-        metadata={"section": "Proxychains", "kind": "str", "help": "SOCKS5 proxy host"},
+        metadata={
+            "section": "Proxychains4",
+            "kind": "str",
+            "help": "proxychains4 SOCKS5 proxy host",
+        },
     )
     """SOCKS5 proxy host for proxychains4 (default: 127.0.0.1)."""
 
     proxychains_port: int = field(
         default=9000,
-        metadata={"section": "Proxychains", "kind": "int", "help": "SOCKS5 proxy port"},
+        metadata={
+            "section": "Proxychains4",
+            "kind": "int",
+            "help": "proxychains4 SOCKS5 proxy port",
+        },
     )
     """SOCKS5 proxy port for proxychains4 (default: 9000, matching ssh -D 9000)."""
 

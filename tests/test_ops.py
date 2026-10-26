@@ -1212,6 +1212,116 @@ class TestProxychainsRenderRow:
         assert "SOCKS5" not in captured.out
 
 
+class TestProxychains4Version:
+    """proxychains4 has no --version flag; the version comes from its banner."""
+
+    BANNER = (
+        "[proxychains] config file found: /tmp/x/proxychains4.conf\n"
+        "[proxychains] preloading /usr/lib/x86_64-linux-gnu/libproxychains.so.4\n"
+        "[proxychains] DLL init: proxychains-ng 4.17\n"
+    )
+
+    @pytest.mark.unit
+    def test_parses_version_from_dll_init_banner(self):
+        from unittest.mock import Mock, patch
+        from cerno_pkg.ops import get_proxychains4_version
+
+        result = Mock(returncode=0, stdout="", stderr=self.BANNER)
+        with patch("shutil.which", return_value="/usr/bin/proxychains4"):
+            with patch("subprocess.run", return_value=result) as mock_run:
+                assert get_proxychains4_version() == "4.17"
+
+        argv = mock_run.call_args[0][0]
+        assert argv[0] == "/usr/bin/proxychains4"
+        assert "--version" not in argv
+        assert "-q" not in argv  # -q would suppress the DLL init banner
+        assert argv[1] == "-f"
+        # The probe runs our own interpreter, never a network tool
+        assert argv[3] == sys.executable
+
+    @pytest.mark.unit
+    def test_unrelated_output_returns_none(self):
+        from unittest.mock import Mock, patch
+        from cerno_pkg.ops import get_proxychains4_version
+
+        result = Mock(returncode=0, stdout="", stderr="[proxychains] preloading libproxychains.so.4\n")
+        with patch("shutil.which", return_value="/usr/bin/proxychains4"):
+            with patch("subprocess.run", return_value=result):
+                assert get_proxychains4_version() is None
+
+    @pytest.mark.unit
+    def test_timeout_returns_none(self):
+        import subprocess
+        from unittest.mock import patch
+        from cerno_pkg.ops import get_proxychains4_version
+
+        with patch("shutil.which", return_value="/usr/bin/proxychains4"):
+            with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("cmd", 5)):
+                assert get_proxychains4_version() is None
+
+    @pytest.mark.unit
+    def test_missing_binary_returns_none(self):
+        from unittest.mock import patch
+        from cerno_pkg.ops import get_proxychains4_version
+
+        with patch("shutil.which", return_value=None):
+            assert get_proxychains4_version() is None
+
+    @pytest.mark.unit
+    def test_get_tool_version_delegates_for_proxychains4(self):
+        from unittest.mock import Mock, patch
+        from cerno_pkg.ops import get_tool_version
+
+        result = Mock(returncode=0, stdout="", stderr=self.BANNER)
+        with patch("shutil.which", return_value="/usr/bin/proxychains4"):
+            with patch("subprocess.run", return_value=result) as mock_run:
+                assert get_tool_version("proxychains4") == "4.17"
+        assert "--version" not in mock_run.call_args[0][0]
+
+    @pytest.mark.unit
+    def test_render_row_shows_version_when_inactive(self, monkeypatch, capsys):
+        import shutil as _shutil
+        from cerno_pkg.config import CernoConfig
+        from cerno_pkg.render import render_tool_availability_table
+
+        monkeypatch.setattr("cerno_pkg.render.load_config", lambda: CernoConfig(proxychains_enabled=False))
+        monkeypatch.setattr(_shutil, "which", lambda name: "/usr/bin/proxychains4" if name == "proxychains4" else None)
+        monkeypatch.setattr("cerno_pkg.ops.get_proxychains4_version", lambda: "4.17")
+
+        render_tool_availability_table(include_unavailable=True)
+        out = capsys.readouterr().out
+        assert "v4.17" in out
+        assert "Available" not in out.split("proxychains4", 1)[1].splitlines()[0]
+
+    @pytest.mark.unit
+    def test_render_row_shows_version_and_socks_when_active(self, monkeypatch, capsys):
+        import shutil as _shutil
+        from cerno_pkg.config import CernoConfig
+        from cerno_pkg.render import render_tool_availability_table
+
+        config = CernoConfig(proxychains_enabled=True, proxychains_host="127.0.0.1", proxychains_port=9000)
+        monkeypatch.setattr("cerno_pkg.render.load_config", lambda: config)
+        monkeypatch.setattr(_shutil, "which", lambda name: "/usr/bin/proxychains4" if name == "proxychains4" else None)
+        monkeypatch.setattr("cerno_pkg.ops.get_proxychains4_version", lambda: "4.17")
+
+        render_tool_availability_table(include_unavailable=True)
+        out = capsys.readouterr().out
+        assert "v4.17" in out
+        assert "SOCKS5 127.0.0.1:9000 (active)" in out
+
+    @pytest.mark.integration
+    @pytest.mark.skipif(
+        sys.platform == "win32" or not __import__("shutil").which("proxychains4"),
+        reason="proxychains4 not installed",
+    )
+    def test_real_proxychains4_version(self):
+        import re
+        from cerno_pkg.ops import get_proxychains4_version
+
+        version = get_proxychains4_version()
+        assert version is not None and re.fullmatch(r"\d+\.\d+(?:\.\d+)?", version)
+
+
 class TestCommandResultRemote:
     """Tests for remote-mode fields on CommandResult."""
 

@@ -201,3 +201,20 @@ def test_mcp_allow_cred_injection_round_trip(config_path):
     # Absent from YAML -> default False
     config_path.write_text("mcp_allow_execution: true\n", encoding="utf-8")
     assert load_config().mcp_allow_cred_injection is False
+
+
+@pytest.mark.unit
+def test_proxy_settings_labelled_proxychains4():
+    # Cerno only runs proxychains4; `config show` must say so. Key names stay
+    # proxychains_* for compatibility with existing config.yaml files.
+    proxy_fields = [
+        f for f in dataclasses.fields(CernoConfig) if f.name.startswith("proxychains_")
+    ]
+    assert {f.name for f in proxy_fields} == {
+        "proxychains_enabled",
+        "proxychains_host",
+        "proxychains_port",
+    }
+    for f in proxy_fields:
+        assert f.metadata["section"] == "Proxychains4"
+        assert "proxychains4" in f.metadata["help"]
