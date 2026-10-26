@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.1] - 2026-10-26
+
+### Fixed
+- **MCP ignored `custom_workflows_path`:** every MCP workflow lookup loaded only the bundled `workflow_mappings.yaml`. `get_workflow`, `prepare_workflow`, `list_workflow_gaps`, `query_findings(has_workflow=…)`, `plan_batch`/`execute_batch` (`has_workflow` predicate and the `"workflow"` strategy), the `cerno://finding/{id}/workflow` resource and the finding prompts now merge your custom workflows over the bundled ones (custom wins on conflict), as `cerno review` does. New shared factory `workflow_mapper.build_workflow_mapper(config)`, which is also the default in `query.run_finding_query` and `workflow_prep.prepare_workflow`. It is built per call, so edits to the YAML are picked up, and a missing or malformed custom file leaves the bundled set and never writes to stdout (the MCP JSON-RPC channel).
+- **MCP ignored `default_netexec_protocol`:** `generate_netexec_cmd`'s `protocol` is now optional. When it is omitted, the configured default is used, else `smb` (same as the TUI). An explicit protocol still wins and is still validated, and an invalid configured value is rejected with an error naming the key. `plan_batch`/`execute_batch` also accept a bare `"netexec"` strategy that uses the same default.
+- **MCP ignored `nmap_default_profile`:** when `nse_option` is omitted, `generate_nmap_cmd` (and the `"nmap"` batch strategy) now applies the configured NSE profile's scripts. `nse_option=""` explicitly means no scripts, and an unknown profile name applies none. `udp` is now optional: when it is omitted, a UDP profile (SNMP/IPMI) adds `-sU`. New helper `tools.find_nse_profile()`.
+- **MCP ignored `default_page_size`:** `list_findings`, `query_findings` and `search_findings` now default `limit` to the configured page size (minimum 8, as in the TUI) when set, else 500. An explicit `limit` still wins.
+
+### Changed
+- **Explicit MCP config contract:** new `config.MCP_NOT_APPLICABLE_KEYS` lists the TUI-only keys the MCP server intentionally ignores (`no_color`, `term_override`, `default_tool`, `claude_assistant_enabled`, `pivot_interface`, `pivot_http_port`, `top_ports_count`). A new guard test fails if a config key is added without deciding how the MCP treats it. `docs/MCP.md` gains a "Config defaults" table.
+
 ## [2.3.0] - 2026-10-23
 
 ### Added

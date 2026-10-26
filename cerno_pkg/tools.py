@@ -51,6 +51,25 @@ MSF_PATTERN = re.compile(r"Metasploit[:\-\s]*\(?([^)]+)\)?", re.IGNORECASE)
 # ========== NSE Profile Selection ==========
 
 
+def find_nse_profile(name: Optional[str]) -> Optional[tuple[list[str], bool]]:
+    """Look up an NSE profile by name (case-insensitive), as the TUI matches
+    ``config.nmap_default_profile``.
+
+    Args:
+        name: Profile name from ``constants.NSE_PROFILES`` (e.g. ``"SMB"``).
+
+    Returns:
+        ``(scripts, needs_udp)`` for the matching profile, or None when ``name``
+        is empty or matches no profile.
+    """
+    if not name:
+        return None
+    for profile_name, _, scripts, needs_udp in NSE_PROFILES:
+        if profile_name.lower() == name.strip().lower():
+            return scripts[:], needs_udp
+    return None
+
+
 def choose_nse_profile(
     config: Optional["CernoConfig"] = None,
 ) -> tuple[list[str], bool]:

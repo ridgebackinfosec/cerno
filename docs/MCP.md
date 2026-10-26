@@ -106,6 +106,27 @@ Notes:
 - `get_capabilities` reports which gated capabilities are live, so a client can
   self-orient without a failed call.
 
+#### Config defaults
+
+The server applies your `~/.cerno/config.yaml` the same way the TUI does. An
+explicit tool argument always wins, then the config value, then the built-in
+default:
+
+| Config key | MCP effect |
+|---|---|
+| `custom_workflows_path` | Merged over the bundled workflows (custom wins on conflict) for `get_workflow`, `prepare_workflow`, `list_workflow_gaps`, `query_findings(has_workflow=…)`, `plan_batch`/`execute_batch`, the `cerno://finding/{id}/workflow` resource, and the finding prompts |
+| `default_netexec_protocol` | Protocol for `generate_netexec_cmd` when `protocol` is omitted (else `smb`), and for the bare `"netexec"` batch strategy |
+| `nmap_default_profile` | NSE scripts for `generate_nmap_cmd` when `nse_option` is omitted (`nse_option=""` = no scripts); a UDP profile (SNMP/IPMI) also turns on `-sU` unless `udp` is given |
+| `default_page_size` | Default `limit` for `list_findings`, `query_findings`, `search_findings` (minimum 8; else 500). Page past it with `offset` |
+| `results_root` | Where `_mcp/<finding_id>/run-*/` target files and run outputs are written |
+
+These keys are TUI-only and intentionally ignored by the server:
+`no_color`, `term_override`, `default_tool`, `claude_assistant_enabled`,
+`pivot_interface`, `pivot_http_port`, `top_ports_count`
+(`config.MCP_NOT_APPLICABLE_KEYS`).
+Config is read when the server starts, so reconnect after changing it. Edits to
+the custom workflow YAML file itself are picked up on the next call.
+
 ### Resources
 
 Operator-pinnable context (read-only), attachable in clients that render MCP

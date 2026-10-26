@@ -387,6 +387,25 @@ class CernoConfig:
     """Port for the temporary HTTP server used in remote scan mode (default: 8877)."""
 
 
+#: Config keys the ``cerno mcp`` server intentionally does NOT apply. They are
+#: terminal/TUI concepts with no MCP meaning: colour/terminal handling, the TUI's
+#: pre-selected tool menu, the in-TUI Claude chat, remote-scan pivot serving, and
+#: the scan-summary "top ports" table. Every other key is honored by the MCP
+#: server, with precedence explicit tool argument > config value > hardcoded
+#: default. ``tests/test_mcp_config.py`` guards that every field is classified.
+MCP_NOT_APPLICABLE_KEYS: frozenset[str] = frozenset(
+    {
+        "no_color",
+        "term_override",
+        "default_tool",
+        "claude_assistant_enabled",
+        "pivot_interface",
+        "pivot_http_port",
+        "top_ports_count",
+    }
+)
+
+
 def iter_config_fields() -> Iterable[Any]:
     """Yield CernoConfig dataclass fields in declaration order.
 

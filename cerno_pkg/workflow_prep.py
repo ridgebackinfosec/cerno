@@ -28,7 +28,7 @@ from .database import db_transaction
 from .exec_chain import is_runnable, resolve_target_binary
 from .models import Finding
 from .tools import credential_placeholder
-from .workflow_mapper import Workflow, WorkflowMapper
+from .workflow_mapper import Workflow, WorkflowMapper, build_workflow_mapper
 
 #: Canonical placeholder token per logical role.
 _CANONICAL = {
@@ -215,7 +215,7 @@ def prepare_workflow(
         A :class:`PreparedWorkflow`, or None if no workflow is mapped to the
         finding's plugin.
     """
-    mapper = workflow_mapper or WorkflowMapper()
+    mapper = workflow_mapper or build_workflow_mapper(config)
     checker = is_installed or _default_is_installed
 
     with db_transaction(conn) as c:

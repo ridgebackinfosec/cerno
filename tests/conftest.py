@@ -160,11 +160,18 @@ def sample_nessus_xml(temp_dir: Path) -> Path:
 
 
 @pytest.fixture(autouse=True)
-def reset_environment(monkeypatch):
+def reset_environment(monkeypatch, tmp_path_factory):
     """Reset environment variables and config caches before each test.
 
     This ensures tests don't interfere with each other through env vars or cached config.
+    The config file is pointed at a fresh temp path so ``load_config()`` never reads
+    (or auto-creates) the developer's real ``~/.cerno/config.yaml``.
     """
+    isolated_config = tmp_path_factory.mktemp("cerno_cfg") / "config.yaml"
+    monkeypatch.setattr(
+        "cerno_pkg.config.get_config_path", lambda: isolated_config
+    )
+
     # Clear database-related env vars (no longer used - config file only)
     monkeypatch.delenv("CERNO_RESULTS_ROOT", raising=False)
     monkeypatch.delenv("NPH_RESULTS_ROOT", raising=False)

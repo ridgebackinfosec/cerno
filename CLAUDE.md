@@ -579,9 +579,9 @@ Only after user confirms the changelog content:
 - `debug_logging` - Enable DEBUG level logging (default: `false`)
 - `no_color` - Disable ANSI color output (default: `false`)
 - `default_tool` - Pre-select tool in menu (e.g., `nmap`, `netexec`)
-- `default_netexec_protocol` - Default protocol for NetExec (e.g., `smb`, `ssh`)
-- `nmap_default_profile` - Default NSE profile name
-- `custom_workflows_path` - Path to custom workflows YAML file
+- `default_netexec_protocol` - Default protocol for NetExec (e.g., `smb`, `ssh`); MCP `generate_netexec_cmd` / bare `"netexec"` batch strategy use it when `protocol` is omitted (else `smb`)
+- `nmap_default_profile` - Default NSE profile name; MCP `generate_nmap_cmd` uses its scripts when `nse_option` is omitted (`""` = none), and its UDP need when `udp` is omitted (`tools.find_nse_profile()`)
+- `custom_workflows_path` - Path to custom workflows YAML file; merged over bundled workflows everywhere in the MCP via `workflow_mapper.build_workflow_mapper(config)` (also the default in `query.run_finding_query` / `workflow_prep.prepare_workflow`)
 - `claude_assistant_enabled` - Enable/disable Claude Assistant (default: `false`, opt-in). Pressing `[A]` while installed-but-disabled shows a data-path disclosure (`claude_assistant.CONSENT_DISCLOSURE`) and persists consent via `claude_assistant.ensure_enabled()`; `claude_assistant.claude_enabled(config)` is the single availability gate. `[A]` is hidden only when `claude` is not on PATH
 - `mcp_allow_execution` - Allow the `cerno mcp` server to execute tool commands via `execute_command` (default: `false`)
 - `mcp_allow_mutations` - Allow the `cerno mcp` server to mutate state (`set_review_state`, `import_nessus`, `ingest_results`, `set_finding_verdict`) (default: `false`)
@@ -592,6 +592,8 @@ Only after user confirms the changelog content:
 - `mcp_allow_batch` - Allow the MCP `execute_batch` tool to RUN the generated command for every finding matched by a query (default: `false`). `plan_batch` (the reviewable dry run) is always available; `execute_batch` is registered only when BOTH `mcp_allow_execution` and `mcp_allow_batch` are on, and every command still passes `_check_exec_policy`, the cred gate, and the per-command timeout — this flag only authorizes the fan-out across a query
 - `mcp_batch_concurrency` - Max commands `execute_batch` runs concurrently (default: `1` = sequential; keep small, 2-3, since nmap/nxc are already internally parallel). Implemented via a shared semaphore gate on the job registry
 - `mcp_batch_timeout` - Per-command timeout in seconds for each `execute_batch` command (default: `300`), clamped to the same [1, 3600] ceiling as `execute_command`
+
+**MCP config contract**: the MCP server honors every config key with precedence explicit tool arg > config > hardcoded default (`default_page_size` → default `limit` for `list_findings`/`query_findings`/`search_findings`, min 8, else 500), except the TUI-only keys in `config.MCP_NOT_APPLICABLE_KEYS` (`no_color`, `term_override`, `default_tool`, `claude_assistant_enabled`, `pivot_interface`, `pivot_http_port`, `top_ports_count`). `tests/test_mcp_config.py` fails when a new key is added without classifying it. Tests isolate `config.get_config_path()` to a temp file (autouse `conftest.reset_environment`), so the developer's real config never leaks in.
 
 **NSE profiles** (`constants.py:NSE_PROFILES`): Pre-configured nmap script sets (SMB, SSL, HTTP, etc.)
 

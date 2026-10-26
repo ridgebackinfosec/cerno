@@ -24,11 +24,14 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from .database import db_transaction, query_all
 from .models import Finding, Plugin
-from .workflow_mapper import WorkflowMapper
+from .workflow_mapper import WorkflowMapper, build_workflow_mapper
+
+if TYPE_CHECKING:
+    from .config import CernoConfig
 
 
 @dataclass
@@ -237,6 +240,7 @@ def run_finding_query(
     conn: Optional[sqlite3.Connection] = None,
     *,
     workflow_mapper: Optional[WorkflowMapper] = None,
+    config: Optional[CernoConfig] = None,
 ) -> list[tuple[Finding, Plugin]]:
     """Run a composite finding query, returning (Finding, Plugin) pairs.
 
@@ -245,6 +249,8 @@ def run_finding_query(
         conn: Database connection (opened/closed by the caller or db_transaction).
         workflow_mapper: Mapper used for the ``has_workflow`` predicate; a default
             one (bundled + custom workflows) is built when omitted.
+        config: Config for the default mapper's ``custom_workflows_path``;
+            loaded when None. Ignored when ``workflow_mapper`` is given.
     """
     with db_transaction(conn) as c:
         rows = [_row_to_finding_plugin(r) for r in _candidate_rows(q, c)]
@@ -255,7 +261,7 @@ def run_finding_query(
 
         # has_workflow is not a DB fact — consult the workflow mapper.
         if q.has_workflow is not None:
-            mapper = workflow_mapper or WorkflowMapper()
+            mapper = workflow_mapper or build_workflow_mapper(config)
             rows = [
                 rp
                 for rp in rows

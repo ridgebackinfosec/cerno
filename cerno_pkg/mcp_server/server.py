@@ -39,7 +39,7 @@ from mcp.server.fastmcp import Context, FastMCP
 from ..config import CernoConfig, load_config
 from ..constants import REVIEW_STATES
 from ..exec_chain import EXEC_WRAPPERS, command_chain, matches_any
-from ..logging_setup import log_error, log_info
+from ..logging_setup import log_debug, log_error, log_info
 
 # Valid review states (mirrors the findings.review_state CHECK constraint).
 _VALID_REVIEW_STATES = set(REVIEW_STATES)
@@ -290,6 +290,24 @@ def tool_list_scans(conn: Optional[sqlite3.Connection] = None) -> list[dict]:
         return Scan.get_all_with_stats(c)
 
 
+#: Row cap for list/query/search when neither the caller nor config sets one.
+_DEFAULT_LIST_LIMIT = 500
+
+
+def _resolve_limit(limit: Optional[int], config: Optional[CernoConfig]) -> int:
+    """Resolve a listing's row cap: explicit ``limit`` > config > 500.
+
+    The config value is ``default_page_size`` with the TUI's floor of 8
+    (``fs.default_page_size``), so an operator's page size carries over to agents.
+    """
+    if limit is not None:
+        return limit
+    cfg = config or load_config()
+    if cfg.default_page_size:
+        return max(8, cfg.default_page_size)
+    return _DEFAULT_LIST_LIMIT
+
+
 def tool_list_findings(
     scan_ids: list[int],
     *,
@@ -298,8 +316,9 @@ def tool_list_findings(
     has_metasploit: Optional[bool] = None,
     plugin_name: Optional[str] = None,
     merged: bool = False,
-    limit: int = 500,
+    limit: Optional[int] = None,
     offset: int = 0,
+    config: Optional[CernoConfig] = None,
     conn: Optional[sqlite3.Connection] = None,
 ) -> list[dict]:
     """List findings across one or more scans, optionally filtered and paged.
@@ -316,10 +335,13 @@ def tool_list_findings(
             When False (default), findings are concatenated and deduplicated by
             ``finding_id``.
         limit: Maximum number of findings to return (applied after filtering/dedup).
+            None uses config ``default_page_size`` (min 8) when set, else 500.
         offset: Number of findings to skip before ``limit`` (for paging).
+        config: Config for the default ``limit``; loaded when None.
     """
     from ..models import Finding
 
+    limit = _resolve_limit(limit, config)
     severity_dir = None if severity_int is None else f"{severity_int}_"
     results: list[dict] = []
     with _db(conn) as c:
@@ -359,7 +381,7 @@ def tool_list_findings(
                     results.append(_finding_plugin_to_dict(finding, plugin))
     if offset:
         results = results[offset:]
-    if limit is not None and limit >= 0:
+    if limit >= 0:
         results = results[:limit]
     return results
 
@@ -369,17 +391,19 @@ def tool_search_findings(
     plugin_name: Optional[str] = None,
     severity_int: Optional[int] = None,
     has_metasploit: Optional[bool] = None,
-    limit: int = 500,
+    limit: Optional[int] = None,
+    config: Optional[CernoConfig] = None,
     conn: Optional[sqlite3.Connection] = None,
 ) -> list[dict]:
     """Search findings across ALL scans (no scan_ids required).
 
     Answers questions like "every host with a critical SMB finding anywhere".
     Each result carries its ``scan_name`` for cross-scan context. Results are
-    capped at ``limit``.
+    capped at ``limit`` (None: config ``default_page_size``, min 8, else 500).
     """
     from ..models import Finding, Scan
 
+    limit = _resolve_limit(limit, config)
     severity_dir = None if severity_int is None else f"{severity_int}_"
     results: list[dict] = []
     with _db(conn) as c:
@@ -416,8 +440,9 @@ def tool_query_findings(
     has_metasploit: Optional[bool] = None,
     has_workflow: Optional[bool] = None,
     merged: bool = False,
-    limit: int = 500,
+    limit: Optional[int] = None,
     offset: int = 0,
+    config: Optional[CernoConfig] = None,
     conn: Optional[sqlite3.Connection] = None,
 ) -> list[dict]:
     """Query findings with AND-combined predicates (the composite superset tool).
@@ -425,13 +450,15 @@ def tool_query_findings(
     Every predicate is optional and parameterized (no free-form SQL). ``scan_ids``
     None spans all scans; ``verdict`` accepts confirmed/false_positive/unable or
     "none" (no verdict yet); ``cve`` is an exact, case-insensitive CVE id;
-    ``has_workflow`` consults the workflow mapper, not the DB. Each row carries its
-    ``scan_name`` and ``has_workflow`` flag.
+    ``has_workflow`` consults the workflow mapper (bundled + ``custom_workflows_path``),
+    not the DB. ``limit`` None uses config ``default_page_size`` (min 8), else 500.
+    Each row carries its ``scan_name`` and ``has_workflow`` flag.
     """
     from ..models import Scan
     from ..query import FindingQuery, run_finding_query
-    from ..workflow_mapper import WorkflowMapper
+    from ..workflow_mapper import build_workflow_mapper
 
+    cfg = config or load_config()
     q = FindingQuery(
         scan_ids=scan_ids,
         severity_int=severity_int,
@@ -446,10 +473,10 @@ def tool_query_findings(
         has_metasploit=has_metasploit,
         has_workflow=has_workflow,
         merged=merged,
-        limit=limit,
+        limit=_resolve_limit(limit, cfg),
         offset=offset,
     )
-    mapper = WorkflowMapper()
+    mapper = build_workflow_mapper(cfg)
     with _db(conn) as c:
         rows = run_finding_query(q, c, workflow_mapper=mapper)
         scan_names = {s["scan_id"]: s["scan_name"] for s in Scan.get_all_with_stats(c)}
@@ -466,17 +493,18 @@ def tool_list_workflow_gaps(
     *,
     scan_ids: Optional[list[int]] = None,
     severity_min: Optional[int] = None,
+    config: Optional[CernoConfig] = None,
     conn: Optional[sqlite3.Connection] = None,
 ) -> list[dict]:
     """List findings with NO mapped verification workflow (triage gaps).
 
     Reuses the composite query layer (``has_workflow=False``) and the workflow
-    mapper; adds no new query logic. Returns one representative row per unmapped
+    mapper (bundled + ``custom_workflows_path``); adds no new query logic. Returns one representative row per unmapped
     plugin (merged), worst-first (severity desc, then Metasploit-backed first).
     """
     from ..models import Scan
     from ..query import FindingQuery, run_finding_query
-    from ..workflow_mapper import WorkflowMapper
+    from ..workflow_mapper import build_workflow_mapper
 
     q = FindingQuery(
         scan_ids=scan_ids,
@@ -484,7 +512,7 @@ def tool_list_workflow_gaps(
         has_workflow=False,  # the gap predicate
         merged=True,  # one representative per unmapped plugin
     )
-    mapper = WorkflowMapper()
+    mapper = build_workflow_mapper(config)
     with _db(conn) as c:
         rows = run_finding_query(q, c, workflow_mapper=mapper)
         scan_names = {s["scan_id"]: s["scan_name"] for s in Scan.get_all_with_stats(c)}
@@ -520,7 +548,11 @@ def tool_top_hosts(
 
 
 def tool_get_capabilities(config: Optional[CernoConfig] = None) -> dict:
-    """Report which gated capabilities are live, so an agent can self-orient."""
+    """Report which gated capabilities are live, so an agent can self-orient.
+
+    TUI-only config keys (``config.MCP_NOT_APPLICABLE_KEYS``) are intentionally
+    not applied by the MCP server and are not reported here.
+    """
     from ..nxc_db import get_nxc_manager
 
     cfg = config or load_config()
@@ -628,11 +660,16 @@ def tool_compare_scans(
     return dataclasses.asdict(result) if result is not None else None
 
 
-def tool_get_workflow(plugin_id: int) -> Optional[dict]:
-    """Return the verification workflow mapped to a plugin, or None if none exists."""
-    from ..workflow_mapper import WorkflowMapper
+def tool_get_workflow(
+    plugin_id: int, config: Optional[CernoConfig] = None
+) -> Optional[dict]:
+    """Return the verification workflow mapped to a plugin, or None if none exists.
 
-    workflow = WorkflowMapper().get_workflow(str(plugin_id))
+    Looks up bundled workflows supplemented by config ``custom_workflows_path``.
+    """
+    from ..workflow_mapper import build_workflow_mapper
+
+    workflow = build_workflow_mapper(config).get_workflow(str(plugin_id))
     return dataclasses.asdict(workflow) if workflow is not None else None
 
 
@@ -1076,7 +1113,11 @@ def tool_read_artifact(
 
 
 def tool_get_config() -> dict:
-    """Return all current Cerno config settings (read-only), with resolved paths."""
+    """Return all current Cerno config settings (read-only), with resolved paths.
+
+    Every key is returned, including the TUI-only ones in
+    ``config.MCP_NOT_APPLICABLE_KEYS`` that the MCP server intentionally ignores.
+    """
     from ..constants import get_results_root
 
     config = load_config()
@@ -1183,15 +1224,36 @@ def _write_targets_file(
 def tool_generate_nmap_cmd(
     finding_id: int,
     *,
-    udp: bool = False,
+    udp: Optional[bool] = None,
     nse_option: Optional[str] = None,
     use_sudo: bool = False,
     config: Optional[CernoConfig] = None,
     conn: Optional[sqlite3.Connection] = None,
 ) -> dict:
-    """Build (but do not run) an nmap command targeting a finding's hosts/ports."""
+    """Build (but do not run) an nmap command targeting a finding's hosts/ports.
+
+    ``nse_option`` None falls back to the config ``nmap_default_profile`` (an
+    ``NSE_PROFILES`` name, matched case-insensitively; unknown = no scripts);
+    ``""`` explicitly means no scripts. ``udp`` None means the applied profile's
+    UDP requirement (SNMP/IPMI), else False; an explicit value always wins.
+    """
     from ..models import Finding
-    from ..tools import build_nmap_cmd
+    from ..tools import build_nmap_cmd, find_nse_profile
+
+    profile_udp = False
+    if nse_option is None:
+        cfg = config or load_config()
+        profile = find_nse_profile(cfg.nmap_default_profile)
+        if profile is not None:
+            scripts, profile_udp = profile
+            nse_option = ",".join(scripts)
+        elif cfg.nmap_default_profile:
+            log_debug(
+                f"mcp: unknown nmap_default_profile {cfg.nmap_default_profile!r}; "
+                "no NSE scripts applied"
+            )
+    if udp is None:
+        udp = profile_udp
 
     with _db(conn) as c:
         finding = Finding.get_by_id(finding_id, c)
@@ -1239,7 +1301,7 @@ def _resolve_credential_ref(use_credential: Optional[str]) -> Optional[dict]:
 
 def tool_generate_netexec_cmd(
     finding_id: int,
-    protocol: str,
+    protocol: Optional[str] = None,
     *,
     use_credential: Optional[str] = None,
     config: Optional[CernoConfig] = None,
@@ -1249,6 +1311,8 @@ def tool_generate_netexec_cmd(
 
     ``protocol`` is case-insensitive and normalized to lowercase; it must be one
     of ``constants.NETEXEC_PROTOCOLS`` (the source of truth), else ValueError.
+    When omitted it falls back to the config ``default_netexec_protocol``, then
+    ``"smb"`` (as the TUI's protocol prompt does).
 
     ``use_credential`` is a credential ``ref`` from ``list_nxc_credentials``. When
     given, auth flags are injected using a ``@cred:<ref>@`` PLACEHOLDER — the real
@@ -1260,10 +1324,18 @@ def tool_generate_netexec_cmd(
     from ..ops import resolve_cmd
     from ..tools import build_netexec_cmd
 
+    source = ""
+    if not protocol:
+        cfg = config or load_config()
+        if cfg.default_netexec_protocol:
+            protocol = cfg.default_netexec_protocol
+            source = " (from config default_netexec_protocol)"
+        else:
+            protocol = "smb"
     proto = protocol.strip().lower()
     if proto not in NETEXEC_PROTOCOLS:
         raise ValueError(
-            f"Unknown netexec protocol {protocol!r}; valid protocols: "
+            f"Unknown netexec protocol {protocol!r}{source}; valid protocols: "
             f"{', '.join(NETEXEC_PROTOCOLS)}"
         )
 
@@ -1409,7 +1481,8 @@ def tool_plan_batch(
     """Build a reviewable batch plan (read-only dry run) over a finding query.
 
     For each matched finding, generates the command for ``strategy`` ("nmap",
-    "netexec:<proto>", "msf", "workflow") and classifies it executable vs manual.
+    "netexec:<proto>", "msf", "workflow"; bare "netexec" uses the config
+    ``default_netexec_protocol``, else smb) and classifies it executable vs manual.
     Already-resolved findings (done, or confirmed/false_positive verdict) are
     skipped when ``skip_done``. Nothing is executed.
     """
@@ -2045,7 +2118,9 @@ def resource_finding_output(
 
 
 def resource_finding_workflow(
-    finding_id: int, conn: Optional[sqlite3.Connection] = None
+    finding_id: int,
+    conn: Optional[sqlite3.Connection] = None,
+    config: Optional[CernoConfig] = None,
 ) -> str:
     """`cerno://finding/{finding_id}/workflow` — verification workflow, or a notice."""
     from ..models import Finding
@@ -2055,7 +2130,7 @@ def resource_finding_workflow(
         if finding is None:
             raise ValueError(f"No finding with id {finding_id}")
         plugin_id = finding.plugin_id
-    workflow = tool_get_workflow(plugin_id)
+    workflow = tool_get_workflow(plugin_id, config=config)
     if workflow is None:
         return f"No verification workflow mapped for plugin {plugin_id}."
 
@@ -2128,11 +2203,15 @@ def resource_finding_results(
 # TUI and MCP produce consistent briefs.
 
 
-def _finding_context(finding_id: int, conn: Optional[sqlite3.Connection]) -> str:
+def _finding_context(
+    finding_id: int,
+    conn: Optional[sqlite3.Connection],
+    config: Optional[CernoConfig] = None,
+) -> str:
     """Assemble the shared finding context block (plugin + hosts + output + workflow)."""
     from ..claude_assistant import build_finding_context
     from ..models import Finding, Plugin
-    from ..workflow_mapper import WorkflowMapper
+    from ..workflow_mapper import build_workflow_mapper
 
     with _db(conn) as c:
         finding = Finding.get_by_id(finding_id, c)
@@ -2143,21 +2222,25 @@ def _finding_context(finding_id: int, conn: Optional[sqlite3.Connection]) -> str
             raise ValueError(f"No plugin with id {finding.plugin_id}")
         hosts, _ = finding.get_hosts_and_ports(c)
         outputs = finding.get_plugin_outputs_by_host(c)
-    workflow = WorkflowMapper().get_workflow(str(finding.plugin_id))
+    workflow = build_workflow_mapper(config).get_workflow(str(finding.plugin_id))
     return build_finding_context(plugin, finding, hosts, outputs, workflow)
 
 
 def prompt_triage_finding(
-    finding_id: int, conn: Optional[sqlite3.Connection] = None
+    finding_id: int,
+    conn: Optional[sqlite3.Connection] = None,
+    config: Optional[CernoConfig] = None,
 ) -> str:
     """Report-brief prompt for a single finding."""
     from ..claude_assistant import REPORT_BRIEF_QUERY
 
-    return f"{_finding_context(finding_id, conn)}\n\n{REPORT_BRIEF_QUERY}"
+    return f"{_finding_context(finding_id, conn, config)}\n\n{REPORT_BRIEF_QUERY}"
 
 
 def prompt_exploit_plan(
-    finding_id: int, conn: Optional[sqlite3.Connection] = None
+    finding_id: int,
+    conn: Optional[sqlite3.Connection] = None,
+    config: Optional[CernoConfig] = None,
 ) -> str:
     """Exploitation-planning prompt for a single finding."""
     instruction = (
@@ -2167,7 +2250,7 @@ def prompt_exploit_plan(
         "verification step (an nmap, netexec, or msfconsole command). Be concise and "
         "flag uncertainty. Always verify before acting."
     )
-    return f"{_finding_context(finding_id, conn)}\n\n{instruction}"
+    return f"{_finding_context(finding_id, conn, config)}\n\n{instruction}"
 
 
 def prompt_triage_scope(
@@ -2240,13 +2323,14 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         has_metasploit: Optional[bool] = None,
         plugin_name: Optional[str] = None,
         merged: bool = False,
-        limit: int = 500,
+        limit: Optional[int] = None,
         offset: int = 0,
     ) -> list[FindingSummary]:
         """List findings across scans, filtered and paged.
 
         merged=True dedups multi-scan results by plugin (TUI semantics); limit/
-        offset page the result.
+        offset page the result. limit defaults to the configured default_page_size
+        (min 8) when set, else 500; use offset to page past it.
         """
         return cast(
             "list[FindingSummary]",
@@ -2259,6 +2343,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
                 merged=merged,
                 limit=limit,
                 offset=offset,
+                config=cfg,
             ),
         )
 
@@ -2267,9 +2352,12 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         plugin_name: Optional[str] = None,
         severity_int: Optional[int] = None,
         has_metasploit: Optional[bool] = None,
-        limit: int = 500,
+        limit: Optional[int] = None,
     ) -> list[FindingSearchResult]:
-        """Search findings across ALL scans (no scan_ids needed); each carries scan_name."""
+        """Search findings across ALL scans (no scan_ids needed); each carries scan_name.
+
+        limit defaults to the configured default_page_size (min 8) when set, else 500.
+        """
         return cast(
             "list[FindingSearchResult]",
             tool_search_findings(
@@ -2277,6 +2365,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
                 severity_int=severity_int,
                 has_metasploit=has_metasploit,
                 limit=limit,
+                config=cfg,
             ),
         )
 
@@ -2295,7 +2384,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         has_metasploit: Optional[bool] = None,
         has_workflow: Optional[bool] = None,
         merged: bool = False,
-        limit: int = 500,
+        limit: Optional[int] = None,
         offset: int = 0,
     ) -> list[QueryFindingResult]:
         """Query findings with AND-combined predicates (composite superset of list/search).
@@ -2304,6 +2393,8 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         confirmed/false_positive/unable or "none" (no verdict yet). cve is an exact
         CVE id (case-insensitive). has_workflow consults the workflow mapper. Each
         row carries scan_name and has_workflow. merged dedups by plugin across scans.
+        limit defaults to the configured default_page_size (min 8) when set, else
+        500; use offset to page past it.
         """
         return cast(
             "list[QueryFindingResult]",
@@ -2323,6 +2414,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
                 merged=merged,
                 limit=limit,
                 offset=offset,
+                config=cfg,
             ),
         )
 
@@ -2351,7 +2443,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
     @mcp.tool()
     def get_workflow(plugin_id: int) -> Optional[dict]:
         """Get the verification workflow mapped to a plugin, if any."""
-        return tool_get_workflow(plugin_id)
+        return tool_get_workflow(plugin_id, config=cfg)
 
     @mcp.tool()
     def list_workflow_gaps(
@@ -2364,7 +2456,9 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         """
         return cast(
             "list[WorkflowGapResult]",
-            tool_list_workflow_gaps(scan_ids=scan_ids, severity_min=severity_min),
+            tool_list_workflow_gaps(
+                scan_ids=scan_ids, severity_min=severity_min, config=cfg
+            ),
         )
 
     @mcp.tool()
@@ -2480,7 +2574,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
     @mcp.tool()
     def generate_nmap_cmd(
         finding_id: int,
-        udp: bool = False,
+        udp: Optional[bool] = None,
         nse_option: Optional[str] = None,
         use_sudo: bool = False,
     ) -> NmapCommand:
@@ -2488,7 +2582,10 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
 
         nse_option: NSE script names or categories, comma-separated (e.g.
         "smb-security-mode,smb2-security-mode" or "vuln"); a "--script=" prefix
-        is optional. Other nmap flags are rejected.
+        is optional. Other nmap flags are rejected. Omitted: the configured
+        nmap_default_profile's scripts (if set); "" means no scripts.
+        udp: omitted = the applied default profile's UDP need (SNMP/IPMI), else
+        False.
         """
         return cast(
             "NmapCommand",
@@ -2503,12 +2600,15 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
 
     @mcp.tool()
     def generate_netexec_cmd(
-        finding_id: int, protocol: str, use_credential: Optional[str] = None
+        finding_id: int,
+        protocol: Optional[str] = None,
+        use_credential: Optional[str] = None,
     ) -> NetexecCommand:
         """Build a netexec command for a finding's hosts (does not run it).
 
         protocol is case-insensitive; valid values: mssql, smb, ftp, ldap, nfs,
         rdp, ssh, vnc, winrm, wmi. An unknown protocol is rejected with an error.
+        Omitted: the configured default_netexec_protocol, else smb.
 
         use_credential is a credential ref from list_nxc_credentials; when given,
         auth is injected via a @cred:<ref>@ placeholder (the secret is resolved
@@ -2565,7 +2665,8 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
     ) -> dict:
         """Build a reviewable batch plan (dry run) over a finding query (no execution).
 
-        strategy is "nmap", "netexec:<proto>", "msf", or "workflow". Predicates are
+        strategy is "nmap", "netexec:<proto>" (bare "netexec" = configured default
+        protocol, else smb), "msf", or "workflow". Predicates are
         the same AND-combined set as query_findings. Each item reports the generated
         command and whether it is executable-via-execute_command or manual; already-
         resolved findings are skipped when skip_done. Review this, then execute_batch.
@@ -2614,7 +2715,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
     @mcp.resource("cerno://finding/{finding_id}/workflow", mime_type="text/plain")
     def finding_workflow_resource(finding_id: int) -> str:
         """Verification workflow for a finding's plugin, if one is mapped."""
-        return resource_finding_workflow(finding_id)
+        return resource_finding_workflow(finding_id, config=cfg)
 
     @mcp.resource("cerno://config", mime_type="application/json")
     def config_resource() -> str:
@@ -2640,12 +2741,12 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
     @mcp.prompt()
     def triage_finding(finding_id: int) -> str:
         """Draft a pentest-report brief for a single finding."""
-        return prompt_triage_finding(finding_id)
+        return prompt_triage_finding(finding_id, config=cfg)
 
     @mcp.prompt()
     def exploit_plan(finding_id: int) -> str:
         """Outline the fastest viable exploitation/verification path for a finding."""
-        return prompt_exploit_plan(finding_id)
+        return prompt_exploit_plan(finding_id, config=cfg)
 
     @mcp.prompt()
     def triage_scope(scan_ids: str, severity_int: Optional[int] = None) -> str:

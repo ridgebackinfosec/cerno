@@ -17,7 +17,8 @@ unreviewed criticals", "nxc smb every signing-disabled host"):
 
 Command generation reuses the single-finding ``generate_*``/``prepare_workflow``
 adapters (so target-file writing, cred placeholders and NSE handling match),
-keyed off a ``strategy``: ``"nmap"``, ``"netexec:<proto>"``, ``"msf"`` or
+keyed off a ``strategy``: ``"nmap"``, ``"netexec:<proto>"`` (bare ``"netexec"``
+uses the config ``default_netexec_protocol``, else smb), ``"msf"`` or
 ``"workflow"`` (first executable workflow command).
 """
 
@@ -107,8 +108,9 @@ def _generate_command(
     if strategy == "nmap":
         res = tool_generate_nmap_cmd(finding_id, config=config, conn=conn)
         return list(res["command"]), "nmap"
-    if strategy.startswith("netexec:"):
-        proto = strategy.split(":", 1)[1]
+    if strategy == "netexec" or strategy.startswith("netexec:"):
+        # Bare "netexec" -> protocol None -> config default_netexec_protocol / smb.
+        proto = strategy.split(":", 1)[1] if ":" in strategy else None
         res = tool_generate_netexec_cmd(
             finding_id, proto, use_credential=use_credential, config=config, conn=conn
         )
@@ -187,7 +189,7 @@ def plan_batch(
 
     plan = BatchPlan(strategy=strategy)
     with db_transaction(conn) as c:
-        for finding, plugin in run_finding_query(query, c):
+        for finding, plugin in run_finding_query(query, c, config=cfg):
             fid = finding.finding_id
             if fid is None:
                 continue
