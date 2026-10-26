@@ -1,12 +1,19 @@
 """Workflow mapping system for plugin-specific verification workflows."""
 
+from __future__ import annotations
+
+import contextlib
+import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 import yaml
 
 from .ansi import warn
-from .logging_setup import log_error
+from .logging_setup import log_debug, log_error
+
+if TYPE_CHECKING:
+    from .config import CernoConfig
 
 
 @dataclass
@@ -309,3 +316,36 @@ class WorkflowMapper:
         workflows_list.sort(key=lambda w: w["workflow_name"])
 
         return workflows_list
+
+
+def build_workflow_mapper(config: Optional[CernoConfig] = None) -> WorkflowMapper:
+    """Build a mapper of bundled workflows supplemented by ``custom_workflows_path``.
+
+    Mirrors the CLI's supplement mode (``cerno review`` with the config key set):
+    bundled ``workflow_mappings.yaml`` first, then the custom file merged on top
+    (custom overrides on plugin_id conflict). A missing or empty custom file
+    leaves the bundled set. Built fresh per call so edits to either YAML are seen.
+
+    Mapper warnings are routed to stderr: this runs inside the MCP server, where
+    stdout is the JSON-RPC channel.
+
+    Args:
+        config: Config source for ``custom_workflows_path``; loaded when None.
+
+    Returns:
+        A populated :class:`WorkflowMapper`.
+    """
+    if config is None:
+        from .config import load_config
+
+        config = load_config()
+
+    with contextlib.redirect_stdout(sys.stderr):
+        mapper = WorkflowMapper()
+        if config.custom_workflows_path:
+            custom = Path(config.custom_workflows_path).expanduser()
+            added = mapper.load_additional_workflows(custom)
+            log_debug(
+                f"workflows: {mapper.count()} total ({added} custom from {custom})"
+            )
+    return mapper

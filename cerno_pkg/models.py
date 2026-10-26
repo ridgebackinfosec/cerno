@@ -21,8 +21,8 @@ from .constants import (
 from .database import db_transaction, query_all, query_one
 from .logging_setup import log_error, log_info
 
-
 # ========== Helper Functions ==========
+
 
 def now_iso() -> str:
     """Get current timestamp in ISO 8601 format.
@@ -34,6 +34,7 @@ def now_iso() -> str:
 
 
 # ========== Model: Scan ==========
+
 
 @dataclass
 class Scan:
@@ -64,7 +65,7 @@ class Scan:
             nessus_file_hash=row["nessus_file_hash"],
             export_root=row["export_root"],
             created_at=row["created_at"],
-            last_reviewed_at=row["last_reviewed_at"]
+            last_reviewed_at=row["last_reviewed_at"],
         )
 
     def save(self, conn: Optional[sqlite3.Connection] = None) -> Optional[int]:
@@ -84,7 +85,12 @@ class Scan:
                     INSERT INTO scans (scan_name, nessus_file_path, nessus_file_hash, export_root)
                     VALUES (?, ?, ?, ?)
                     """,
-                    (self.scan_name, self.nessus_file_path, self.nessus_file_hash, self.export_root)
+                    (
+                        self.scan_name,
+                        self.nessus_file_path,
+                        self.nessus_file_hash,
+                        self.export_root,
+                    ),
                 )
                 self.scan_id = cursor.lastrowid
                 log_info(f"Created scan: {self.scan_name} (ID: {self.scan_id})")
@@ -97,14 +103,22 @@ class Scan:
                         export_root=?, last_reviewed_at=?
                     WHERE scan_id=?
                     """,
-                    (self.scan_name, self.nessus_file_path, self.nessus_file_hash,
-                     self.export_root, self.last_reviewed_at, self.scan_id)
+                    (
+                        self.scan_name,
+                        self.nessus_file_path,
+                        self.nessus_file_hash,
+                        self.export_root,
+                        self.last_reviewed_at,
+                        self.scan_id,
+                    ),
                 )
 
         return self.scan_id
 
     @classmethod
-    def get_by_name(cls, scan_name: str, conn: Optional[sqlite3.Connection] = None) -> Optional[Scan]:
+    def get_by_name(
+        cls, scan_name: str, conn: Optional[sqlite3.Connection] = None
+    ) -> Optional[Scan]:
         """Retrieve scan by name.
 
         Args:
@@ -119,7 +133,9 @@ class Scan:
             return cls.from_row(row) if row else None
 
     @classmethod
-    def get_by_id(cls, scan_id: int, conn: Optional[sqlite3.Connection] = None) -> Optional[Scan]:
+    def get_by_id(
+        cls, scan_id: int, conn: Optional[sqlite3.Connection] = None
+    ) -> Optional[Scan]:
         """Retrieve scan by ID.
 
         Args:
@@ -151,12 +167,14 @@ class Scan:
                 """
                 SELECT * FROM scans
                 ORDER BY last_reviewed_at DESC NULLS LAST, created_at DESC
-                """
+                """,
             )
             return [cls.from_row(row) for row in rows]
 
     @classmethod
-    def get_all_with_stats(cls, conn: Optional[sqlite3.Connection] = None) -> list[dict]:
+    def get_all_with_stats(
+        cls, conn: Optional[sqlite3.Connection] = None
+    ) -> list[dict]:
         """Retrieve all scans with statistics (finding counts, severity breakdown).
 
         Args:
@@ -190,12 +208,14 @@ class Scan:
                 LEFT JOIN plugins p ON f.plugin_id = p.plugin_id
                 GROUP BY s.scan_id, s.scan_name, s.created_at, s.last_reviewed_at
                 ORDER BY s.last_reviewed_at DESC NULLS LAST, s.created_at DESC
-                """
+                """,
             )
             return [dict(row) for row in rows]
 
     @classmethod
-    def delete_by_name(cls, scan_name: str, conn: Optional[sqlite3.Connection] = None) -> bool:
+    def delete_by_name(
+        cls, scan_name: str, conn: Optional[sqlite3.Connection] = None
+    ) -> bool:
         """Delete a scan and all associated data by name.
 
         Due to CASCADE DELETE constraints, this will automatically delete:
@@ -227,6 +247,7 @@ class Scan:
 
 # ========== Model: Plugin ==========
 
+
 @dataclass
 class Plugin:
     """Represents a Nessus plugin (finding type).
@@ -238,7 +259,9 @@ class Plugin:
     plugin_id: int
     plugin_name: str = ""
     severity_int: int = 0
-    severity_label: str = ""  # Populated from v_plugins_with_severity view, not stored in plugins table
+    severity_label: str = (
+        ""  # Populated from v_plugins_with_severity view, not stored in plugins table
+    )
     has_metasploit: bool = False
     cvss3_score: Optional[float] = None
     cvss2_score: Optional[float] = None
@@ -258,7 +281,9 @@ class Plugin:
             Plugin instance
         """
         metasploit_names_json = row["metasploit_names"]
-        metasploit_names = json.loads(metasploit_names_json) if metasploit_names_json else None
+        metasploit_names = (
+            json.loads(metasploit_names_json) if metasploit_names_json else None
+        )
 
         cves_json = row["cves"]
         cves = json.loads(cves_json) if cves_json else None
@@ -267,14 +292,16 @@ class Plugin:
             plugin_id=row["plugin_id"],
             plugin_name=row["plugin_name"],
             severity_int=row["severity_int"],
-            severity_label=row["severity_label"] if "severity_label" in row.keys() else "",  # Optional, from v_plugins_with_severity view
+            severity_label=(
+                row["severity_label"] if "severity_label" in row.keys() else ""
+            ),  # Optional, from v_plugins_with_severity view
             has_metasploit=bool(row["has_metasploit"]),
             cvss3_score=row["cvss3_score"],
             cvss2_score=row["cvss2_score"],
             metasploit_names=metasploit_names,
             cves=cves,
             plugin_url=row["plugin_url"],
-            metadata_fetched_at=row["metadata_fetched_at"]
+            metadata_fetched_at=row["metadata_fetched_at"],
         )
 
     def save(self, conn: Optional[sqlite3.Connection] = None) -> Optional[int]:
@@ -286,7 +313,9 @@ class Plugin:
         Returns:
             plugin_id (or None if not set)
         """
-        metasploit_names_json = json.dumps(self.metasploit_names) if self.metasploit_names else None
+        metasploit_names_json = (
+            json.dumps(self.metasploit_names) if self.metasploit_names else None
+        )
         cves_json = json.dumps(self.cves) if self.cves else None
 
         with db_transaction(conn) as c:
@@ -298,15 +327,26 @@ class Plugin:
                     plugin_url, metadata_fetched_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (self.plugin_id, self.plugin_name, self.severity_int,
-                 self.has_metasploit, self.cvss3_score, self.cvss2_score, metasploit_names_json, cves_json,
-                 self.plugin_url, self.metadata_fetched_at)
+                (
+                    self.plugin_id,
+                    self.plugin_name,
+                    self.severity_int,
+                    self.has_metasploit,
+                    self.cvss3_score,
+                    self.cvss2_score,
+                    metasploit_names_json,
+                    cves_json,
+                    self.plugin_url,
+                    self.metadata_fetched_at,
+                ),
             )
 
         return self.plugin_id
 
     @classmethod
-    def get_by_id(cls, plugin_id: int, conn: Optional[sqlite3.Connection] = None) -> Optional[Plugin]:
+    def get_by_id(
+        cls, plugin_id: int, conn: Optional[sqlite3.Connection] = None
+    ) -> Optional[Plugin]:
         """Retrieve plugin by ID.
 
         Args:
@@ -317,11 +357,14 @@ class Plugin:
             Plugin instance or None if not found
         """
         with db_transaction(conn) as c:
-            row = query_one(c, "SELECT * FROM plugins WHERE plugin_id = ?", (plugin_id,))
+            row = query_one(
+                c, "SELECT * FROM plugins WHERE plugin_id = ?", (plugin_id,)
+            )
             return cls.from_row(row) if row else None
 
 
 # ========== Model: Finding ==========
+
 
 class InvalidReviewTransition(ValueError):
     """Raised when a review-state change is not allowed by the workflow."""
@@ -377,7 +420,7 @@ class Finding:
             review_state=row["review_state"],
             reviewed_at=row["reviewed_at"],
             reviewed_by=row["reviewed_by"],
-            review_notes=row["review_notes"]
+            review_notes=row["review_notes"],
         )
 
     def save(self, conn: Optional[sqlite3.Connection] = None) -> Optional[int]:
@@ -399,8 +442,14 @@ class Finding:
                         reviewed_at, reviewed_by, review_notes
                     ) VALUES (?, ?, ?, ?, ?, ?)
                     """,
-                    (self.scan_id, self.plugin_id, self.review_state,
-                     self.reviewed_at, self.reviewed_by, self.review_notes)
+                    (
+                        self.scan_id,
+                        self.plugin_id,
+                        self.review_state,
+                        self.reviewed_at,
+                        self.reviewed_by,
+                        self.review_notes,
+                    ),
                 )
                 self.finding_id = cursor.lastrowid
             else:
@@ -411,13 +460,21 @@ class Finding:
                     SET review_state=?, reviewed_at=?, reviewed_by=?, review_notes=?
                     WHERE finding_id=?
                     """,
-                    (self.review_state, self.reviewed_at, self.reviewed_by, self.review_notes, self.finding_id)
+                    (
+                        self.review_state,
+                        self.reviewed_at,
+                        self.reviewed_by,
+                        self.review_notes,
+                        self.finding_id,
+                    ),
                 )
 
         return self.finding_id
 
     @classmethod
-    def get_by_id(cls, finding_id: int, conn: Optional[sqlite3.Connection] = None) -> Optional[Finding]:
+    def get_by_id(
+        cls, finding_id: int, conn: Optional[sqlite3.Connection] = None
+    ) -> Optional[Finding]:
         """Retrieve finding by ID.
 
         Args:
@@ -428,7 +485,9 @@ class Finding:
             Finding instance or None if not found
         """
         with db_transaction(conn) as c:
-            row = query_one(c, "SELECT * FROM findings WHERE finding_id = ?", (finding_id,))
+            row = query_one(
+                c, "SELECT * FROM findings WHERE finding_id = ?", (finding_id,)
+            )
             return cls.from_row(row) if row else None
 
     def next_review_state(self) -> Optional[str]:
@@ -447,7 +506,7 @@ class Finding:
         self,
         new_state: str,
         notes: Optional[str] = None,
-        conn: Optional[sqlite3.Connection] = None
+        conn: Optional[sqlite3.Connection] = None,
     ) -> None:
         """Move to ``new_state`` if the review workflow allows it.
 
@@ -474,7 +533,7 @@ class Finding:
         self,
         new_state: str,
         notes: Optional[str] = None,
-        conn: Optional[sqlite3.Connection] = None
+        conn: Optional[sqlite3.Connection] = None,
     ) -> None:
         """Set review state and timestamp without a workflow check.
 
@@ -489,8 +548,30 @@ class Finding:
         self.review_state = new_state
         self.reviewed_at = now_iso()
         if notes:
-            self.review_notes = notes
+            self.review_notes = self._with_appended_note(notes)
 
+        self.save(conn)
+
+    def _with_appended_note(self, note: str) -> str:
+        """Return ``review_notes`` with a timestamped ``note`` appended.
+
+        Pure string helper (does not persist). Existing notes are preserved so
+        callers never clobber prior entries.
+        """
+        prefix = (self.review_notes + "\n") if self.review_notes else ""
+        return prefix + f"[{now_iso()}] {note}"
+
+    def append_note(self, note: str, conn: Optional[sqlite3.Connection] = None) -> None:
+        """Append a timestamped note to ``review_notes`` and persist.
+
+        Unlike ``update_review_state``, this does not touch the review state;
+        it only accumulates notes without overwriting existing ones.
+
+        Args:
+            note: Note text to append
+            conn: Database connection
+        """
+        self.review_notes = self._with_appended_note(note)
         self.save(conn)
 
     @classmethod
@@ -503,7 +584,7 @@ class Finding:
         plugin_name_filter: Optional[str] = None,
         has_metasploit: Optional[bool] = None,
         plugin_ids: Optional[list[int]] = None,
-        conn: Optional[sqlite3.Connection] = None
+        conn: Optional[sqlite3.Connection] = None,
     ) -> list[tuple[Finding, Plugin]]:
         """Retrieve findings with plugin info for a scan.
 
@@ -540,7 +621,7 @@ class Finding:
             if severity_dir is not None:
                 # Parse severity_dir format like "4_Critical" to extract severity_int
                 try:
-                    severity_int = int(severity_dir.split('_')[0])
+                    severity_int = int(severity_dir.split("_")[0])
                     query += " AND p.severity_int = ?"
                     params.append(severity_int)
                 except (ValueError, IndexError):
@@ -550,7 +631,7 @@ class Finding:
                 severity_ints = []
                 for sd in severity_dirs:
                     try:
-                        severity_ints.append(int(sd.split('_')[0]))
+                        severity_ints.append(int(sd.split("_")[0]))
                     except (ValueError, IndexError):
                         pass
                 if severity_ints:
@@ -590,7 +671,7 @@ class Finding:
                     review_state=row[3],
                     reviewed_at=row[4],
                     reviewed_by=row[5],
-                    review_notes=row[6]
+                    review_notes=row[6],
                 )
 
                 # Create Plugin from row (columns 7-17)
@@ -681,7 +762,7 @@ class Finding:
             # Add optional filters
             if severity_dir is not None:
                 try:
-                    severity_int = int(severity_dir.split('_')[0])
+                    severity_int = int(severity_dir.split("_")[0])
                     query += " AND p.severity_int = ?"
                     params.append(severity_int)
                 except (ValueError, IndexError):
@@ -690,7 +771,7 @@ class Finding:
                 severity_ints = []
                 for sd in severity_dirs:
                     try:
-                        severity_ints.append(int(sd.split('_')[0]))
+                        severity_ints.append(int(sd.split("_")[0]))
                     except (ValueError, IndexError):
                         pass
                 if severity_ints:
@@ -791,7 +872,7 @@ class Finding:
             Tuple of (unreviewed, in_progress, done, total)
         """
         try:
-            severity_int = int(severity_dir.split('_')[0])
+            severity_int = int(severity_dir.split("_")[0])
         except (ValueError, IndexError):
             return (0, 0, 0, 0)
 
@@ -855,26 +936,24 @@ class Finding:
                 total_row = query_one(
                     c,
                     f"SELECT COUNT(DISTINCT plugin_id) FROM findings WHERE scan_id IN ({placeholders})",
-                    tuple(scan_ids)
+                    tuple(scan_ids),
                 )
                 total_count = total_row[0] if total_row else 0
                 reviewed_row = query_one(
                     c,
                     f"SELECT COUNT(DISTINCT plugin_id) FROM findings WHERE scan_id IN ({placeholders}) AND review_state = 'done'",
-                    tuple(scan_ids)
+                    tuple(scan_ids),
                 )
                 reviewed_count = reviewed_row[0] if reviewed_row else 0
             else:
                 total_row = query_one(
-                    c,
-                    "SELECT COUNT(*) FROM findings WHERE scan_id = ?",
-                    (scan_id,)
+                    c, "SELECT COUNT(*) FROM findings WHERE scan_id = ?", (scan_id,)
                 )
                 total_count = total_row[0] if total_row else 0
                 reviewed_row = query_one(
                     c,
                     "SELECT COUNT(*) FROM findings WHERE scan_id = ? AND review_state = 'done'",
-                    (scan_id,)
+                    (scan_id,),
                 )
                 reviewed_count = reviewed_row[0] if reviewed_row else 0
 
@@ -936,7 +1015,9 @@ class Finding:
                 result.append(f"{row['severity_int']}_{row['severity_label']}")
             return result
 
-    def get_hosts_and_ports(self, conn: Optional[sqlite3.Connection] = None) -> tuple[list[str], str]:
+    def get_hosts_and_ports(
+        self, conn: Optional[sqlite3.Connection] = None
+    ) -> tuple[list[str], str]:
         """Retrieve hosts and formatted port string from database.
 
         Queries the finding_affected_hosts table to get all host:port combinations
@@ -973,7 +1054,7 @@ class Finding:
                          ELSE 2 END,
                     h.scan_target ASC
                 """,
-                tuple(all_ids)
+                tuple(all_ids),
             )
 
             if not rows:
@@ -1002,7 +1083,9 @@ class Finding:
 
             return hosts, ports_str
 
-    def get_port_distribution(self, conn: Optional[sqlite3.Connection] = None) -> dict[str, int]:
+    def get_port_distribution(
+        self, conn: Optional[sqlite3.Connection] = None
+    ) -> dict[str, int]:
         """Get count of hosts per port for this finding.
 
         Args:
@@ -1013,7 +1096,9 @@ class Finding:
             Example: {"80": 8, "443": 3, "8080": 1}
         """
         if self.finding_id is None:
-            log_error("Cannot get port distribution for unsaved Finding (finding_id is None)")
+            log_error(
+                "Cannot get port distribution for unsaved Finding (finding_id is None)"
+            )
             return {}
 
         with db_transaction(conn) as c:
@@ -1030,7 +1115,7 @@ class Finding:
                 GROUP BY fah.port_number
                 ORDER BY fah.port_number ASC
                 """,
-                tuple(all_ids)
+                tuple(all_ids),
             )
 
             if not rows:
@@ -1046,7 +1131,9 @@ class Finding:
 
             return distribution
 
-    def get_all_host_port_lines(self, conn: Optional[sqlite3.Connection] = None) -> list[str]:
+    def get_all_host_port_lines(
+        self, conn: Optional[sqlite3.Connection] = None
+    ) -> list[str]:
         """Retrieve all host:port combinations as formatted lines.
 
         Queries the finding_affected_hosts table and returns each entry as a
@@ -1060,7 +1147,9 @@ class Finding:
             Example: ["192.168.1.1:80", "192.168.1.1:443", "example.com:80"]
         """
         if self.finding_id is None:
-            log_error("Cannot get host:port lines for unsaved Finding (finding_id is None)")
+            log_error(
+                "Cannot get host:port lines for unsaved Finding (finding_id is None)"
+            )
             return []
 
         with db_transaction(conn) as c:
@@ -1083,7 +1172,7 @@ class Finding:
                     h.scan_target ASC,
                     fah.port_number ASC
                 """,
-                tuple(all_ids)
+                tuple(all_ids),
             )
 
             if not rows:
@@ -1098,7 +1187,7 @@ class Finding:
                 if port is not None:
                     # Format with port
                     # Handle IPv6 addresses (add brackets if needed)
-                    is_ipv6 = (row[2] == 'ipv6')
+                    is_ipv6 = row[2] == "ipv6"
                     if is_ipv6 and ":" in host and not host.startswith("["):
                         lines.append(f"[{host}]:{port}")
                     else:
@@ -1110,8 +1199,7 @@ class Finding:
             return lines
 
     def get_plugin_outputs_by_host(
-        self,
-        conn: Optional[sqlite3.Connection] = None
+        self, conn: Optional[sqlite3.Connection] = None
     ) -> list[tuple[str, Optional[int], Optional[str]]]:
         """Retrieve all plugin outputs grouped by host:port.
 
@@ -1130,7 +1218,9 @@ class Finding:
             ]
         """
         if self.finding_id is None:
-            log_error("Cannot get plugin outputs for unsaved Finding (finding_id is None)")
+            log_error(
+                "Cannot get plugin outputs for unsaved Finding (finding_id is None)"
+            )
             return []
 
         with db_transaction(conn) as c:
@@ -1153,7 +1243,7 @@ class Finding:
                     h.scan_target ASC,
                     fah.port_number ASC
                 """,
-                tuple(all_ids)
+                tuple(all_ids),
             )
 
             if not rows:
@@ -1164,6 +1254,7 @@ class Finding:
 
 
 # ========== Model: ToolExecution ==========
+
 
 @dataclass
 class ToolExecution:
@@ -1211,7 +1302,7 @@ class ToolExecution:
             host_count=row["host_count"],
             sampled=bool(row["sampled"]),
             ports=row["ports"],
-            used_sudo=bool(row["used_sudo"])
+            used_sudo=bool(row["used_sudo"]),
         )
 
     def save(self, conn: Optional[sqlite3.Connection] = None) -> Optional[int]:
@@ -1236,10 +1327,21 @@ class ToolExecution:
                         host_count, sampled, ports, used_sudo
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (self.session_id, self.finding_id, self.tool_name, self.tool_protocol,
-                     self.command_text, cmd_args_json, self.executed_at or now_iso(),
-                     self.exit_code, self.duration_seconds, self.host_count,
-                     self.sampled, self.ports, self.used_sudo)
+                    (
+                        self.session_id,
+                        self.finding_id,
+                        self.tool_name,
+                        self.tool_protocol,
+                        self.command_text,
+                        cmd_args_json,
+                        self.executed_at or now_iso(),
+                        self.exit_code,
+                        self.duration_seconds,
+                        self.host_count,
+                        self.sampled,
+                        self.ports,
+                        self.used_sudo,
+                    ),
                 )
                 self.execution_id = cursor.lastrowid
             else:
@@ -1250,13 +1352,14 @@ class ToolExecution:
                     SET exit_code=?, duration_seconds=?
                     WHERE execution_id=?
                     """,
-                    (self.exit_code, self.duration_seconds, self.execution_id)
+                    (self.exit_code, self.duration_seconds, self.execution_id),
                 )
 
         return self.execution_id
 
 
 # ========== Model: Artifact ==========
+
 
 @dataclass
 class Artifact:
@@ -1298,7 +1401,7 @@ class Artifact:
             file_hash=row["file_hash"],
             created_at=row["created_at"],
             last_accessed_at=row["last_accessed_at"],
-            metadata=metadata
+            metadata=metadata,
         )
 
     def save(self, conn: Optional[sqlite3.Connection] = None) -> Optional[int]:
@@ -1320,9 +1423,17 @@ class Artifact:
                     file_size_bytes, file_hash, created_at, last_accessed_at, metadata
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (self.artifact_id, self.execution_id, self.artifact_path, self.artifact_type_id,
-                 self.file_size_bytes, self.file_hash, self.created_at or now_iso(),
-                 self.last_accessed_at, metadata_json)
+                (
+                    self.artifact_id,
+                    self.execution_id,
+                    self.artifact_path,
+                    self.artifact_type_id,
+                    self.file_size_bytes,
+                    self.file_hash,
+                    self.created_at or now_iso(),
+                    self.last_accessed_at,
+                    metadata_json,
+                ),
             )
             if self.artifact_id is None:
                 self.artifact_id = cursor.lastrowid
@@ -1330,7 +1441,9 @@ class Artifact:
         return self.artifact_id
 
     @classmethod
-    def get_by_execution(cls, execution_id: int, conn: Optional[sqlite3.Connection] = None) -> list[Artifact]:
+    def get_by_execution(
+        cls, execution_id: int, conn: Optional[sqlite3.Connection] = None
+    ) -> list[Artifact]:
         """Retrieve all artifacts for a tool execution.
 
         Args:
@@ -1341,11 +1454,14 @@ class Artifact:
             List of Artifact instances
         """
         with db_transaction(conn) as c:
-            rows = query_all(c, "SELECT * FROM artifacts WHERE execution_id = ?", (execution_id,))
+            rows = query_all(
+                c, "SELECT * FROM artifacts WHERE execution_id = ?", (execution_id,)
+            )
             return [cls.from_row(row) for row in rows]
 
 
 # ========== Model: SeverityLevel ==========
+
 
 @dataclass
 class SeverityLevel:
@@ -1374,7 +1490,7 @@ class SeverityLevel:
             severity_int=row["severity_int"],
             severity_label=row["severity_label"],
             severity_order=row["severity_order"],
-            color_hint=row["color_hint"]
+            color_hint=row["color_hint"],
         )
 
     @classmethod
@@ -1388,11 +1504,15 @@ class SeverityLevel:
             List of SeverityLevel instances (Critical to Info)
         """
         with db_transaction(conn) as c:
-            rows = query_all(c, "SELECT * FROM severity_levels ORDER BY severity_int DESC")
+            rows = query_all(
+                c, "SELECT * FROM severity_levels ORDER BY severity_int DESC"
+            )
             return [cls.from_row(row) for row in rows]
 
     @classmethod
-    def get_by_int(cls, severity_int: int, conn: Optional[sqlite3.Connection] = None) -> Optional[SeverityLevel]:
+    def get_by_int(
+        cls, severity_int: int, conn: Optional[sqlite3.Connection] = None
+    ) -> Optional[SeverityLevel]:
         """Retrieve severity level by integer value.
 
         Args:
@@ -1403,11 +1523,16 @@ class SeverityLevel:
             SeverityLevel instance or None if not found
         """
         with db_transaction(conn) as c:
-            row = query_one(c, "SELECT * FROM severity_levels WHERE severity_int = ?", (severity_int,))
+            row = query_one(
+                c,
+                "SELECT * FROM severity_levels WHERE severity_int = ?",
+                (severity_int,),
+            )
             return cls.from_row(row) if row else None
 
 
 # ========== Model: ArtifactType ==========
+
 
 @dataclass
 class ArtifactType:
@@ -1438,7 +1563,7 @@ class ArtifactType:
             type_name=row["type_name"],
             file_extension=row["file_extension"],
             description=row["description"],
-            parser_module=row["parser_module"]
+            parser_module=row["parser_module"],
         )
 
     @classmethod
@@ -1456,7 +1581,9 @@ class ArtifactType:
             return [cls.from_row(row) for row in rows]
 
     @classmethod
-    def get_by_name(cls, type_name: str, conn: Optional[sqlite3.Connection] = None) -> Optional[ArtifactType]:
+    def get_by_name(
+        cls, type_name: str, conn: Optional[sqlite3.Connection] = None
+    ) -> Optional[ArtifactType]:
         """Retrieve artifact type by name.
 
         Args:
@@ -1467,11 +1594,14 @@ class ArtifactType:
             ArtifactType instance or None if not found
         """
         with db_transaction(conn) as c:
-            row = query_one(c, "SELECT * FROM artifact_types WHERE type_name = ?", (type_name,))
+            row = query_one(
+                c, "SELECT * FROM artifact_types WHERE type_name = ?", (type_name,)
+            )
             return cls.from_row(row) if row else None
 
 
 # ========== Model: AuditLog ==========
+
 
 @dataclass
 class AuditLog:
@@ -1514,15 +1644,12 @@ class AuditLog:
             changed_by=row["changed_by"],
             changed_at=row["changed_at"],
             old_values=old_values,
-            new_values=new_values
+            new_values=new_values,
         )
 
     @classmethod
     def get_by_table_and_record(
-        cls,
-        table_name: str,
-        record_id: int,
-        conn: Optional[sqlite3.Connection] = None
+        cls, table_name: str, record_id: int, conn: Optional[sqlite3.Connection] = None
     ) -> list[AuditLog]:
         """Retrieve audit log entries for a specific table record.
 
@@ -1538,12 +1665,14 @@ class AuditLog:
             rows = query_all(
                 c,
                 "SELECT * FROM audit_log WHERE table_name = ? AND record_id = ? ORDER BY changed_at ASC",
-                (table_name, record_id)
+                (table_name, record_id),
             )
             return [cls.from_row(row) for row in rows]
 
     @classmethod
-    def get_recent(cls, limit: int = 100, conn: Optional[sqlite3.Connection] = None) -> list[AuditLog]:
+    def get_recent(
+        cls, limit: int = 100, conn: Optional[sqlite3.Connection] = None
+    ) -> list[AuditLog]:
         """Retrieve recent audit log entries.
 
         Args:
@@ -1555,14 +1684,13 @@ class AuditLog:
         """
         with db_transaction(conn) as c:
             rows = query_all(
-                c,
-                "SELECT * FROM audit_log ORDER BY changed_at DESC LIMIT ?",
-                (limit,)
+                c, "SELECT * FROM audit_log ORDER BY changed_at DESC LIMIT ?", (limit,)
             )
             return [cls.from_row(row) for row in rows]
 
 
 # ========== Model: Host ==========
+
 
 @dataclass
 class Host:
@@ -1603,7 +1731,7 @@ class Host:
             fqdn=row["fqdn"] if "fqdn" in row.keys() else None,
             reverse_dns=row["reverse_dns"] if "reverse_dns" in row.keys() else None,
             first_seen=row["first_seen"] if "first_seen" in row.keys() else None,
-            last_seen=row["last_seen"] if "last_seen" in row.keys() else None
+            last_seen=row["last_seen"] if "last_seen" in row.keys() else None,
         )
 
     @classmethod
@@ -1615,7 +1743,7 @@ class Host:
         netbios_name: Optional[str] = None,
         fqdn: Optional[str] = None,
         reverse_dns: Optional[str] = None,
-        conn: Optional[sqlite3.Connection] = None
+        conn: Optional[sqlite3.Connection] = None,
     ) -> int:
         """Get existing host_id or create new host.
 
@@ -1639,7 +1767,7 @@ class Host:
             row = query_one(
                 c,
                 "SELECT host_id FROM hosts WHERE ip_address = ? AND scan_target = ?",
-                (ip_address, scan_target)
+                (ip_address, scan_target),
             )
 
             if row:
@@ -1651,7 +1779,7 @@ class Host:
                         fqdn = COALESCE(?, fqdn),
                         reverse_dns = COALESCE(?, reverse_dns)
                     WHERE host_id = ?""",
-                    (netbios_name, fqdn, reverse_dns, row["host_id"])
+                    (netbios_name, fqdn, reverse_dns, row["host_id"]),
                 )
                 return cast(int, row["host_id"])
 
@@ -1660,7 +1788,14 @@ class Host:
                 """INSERT INTO hosts
                     (ip_address, scan_target, scan_target_type, netbios_name, fqdn, reverse_dns)
                 VALUES (?, ?, ?, ?, ?, ?)""",
-                (ip_address, scan_target, scan_target_type, netbios_name, fqdn, reverse_dns)
+                (
+                    ip_address,
+                    scan_target,
+                    scan_target_type,
+                    netbios_name,
+                    fqdn,
+                    reverse_dns,
+                ),
             )
             # lastrowid should always be set after INSERT, but satisfy type checker
             return cursor.lastrowid if cursor.lastrowid is not None else 0
@@ -1670,7 +1805,7 @@ class Host:
         cls,
         ip_address: str,
         scan_target: str,
-        conn: Optional[sqlite3.Connection] = None
+        conn: Optional[sqlite3.Connection] = None,
     ) -> Optional["Host"]:
         """Get host by composite key (ip_address, scan_target).
 
@@ -1686,15 +1821,13 @@ class Host:
             row = query_one(
                 c,
                 "SELECT * FROM hosts WHERE ip_address = ? AND scan_target = ?",
-                (ip_address, scan_target)
+                (ip_address, scan_target),
             )
             return cls.from_row(row) if row else None
 
     @classmethod
     def get_by_ip(
-        cls,
-        ip_address: str,
-        conn: Optional[sqlite3.Connection] = None
+        cls, ip_address: str, conn: Optional[sqlite3.Connection] = None
     ) -> list["Host"]:
         """Get all hosts with a given IP address.
 
@@ -1709,17 +1842,13 @@ class Host:
         """
         with db_transaction(conn) as c:
             rows = query_all(
-                c,
-                "SELECT * FROM hosts WHERE ip_address = ?",
-                (ip_address,)
+                c, "SELECT * FROM hosts WHERE ip_address = ?", (ip_address,)
             )
             return [cls.from_row(row) for row in rows]
 
     @classmethod
     def get_by_scan_target(
-        cls,
-        scan_target: str,
-        conn: Optional[sqlite3.Connection] = None
+        cls, scan_target: str, conn: Optional[sqlite3.Connection] = None
     ) -> list["Host"]:
         """Get all hosts with a given scan target.
 
@@ -1734,16 +1863,13 @@ class Host:
         """
         with db_transaction(conn) as c:
             rows = query_all(
-                c,
-                "SELECT * FROM hosts WHERE scan_target = ?",
-                (scan_target,)
+                c, "SELECT * FROM hosts WHERE scan_target = ?", (scan_target,)
             )
             return [cls.from_row(row) for row in rows]
 
     @classmethod
     def get_all_with_stats(
-        cls,
-        conn: Optional[sqlite3.Connection] = None
+        cls, conn: Optional[sqlite3.Connection] = None
     ) -> list[dict]:
         """Get all hosts with finding counts (cross-scan query).
 
@@ -1751,7 +1877,9 @@ class Host:
             List of dicts with host info and statistics
         """
         with db_transaction(conn) as c:
-            rows = query_all(c, """
+            rows = query_all(
+                c,
+                """
                 SELECT
                     h.host_id,
                     h.ip_address,
@@ -1770,7 +1898,8 @@ class Host:
                 LEFT JOIN plugins p ON f.plugin_id = p.plugin_id
                 GROUP BY h.host_id
                 ORDER BY finding_count DESC
-            """)
+            """,
+            )
             return [dict(row) for row in rows]
 
     @classmethod
@@ -1824,6 +1953,7 @@ class Host:
 
 # ========== Model: Port ==========
 
+
 @dataclass
 class Port:
     """Represents a port number with optional service metadata."""
@@ -1845,7 +1975,7 @@ class Port:
         return cls(
             port_number=row["port_number"],
             service_name=row["service_name"] if "service_name" in row.keys() else None,
-            description=row["description"] if "description" in row.keys() else None
+            description=row["description"] if "description" in row.keys() else None,
         )
 
     @classmethod
@@ -1853,7 +1983,7 @@ class Port:
         cls,
         port_number: int,
         service_name: Optional[str] = None,
-        conn: Optional[sqlite3.Connection] = None
+        conn: Optional[sqlite3.Connection] = None,
     ) -> int:
         """Get existing port or create new.
 
@@ -1867,9 +1997,7 @@ class Port:
         """
         with db_transaction(conn) as c:
             row = query_one(
-                c,
-                "SELECT port_number FROM ports WHERE port_number = ?",
-                (port_number,)
+                c, "SELECT port_number FROM ports WHERE port_number = ?", (port_number,)
             )
 
             if row:
@@ -1877,14 +2005,14 @@ class Port:
                 if service_name:
                     c.execute(
                         "UPDATE ports SET service_name = ? WHERE port_number = ?",
-                        (service_name, port_number)
+                        (service_name, port_number),
                     )
                 return port_number
 
             # Create new
             c.execute(
                 "INSERT INTO ports (port_number, service_name) VALUES (?, ?)",
-                (port_number, service_name)
+                (port_number, service_name),
             )
             return port_number
 
@@ -1893,8 +2021,7 @@ class Port:
 
 
 def get_http_urls_for_scan(
-    scan_id: int,
-    conn: Optional[sqlite3.Connection] = None
+    scan_id: int, conn: Optional[sqlite3.Connection] = None
 ) -> list[str]:
     """Query HTTP/HTTPS URLs discovered in a scan.
 
@@ -1917,7 +2044,7 @@ def get_http_urls_for_scan(
             WHERE scan_id = ? AND http_scheme IS NOT NULL
             ORDER BY scan_target, port_number
             """,
-            (scan_id,)
+            (scan_id,),
         )
 
         urls = []
@@ -1931,6 +2058,7 @@ def get_http_urls_for_scan(
 
 
 # ========== Model: ClaudeConversationTurn ==========
+
 
 @dataclass
 class ClaudeConversationTurn:
@@ -2047,6 +2175,7 @@ class ClaudeConversationTurn:
 
 # ========== Model: ClaudeAggregateConversationTurn ==========
 
+
 @dataclass
 class ClaudeAggregateConversationTurn:
     """A single turn in a Claude Assistant aggregate conversation.
@@ -2121,3 +2250,431 @@ class ClaudeAggregateConversationTurn:
             (context_key,),
         )
         return row is not None
+
+
+# ========== Execution -> Data Loop models (schema v4) ==========
+
+
+class InvalidVerdict(ValueError):
+    """Raised when a verdict label is not a known verdict type."""
+
+
+def _lookup_id_by_label(
+    table: str, id_col: str, label: str, conn: Optional[sqlite3.Connection] = None
+) -> Optional[int]:
+    """Resolve a lookup-table row id from its label (case-sensitive)."""
+    with db_transaction(conn) as c:
+        row = query_one(c, f"SELECT {id_col} FROM {table} WHERE label = ?", (label,))
+        return cast(int, row[id_col]) if row else None
+
+
+class VerdictType:
+    """Accessor for the verdict_types lookup table."""
+
+    @staticmethod
+    def id_for_label(
+        label: str, conn: Optional[sqlite3.Connection] = None
+    ) -> Optional[int]:
+        return _lookup_id_by_label("verdict_types", "verdict_type_id", label, conn)
+
+    @staticmethod
+    def all_labels(conn: Optional[sqlite3.Connection] = None) -> list[str]:
+        with db_transaction(conn) as c:
+            rows = query_all(
+                c, "SELECT label FROM verdict_types ORDER BY verdict_type_id"
+            )
+            return [r["label"] for r in rows]
+
+
+class NseVerdict:
+    """Accessor for the nse_verdicts lookup table."""
+
+    @staticmethod
+    def id_for_label(
+        label: str, conn: Optional[sqlite3.Connection] = None
+    ) -> Optional[int]:
+        return _lookup_id_by_label("nse_verdicts", "nse_verdict_id", label, conn)
+
+
+class PortState:
+    """Accessor for the port_states lookup table."""
+
+    @staticmethod
+    def id_for_label(
+        label: str, conn: Optional[sqlite3.Connection] = None
+    ) -> Optional[int]:
+        return _lookup_id_by_label("port_states", "port_state_id", label, conn)
+
+
+@dataclass
+class VerifiedPort:
+    """A live-verified open port from a tool run (provenance = execution_id)."""
+
+    verified_port_id: Optional[int] = None
+    execution_id: int = 0
+    host_id: int = 0
+    port_number: Optional[int] = None
+    protocol: str = "tcp"
+    port_state_id: Optional[int] = None
+    service_name: Optional[str] = None
+    created_at: Optional[str] = None
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> VerifiedPort:
+        return cls(
+            verified_port_id=row["verified_port_id"],
+            execution_id=row["execution_id"],
+            host_id=row["host_id"],
+            port_number=row["port_number"],
+            protocol=row["protocol"],
+            port_state_id=row["port_state_id"],
+            service_name=row["service_name"],
+            created_at=row["created_at"],
+        )
+
+    def save(self, conn: Optional[sqlite3.Connection] = None) -> Optional[int]:
+        with db_transaction(conn) as c:
+            cursor = c.execute(
+                """
+                INSERT OR REPLACE INTO verified_ports (
+                    execution_id, host_id, port_number, protocol,
+                    port_state_id, service_name, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    self.execution_id,
+                    self.host_id,
+                    self.port_number,
+                    self.protocol,
+                    self.port_state_id,
+                    self.service_name,
+                    self.created_at or now_iso(),
+                ),
+            )
+            if self.verified_port_id is None:
+                self.verified_port_id = cursor.lastrowid
+        return self.verified_port_id
+
+    @classmethod
+    def delete_by_execution(
+        cls, execution_id: int, conn: Optional[sqlite3.Connection] = None
+    ) -> int:
+        with db_transaction(conn) as c:
+            cursor = c.execute(
+                "DELETE FROM verified_ports WHERE execution_id = ?", (execution_id,)
+            )
+            return cursor.rowcount
+
+    @classmethod
+    def get_by_execution(
+        cls, execution_id: int, conn: Optional[sqlite3.Connection] = None
+    ) -> list[VerifiedPort]:
+        with db_transaction(conn) as c:
+            rows = query_all(
+                c,
+                "SELECT * FROM verified_ports WHERE execution_id = ?",
+                (execution_id,),
+            )
+            return [cls.from_row(r) for r in rows]
+
+
+@dataclass
+class NseScriptResult:
+    """An NSE script result (vuln verdict) from a tool run (provenance = execution_id).
+
+    port_number is None for a host script (vs a port script).
+    """
+
+    nse_result_id: Optional[int] = None
+    execution_id: int = 0
+    host_id: int = 0
+    port_number: Optional[int] = None
+    script_id: str = ""
+    nse_verdict_id: Optional[int] = None
+    output: Optional[str] = None
+    created_at: Optional[str] = None
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> NseScriptResult:
+        return cls(
+            nse_result_id=row["nse_result_id"],
+            execution_id=row["execution_id"],
+            host_id=row["host_id"],
+            port_number=row["port_number"],
+            script_id=row["script_id"],
+            nse_verdict_id=row["nse_verdict_id"],
+            output=row["output"],
+            created_at=row["created_at"],
+        )
+
+    def save(self, conn: Optional[sqlite3.Connection] = None) -> Optional[int]:
+        with db_transaction(conn) as c:
+            cursor = c.execute(
+                """
+                INSERT OR REPLACE INTO nse_script_results (
+                    execution_id, host_id, port_number, script_id,
+                    nse_verdict_id, output, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    self.execution_id,
+                    self.host_id,
+                    self.port_number,
+                    self.script_id,
+                    self.nse_verdict_id,
+                    self.output,
+                    self.created_at or now_iso(),
+                ),
+            )
+            if self.nse_result_id is None:
+                self.nse_result_id = cursor.lastrowid
+        return self.nse_result_id
+
+    @classmethod
+    def delete_by_execution(
+        cls, execution_id: int, conn: Optional[sqlite3.Connection] = None
+    ) -> int:
+        with db_transaction(conn) as c:
+            cursor = c.execute(
+                "DELETE FROM nse_script_results WHERE execution_id = ?", (execution_id,)
+            )
+            return cursor.rowcount
+
+    @classmethod
+    def get_by_execution(
+        cls, execution_id: int, conn: Optional[sqlite3.Connection] = None
+    ) -> list[NseScriptResult]:
+        with db_transaction(conn) as c:
+            rows = query_all(
+                c,
+                "SELECT * FROM nse_script_results WHERE execution_id = ?",
+                (execution_id,),
+            )
+            return [cls.from_row(r) for r in rows]
+
+
+@dataclass
+class NxcFlagObservation:
+    """A point-in-time snapshot of one nxc security flag (provenance = execution_id)."""
+
+    nxc_flag_id: Optional[int] = None
+    execution_id: int = 0
+    host_id: int = 0
+    protocol: str = ""
+    flag_name: str = ""
+    flag_value: int = 0
+    created_at: Optional[str] = None
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> NxcFlagObservation:
+        return cls(
+            nxc_flag_id=row["nxc_flag_id"],
+            execution_id=row["execution_id"],
+            host_id=row["host_id"],
+            protocol=row["protocol"],
+            flag_name=row["flag_name"],
+            flag_value=row["flag_value"],
+            created_at=row["created_at"],
+        )
+
+    def save(self, conn: Optional[sqlite3.Connection] = None) -> Optional[int]:
+        with db_transaction(conn) as c:
+            cursor = c.execute(
+                """
+                INSERT OR REPLACE INTO nxc_flag_observations (
+                    execution_id, host_id, protocol, flag_name, flag_value, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    self.execution_id,
+                    self.host_id,
+                    self.protocol,
+                    self.flag_name,
+                    1 if self.flag_value else 0,
+                    self.created_at or now_iso(),
+                ),
+            )
+            if self.nxc_flag_id is None:
+                self.nxc_flag_id = cursor.lastrowid
+        return self.nxc_flag_id
+
+    @classmethod
+    def delete_by_execution(
+        cls, execution_id: int, conn: Optional[sqlite3.Connection] = None
+    ) -> int:
+        with db_transaction(conn) as c:
+            cursor = c.execute(
+                "DELETE FROM nxc_flag_observations WHERE execution_id = ?",
+                (execution_id,),
+            )
+            return cursor.rowcount
+
+    @classmethod
+    def get_by_execution(
+        cls, execution_id: int, conn: Optional[sqlite3.Connection] = None
+    ) -> list[NxcFlagObservation]:
+        with db_transaction(conn) as c:
+            rows = query_all(
+                c,
+                "SELECT * FROM nxc_flag_observations WHERE execution_id = ?",
+                (execution_id,),
+            )
+            return [cls.from_row(r) for r in rows]
+
+
+@dataclass
+class VerdictEvidence:
+    """A piece of evidence backing a verdict (links to execution/artifact/NSE result)."""
+
+    evidence_id: Optional[int] = None
+    verdict_id: Optional[int] = None
+    execution_id: Optional[int] = None
+    artifact_id: Optional[int] = None
+    nse_result_id: Optional[int] = None
+    note: Optional[str] = None
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> VerdictEvidence:
+        return cls(
+            evidence_id=row["evidence_id"],
+            verdict_id=row["verdict_id"],
+            execution_id=row["execution_id"],
+            artifact_id=row["artifact_id"],
+            nse_result_id=row["nse_result_id"],
+            note=row["note"],
+        )
+
+    def save(self, conn: Optional[sqlite3.Connection] = None) -> Optional[int]:
+        with db_transaction(conn) as c:
+            cursor = c.execute(
+                """
+                INSERT INTO verdict_evidence (
+                    verdict_id, execution_id, artifact_id, nse_result_id, note
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    self.verdict_id,
+                    self.execution_id,
+                    self.artifact_id,
+                    self.nse_result_id,
+                    self.note,
+                ),
+            )
+            if self.evidence_id is None:
+                self.evidence_id = cursor.lastrowid
+        return self.evidence_id
+
+    @classmethod
+    def get_by_verdict(
+        cls, verdict_id: int, conn: Optional[sqlite3.Connection] = None
+    ) -> list[VerdictEvidence]:
+        with db_transaction(conn) as c:
+            rows = query_all(
+                c, "SELECT * FROM verdict_evidence WHERE verdict_id = ?", (verdict_id,)
+            )
+            return [cls.from_row(r) for r in rows]
+
+
+@dataclass
+class FindingVerdict:
+    """A verification verdict for a finding (truth, distinct from review_state).
+
+    Append-only history: each ``set()`` inserts a new row. The current verdict
+    for a finding is the latest one (see ``get_current`` / v_finding_current_verdict).
+    """
+
+    verdict_id: Optional[int] = None
+    finding_id: int = 0
+    verdict_type_id: int = 0
+    verdict_label: str = ""
+    note: Optional[str] = None
+    created_at: Optional[str] = None
+    created_by: Optional[str] = None
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> FindingVerdict:
+        keys = row.keys()
+        return cls(
+            verdict_id=row["verdict_id"],
+            finding_id=row["finding_id"],
+            verdict_type_id=row["verdict_type_id"],
+            verdict_label=row["verdict_label"] if "verdict_label" in keys else "",
+            note=row["note"],
+            created_at=row["created_at"],
+            created_by=row["created_by"] if "created_by" in keys else None,
+        )
+
+    @classmethod
+    def set(
+        cls,
+        finding_id: int,
+        verdict_label: str,
+        note: Optional[str] = None,
+        created_by: Optional[str] = None,
+        evidence: Optional[list[VerdictEvidence]] = None,
+        conn: Optional[sqlite3.Connection] = None,
+    ) -> FindingVerdict:
+        """Record a new verdict (and optional evidence) for a finding.
+
+        Raises:
+            InvalidVerdict: if ``verdict_label`` is not a known verdict type.
+        """
+        with db_transaction(conn) as c:
+            type_id = VerdictType.id_for_label(verdict_label, c)
+            if type_id is None:
+                valid = ", ".join(VerdictType.all_labels(c))
+                raise InvalidVerdict(
+                    f"Unknown verdict '{verdict_label}'. Valid verdicts: {valid}"
+                )
+            created = now_iso()
+            cursor = c.execute(
+                """
+                INSERT INTO finding_verdicts (
+                    finding_id, verdict_type_id, note, created_at, created_by
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (finding_id, type_id, note, created, created_by),
+            )
+            verdict_id = cursor.lastrowid
+            for ev in evidence or []:
+                ev.verdict_id = verdict_id
+                ev.save(c)
+            return cls(
+                verdict_id=verdict_id,
+                finding_id=finding_id,
+                verdict_type_id=type_id,
+                verdict_label=verdict_label,
+                note=note,
+                created_at=created,
+                created_by=created_by,
+            )
+
+    @classmethod
+    def get_current(
+        cls, finding_id: int, conn: Optional[sqlite3.Connection] = None
+    ) -> Optional[FindingVerdict]:
+        with db_transaction(conn) as c:
+            row = query_one(
+                c,
+                "SELECT * FROM v_finding_current_verdict WHERE finding_id = ?",
+                (finding_id,),
+            )
+            return cls.from_row(row) if row else None
+
+    @classmethod
+    def get_history(
+        cls, finding_id: int, conn: Optional[sqlite3.Connection] = None
+    ) -> list[FindingVerdict]:
+        with db_transaction(conn) as c:
+            rows = query_all(
+                c,
+                """
+                SELECT fv.*, vt.label AS verdict_label
+                FROM finding_verdicts fv
+                JOIN verdict_types vt ON fv.verdict_type_id = vt.verdict_type_id
+                WHERE fv.finding_id = ?
+                ORDER BY fv.created_at DESC, fv.verdict_id DESC
+                """,
+                (finding_id,),
+            )
+            return [cls.from_row(r) for r in rows]

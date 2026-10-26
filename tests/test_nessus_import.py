@@ -271,15 +271,15 @@ class TestExtractScanNameFromNessus:
 class TestNessusImport:
     """Tests for Nessus import functionality."""
 
-    @pytest.mark.skip(reason="File-based export deprecated; see TestNessusImportDatabaseIntegration for database tests")
+    @pytest.mark.skip(
+        reason="File-based export deprecated; see TestNessusImportDatabaseIntegration for database tests"
+    )
     @pytest.mark.integration
-    def test_export_creates_database_records(self, minimal_nessus_fixture, temp_dir, temp_db):
+    def test_export_creates_database_records(
+        self, minimal_nessus_fixture, temp_dir, temp_db
+    ):
         """Test that export creates database records (database-only mode)."""
-        result = import_nessus_file(
-            minimal_nessus_fixture,
-            temp_dir,
-            use_database=True
-        )
+        result = import_nessus_file(minimal_nessus_fixture, temp_dir, use_database=True)
 
         # Check result structure
         assert isinstance(result, ExportResult)
@@ -287,6 +287,7 @@ class TestNessusImport:
 
         # Check database records were created
         from cerno_pkg.models import Scan, Finding
+
         scan = Scan.get_by_name(result.scan_name, temp_db)
         assert scan is not None
         assert scan.scan_name == result.scan_name
@@ -296,6 +297,7 @@ class TestNessusImport:
         for sev_int in result.severities.keys():
             # Construct severity_dir format for filtering (e.g., "4_Critical")
             from cerno_pkg.nessus_import import severity_label_from_int
+
             sev_label = severity_label_from_int(sev_int)
             sev_dir = f"{sev_int}_{sev_label}"
 
@@ -311,9 +313,7 @@ class TestNessusImport:
     def test_export_creates_findings(self, minimal_nessus_fixture, temp_dir):
         """Test that plugin files are created."""
         result = import_nessus_file(
-            minimal_nessus_fixture,
-            temp_dir,
-            use_database=False
+            minimal_nessus_fixture, temp_dir, use_database=False
         )
 
         scan_dir = temp_dir / result.scan_name
@@ -330,10 +330,7 @@ class TestNessusImport:
     def test_export_file_content_format(self, minimal_nessus_fixture, temp_dir):
         """Test that plugin file content is correctly formatted."""
         result = import_nessus_file(
-            minimal_nessus_fixture,
-            temp_dir,
-            include_ports=True,
-            use_database=False
+            minimal_nessus_fixture, temp_dir, include_ports=True, use_database=False
         )
 
         scan_dir = temp_dir / result.scan_name
@@ -346,7 +343,7 @@ class TestNessusImport:
         content = plugin_file.read_text()
 
         # File should have at least one host entry
-        lines = [line.strip() for line in content.split('\n') if line.strip()]
+        lines = [line.strip() for line in content.split("\n") if line.strip()]
         assert len(lines) > 0
 
         # IPs should come before hostnames (if both present)
@@ -354,17 +351,16 @@ class TestNessusImport:
         hostname_lines = [i for i, line in enumerate(lines) if not is_ip(line)]
 
         if ip_lines and hostname_lines:
-            assert max(ip_lines) < min(hostname_lines), "IPs should come before hostnames"
+            assert max(ip_lines) < min(
+                hostname_lines
+            ), "IPs should come before hostnames"
 
     @pytest.mark.skip(reason="File-based export deprecated; database-only mode now")
     @pytest.mark.integration
     def test_export_without_ports(self, minimal_nessus_fixture, temp_dir):
         """Test export with ports disabled."""
         result = import_nessus_file(
-            minimal_nessus_fixture,
-            temp_dir,
-            include_ports=False,
-            use_database=False
+            minimal_nessus_fixture, temp_dir, include_ports=False, use_database=False
         )
 
         scan_dir = temp_dir / result.scan_name
@@ -377,7 +373,7 @@ class TestNessusImport:
         content = plugin_file.read_text()
 
         # Should have hosts without ports
-        lines = [line.strip() for line in content.split('\n') if line.strip()]
+        lines = [line.strip() for line in content.split("\n") if line.strip()]
         assert len(lines) > 0
 
         # Check that lines don't have :port suffix (for IPs that had ports)
@@ -394,9 +390,7 @@ class TestNessusImport:
     def test_export_result_structure(self, minimal_nessus_fixture, temp_dir):
         """Test that ExportResult contains correct data."""
         result = import_nessus_file(
-            minimal_nessus_fixture,
-            temp_dir,
-            use_database=False
+            minimal_nessus_fixture, temp_dir, use_database=False
         )
 
         assert isinstance(result, ExportResult)
@@ -413,9 +407,7 @@ class TestNessusImport:
     def test_export_host_deduplication(self, minimal_nessus_fixture, temp_dir):
         """Test that duplicate host:port entries are deduplicated."""
         result = import_nessus_file(
-            minimal_nessus_fixture,
-            temp_dir,
-            use_database=False
+            minimal_nessus_fixture, temp_dir, use_database=False
         )
 
         scan_dir = temp_dir / result.scan_name
@@ -426,21 +418,19 @@ class TestNessusImport:
 
         plugin_file = txt_files[0]
         content = plugin_file.read_text()
-        lines = [line.strip() for line in content.split('\n') if line.strip()]
+        lines = [line.strip() for line in content.split("\n") if line.strip()]
 
         # Should not have duplicates
         assert len(lines) == len(set(lines))
 
     @pytest.mark.skip(reason="File-based export deprecated; database-only mode now")
     @pytest.mark.integration
-    def test_export_handles_special_characters_in_name(self, sample_nessus_xml, temp_dir):
+    def test_export_handles_special_characters_in_name(
+        self, sample_nessus_xml, temp_dir
+    ):
         """Test that special characters in plugin names are sanitized."""
         # This test uses the fixture from conftest.py
-        result = import_nessus_file(
-            sample_nessus_xml,
-            temp_dir,
-            use_database=False
-        )
+        result = import_nessus_file(sample_nessus_xml, temp_dir, use_database=False)
 
         # Check that files were created with sanitized names
         scan_dir = temp_dir / result.scan_name
@@ -461,11 +451,7 @@ class TestNessusImport:
     @pytest.mark.integration
     def test_export_large_scan(self, goad_nessus_fixture, temp_dir):
         """Test exporting large real-world scan (GOAD)."""
-        result = import_nessus_file(
-            goad_nessus_fixture,
-            temp_dir,
-            use_database=False
-        )
+        result = import_nessus_file(goad_nessus_fixture, temp_dir, use_database=False)
 
         assert result.plugins_exported > 0
         assert result.total_hosts > 0
@@ -491,11 +477,12 @@ class TestNessusImportDatabaseIntegration:
 
         class UnclosableConnection:
             """Wrapper that prevents connection from being closed."""
+
             def __init__(self, conn):
                 self._conn = conn
 
             def __getattr__(self, name):
-                if name == 'close':
+                if name == "close":
                     return lambda: None
                 return getattr(self._conn, name)
 
@@ -513,11 +500,7 @@ class TestNessusImportDatabaseIntegration:
     @pytest.mark.integration
     def test_export_populates_database(self, minimal_nessus_fixture, temp_dir, temp_db):
         """Test that export writes to database."""
-        result = import_nessus_file(
-            minimal_nessus_fixture,
-            temp_dir,
-            use_database=True
-        )
+        result = import_nessus_file(minimal_nessus_fixture, temp_dir, use_database=True)
 
         assert result.plugins_exported > 0
 
@@ -591,7 +574,9 @@ class TestNessusImportDatabaseIntegration:
     @pytest.mark.integration
     def test_demo_nessus_fixture_imports_expected_review_data(self, temp_dir, temp_db):
         """The expanded demo scan remains usable for docs and conference demos."""
-        demo_nessus = Path(__file__).parents[1] / "docs" / "demo" / "cerno-demo-expanded.nessus"
+        demo_nessus = (
+            Path(__file__).parents[1] / "docs" / "demo" / "cerno-demo-expanded.nessus"
+        )
         assert demo_nessus.exists()
 
         scan_name = extract_scan_name_from_nessus(demo_nessus)
@@ -618,7 +603,9 @@ class TestNessusImportDatabaseIntegration:
         ).fetchone()
         assert scan is not None
 
-        host_count = temp_db.execute("SELECT COUNT(*) AS count FROM hosts").fetchone()["count"]
+        host_count = temp_db.execute("SELECT COUNT(*) AS count FROM hosts").fetchone()[
+            "count"
+        ]
         assert host_count == 42
 
         cve_plugins = {
@@ -632,42 +619,43 @@ class TestNessusImportDatabaseIntegration:
         assert 42263 in cve_plugins
         assert "CVE-1999-0619" in cve_plugins[42263]
 
-        telnet_plugin = temp_db.execute(
-            """
+        telnet_plugin = temp_db.execute("""
             SELECT has_metasploit, metasploit_names
             FROM plugins
             WHERE plugin_id = 42263
-            """
-        ).fetchone()
+            """).fetchone()
         assert telnet_plugin is not None
         assert telnet_plugin["has_metasploit"] == 1
-        assert "auxiliary/scanner/telnet/telnet_version" in telnet_plugin["metasploit_names"]
+        assert (
+            "auxiliary/scanner/telnet/telnet_version"
+            in telnet_plugin["metasploit_names"]
+        )
 
-        ssl_hosts = temp_db.execute(
-            """
+        ssl_hosts = temp_db.execute("""
             SELECT COUNT(*) AS count
             FROM finding_affected_hosts fah
             JOIN findings f ON f.finding_id = fah.finding_id
             WHERE f.plugin_id = 20007
-            """
-        ).fetchone()["count"]
+            """).fetchone()["count"]
         assert ssl_hosts == 8
 
-        output_row = temp_db.execute(
-            """
+        output_row = temp_db.execute("""
             SELECT fah.plugin_output
             FROM finding_affected_hosts fah
             JOIN findings f ON f.finding_id = fah.finding_id
             WHERE f.plugin_id = 41028
-            """
-        ).fetchone()
+            """).fetchone()
         assert output_row is not None
         assert "Community string accepted: public" in output_row["plugin_output"]
 
     @pytest.mark.integration
-    def test_initial_demo_nessus_fixture_imports_expected_baseline_data(self, temp_dir, temp_db):
+    def test_initial_demo_nessus_fixture_imports_expected_baseline_data(
+        self, temp_dir, temp_db
+    ):
         """The smaller initial demo scan remains usable for compare demos."""
-        demo_nessus = Path(__file__).parents[1] / "docs" / "demo" / "cerno-demo-initial.nessus"
+        demo_nessus = (
+            Path(__file__).parents[1] / "docs" / "demo" / "cerno-demo-initial.nessus"
+        )
         assert demo_nessus.exists()
 
         scan_name = extract_scan_name_from_nessus(demo_nessus)
@@ -688,8 +676,46 @@ class TestNessusImportDatabaseIntegration:
             0: 1,
         }
 
-        host_count = temp_db.execute("SELECT COUNT(*) AS count FROM hosts").fetchone()["count"]
+        host_count = temp_db.execute("SELECT COUNT(*) AS count FROM hosts").fetchone()[
+            "count"
+        ]
         assert host_count == 5
+
+    @pytest.mark.integration
+    def test_import_invalidates_nxc_manager(
+        self, minimal_nessus_fixture, temp_dir, monkeypatch
+    ):
+        """A successful import resets the cached nxc manager so later enrichment
+        reflects the newly-imported hosts without a server restart."""
+        import cerno_pkg.nxc_db as nxc_db
+
+        class _FakeMgr:
+            closed = False
+
+            def close(self):
+                self.closed = True
+
+        fake = _FakeMgr()
+        monkeypatch.setattr(nxc_db, "_nxc_manager", fake)
+
+        import_nessus_file(minimal_nessus_fixture, temp_dir, use_database=True)
+
+        # Singleton cleared (and the stale manager closed) → next get_nxc_manager()
+        # rebuilds against current state.
+        assert nxc_db._nxc_manager is None
+        assert fake.closed is True
+
+    @pytest.mark.integration
+    def test_import_nxc_reset_is_safe_when_manager_unbuilt(
+        self, minimal_nessus_fixture, temp_dir, monkeypatch
+    ):
+        """Reset is a no-op (no error) when the nxc manager was never built."""
+        import cerno_pkg.nxc_db as nxc_db
+
+        monkeypatch.setattr(nxc_db, "_nxc_manager", None)
+        result = import_nessus_file(minimal_nessus_fixture, temp_dir, use_database=True)
+        assert result.plugins_exported > 0
+        assert nxc_db._nxc_manager is None
 
 
 class TestNessusImportEdgeCases:
@@ -708,9 +734,7 @@ class TestNessusImportEdgeCases:
         output_dir = temp_dir / "new_dir" / "nested"
 
         result = import_nessus_file(
-            minimal_nessus_fixture,
-            output_dir,
-            use_database=False
+            minimal_nessus_fixture, output_dir, use_database=False
         )
 
         assert output_dir.exists()
@@ -722,16 +746,12 @@ class TestNessusImportEdgeCases:
         """Test that running export twice handles existing files."""
         # First export
         result1 = import_nessus_file(
-            minimal_nessus_fixture,
-            temp_dir,
-            use_database=False
+            minimal_nessus_fixture, temp_dir, use_database=False
         )
 
         # Second export (should handle existing directory)
         result2 = import_nessus_file(
-            minimal_nessus_fixture,
-            temp_dir,
-            use_database=False
+            minimal_nessus_fixture, temp_dir, use_database=False
         )
 
         # Both should succeed
@@ -751,11 +771,12 @@ class TestCVEAndMetasploitExtraction:
 
         class UnclosableConnection:
             """Wrapper that prevents connection from being closed."""
+
             def __init__(self, conn):
                 self._conn = conn
 
             def __getattr__(self, name):
-                if name == 'close':
+                if name == "close":
                     return lambda: None
                 return getattr(self._conn, name)
 
@@ -773,7 +794,7 @@ class TestCVEAndMetasploitExtraction:
     @pytest.fixture
     def nessus_with_cves_and_msf(self, temp_dir) -> Path:
         """Create a .nessus file with CVEs and Metasploit module names."""
-        nessus_content = '''<?xml version="1.0" ?>
+        nessus_content = """<?xml version="1.0" ?>
 <NessusClientData_v2>
   <Report name="Test Scan">
     <ReportHost name="192.168.1.10">
@@ -797,21 +818,21 @@ class TestCVEAndMetasploitExtraction:
       </ReportItem>
     </ReportHost>
   </Report>
-</NessusClientData_v2>'''
+</NessusClientData_v2>"""
 
         nessus_file = temp_dir / "test_cves.nessus"
         nessus_file.write_text(nessus_content)
         return nessus_file
 
     @pytest.mark.integration
-    def test_import_extracts_cves_from_xml(self, nessus_with_cves_and_msf, temp_dir, temp_db):
+    def test_import_extracts_cves_from_xml(
+        self, nessus_with_cves_and_msf, temp_dir, temp_db
+    ):
         """Verify CVEs are extracted from .nessus XML during import."""
         from cerno_pkg.models import Plugin
 
         _result = import_nessus_file(
-            nessus_with_cves_and_msf,
-            temp_dir,
-            use_database=True
+            nessus_with_cves_and_msf, temp_dir, use_database=True
         )
 
         # Plugin 65821 should have 2 CVEs
@@ -830,14 +851,14 @@ class TestCVEAndMetasploitExtraction:
         assert plugin.metadata_fetched_at is None
 
     @pytest.mark.integration
-    def test_import_extracts_metasploit_names_from_xml(self, nessus_with_cves_and_msf, temp_dir, temp_db):
+    def test_import_extracts_metasploit_names_from_xml(
+        self, nessus_with_cves_and_msf, temp_dir, temp_db
+    ):
         """Verify Metasploit module names are extracted from .nessus XML during import."""
         from cerno_pkg.models import Plugin
 
         _result = import_nessus_file(
-            nessus_with_cves_and_msf,
-            temp_dir,
-            use_database=True
+            nessus_with_cves_and_msf, temp_dir, use_database=True
         )
 
         # Plugin 10043 should have 1 Metasploit module
@@ -856,21 +877,24 @@ class TestCVEAndMetasploitExtraction:
         assert plugin_42873.has_metasploit is True
         assert plugin_42873.metasploit_names is not None
         assert "SMB Login Check Scanner" in plugin_42873.metasploit_names
-        assert "MS17-010 EternalBlue SMB Remote Windows Kernel Pool Corruption" in plugin_42873.metasploit_names
+        assert (
+            "MS17-010 EternalBlue SMB Remote Windows Kernel Pool Corruption"
+            in plugin_42873.metasploit_names
+        )
         assert len(plugin_42873.metasploit_names) == 2
 
         # Verify names are sorted
         assert plugin_42873.metasploit_names == sorted(plugin_42873.metasploit_names)
 
     @pytest.mark.integration
-    def test_import_handles_plugins_without_cves(self, nessus_with_cves_and_msf, temp_dir, temp_db):
+    def test_import_handles_plugins_without_cves(
+        self, nessus_with_cves_and_msf, temp_dir, temp_db
+    ):
         """Verify plugins without CVEs store None, not empty list."""
         from cerno_pkg.models import Plugin
 
         _result = import_nessus_file(
-            nessus_with_cves_and_msf,
-            temp_dir,
-            use_database=True
+            nessus_with_cves_and_msf, temp_dir, use_database=True
         )
 
         # Plugin 42873 has no CVEs in our fixture
@@ -880,14 +904,14 @@ class TestCVEAndMetasploitExtraction:
         assert plugin.cves is None, "Plugin without CVEs should have None"
 
     @pytest.mark.integration
-    def test_import_handles_plugins_without_metasploit_names(self, nessus_with_cves_and_msf, temp_dir, temp_db):
+    def test_import_handles_plugins_without_metasploit_names(
+        self, nessus_with_cves_and_msf, temp_dir, temp_db
+    ):
         """Verify plugins without Metasploit names store None, not empty list."""
         from cerno_pkg.models import Plugin
 
         _result = import_nessus_file(
-            nessus_with_cves_and_msf,
-            temp_dir,
-            use_database=True
+            nessus_with_cves_and_msf, temp_dir, use_database=True
         )
 
         # Plugin 65821 has no Metasploit names (has_metasploit=false)
@@ -895,19 +919,19 @@ class TestCVEAndMetasploitExtraction:
 
         assert plugin is not None, "Plugin 65821 should exist"
         assert plugin.has_metasploit is False
-        assert plugin.metasploit_names is None, "Plugin without Metasploit names should have None"
+        assert (
+            plugin.metasploit_names is None
+        ), "Plugin without Metasploit names should have None"
 
     @pytest.mark.integration
-    def test_reimport_overwrites_cves_and_metasploit_names(self, nessus_with_cves_and_msf, temp_dir, temp_db):
+    def test_reimport_overwrites_cves_and_metasploit_names(
+        self, nessus_with_cves_and_msf, temp_dir, temp_db
+    ):
         """Verify CVEs and Metasploit names are refreshed from XML on re-import."""
         from cerno_pkg.models import Plugin
 
         # First import
-        import_nessus_file(
-            nessus_with_cves_and_msf,
-            temp_dir,
-            use_database=True
-        )
+        import_nessus_file(nessus_with_cves_and_msf, temp_dir, use_database=True)
 
         # Manually modify CVEs and Metasploit names to simulate stale data
         plugin = Plugin.get_by_id(65821, conn=temp_db)
@@ -930,14 +954,12 @@ class TestCVEAndMetasploitExtraction:
         # Verify stale data was saved
         plugin_check_10043 = Plugin.get_by_id(10043, conn=temp_db)
         assert plugin_check_10043 is not None
-        assert plugin_check_10043.metasploit_names == ["STALE_MODULE"], "Stale data should be saved"
+        assert plugin_check_10043.metasploit_names == [
+            "STALE_MODULE"
+        ], "Stale data should be saved"
 
         # Re-import same file
-        import_nessus_file(
-            nessus_with_cves_and_msf,
-            temp_dir,
-            use_database=True
-        )
+        import_nessus_file(nessus_with_cves_and_msf, temp_dir, use_database=True)
 
         # CVEs should be refreshed from XML (overwriting stale data)
         plugin = Plugin.get_by_id(65821, conn=temp_db)

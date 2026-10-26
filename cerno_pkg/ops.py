@@ -83,9 +83,9 @@ def write_proxychains_config(proxy: ProxyConfig, config_path: Path) -> None:
     if not proxy.enabled:
         return
     if "\n" in proxy.host or " " in proxy.host:
-        raise ValueError(f"Invalid proxychains host: {proxy.host!r}")
+        raise ValueError(f"Invalid proxychains4 host: {proxy.host!r}")
     if not (0 < proxy.port < 65536):
-        raise ValueError(f"Invalid proxychains port: {proxy.port}")
+        raise ValueError(f"Invalid proxychains4 port: {proxy.port}")
     content = (
         "strict_chain\n"
         "proxy_dns\n"
@@ -270,6 +270,72 @@ def run_command_with_progress(
 
 
 @log_timing
+def _sudo_guard(cmd: list[str]) -> bool:
+    """Return True if ``cmd`` runs under sudo, refusing an interactive prompt.
+
+    Non-interactive contexts (MCP) must never hang on a password prompt: if the
+    command starts with ``sudo`` and the sudo timestamp is not already valid, a
+    PermissionError is raised instead.
+    """
+    used_sudo = len(cmd) > 0 and os.path.basename(str(cmd[0])) == "sudo"
+    if used_sudo:
+        try:
+            check = subprocess.run(
+                ["sudo", "-vn"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            if check.returncode != 0:
+                raise PermissionError(
+                    "sudo requires a password; refusing to prompt in non-interactive "
+                    "mode. Pre-authenticate with `sudo -v` or run without sudo."
+                )
+        except FileNotFoundError:
+            raise PermissionError("sudo not found on PATH")
+    return used_sudo
+
+
+def _wrap_proxy(cmd: list[str], proxy_config: Optional[ProxyConfig]) -> list[str]:
+    """Prefix ``cmd`` with proxychains4 when a proxy config is enabled."""
+    if proxy_config is not None and proxy_config.enabled:
+        conf_path = Path.home() / ".cerno" / "proxychains4.conf"
+        write_proxychains_config(proxy_config, conf_path)
+        prefix = ["proxychains4"]
+        if proxy_config.quiet:
+            prefix.append("-q")
+        prefix.extend(["-f", str(conf_path)])
+        return prefix + cmd
+    return cmd
+
+
+def start_process(
+    cmd: list[str],
+    *,
+    proxy_config: Optional[ProxyConfig] = None,
+) -> tuple["subprocess.Popen[str]", bool]:
+    """Spawn ``cmd`` in its own process group, capturing stdout/stderr.
+
+    Like :func:`run_command_captured` (same non-interactive sudo guard and
+    proxychains4 wrapping) but returns the live ``Popen`` so a caller can cancel
+    the run: ``start_new_session=True`` puts the child in a new process group, so
+    ``os.killpg(os.getpgid(proc.pid), ...)`` terminates the tool and its children
+    cleanly. The caller is responsible for ``communicate()`` and timeout handling.
+
+    Returns ``(proc, used_sudo)``.
+    """
+    used_sudo = _sudo_guard(cmd)
+    run_cmd = _wrap_proxy(cmd, proxy_config)
+    log_info(f"Spawning (captured): {' '.join(str(x) for x in run_cmd)}")
+    proc = subprocess.Popen(
+        run_cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    return proc, used_sudo
+
+
 def run_command_captured(
     cmd: list[str],
     *,
@@ -300,32 +366,8 @@ def run_command_captured(
         PermissionError: If the command needs an interactive sudo password.
         subprocess.TimeoutExpired: If the command exceeds ``timeout``.
     """
-    used_sudo = len(cmd) > 0 and os.path.basename(str(cmd[0])) == "sudo"
-
-    if used_sudo:
-        try:
-            check = subprocess.run(
-                ["sudo", "-vn"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            if check.returncode != 0:
-                raise PermissionError(
-                    "sudo requires a password; refusing to prompt in non-interactive "
-                    "mode. Pre-authenticate with `sudo -v` or run without sudo."
-                )
-        except FileNotFoundError:
-            raise PermissionError("sudo not found on PATH")
-
-    run_cmd: list[str] = cmd
-    if proxy_config is not None and proxy_config.enabled:
-        conf_path = Path.home() / ".cerno" / "proxychains4.conf"
-        write_proxychains_config(proxy_config, conf_path)
-        prefix = ["proxychains4"]
-        if proxy_config.quiet:
-            prefix.append("-q")
-        prefix.extend(["-f", str(conf_path)])
-        run_cmd = prefix + cmd
+    used_sudo = _sudo_guard(cmd)
+    run_cmd = _wrap_proxy(cmd, proxy_config)
 
     log_info(f"Executing (captured): {' '.join(str(x) for x in run_cmd)}")
     start_time = time.time()
@@ -443,6 +485,11 @@ def get_tool_version(
     # Determine which binaries to try
     binaries_to_try = candidates if candidates else [tool_name]
 
+    # proxychains4 has no --version flag (it would try to exec "--version");
+    # its version is only printed in the startup banner.
+    if binaries_to_try == ["proxychains4"]:
+        return get_proxychains4_version()
+
     # Try each binary candidate
     for binary in binaries_to_try:
         # Check if binary exists first
@@ -482,6 +529,60 @@ def get_tool_version(
             log_debug(f"Error getting version for {binary}: {exc}")
 
     # No version detected for any candidate
+    return None
+
+
+_PROXYCHAINS4_VERSION_RE = re.compile(r"proxychains-ng\s+v?(\d+\.\d+(?:\.\d+)?)")
+
+
+def get_proxychains4_version() -> Optional[str]:
+    """Detect the installed proxychains-ng version from its startup banner.
+
+    proxychains4 has no ``--version`` flag, but when it launches a program
+    without ``-q`` it prints ``[proxychains] DLL init: proxychains-ng 4.17``.
+    This runs our own interpreter (``sys.executable -c ""``, which makes no
+    network connections) under a throwaway config passed via ``-f`` so a missing
+    system ``/etc/proxychains4.conf`` doesn't matter.
+
+    Returns:
+        Version string (e.g., "4.17"), or None if proxychains4 is not on PATH
+        or the banner could not be parsed.
+    """
+    import tempfile
+
+    from .logging_setup import log_debug
+
+    binary = shutil.which("proxychains4")
+    if not binary:
+        return None
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="cerno-pc4-") as tmp:
+            conf = Path(tmp) / "proxychains4.conf"
+            # The proxy is never contacted: the probe program opens no sockets.
+            write_proxychains_config(
+                ProxyConfig(enabled=True, host="127.0.0.1", port=9), conf
+            )
+            result = subprocess.run(
+                [binary, "-f", str(conf), sys.executable, "-c", ""],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+    except subprocess.TimeoutExpired:
+        log_debug("Timeout getting version for proxychains4")
+        return None
+    except Exception as exc:
+        log_debug(f"Error getting version for proxychains4: {exc}")
+        return None
+
+    output = (result.stdout or "") + (result.stderr or "")
+    match = _PROXYCHAINS4_VERSION_RE.search(output)
+    if match:
+        log_debug(f"Detected proxychains4 version: {match.group(1)}")
+        return match.group(1)
+    log_debug("Could not parse version from proxychains4 banner")
     return None
 
 
@@ -559,6 +660,56 @@ def log_tool_execution(
         return None
 
 
+#: Flags whose immediately-following token is a secret, masked before logging.
+_SECRET_FLAG_TOKENS = {"-p", "--password", "-H", "--hash"}
+_SECRET_MASK = "********"
+
+
+def mask_auth_flags(command_text: str) -> str:
+    """Mask secret values after auth flags in a command string (defense-in-depth).
+
+    Replaces the token after ``-p``/``--password``/``-H``/``--hash`` with
+    ``********`` so a cleartext password/hash is never persisted in
+    ``tool_executions.command_text`` even if a caller passes one directly.
+
+    Caller must scope this to credential-bearing tools: ``-p`` is nxc's password
+    flag but also nmap's ports flag, so applying it to nmap would corrupt the
+    audited ports (see ``_mask_if_credential_tool``).
+    """
+    tokens = command_text.split(" ")
+    masked: list[str] = []
+    mask_next = False
+    for tok in tokens:
+        if mask_next and tok != "":
+            masked.append(_SECRET_MASK)
+            mask_next = False
+            continue
+        masked.append(tok)
+        if tok in _SECRET_FLAG_TOKENS:
+            mask_next = True
+    return " ".join(masked)
+
+
+def _mask_if_credential_tool(command_text: str) -> str:
+    """Mask auth flags only when the command's target binary is nxc/netexec.
+
+    Resolves the real binary via the shared ``exec_chain`` resolver (same view the
+    MCP exec policy uses) so nmap's ``-p <ports>`` is never masked while nxc's
+    ``-p <password>`` / ``-H <hash>`` is.
+    """
+    import shlex
+
+    from . import exec_chain
+
+    try:
+        argv = shlex.split(command_text)
+    except ValueError:
+        return command_text
+    if exec_chain.effective_tool(argv) == "nxc":
+        return mask_auth_flags(command_text)
+    return command_text
+
+
 def _log_tool_execution_impl(
     conn: sqlite3.Connection,
     tool_name: str,
@@ -615,7 +766,7 @@ def _log_tool_execution_impl(
             finding_id=finding_id,
             tool_name=tool_name,
             tool_protocol=tool_protocol,
-            command_text=command_text,
+            command_text=_mask_if_credential_tool(command_text),
             executed_at=now_iso(),
             exit_code=execution_metadata.exit_code,
             duration_seconds=execution_metadata.duration_seconds,

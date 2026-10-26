@@ -48,9 +48,13 @@ EXPECTED_TOOLS = {
     "read_artifact",
     "get_config",
     "search_findings",
+    "query_findings",
     "top_hosts",
     "get_capabilities",
     "get_finding_artifacts",
+    "get_finding_verdict",
+    "list_workflow_gaps",
+    "get_notes",
     # netexec (always on)
     "get_host_nxc",
     "list_nxc_credentials",
@@ -58,10 +62,21 @@ EXPECTED_TOOLS = {
     "generate_nmap_cmd",
     "generate_netexec_cmd",
     "generate_msf_search",
+    "prepare_workflow",
+    "plan_batch",
     # gated
     "execute_command",  # mcp_allow_execution
+    "start_execution",  # mcp_allow_execution
+    "get_execution_status",  # mcp_allow_execution
+    "cancel_execution",  # mcp_allow_execution
+    "list_jobs",  # mcp_allow_execution
+    "execute_batch",  # mcp_allow_execution AND mcp_allow_batch
     "set_review_state",
+    "add_note",  # mcp_allow_mutations
     "import_nessus",  # mcp_allow_mutations
+    "ingest_results",  # mcp_allow_mutations
+    "set_finding_verdict",  # mcp_allow_mutations
+    "reveal_credential",  # mcp_allow_cred_reveal
 }
 EXPECTED_STATIC_RESOURCES = {"cerno://scans", "cerno://config"}
 EXPECTED_RESOURCE_TEMPLATES = {
@@ -69,6 +84,8 @@ EXPECTED_RESOURCE_TEMPLATES = {
     "cerno://scan/{scan_id}/cves",
     "cerno://finding/{finding_id}/output",
     "cerno://finding/{finding_id}/workflow",
+    "cerno://finding/{finding_id}/verdict",
+    "cerno://finding/{finding_id}/results",
     "cerno://host/{host_ip}/nxc",
 }
 EXPECTED_PROMPTS = {"triage_finding", "exploit_plan", "triage_scope"}
@@ -97,6 +114,29 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     conn.executemany(
         "INSERT INTO artifact_types (type_name, file_extension, description) VALUES (?, ?, ?)",
         [("nmap_xml", ".xml", "Nmap XML output"), ("log", ".log", "Tool log")],
+    )
+    conn.executemany(
+        "INSERT INTO verdict_types (label, description) VALUES (?, ?)",
+        [
+            ("confirmed", "true positive"),
+            ("false_positive", "false positive"),
+            ("unable", "unable to verify"),
+        ],
+    )
+    conn.executemany(
+        "INSERT INTO nse_verdicts (label) VALUES (?)",
+        [("VULNERABLE",), ("NOT_VULNERABLE",), ("LIKELY_VULNERABLE",), ("UNKNOWN",)],
+    )
+    conn.executemany(
+        "INSERT INTO port_states (label) VALUES (?)",
+        [
+            ("open",),
+            ("closed",),
+            ("filtered",),
+            ("open|filtered",),
+            ("closed|filtered",),
+            ("unfiltered",),
+        ],
     )
     conn.executescript(database.SCHEMA_SQL_VIEWS)
     conn.commit()
@@ -158,6 +198,8 @@ def contract(tmp_path, monkeypatch):
         results_root=str(tmp_path / "artifacts"),
         mcp_allow_execution=True,
         mcp_allow_mutations=True,
+        mcp_allow_cred_reveal=True,
+        mcp_allow_batch=True,
     )
     srv = build_server(cfg)
     return {
@@ -166,6 +208,7 @@ def contract(tmp_path, monkeypatch):
         "finding_id": finding_id,
         "plugin_id": 100,
         "artifact_id": artifact_id,
+        "execution_id": exec_id,
         "host_ip": "10.0.0.1",
     }
 
@@ -186,7 +229,9 @@ def _client_call_tools(server, calls: dict[str, dict]) -> dict:
         async with create_connected_server_and_client_session(
             server._mcp_server
         ) as session:
-            return {name: await session.call_tool(name, kw) for name, kw in calls.items()}
+            return {
+                name: await session.call_tool(name, kw) for name, kw in calls.items()
+            }
 
     return _run(go())
 
@@ -229,6 +274,8 @@ def test_tools_callable_through_server(contract):
     args = {
         "list_scans": {},
         "list_findings": {"scan_ids": [sid]},
+        "query_findings": {"scan_ids": [sid], "severity_int": 4, "has_metasploit": True},
+        "plan_batch": {"strategy": "nmap", "scan_ids": [sid], "skip_done": False},
         "get_finding_detail": {"finding_id": fid},
         "get_finding_hosts": {"finding_id": fid},
         "list_hosts": {},
@@ -249,12 +296,20 @@ def test_tools_callable_through_server(contract):
         "generate_nmap_cmd": {"finding_id": fid},
         "generate_netexec_cmd": {"finding_id": fid, "protocol": "smb"},
         "generate_msf_search": {"finding_id": fid},
-        # mutation (safe): flips review state in the seeded temp DB
+        "prepare_workflow": {"finding_id": fid},
+        "get_finding_verdict": {"finding_id": fid},
+        "list_workflow_gaps": {"scan_ids": [sid]},
+        "get_notes": {"finding_id": fid},
+        # mutations (safe against the seeded temp DB)
         "set_review_state": {"finding_id": fid, "new_state": "in_progress"},
+        "add_note": {"finding_id": fid, "note": "t"},
+        "set_finding_verdict": {"finding_id": fid, "verdict": "confirmed"},
+        "ingest_results": {"execution_id": contract["execution_id"]},
     }
-    # execute_command (subprocess/async) and import_nessus (needs a file) are
-    # covered by the inventory test + test_mcp_server.py; exercising them here
-    # would add platform/side-effect flakiness.
+    # execute_command + the async job tools (start/get/cancel/list_jobs are
+    # subprocess/async) and import_nessus (needs a file) are covered by the
+    # inventory test + test_mcp_server.py/test_jobs.py; exercising them here would
+    # add platform/side-effect flakiness.
     for name, result in _client_call_tools(s, args).items():
         detail = result.content[0].text if result.content else ""
         assert not result.isError, f"{name} failed via MCP client: {detail}"

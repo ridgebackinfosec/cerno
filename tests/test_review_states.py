@@ -118,6 +118,42 @@ class TestTransitionReviewState:
         assert Finding(review_state=src).next_review_state() == expected
 
 
+class TestAppendNote:
+    """review_notes is append-only (no clobber across add_note / review-state notes)."""
+
+    def _reload_notes(self, temp_db, finding):
+        return Finding.get_by_id(finding.finding_id, temp_db).review_notes
+
+    def test_append_note_accumulates(self, temp_db):
+        finding = _seed_finding(temp_db)
+        finding.append_note("first", temp_db)
+        finding.append_note("second", temp_db)
+        raw = self._reload_notes(temp_db, finding)
+        lines = [ln for ln in raw.splitlines() if ln.strip()]
+        assert len(lines) == 2
+        assert "first" in lines[0] and "second" in lines[1]
+        # Timestamp prefix present on each entry.
+        assert lines[0].startswith("[") and "]" in lines[0]
+
+    def test_update_review_state_notes_append_not_overwrite(self, temp_db):
+        finding = _seed_finding(temp_db)
+        finding.append_note("manual note", temp_db)
+        finding.update_review_state("in_progress", notes="review note", conn=temp_db)
+        raw = self._reload_notes(temp_db, finding)
+        assert "manual note" in raw
+        assert "review note" in raw
+        assert raw.index("manual note") < raw.index("review note")
+
+    def test_update_review_state_without_notes_leaves_notes_untouched(self, temp_db):
+        finding = _seed_finding(temp_db)
+        finding.append_note("only note", temp_db)
+        finding.update_review_state("in_progress", conn=temp_db)
+        raw = self._reload_notes(temp_db, finding)
+        lines = [ln for ln in raw.splitlines() if ln.strip()]
+        assert lines == [raw.splitlines()[0]]
+        assert "only note" in raw
+
+
 @pytest.mark.integration
 class TestMoveReviewState:
     def test_move_cycles_through_every_status(self, file_db):

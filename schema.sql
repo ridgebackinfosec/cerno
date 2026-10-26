@@ -5,7 +5,8 @@
 -- and generated artifacts. This file serves as reference documentation.
 --
 -- Database location: ~/.cerno/cerno.db (global, cross-scan queries)
--- Schema version: 3 (normalized structure; review states unreviewed/in_progress/done)
+-- Schema version: 4 (adds the execution->data loop: verified ports, NSE verdicts,
+--   nxc flag snapshots, finding verdicts + evidence, and their lookup tables/views)
 --
 -- IMPORTANT: This file is DOCUMENTATION ONLY
 -- - Actual schema initialization: cerno_pkg/database.py (SCHEMA_SQL_TABLES + SCHEMA_SQL_VIEWS)
@@ -522,3 +523,110 @@ GROUP BY h.host_id, h.ip_address, h.scan_target, h.scan_target_type,
 -- FROM v_plugins_with_severity
 -- WHERE severity_int >= 3
 -- ORDER BY severity_int DESC, cvss3_score DESC;
+
+-- ============================================================================
+-- NOTE: The objects below exist in cerno_pkg/database.py but were historically
+-- omitted from this reference file. Documented here for completeness; the
+-- authoritative DDL is always SCHEMA_SQL_TABLES + SCHEMA_SQL_VIEWS in database.py.
+-- ============================================================================
+
+-- Previously-undocumented tables (schema v2/v3):
+--   session_scans(session_id FK->sessions CASCADE, scan_id FK->scans CASCADE, PK(session_id,scan_id))
+--   host_services(host_service_id PK, scan_id FK->scans CASCADE, host_id FK->hosts,
+--                 port_number FK->ports, protocol NOT NULL DEFAULT 'tcp', svc_name NOT NULL,
+--                 UNIQUE(scan_id,host_id,port_number,protocol))
+--   claude_conversations(id PK, finding_id FK->findings CASCADE, role CHECK(user|assistant),
+--                        content NOT NULL, created_at)
+--   claude_aggregate_conversations(id PK, context_key NOT NULL, role CHECK(user|assistant),
+--                                  content NOT NULL, created_at)
+-- Previously-undocumented view (schema v3):
+--   v_http_services (HTTP/HTTPS services from host_services, with computed http_scheme)
+
+-- ============================================================================
+-- EXECUTION -> DATA LOOP (schema v4)
+-- ============================================================================
+
+-- Lookup tables (seeded in initialize_database):
+--   verdict_types(verdict_type_id PK, label UNIQUE, description)
+--       seeded: confirmed, false_positive, unable
+--   nse_verdicts(nse_verdict_id PK, label UNIQUE)
+--       seeded: VULNERABLE, NOT_VULNERABLE, LIKELY_VULNERABLE, UNKNOWN
+--   port_states(port_state_id PK, label UNIQUE)
+--       seeded: open, closed, filtered, open|filtered, closed|filtered, unfiltered
+
+-- Fact tables (provenance = execution_id; idempotent per execution):
+CREATE TABLE IF NOT EXISTS verified_ports (
+    verified_port_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    execution_id     INTEGER NOT NULL,
+    host_id          INTEGER NOT NULL,
+    port_number      INTEGER,
+    protocol         TEXT NOT NULL DEFAULT 'tcp',
+    port_state_id    INTEGER,
+    service_name     TEXT,
+    created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (execution_id) REFERENCES tool_executions(execution_id) ON DELETE CASCADE,
+    FOREIGN KEY (host_id) REFERENCES hosts(host_id),
+    FOREIGN KEY (port_number) REFERENCES ports(port_number),
+    FOREIGN KEY (port_state_id) REFERENCES port_states(port_state_id),
+    UNIQUE (execution_id, host_id, port_number, protocol)
+);
+
+CREATE TABLE IF NOT EXISTS nse_script_results (
+    nse_result_id  INTEGER PRIMARY KEY AUTOINCREMENT,
+    execution_id   INTEGER NOT NULL,
+    host_id        INTEGER NOT NULL,
+    port_number    INTEGER,          -- NULL = host script
+    script_id      TEXT NOT NULL,
+    nse_verdict_id INTEGER,
+    output         TEXT,
+    created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (execution_id) REFERENCES tool_executions(execution_id) ON DELETE CASCADE,
+    FOREIGN KEY (host_id) REFERENCES hosts(host_id),
+    FOREIGN KEY (port_number) REFERENCES ports(port_number),
+    FOREIGN KEY (nse_verdict_id) REFERENCES nse_verdicts(nse_verdict_id),
+    UNIQUE (execution_id, host_id, port_number, script_id)
+);
+
+CREATE TABLE IF NOT EXISTS nxc_flag_observations (
+    nxc_flag_id  INTEGER PRIMARY KEY AUTOINCREMENT,
+    execution_id INTEGER NOT NULL,
+    host_id      INTEGER NOT NULL,
+    protocol     TEXT NOT NULL,
+    flag_name    TEXT NOT NULL,
+    flag_value   INTEGER NOT NULL CHECK(flag_value IN (0, 1)),
+    created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (execution_id) REFERENCES tool_executions(execution_id) ON DELETE CASCADE,
+    FOREIGN KEY (host_id) REFERENCES hosts(host_id),
+    UNIQUE (execution_id, host_id, protocol, flag_name)
+);
+
+-- Verdict tables (append-only history + evidence links):
+CREATE TABLE IF NOT EXISTS finding_verdicts (
+    verdict_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    finding_id      INTEGER NOT NULL,
+    verdict_type_id INTEGER NOT NULL,
+    note            TEXT,
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_by      TEXT,
+    FOREIGN KEY (finding_id) REFERENCES findings(finding_id) ON DELETE CASCADE,
+    FOREIGN KEY (verdict_type_id) REFERENCES verdict_types(verdict_type_id)
+);
+
+CREATE TABLE IF NOT EXISTS verdict_evidence (
+    evidence_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    verdict_id    INTEGER NOT NULL,
+    execution_id  INTEGER,
+    artifact_id   INTEGER,
+    nse_result_id INTEGER,
+    note          TEXT,
+    FOREIGN KEY (verdict_id) REFERENCES finding_verdicts(verdict_id) ON DELETE CASCADE,
+    FOREIGN KEY (execution_id) REFERENCES tool_executions(execution_id) ON DELETE SET NULL,
+    FOREIGN KEY (artifact_id) REFERENCES artifacts(artifact_id) ON DELETE SET NULL,
+    FOREIGN KEY (nse_result_id) REFERENCES nse_script_results(nse_result_id) ON DELETE SET NULL
+);
+
+-- Views (schema v4):
+--   v_finding_current_verdict  — latest verdict per finding (joined to verdict_types)
+--   v_nse_results_with_verdict — nse_script_results joined to nse_verdicts label
+--   v_finding_verified_stats   — per-finding verified_port/nse_result/vulnerable counts
+--                                (via tool_executions.finding_id)

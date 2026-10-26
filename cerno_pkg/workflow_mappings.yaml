@@ -48,7 +48,7 @@ workflows:
     steps:
       - title: "Try with NSE script"
         commands:
-          - "sudo nmap --script http-internal-ip-disclosure --script-args http-internal-ip-disclosure.path=/ $IP -p $PORT"
+          - "sudo nmap --script http-internal-ip-disclosure --script-args http-internal-ip-disclosure.path=/ <TARGET> -p <PORT>"
         notes: ""
 
       - title: "Use Burp's Repeater"
@@ -66,20 +66,20 @@ workflows:
     steps:
       - title: "Verify SMB signing is disabled"
         commands:
-          - "netexec smb <target> -u <username> -p <password>"
-          - "nmap -p445 --script smb-security-mode <target>"
+          - "netexec smb <TARGET> -u <USERNAME> -p <PASSWORD>"
+          - "nmap -p445 --script smb-security-mode <TARGET>"
         notes: "Check output for 'Message signing: disabled' or similar"
 
       - title: "Test NTLM relay attack feasibility"
         commands:
-          - "responder -I <interface> -A"
+          - "responder -I <INTERFACE> -A"
           - "ntlmrelayx.py -tf targets.txt -smb2support"
         notes: "Attempt to relay captured NTLM authentication"
 
       - title: "Enumerate accessible shares"
         commands:
-          - "netexec smb <target> -u <username> -p <password> --shares"
-          - "smbclient -L //<target> -U <username>"
+          - "netexec smb <TARGET> -u <USERNAME> -p <PASSWORD> --shares"
+          - "smbclient -L //<TARGET> -U <USERNAME>"
         notes: "List available SMB shares and permissions"
 
     references:
@@ -92,7 +92,7 @@ workflows:
     steps:
       - title: "Check request and response types"
         commands:
-          - "hping3 IP_address --icmp --icmp-ts -V"
+          - "hping3 <TARGET> --icmp --icmp-ts -V"
         notes: "You're looking to see if the ICMP timestamp request was coded as message type 13 and the subsequent timestamp response was coded as message type 14"
 
       - title: "Now convert an hping3's IMCP timestamp response into human readable time using https://github.com/DefensiveOrigins/icmp-timestamp."
@@ -108,11 +108,11 @@ workflows:
     steps:
       - title: "Enumerate SNMP info against the internal scope"
         commands:
-          - "sudo nmap -sU -sV -p161 -T4 --script \"snmp* and not snmp-brute\" IP_address"
+          - "sudo nmap -sU -sV -p161 -T4 --script \"snmp* and not snmp-brute\" <TARGET>"
       
       - title: "Specifically use snmp-brute to verify this issue and to check for additional commonly used SNMP community strings"
         commands:
-          - "sudo nmap -sU -sV -p161 -T4 --script snmp-brute IP_address"
+          - "sudo nmap -sU -sV -p161 -T4 --script snmp-brute <TARGET>"
 
       - title: "Also available to use..."
         commands:
@@ -132,7 +132,7 @@ workflows:
     steps:
       - title: "Enumerate the supported encryption protocol versions and cipher suites."
         commands:
-          - "sudo nmap -A --script=ssl-enum-ciphers,ssl-cert,ssl-date IP_address"
+          - "sudo nmap -A --script=ssl-enum-ciphers,ssl-cert,ssl-date <TARGET>"
         notes: "SSLv2, SSLv3, TLSv1.0, and TLSv1.1 are deprecated and should be disabled. Weak/medium-strength, anonymous, and EXPORT cipher suites must be removed. Check for specific vulnerabilities: POODLE (plugin 78479) exploits SSLv3 CBC padding; FREAK (65821, 83875) and Logjam (81606, 83738, 89058) exploit weak EXPORT key exchange. Prefer TLSv1.2+ with strong cipher suites only."
 
     references:
@@ -156,12 +156,12 @@ workflows:
     steps:
       - title: "Verify Telnet usage."
         commands:
-          - "sudo nmap -A -p 23 IP_address"
+          - "sudo nmap -A -p 23 <TARGET>"
 
       - title: "Intercept cleartext traffic for proof-of-concept."
         commands:
-          - "tcpdump tcp port 23 and dst IP_address and src 0.0.0.0 -i eth0 -w telnet.pcap -tttt"
-          - "telnet IP_address 23"
+          - "tcpdump tcp port 23 and dst <TARGET> and src 0.0.0.0 -i eth0 -w telnet.pcap -tttt"
+          - "telnet <TARGET> 23"
         notes: "Start up tcpdump to capture packets then trigger a telnet connect. Enter any credentials you want. We're just trying to prove the capturing."
 
       - title: "Wireshark Analysis"
@@ -181,7 +181,7 @@ workflows:
       - title: "Run the POC script & connect to the proxy server you started"
         commands:
           - "python terrapin-poc.py"
-          - "ssh root@IP_address -p 2222"
+          - "ssh root@<TARGET> -p 2222"
         notes: "In the Python script output, a successful exploitation is evident when the two SSH output lines below are missing.\n\ndebug1: SSH2_MSG_EXT_INFO received\ndebug1: kex_input_ext_info: server-sig-algs=<rsa-sha2-256,rsa-sha2-512>"
 
 
@@ -197,24 +197,24 @@ workflows:
     steps:
       - title: "Enumerate SSH service version, supported algorithms, and accepted auth methods"
         commands:
-          - "sudo nmap -p 22 --script ssh2-enum-algos,ssh-hostkey,sshv1,ssh-auth-methods <target>"
+          - "sudo nmap -p 22 --script ssh2-enum-algos,ssh-hostkey,sshv1,ssh-auth-methods <TARGET>"
         notes: "Look for CBC ciphers, weak KEX algorithms (diffie-hellman-group1-sha1, diffie-hellman-group14-sha1), weak MACs (hmac-md5, hmac-sha1-96), SSHv1 support, and accepted authentication methods (password, publickey, keyboard-interactive)."
 
       - title: "Run ssh-audit for a comprehensive algorithm audit"
         commands:
-          - "ssh-audit <target>"
-          - "ssh-audit <target> -p <port>"
+          - "ssh-audit <TARGET>"
+          - "ssh-audit <TARGET> -p <PORT>"
         notes: "ssh-audit provides color-coded output for deprecated/weak algorithms. Available at https://github.com/jtesta/ssh-audit"
 
       - title: "Verify password authentication is accepted"
         commands:
-          - "ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no <user>@<target>"
-          - "sudo nmap -p 22 --script ssh-brute --script-args userdb=users.txt,passdb=passwords.txt <target>"
+          - "ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no <USERNAME>@<TARGET>"
+          - "sudo nmap -p 22 --script ssh-brute --script-args userdb=users.txt,passdb=passwords.txt <TARGET>"
         notes: "Confirm that password auth is accepted (relevant to plugin 90317). Brute force only with explicit authorization."
 
       - title: "Check for additional weak configurations with Metasploit"
         commands:
-          - "msfconsole -q -x 'use auxiliary/scanner/ssh/ssh_enumusers; set RHOSTS <target>; run'"
+          - "msfconsole -q -x 'use auxiliary/scanner/ssh/ssh_enumusers; set RHOSTS <TARGET>; run'"
         notes: "Optional: enumerate valid usernames if the service is vulnerable to user enumeration."
 
     references:

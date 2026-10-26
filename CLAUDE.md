@@ -57,7 +57,7 @@ Follow Python best practices (PEP 8, type hints, docstrings, SOLID, DRY, paramet
 
 ### Schema Management
 - Database uses normalized structure created on initialization
-- Schema version tracked in `database.py:SCHEMA_VERSION` (current: 3), written to `PRAGMA user_version`; `initialize_database()` raises `SchemaVersionError` for older DBs (CLI prints re-import instructions to stderr)
+- Schema version tracked in `database.py:SCHEMA_VERSION` (current: 4), written to `PRAGMA user_version`; `initialize_database()` raises `SchemaVersionError` for older DBs (CLI prints re-import instructions to stderr)
 - Future schema changes will include migration system when needed
 - Always test schema changes with fresh database before release
 
@@ -133,6 +133,8 @@ cerno scan list                   # List all scans (compact; --wide = all severi
 cerno scan delete <scan_name>     # Delete scan from database
 cerno scan compare <s1> <s2>      # Compare findings between two scans
 cerno scan history <host_ip>      # Show vulnerability timeline for a host
+cerno creds list                  # List NetExec credential refs (never shows secret values)
+cerno creds reveal <ref>          # Reveal a credential's cleartext (SENSITIVE, local, audited)
 cerno mcp                         # Run the MCP server over stdio (launched by an MCP client)
 ```
 
@@ -192,7 +194,7 @@ pyright cerno_pkg/tui.py
 Cerno uses a **fully normalized database architecture** with SQLite as the source of truth:
 
 - **Location**: `~/.cerno/cerno.db` (global, cross-scan)
-- **Schema version**: Tracked in `database.py:SCHEMA_VERSION` (current: 3; v2/v3 renamed review states — shipped in 1.7.0 as a minor bump by explicit user decision)
+- **Schema version**: Tracked in `database.py:SCHEMA_VERSION` (current: 4; v2/v3 renamed review states — shipped in 1.7.0 as a minor bump by explicit user decision; v4 added the execution→data loop tables/views — major bump, forces re-import)
 - **Schema approach**: Normalized structure created on initialization
 - `.txt` files are **reference only** - all data lives in database
 
@@ -217,7 +219,24 @@ cerno_pkg/
   │                        # Single-scan: Finding.get_by_scan_with_plugin(); Multi-scan: Finding.get_by_scan_ids_merged()
   │                        # Claude: ClaudeConversationTurn (per-finding), ClaudeAggregateConversationTurn (scope-level)
   ├── nessus_import.py     # .nessus XML parsing and database import
+  ├── nmap_parse.py        # Pure nmap XML parser (open ports + NSE vuln verdicts; no DB)
+  ├── ingest.py            # Result ingestion: execution output -> structured facts
+  │                        # ingest_execution() (nmap XML -> verified_ports/nse_script_results;
+  │                        # nxc workspace re-read -> nxc_flag_observations); idempotent per
+  │                        # execution_id, forgiving of empty/partial/failed runs
   ├── parsing.py           # Host:port parsing (canonical parser, ParsedHostsPorts model)
+  ├── query.py             # Composite finding query (FindingQuery + run_finding_query)
+  │                        # AND-combined, parameterized predicate set shared by MCP
+  │                        # query_findings and (future) TUI finding-list filtering
+  ├── workflow_prep.py     # prepare_workflow(): fill a mapped workflow's placeholders
+  │                        # (canonical <TARGET>/<PORT>/<USERNAME>/<PASSWORD>/<INTERFACE>
+  │                        # + variant map) from a finding's hosts/ports/@cred placeholder
+  │                        # and classify each command executable-vs-manual (exec_chain
+  │                        # is_runnable + PATH-installed check)
+  ├── batch.py             # Scoped batch: plan_batch (reviewable dry run) + async
+  │                        # execute_batch over a FindingQuery; per-finding command
+  │                        # generation (nmap/netexec/msf/workflow) + skip_done,
+  │                        # runs via the job registry (bounded concurrency)
   ├── analysis.py          # Cross-file comparison, superset analysis
   ├── claude_assistant.py  # Claude Assistant integration
   │                        # check_claude_available(), build_finding_context(), run_exchange()
@@ -225,16 +244,33 @@ cerno_pkg/
   │                        # load_skill_prompt() (loads .claude/skills/cerno-assistant.md or fallback)
   ├── mcp_server/          # MCP server (BETA) — `cerno mcp` command, stdio transport
   │   ├── __init__.py      #   build_server(), main()
+  │   ├── jobs.py          #   In-memory async job registry (start/status/cancel/
+  │   │                    #   list_jobs); cancellable ops.start_process runner
+  │   │                    #   (killpg); shares server._run_and_record for logging/ingest
   │   └── server.py        #   Pure tool_*/resource_*/prompt_* adapters (testable w/ conn)
   │                        #   + FastMCP registration. Read/generate tools, resources
   │                        #   (cerno:// URIs incl. config + host/{ip}/nxc), and prompts
   │                        #   always on; NetExec enrichment (get_host_nxc/
   │                        #   list_nxc_credentials) + find_affected_by_cve + read_artifact +
   │                        #   get_config + search_findings (all scans) + top_hosts +
-  │                        #   get_capabilities + get_finding_artifacts also always on.
+  │                        #   get_capabilities + get_finding_artifacts + get_finding_verdict +
+  │                        #   list_workflow_gaps (findings with NO mapped workflow, worst-first;
+  │                        #   complement of query_findings has_workflow) + get_notes (read
+  │                        #   append-only findings.review_notes as entries+raw)
+  │                        #   also always on. Resources add cerno://finding/{id}/verdict and
+  │                        #   cerno://finding/{id}/results.
+  │                        #   query_findings (composite AND-predicates:
+  │                        #   severity/verdict/cve/port/service/host/review_state/
+  │                        #   has_workflow/has_metasploit/plugin_name/scan_ids; cve exact-
+  │                        #   confirmed, has_workflow via mapper; shared cerno_pkg/query.py)
+  │                        #   also always on.
   │                        #   list_findings supports merged/limit/offset; get_finding_detail
-  │                        #   caps per-host output via max_hosts. execute_command gated by
-  │                        #   mcp_allow_execution (async w/ progress heartbeats; common
+  │                        #   caps per-host output via max_hosts. execute_command +
+  │                        #   async job tools (start_execution/get_execution_status/
+  │                        #   cancel_execution/list_jobs via mcp_server/jobs.py) gated by
+  │                        #   mcp_allow_execution; plan_batch always on + execute_batch
+  │                        #   gated by mcp_allow_execution AND mcp_allow_batch (cerno_pkg/
+  │                        #   batch.py). (async w/ progress heartbeats; common
   │                        #   wrappers sudo/doas/proxychains4/env/nice/nohup/timeout/stdbuf/
   │                        #   setsid/ionice/time unwrapped (_EXEC_WRAPPERS), chain checked
   │                        #   against mcp_exec_denylist then target against mcp_exec_allowlist
@@ -243,8 +279,23 @@ cerno_pkg/
   │                        #   nmap runs (-oA present) register -oA artifacts via
   │                        #   ops.log_artifacts_for_nmap + record host_count/ports, and refuse
   │                        #   to overwrite existing -oA output; generate_* write unique
-  │                        #   _mcp/<fid>/run-XXXX/ dirs so runs don't clobber);
-  │                        #   set_review_state/import_nessus gated by mcp_allow_mutations.
+  │                        #   _mcp/<fid>/run-XXXX/ dirs so runs don't clobber; auto-ingests
+  │                        #   best-effort when mutations also on; resolves @cred:<ref>@
+  │                        #   placeholders server-side (gated by mcp_allow_cred_injection),
+  │                        #   masks command_text + scrubs stdout/stderr);
+  │                        #   set_review_state/add_note/import_nessus/ingest_results/
+  │                        #   set_finding_verdict gated by mcp_allow_mutations (add_note appends
+  │                        #   a timestamped note to review_notes, never clobbering prior notes;
+  │                        #   set_review_state notes now append too). generate_netexec_cmd takes
+  │                        #   use_credential=<ref> (placeholder injection via nxc_db;
+  │                        #   ref->spec resolved by shared _resolve_credential_ref).
+  │                        #   prepare_workflow (always on) fills a finding's mapped
+  │                        #   workflow via cerno_pkg/workflow_prep.py and marks each
+  │                        #   command executable/manual (allow/deny glob + is_runnable
+  │                        #   shared through exec_chain.matches_any).
+  │                        #   reveal_credential gated by mcp_allow_cred_reveal (returns
+  │                        #   cleartext; audited via cerno_pkg/creds.py, shared with the
+  │                        #   `cerno creds` CLI).
   │                        #   Core read tools declare TypedDict output schemas. stdout is the
   │                        #   JSON-RPC channel, so adapters never print (exec uses
   │                        #   ops.run_command_captured)
@@ -340,6 +391,14 @@ cerno_pkg/
   - Keyed to `finding_id`; each row is one turn (role: user|assistant, content, created_at)
   - Used by `browse_claude_chat()` / `ClaudeConversationTurn` model
 - `claude_aggregate_conversations`: Scope-level Claude Assistant chat history (no FK — free-form context_key)
+
+**Execution→Data Loop Tables** (schema v4):
+- `verdict_types` / `nse_verdicts` / `port_states`: lookup tables (seeded in init)
+- `verified_ports`: live-verified open ports from a tool run (FK `execution_id`→tool_executions CASCADE; idempotent per execution)
+- `nse_script_results`: NSE script results + vuln verdicts (FK `execution_id` CASCADE; `port_number` NULL = host script)
+- `nxc_flag_observations`: point-in-time nxc security-flag snapshot (FK `execution_id` CASCADE); creds/shares stay live-read via `nxc_db.py` (not duplicated)
+- `finding_verdicts`: append-only verification verdict history (FK `finding_id`→findings CASCADE); current = latest `created_at`
+- `verdict_evidence`: evidence backing a verdict (FK `verdict_id` CASCADE; `execution_id`/`artifact_id`/`nse_result_id` SET NULL)
   - context_key format: `"sev_menu:{scan_ids}"` or `"findings_list:{scan_ids}:{scope_hash}"`
   - Used by `browse_claude_chat_aggregate()` / `ClaudeAggregateConversationTurn` model
 
@@ -350,6 +409,9 @@ cerno_pkg/
 - `v_host_findings`: Cross-scan host analysis
 - `v_artifacts_with_types`: Artifacts with type names
 - `v_http_services`: HTTP/HTTPS services per scan (identifies web services by svc_name heuristics)
+- `v_finding_current_verdict`: latest verification verdict per finding (joined to `verdict_types`)
+- `v_nse_results_with_verdict`: `nse_script_results` with resolved verdict label
+- `v_finding_verified_stats`: per-finding verified_port/nse_result/vulnerable counts (via `tool_executions.finding_id`)
 
 **Schema changes**: Update `database.py:SCHEMA_SQL_TABLES` and `SCHEMA_SQL_VIEWS`. Test with fresh database before release.
 
@@ -517,14 +579,21 @@ Only after user confirms the changelog content:
 - `debug_logging` - Enable DEBUG level logging (default: `false`)
 - `no_color` - Disable ANSI color output (default: `false`)
 - `default_tool` - Pre-select tool in menu (e.g., `nmap`, `netexec`)
-- `default_netexec_protocol` - Default protocol for NetExec (e.g., `smb`, `ssh`)
-- `nmap_default_profile` - Default NSE profile name
-- `custom_workflows_path` - Path to custom workflows YAML file
+- `default_netexec_protocol` - Default protocol for NetExec (e.g., `smb`, `ssh`); MCP `generate_netexec_cmd` / bare `"netexec"` batch strategy use it when `protocol` is omitted (else `smb`)
+- `nmap_default_profile` - Default NSE profile name; MCP `generate_nmap_cmd` uses its scripts when `nse_option` is omitted (`""` = none), and its UDP need when `udp` is omitted (`tools.find_nse_profile()`)
+- `custom_workflows_path` - Path to custom workflows YAML file; merged over bundled workflows everywhere in the MCP via `workflow_mapper.build_workflow_mapper(config)` (also the default in `query.run_finding_query` / `workflow_prep.prepare_workflow`)
 - `claude_assistant_enabled` - Enable/disable Claude Assistant (default: `false`, opt-in). Pressing `[A]` while installed-but-disabled shows a data-path disclosure (`claude_assistant.CONSENT_DISCLOSURE`) and persists consent via `claude_assistant.ensure_enabled()`; `claude_assistant.claude_enabled(config)` is the single availability gate. `[A]` is hidden only when `claude` is not on PATH
 - `mcp_allow_execution` - Allow the `cerno mcp` server to execute tool commands via `execute_command` (default: `false`)
-- `mcp_allow_mutations` - Allow the `cerno mcp` server to mutate state (`set_review_state`, `import_nessus`) (default: `false`)
+- `mcp_allow_mutations` - Allow the `cerno mcp` server to mutate state (`set_review_state`, `import_nessus`, `ingest_results`, `set_finding_verdict`) (default: `false`)
+- `mcp_allow_cred_injection` - Allow `execute_command` to resolve `@cred:<ref>@` placeholders to real NetExec secrets server-side at run time (default: `false`). Independent of `mcp_allow_execution`; the resolved secret is never logged, returned, or written to an artifact (masked in `command_text`, scrubbed from stdout/stderr **and from registered `--log`/`-oA` artifact files**)
+- `mcp_allow_cred_reveal` - Allow the MCP `reveal_credential` tool to return a credential's **cleartext** secret to the caller (default: `false`). Strictly more sensitive than injection (reveal hands the secret back), gated independently — injection being on does NOT enable reveal. The local `cerno creds reveal <ref>` CLI works regardless of this flag; every reveal is audited to `tool_executions` (`tool_name='cred_reveal'`, ref only, never the value)
 - `mcp_exec_allowlist` - Glob patterns for the binaries the MCP `execute_command` tool may run, matched on the basename of the target binary after unwrapping `sudo`/`proxychains4` (default: `config.DEFAULT_MCP_EXEC_ALLOWLIST` = `nmap, nxc, netexec, msfconsole`). `*` = any binary not denied; **empty list = deny all**. Only consulted when `mcp_allow_execution` is on. Set via CSV: `cerno config set mcp_exec_allowlist "nmap,nxc"`
 - `mcp_exec_denylist` - Glob patterns for binaries `execute_command` may never run, checked against every binary in the chain including wrappers; always wins over the allowlist (default: `config.DEFAULT_MCP_EXEC_DENYLIST`, destructive commands like `rm, dd, mkfs*`). A guardrail, not a security boundary. Both list keys go through `config.coerce_str_list()` on load and `config set`, so YAML scalars and CSV strings become lists
+- `mcp_allow_batch` - Allow the MCP `execute_batch` tool to RUN the generated command for every finding matched by a query (default: `false`). `plan_batch` (the reviewable dry run) is always available; `execute_batch` is registered only when BOTH `mcp_allow_execution` and `mcp_allow_batch` are on, and every command still passes `_check_exec_policy`, the cred gate, and the per-command timeout — this flag only authorizes the fan-out across a query
+- `mcp_batch_concurrency` - Max commands `execute_batch` runs concurrently (default: `1` = sequential; keep small, 2-3, since nmap/nxc are already internally parallel). Implemented via a shared semaphore gate on the job registry
+- `mcp_batch_timeout` - Per-command timeout in seconds for each `execute_batch` command (default: `300`), clamped to the same [1, 3600] ceiling as `execute_command`
+
+**MCP config contract**: the MCP server honors every config key with precedence explicit tool arg > config > hardcoded default (`default_page_size` → default `limit` for `list_findings`/`query_findings`/`search_findings`, min 8, else 500), except the TUI-only keys in `config.MCP_NOT_APPLICABLE_KEYS` (`no_color`, `term_override`, `default_tool`, `claude_assistant_enabled`, `pivot_interface`, `pivot_http_port`, `top_ports_count`). `tests/test_mcp_config.py` fails when a new key is added without classifying it. Tests isolate `config.get_config_path()` to a temp file (autouse `conftest.reset_environment`), so the developer's real config never leaks in.
 
 **NSE profiles** (`constants.py:NSE_PROFILES`): Pre-configured nmap script sets (SMB, SSL, HTTP, etc.)
 

@@ -41,6 +41,7 @@ class ExportResult:
         scan_name: Name of the scan (derived from .nessus filename)
         severities: Mapping of severity level to plugin count
     """
+
     plugins_exported: int
     total_hosts: int
     scan_name: str
@@ -61,6 +62,7 @@ class HostMetadata:
         fqdn: FQDN from Nessus discovery (from host-fqdn tag)
         reverse_dns: Reverse DNS result (from host-rdns tag)
     """
+
     host_ip: str
     scan_target: str
     netbios_name: Optional[str] = None
@@ -84,7 +86,9 @@ def is_ip(entry: str) -> bool:
         return False
 
 
-def sort_key_ip(entry: str) -> Tuple[ipaddress.IPv4Address | ipaddress.IPv6Address, int]:
+def sort_key_ip(
+    entry: str,
+) -> Tuple[ipaddress.IPv4Address | ipaddress.IPv6Address, int]:
     """Generate sort key for IP address entries.
 
     Sorts by IP address (natural ordering) then port number.
@@ -161,8 +165,7 @@ def sanitize_filename(name: str, max_len: int = 80) -> str:
         Filesystem-safe string with invalid chars replaced by underscores
     """
     safe = "".join(
-        c if (c.isalnum() or c in "-_ .") else "_"
-        for c in (name or "").strip()
+        c if (c.isalnum() or c in "-_ .") else "_" for c in (name or "").strip()
     )
     safe = "_".join(safe.split())  # Collapse multiple spaces
 
@@ -262,10 +265,12 @@ def _parse_host_entry(host_entry: str) -> tuple[str, Optional[int]]:
     return scan_target, port
 
 
-def _build_index_stream(
-    filename: Path,
-    include_ports: bool = True
-) -> Tuple[Dict[str, dict], Dict[str, Set[Tuple[str, str]]], Dict[str, HostMetadata], Set[Tuple[str, str, str, str]]]:
+def _build_index_stream(filename: Path, include_ports: bool = True) -> Tuple[
+    Dict[str, dict],
+    Dict[str, Set[Tuple[str, str]]],
+    Dict[str, HostMetadata],
+    Set[Tuple[str, str, str, str]],
+]:
     """Parse .nessus XML file and build plugin index with streaming.
 
     Memory-efficient single-pass parsing using iterparse with element clearing.
@@ -339,7 +344,7 @@ def _build_index_stream(
                     if cve_elem.text:
                         cve_text = cve_elem.text.strip().upper()
                         # Validate CVE format: CVE-YYYY-NNNNN
-                        if re.match(r'^CVE-\d{4}-\d{4,}$', cve_text):
+                        if re.match(r"^CVE-\d{4}-\d{4,}$", cve_text):
                             cve_list.append(cve_text)
                 # Sort and deduplicate CVEs
                 cves: list[str] | None = sorted(set(cve_list)) if cve_list else None
@@ -353,7 +358,9 @@ def _build_index_stream(
                         if name:
                             msf_name_list.append(name)
                 # Sort and deduplicate module names
-                msf_names: list[str] | None = sorted(set(msf_name_list)) if msf_name_list else None
+                msf_names: list[str] | None = (
+                    sorted(set(msf_name_list)) if msf_name_list else None
+                )
 
                 # Extract plugin_output from XML
                 plugin_output_elem = elem.find("plugin_output")
@@ -387,7 +394,9 @@ def _build_index_stream(
                     if msf_names:
                         existing_names = existing.get("msf_names") or []
                         merged_names = list(set(existing_names + msf_names))
-                        existing["msf_names"] = sorted(merged_names) if merged_names else None
+                        existing["msf_names"] = (
+                            sorted(merged_names) if merged_names else None
+                        )
                     # Merge CVEs (deduplicate)
                     if cves:
                         existing_cves = existing.get("cves") or []
@@ -423,7 +432,7 @@ def _build_index_stream(
                         scan_target=current_host,
                         netbios_name=current_host_properties.get("netbios-name"),
                         fqdn=current_host_properties.get("host-fqdn"),
-                        reverse_dns=current_host_properties.get("host-rdns")
+                        reverse_dns=current_host_properties.get("host-rdns"),
                     )
 
                 elem.clear()
@@ -449,7 +458,7 @@ def import_nessus_file(
     *,
     scan_name: Optional[str] = None,
     include_ports: bool = True,
-    use_database: bool = True
+    use_database: bool = True,
 ) -> ExportResult:
     """Import Nessus scan from .nessus file into database.
 
@@ -479,7 +488,9 @@ def import_nessus_file(
     log_info(f"Importing Nessus scan from {nessus_file}")
 
     # Parse .nessus file
-    plugins, plugin_hosts, host_metadata, service_entries = _build_index_stream(nessus_file, include_ports)
+    plugins, plugin_hosts, host_metadata, service_entries = _build_index_stream(
+        nessus_file, include_ports
+    )
 
     if not plugins:
         log_info("No plugins with findings found in .nessus file")
@@ -488,7 +499,7 @@ def import_nessus_file(
             plugins_exported=0,
             total_hosts=0,
             scan_name=scan_name or nessus_file.stem,
-            severities={}
+            severities={},
         )
 
     # Prepare export directory structure
@@ -521,7 +532,9 @@ def import_nessus_file(
         total_hosts += len(hosts)
         severities[meta["severity_int"]] = severities.get(meta["severity_int"], 0) + 1
 
-    log_info(f"Database-only import complete: {len(plugins)} plugins, {total_hosts} host entries (no files created)")
+    log_info(
+        f"Database-only import complete: {len(plugins)} plugins, {total_hosts} host entries (no files created)"
+    )
 
     # Write to database if enabled
     if use_database:
@@ -532,18 +545,26 @@ def import_nessus_file(
             plugins=plugins,
             plugin_hosts=plugin_hosts,
             host_metadata=host_metadata,
-            service_entries=service_entries
+            service_entries=service_entries,
         )
+        # The host inventory just changed; invalidate the cached NetExec manager so
+        # the next get_nxc_manager() rebuilds against the new hosts (otherwise a
+        # scan imported into a running MCP server stays invisible to nxc enrichment
+        # until restart). Safe/idempotent when the manager was never built.
+        from .nxc_db import reset_nxc_manager
+
+        reset_nxc_manager()
 
     return ExportResult(
         plugins_exported=len(plugins),
         total_hosts=total_hosts,
         scan_name=scan_name,
-        severities=severities
+        severities=severities,
     )
 
 
 # ========== Database Integration ==========
+
 
 def _write_to_database(
     nessus_file: Path,
@@ -576,14 +597,16 @@ def _write_to_database(
 
         with db_transaction() as conn:
             # Create or update scan
-            nessus_hash = compute_file_hash(nessus_file) if nessus_file.exists() else None
+            nessus_hash = (
+                compute_file_hash(nessus_file) if nessus_file.exists() else None
+            )
 
             scan = Scan(
                 scan_name=scan_name,
                 nessus_file_path=str(nessus_file.resolve()),
                 nessus_file_hash=nessus_hash,
                 export_root=str(base_scan_dir.parent),
-                created_at=now_iso()
+                created_at=now_iso(),
             )
 
             # Check if scan exists
@@ -610,7 +633,9 @@ def _write_to_database(
 
             # ========== Step 1: Collect unique hosts and ports from ALL plugins ==========
             # Use (ip_address, scan_target) as composite key for hosts
-            unique_hosts: Dict[Tuple[str, str], HostMetadata] = {}  # (ip, target) -> metadata
+            unique_hosts: Dict[Tuple[str, str], HostMetadata] = (
+                {}
+            )  # (ip, target) -> metadata
             unique_ports: Set[int] = set()
 
             for plugin_id_str, meta in plugins.items():
@@ -639,8 +664,7 @@ def _write_to_database(
                         else:
                             # Create metadata from scan_target (IP-targeted scan)
                             unique_hosts[composite_key] = HostMetadata(
-                                host_ip=ip_address,
-                                scan_target=scan_target
+                                host_ip=ip_address, scan_target=scan_target
                             )
 
                     if port:
@@ -654,23 +678,25 @@ def _write_to_database(
                     # Determine scan_target_type
                     scan_target_type = detect_host_type(scan_tgt)
                     # Convert 'hostname' to 'fqdn' for the new schema
-                    if scan_target_type == 'hostname':
-                        scan_target_type = 'fqdn'
+                    if scan_target_type == "hostname":
+                        scan_target_type = "fqdn"
 
-                    host_records.append((
-                        ip_addr,
-                        scan_tgt,
-                        scan_target_type,
-                        meta_entry.netbios_name,
-                        meta_entry.fqdn,
-                        meta_entry.reverse_dns
-                    ))
+                    host_records.append(
+                        (
+                            ip_addr,
+                            scan_tgt,
+                            scan_target_type,
+                            meta_entry.netbios_name,
+                            meta_entry.fqdn,
+                            meta_entry.reverse_dns,
+                        )
+                    )
 
                 conn.executemany(
                     """INSERT OR IGNORE INTO hosts
                        (ip_address, scan_target, scan_target_type, netbios_name, fqdn, reverse_dns)
                        VALUES (?, ?, ?, ?, ?, ?)""",
-                    host_records
+                    host_records,
                 )
 
             # ========== Step 3: Bulk insert ports ==========
@@ -678,7 +704,7 @@ def _write_to_database(
                 log_info(f"Inserting {len(unique_ports)} unique ports...")
                 conn.executemany(
                     "INSERT OR IGNORE INTO ports (port_number) VALUES (?)",
-                    [(p,) for p in unique_ports]
+                    [(p,) for p in unique_ports],
                 )
 
             # ========== Step 4: Build host_id lookup map using composite key ==========
@@ -695,7 +721,12 @@ def _write_to_database(
             if service_entries:
                 log_info(f"Inserting {len(service_entries)} service mappings...")
                 service_records = []
-                for scan_target_entry, port_str, protocol_val, svc_name_val in service_entries:
+                for (
+                    scan_target_entry,
+                    port_str,
+                    protocol_val,
+                    svc_name_val,
+                ) in service_entries:
                     # Resolve scan_target to host_id using metadata
                     meta_entry = host_metadata.get(scan_target_entry)
                     if meta_entry:
@@ -712,16 +743,16 @@ def _write_to_database(
                         continue
 
                     if host_id and port_int:
-                        service_records.append((
-                            scan_id, host_id, port_int, protocol_val, svc_name_val
-                        ))
+                        service_records.append(
+                            (scan_id, host_id, port_int, protocol_val, svc_name_val)
+                        )
 
                 if service_records:
                     conn.executemany(
                         """INSERT OR IGNORE INTO host_services
                            (scan_id, host_id, port_number, protocol, svc_name)
                            VALUES (?, ?, ?, ?, ?)""",
-                        service_records
+                        service_records,
                     )
 
             # ========== Step 5: Insert plugins and plugin files ==========
@@ -743,7 +774,7 @@ def _write_to_database(
                     cvss2_score=meta.get("cvss2"),
                     metasploit_names=meta.get("msf_names"),
                     cves=meta.get("cves"),
-                    plugin_url=f"https://www.tenable.com/plugins/nessus/{plugin_id}"
+                    plugin_url=f"https://www.tenable.com/plugins/nessus/{plugin_id}",
                 )
                 plugin.save(conn)
 
@@ -755,7 +786,9 @@ def _write_to_database(
                 ports_for_plugin = set()
                 for host_entry_data in hosts_data:
                     # Unpack tuple to get host_entry string (ignore plugin_output for counting)
-                    host_entry, _ = host_entry_data  # Extract host:port, ignore plugin_output
+                    host_entry, _ = (
+                        host_entry_data  # Extract host:port, ignore plugin_output
+                    )
 
                     # Now parse host:port as before
                     host, port = _parse_host_entry(host_entry)
@@ -787,7 +820,9 @@ def _write_to_database(
                     composite_key = (ip_address, scan_target)
                     host_id = host_id_map.get(composite_key)
                     if host_id:
-                        junction_records.append((finding_id, host_id, port, plugin_output))
+                        junction_records.append(
+                            (finding_id, host_id, port, plugin_output)
+                        )
 
                 # Bulk insert junction records
                 if junction_records:
@@ -797,11 +832,13 @@ def _write_to_database(
                             finding_id, host_id, port_number, plugin_output
                         ) VALUES (?, ?, ?, ?)
                         """,
-                        junction_records
+                        junction_records,
                     )
 
         elapsed = time.time() - start_time
-        log_info(f"Database updated: {len(plugins)} plugins, {scan_id=} (took {elapsed:.1f}s)")
+        log_info(
+            f"Database updated: {len(plugins)} plugins, {scan_id=} (took {elapsed:.1f}s)"
+        )
 
     except Exception as e:
         log_error(f"Failed to write to database: {e}")

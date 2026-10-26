@@ -256,6 +256,73 @@ def test_set_review_state_invalid_raises(seeded, state):
 
 
 # ---------------------------------------------------------------------------
+# Workflow gaps
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_list_workflow_gaps_returns_unmapped_worst_first(seeded):
+    # Plugins 100 (Critical+MSF) and 200 (Low) are synthetic -- neither is in the
+    # bundled workflow map, so both are gaps, worst-first.
+    rows = mcp.tool_list_workflow_gaps(scan_ids=[seeded["scan_id"]], conn=seeded["conn"])
+    plugin_ids = [r["plugin_id"] for r in rows]
+    assert plugin_ids == [100, 200]
+    assert rows[0]["has_metasploit"] is True
+    assert rows[0]["scan_name"] == "engagement"
+
+
+@pytest.mark.integration
+def test_list_workflow_gaps_severity_min_filters(seeded):
+    rows = mcp.tool_list_workflow_gaps(
+        scan_ids=[seeded["scan_id"]], severity_min=4, conn=seeded["conn"]
+    )
+    assert [r["plugin_id"] for r in rows] == [100]
+
+
+# ---------------------------------------------------------------------------
+# Notes (append-only review_notes)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_get_notes_empty_when_none(seeded):
+    res = mcp.tool_get_notes(seeded["f1"], conn=seeded["conn"])
+    assert res == {"finding_id": seeded["f1"], "entries": [], "raw": None}
+
+
+@pytest.mark.integration
+def test_add_note_appends_and_round_trips(seeded):
+    mcp.tool_add_note(seeded["f1"], "first", conn=seeded["conn"])
+    res = mcp.tool_add_note(seeded["f1"], "second", conn=seeded["conn"])
+    # add_note returns the fresh get_notes read with both entries.
+    assert res["finding_id"] == seeded["f1"]
+    assert len(res["entries"]) == 2
+    assert "first" in res["entries"][0]
+    assert "second" in res["entries"][1]
+    # Persisted.
+    reread = mcp.tool_get_notes(seeded["f1"], conn=seeded["conn"])
+    assert reread["entries"] == res["entries"]
+
+
+@pytest.mark.integration
+def test_set_review_state_notes_append_not_clobber(seeded):
+    mcp.tool_add_note(seeded["f1"], "manual note", conn=seeded["conn"])
+    mcp.tool_set_review_state(
+        seeded["f1"], "in_progress", notes="review note", conn=seeded["conn"]
+    )
+    entries = mcp.tool_get_notes(seeded["f1"], conn=seeded["conn"])["entries"]
+    assert len(entries) == 2
+    assert "manual note" in entries[0]
+    assert "review note" in entries[1]
+
+
+@pytest.mark.integration
+def test_get_notes_unknown_finding_raises(seeded):
+    with pytest.raises(ValueError, match="No finding"):
+        mcp.tool_get_notes(999999, conn=seeded["conn"])
+
+
+# ---------------------------------------------------------------------------
 # Execution
 # ---------------------------------------------------------------------------
 

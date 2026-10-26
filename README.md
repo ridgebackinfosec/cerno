@@ -137,9 +137,9 @@ cerno config reset                   # Reset to defaults (creates backup)
 
 **Proxychains4 proxy settings:**
 ```bash
-cerno config set proxychains_enabled true        # Enable proxy routing (default: false)
-cerno config set proxychains_host 127.0.0.1      # SOCKS5 proxy host
-cerno config set proxychains_port 9000           # SOCKS5 proxy port (matches ssh -D default)
+cerno config set proxychains_enabled true        # Route tools through proxychains4 (default: false)
+cerno config set proxychains_host 127.0.0.1      # proxychains4 SOCKS5 proxy host
+cerno config set proxychains_port 9000           # proxychains4 SOCKS5 proxy port (matches ssh -D default)
 ```
 
 <p align="center">
@@ -294,24 +294,24 @@ Launch nmap NSE scripts, NetExec, Metasploit, or custom commands with placeholde
 
 *Run every tool through your pivot with a single toggle — no per-command proxy fiddling.*
 
-Route all tool executions (nmap, NetExec, Metasploit, custom commands) through a SOCKS5 proxy via `proxychains4`. Designed for use with an SSH `-D` tunnel.
+Route all tool executions (nmap, NetExec, Metasploit, custom commands) through a SOCKS5 proxy via `proxychains4` (proxychains-ng). Designed for use with an SSH `-D` tunnel. Cerno always invokes the `proxychains4` binary; the `proxychains_*` config key names are kept for compatibility and configure `proxychains4`.
 
 **Enable in config (persists across sessions):**
 ```bash
-cerno config set proxychains_enabled true
-cerno config set proxychains_host 127.0.0.1
+cerno config set proxychains_enabled true        # Route tools through proxychains4
+cerno config set proxychains_host 127.0.0.1      # proxychains4 SOCKS5 proxy host
 cerno config set proxychains_port 9000           # Matches: ssh -D 9000 user@host
 ```
 
 **Or override per session:**
 ```bash
-cerno review --proxy      # Force-enable for this session
-cerno review --no-proxy   # Force-disable for this session
+cerno review --proxy      # Force-enable proxychains4 routing for this session
+cerno review --no-proxy   # Force-disable proxychains4 routing for this session
 ```
 
 **Behavior when active:**
 - `[PROXY]` badge (magenta) shown in the review session status line
-- proxychains4 row appears in the startup tool availability table
+- proxychains4 row appears in the startup tool availability table with the detected proxychains-ng version (e.g. `v4.17 · SOCKS5 127.0.0.1:9000 (active)`)
 - Tools run as `proxychains4 -q` (quiet) so per-connection chatter doesn't clutter the terminal; a magenta `[PROXY] proxychains4 → SOCKS5 host:port` line and a `Running via proxychains4` spinner confirm routing
 - Set `cerno config set debug_logging true` to see full proxychains4 output when troubleshooting a tunnel
 - nmap automatically adds `-Pn` and drops `sudo` when proxied (ICMP and raw sockets don't traverse SOCKS)

@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<nmaprun scanner="nmap">
+  <host>
+    <status state="up"/>
+    <address addr="10.0.0.1" addrtype="ipv4"/>
+    <hostnames><hostname name="dc01" type="PTR"/></hostnames>
+    <ports>
+      <port protocol="tcp" portid="445">
+        <state state="open"/>
+        <service name="microsoft-ds"/>
+        <script id="smb-vuln-ms17-010" output="&#xa;VULNERABLE:&#xa;  State: VULNERABLE&#xa;"/>
+      </port>
+    </ports>
+  </host>
+</nmaprun>
