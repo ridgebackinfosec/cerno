@@ -2,20 +2,22 @@
 
 This is the shared implementation behind the MCP ``ingest_results`` tool and the
 best-effort auto-ingest inside ``execute_command``; it is also usable directly by
-the TUI. Everything written here is keyed to an ``execution_id`` (which carries
+TUI-logged runs (by execution_id). Everything written here is keyed to an ``execution_id`` (which carries
 ``executed_at`` and ``finding_id``), so live-verified facts are distinguishable
 from Nessus-imported data and ingestion is fully attributable.
 
-Ingestion is **idempotent**: re-ingesting the same ``execution_id`` deletes that
-execution's prior rows and rewrites them, so it never duplicates. It is also
+Ingestion is **idempotent**: re-ingesting the same ``execution_id`` reconciles
+that execution's rows in place (updating existing rows, keeping their primary
+keys, and pruning rows that no longer appear), so it never duplicates and
+verdict evidence pointing at those rows stays valid. It is also
 forgiving of partial/failed/empty runs — nothing to parse yields a summary with
 ``skipped_reason`` set rather than an error.
 
 - nmap: parses the execution's ``nmap_xml`` artifact into ``verified_ports`` and
   ``nse_script_results`` (reusing :mod:`cerno_pkg.nmap_parse`).
 - nxc/netexec: re-reads the NetExec workspace (via :mod:`cerno_pkg.nxc_db`) for
-  the execution's finding hosts and snapshots security flags into
-  ``nxc_flag_observations``. Credentials/shares are **not** duplicated here; they
+  the execution's finding hosts and snapshots every boolean host attribute
+  (signing, SMBv1, DC, spooler, NLA, …) into ``nxc_flag_observations``. Credentials/shares are **not** duplicated here; they
   stay live-read via ``nxc_db`` to avoid a divergent second store.
 """
 
@@ -375,7 +377,7 @@ def ingest_execution(
         summary = IngestSummary(execution_id=execution_id, tool_name=tool_name)
 
         # Dispatch on the real target binary, not the free-text tool_name label:
-        # the MCP server records every run as tool_name="mcp", so the actual tool
+        # MCP runs default to tool_name="mcp" ("mcp-batch" for batch), so the actual tool
         # must be resolved from command_text (unwrapping sudo/proxychains4/etc.).
         effective = tool_name if tool_name in (_NMAP_TOOLS | _NXC_TOOLS) else None
         if effective is None:

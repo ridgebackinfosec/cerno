@@ -313,8 +313,8 @@ def browse_workflow_groups(
     """
     Browse workflow groups and findings within selected workflow.
 
-    Displays a menu of workflow names with file counts, allows selection,
-    then shows findings for that workflow.
+    Displays a menu of workflow names with Unreviewed / In Progress / Done
+    counts, allows selection, then shows findings for that workflow.
 
     Args:
         scan: Primary Scan database object
@@ -324,6 +324,8 @@ def browse_workflow_groups(
         in_progress_total: List of findings viewed but not marked done
         done_total: List of findings marked done
         workflow_mapper: WorkflowMapper instance
+        config: Optional config (loaded if omitted)
+        session_start_time: Review session start, used for end-of-session statistics
         scan_label: Optional display label override (used for multi-scan breadcrumbs)
         scans: Optional full list of selected Scan objects for multi-scan support
     """
@@ -409,7 +411,7 @@ def browse_workflow_groups(
         )
 
         # Refresh workflow files from database to get updated review_state values
-        # This ensures the statistics display shows current counts after marking files reviewed
+        # This ensures the statistics display shows current counts after moving findings between statuses
         from cerno_pkg.models import Finding
 
         all_scan_ids = [s.scan_id for s in all_scans if s.scan_id is not None]
@@ -447,11 +449,11 @@ def browse_file_list(
     session_start_time: Optional[Any] = None,
 ) -> None:
     """
-    Browse and interact with file list (unified for severity and MSF modes).
+    Browse and interact with the findings list (unified for severity and MSF modes).
 
     Args:
         scans: List of Scan database objects (single-scan: pass [scan])
-        sev_dir: Severity directory for file operations (optional, derived if needed)
+        sev_dir: Severity display path, used for the preview and tool output paths
         severity_dir_filter: Severity directory filter for database query (e.g., "3_High")
         severity_label: Display label for the severity
         workflow_mapper: Optional workflow mapper for plugin workflows
@@ -462,6 +464,9 @@ def browse_file_list(
         is_msf_mode: If True, display severity labels in the Done list
         has_metasploit_filter: Optional filter for metasploit plugins
         plugin_ids_filter: Optional list of specific plugin IDs to include
+        severity_dirs_filter: Optional list of severity filters for a multi-severity view
+        config: Optional config (loaded if omitted)
+        session_start_time: Review session start, used for end-of-session statistics
     """
     from cerno_pkg.models import Finding
 
@@ -751,7 +756,7 @@ def browse_file_list(
 
             # Group filter with bold visual indicator
             if group_filter:
-                # Enhanced group filter with description (backward compatible)
+                # group_filter is (index, labels, description)
                 group_desc = (
                     group_filter[2]
                     if len(group_filter) > 2
@@ -1249,7 +1254,7 @@ def show_session_statistics(
         session_start_time: Datetime when session started
         in_progress_total: List of findings viewed but not marked done
         done_total: List of findings marked done
-        scan_dir: Scan directory for severity analysis
+        scan_dir: Scan directory (only used by the legacy no-scan_id fallback)
         scan_id: Optional scan ID for database queries
         scan_ids: Optional list of scan IDs for multi-scan queries (overrides scan_id)
     """
@@ -1290,7 +1295,8 @@ def show_session_statistics(
     if done_total:
         severity_counts = {}
 
-        # Use database if available, otherwise fall back to filesystem
+        # Database query (multi-scan or single-scan). The filesystem branch below
+        # is a legacy fallback, only reached when no scan_id is passed.
         if scan_ids and len(scan_ids) > 1:
             from cerno_pkg.database import db_transaction, query_all
 
@@ -1353,14 +1359,22 @@ def show_session_statistics(
             )
             sev_table.add_column("Severity Level", style=style_if_enabled("cyan"))
             sev_table.add_column(
-                "Moved to Done",
+                "Done",
                 justify="right",
                 style=style_if_enabled(REVIEW_STATE_STYLES[REVIEW_STATE_DONE]),
             )
 
-            for sev_label in sorted(severity_counts.keys()):
+            sev_order = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3, "Info": 4}
+            for sev_label in sorted(
+                severity_counts, key=lambda lbl: (sev_order.get(lbl, 99), lbl)
+            ):
                 sev_col = severity_cell(sev_label)
                 sev_table.add_row(sev_col, str(severity_counts[sev_label]))
+
+            # Counts cover every Done finding in the scan(s), not just this session.
+            console.print("Done by severity (all sessions):")
+            console.print(sev_table)
+            _console_global.print()
 
 
 def main(args: types.SimpleNamespace) -> None:
@@ -1369,16 +1383,13 @@ def main(args: types.SimpleNamespace) -> None:
 
     Args:
         args: Command-line arguments namespace containing:
-            - export_root (Optional[Path]): DEPRECATED. Path to export directory.
-              Review mode now requires database. Use 'cerno import' first.
+            - export_root (Optional[Path]): DEPRECATED and ignored. When set, the
+              review is skipped and only a 'cerno review' reminder is printed.
             - no_tools (bool): Skip tool execution workflow if True.
             - custom_workflows (Optional[Path]): Custom workflow YAML to supplement defaults.
             - custom_workflows_only (Optional[Path]): Use only this workflow YAML.
-
-    Note:
-        The --export-root flag has been deprecated for review mode. All review
-        operations now use the database for improved performance and feature support
-        including workflow mapping, Metasploit module detection, and session tracking.
+            - check (bool): Print the tool availability table and exit.
+            - proxy / no_proxy (bool): Force proxychains4 routing on/off for this session.
     """
     # Load configuration
     config = get_current_config()
@@ -2136,7 +2147,7 @@ def main(args: types.SimpleNamespace) -> None:
 
 
 # === Typer CLI ===
-# Main app + sub-apps (import, scan, config)
+# Main app + sub-apps (import, scan, config, workflow, creds)
 
 app = typer.Typer(
     help="cerno — faster review & tooling runner for vulnerability scans",
@@ -2147,13 +2158,13 @@ _console = _console_global
 # Sub-applications
 import_app = typer.Typer(help="Import data from various sources into cerno")
 
-scan_app = typer.Typer(help="Scan management - list and delete imported scans")
+scan_app = typer.Typer(
+    help="Scan management - list, delete and compare scans, and show host history"
+)
 
 config_app = typer.Typer(help="Configuration management - view and modify settings")
 
-workflow_app = typer.Typer(
-    help="Workflow management - list and view available workflows"
-)
+workflow_app = typer.Typer(help="Workflow management - list available workflows")
 
 creds_app = typer.Typer(
     help="NetExec credential inspection - list refs and reveal cleartext (local)"
@@ -2249,14 +2260,23 @@ def mcp_cmd() -> None:
 
         claude mcp add cerno -- cerno mcp
 
-    Read and command-generation tools are always available. Execution and
-    mutation tools are exposed only when enabled in config:
+    Read and command-generation tools are always available. Gated tools are
+    exposed only when enabled in config:
 
         cerno config set mcp_allow_execution true
         cerno config set mcp_allow_mutations true
+        cerno config set mcp_allow_batch true
+        cerno config set mcp_allow_cred_injection true
+        cerno config set mcp_allow_cred_reveal true
+
+    Execution unlocks execute_command and background jobs; mutations unlock
+    review state, notes, verdicts, ingest and import; batch (which also needs
+    execution) unlocks execute_batch; cred_injection resolves @cred:<ref>@
+    placeholders at run time; cred_reveal unlocks reveal_credential (cleartext).
 
     execute_command only runs binaries matching mcp_exec_allowlist ("*" for any)
     and never runs binaries matching mcp_exec_denylist (the denylist always wins).
+    See docs/MCP.md for the full tool reference.
 
     Gating flags are read once at startup. After changing them, reconnect or
     restart the server (e.g. via your MCP client) for the change to take effect.
@@ -2391,7 +2411,7 @@ def review(
         None,
         "--export-root",
         "-r",
-        help="DEPRECATED: Scan root (use 'cerno import' instead).",
+        help="DEPRECATED and ignored: prints a reminder to use 'cerno import' and exits.",
     ),
     no_tools: bool = typer.Option(
         False, "--no-tools", help="Disable tool prompts (review-only)."
@@ -2430,13 +2450,12 @@ def review(
     This command requires scans to be imported into the database first.
     Use 'cerno import' to import scans before reviewing.
 
-    Note: The --export-root flag has been deprecated. All review operations
-    now require database mode for improved performance and features like
-    workflow mapping, Metasploit module detection, and session tracking.
+    Note: The --export-root flag is deprecated and ignored: passing it skips
+    the review and only prints a reminder to run 'cerno review'.
 
     Usage:
-        cerno review              # Select from imported scans
-        cerno import scan.nessus  # Import scan first if needed
+        cerno review                     # Select from imported scans
+        cerno import nessus scan.nessus  # Import a scan first if needed
     """
     # Display promotional banner (unless suppressed)
     if not quiet:
@@ -2513,7 +2532,7 @@ def _show_nuclei_suggestion(scan_name: str) -> None:
 
 def show_nessus_tool_suggestions(nessus_file: Path, scan_name: str) -> None:
     """
-    Display suggested tool commands after import export completes.
+    Display suggested tool commands after an import completes.
 
     Args:
         nessus_file: Path to the original .nessus file
@@ -2560,11 +2579,13 @@ def import_scan(
     ),
 ) -> None:
     """
-    Import .nessus file(s) and export finding host lists to organized directory.
+    Import .nessus file(s) into the database.
 
     Accepts a single .nessus file or a directory. When given a directory, recursively
     discovers all .nessus files, lists them for confirmation, then imports each in sequence.
-    Auto-detects scan name from .nessus file and exports to ~/.cerno/scans/<scan_name>.
+    The scan name is taken from the .nessus report name. No per-plugin files are
+    written; ~/.cerno/scans/<scan_name>/ only receives http_urls.txt when web
+    services are found.
     """
     if not nessus.exists():
         err(f"Path does not exist: {nessus}")
@@ -2644,7 +2665,7 @@ def _import_single_nessus(nessus: Path) -> bool:
             info("Import cancelled.")
             return False
 
-    # Run export
+    # Run import
     header("Importing scan to database")
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -2698,7 +2719,7 @@ def _import_single_nessus(nessus: Path) -> bool:
             _console_global.print(sev_table)
 
     except Exception as e:
-        err(f"Export failed: {e}")
+        err(f"Import failed: {e}")
         return False
 
     # Show suggested tool commands
@@ -2886,13 +2907,16 @@ def delete_scan(
 ) -> None:
     """Delete a scan and its review data from the database.
 
-    This will permanently remove:
+    This will permanently remove (via ON DELETE CASCADE):
     - The scan entry
-    - All findings for this scan
-    - All host:port data
-    - All review sessions
+    - All findings for this scan and their host:port data
+    - Discovered services for this scan
+    - Review sessions that include this scan
+    - Verification verdicts and their evidence
+    - Per-finding Claude Assistant chat history
 
-    Tool execution and artifact records are retained for audit/history, but
+    Tool execution and artifact records (and the verified ports / NSE results /
+    NetExec flags ingested from them) are retained for audit/history, but their
     links to deleted findings or sessions are cleared.
 
     This action cannot be undone!
@@ -2909,11 +2933,14 @@ def delete_scan(
     # Confirm deletion
     warn(f"You are about to delete scan: {scan_name}")
     warn("This will permanently delete scan review data:")
-    warn("  - Findings")
-    warn("  - Host:port combinations")
+    warn("  - Findings and their host:port combinations")
+    warn("  - Discovered services")
     warn("  - Review sessions")
+    warn("  - Verification verdicts and evidence")
+    warn("  - Per-finding Claude Assistant chat history")
     info(
-        "Tool executions and artifacts are retained, but links to this scan's findings/sessions are cleared."
+        "Tool executions, artifacts and their ingested results are retained, "
+        "but links to this scan's findings/sessions are cleared."
     )
     _console_global.print()  # Blank line
 
@@ -3394,13 +3421,15 @@ def reset_installation() -> None:
     """Purge all cerno data under ~/.cerno and return to a fresh installation state.
 
     This permanently deletes:
-    - cerno.db (all scans, findings, sessions, tool executions)
-    - config.yaml (user configuration)
+    - cerno.db and its WAL/SHM sidecars (all scans, findings, sessions, tool executions)
+    - config.yaml and config.yaml.backup (user configuration)
     - cerno.log and rotated log files
+    - proxychains4.conf (generated proxy config)
     - artifacts/ directory (generated tool output)
-    - scans/ directory (scan export files)
+    - scans/ directory (per-scan working directories, e.g. http_urls.txt)
 
-    Shell completions (e.g. ~/.bashrc entries) are NOT affected.
+    A custom results_root or log_path outside ~/.cerno is NOT touched, and
+    neither are shell completions (e.g. ~/.bashrc entries).
     """
     import shutil
 
@@ -3411,25 +3440,28 @@ def reset_installation() -> None:
         raise typer.Exit(0)
 
     # Enumerate what will be deleted
-    db_path = cerno_dir / "cerno.db"
-    config_path = cerno_dir / "config.yaml"
+    db_files = list(cerno_dir.glob("cerno.db*"))  # incl. -wal / -shm sidecars
+    config_files = list(cerno_dir.glob("config.yaml*"))  # incl. .backup
     log_files = list(cerno_dir.glob("cerno.log*"))
+    proxy_conf = cerno_dir / "proxychains4.conf"
     artifacts_dir = cerno_dir / "artifacts"
     scans_dir = cerno_dir / "scans"
 
     warn("This will permanently delete the following from ~/.cerno/:")
-    if db_path.exists():
+    if db_files:
         warn(
             "  cerno.db       — entire database (scans, findings, sessions, tool executions)"
         )
-    if config_path.exists():
-        warn("  config.yaml    — user configuration")
+    if config_files:
+        warn("  config.yaml    — user configuration (and any backup)")
     if log_files:
         warn(f"  cerno.log*     — {len(log_files)} log file(s)")
+    if proxy_conf.exists():
+        warn("  proxychains4.conf — generated proxy config")
     if artifacts_dir.exists():
         warn("  artifacts/     — generated tool output files")
     if scans_dir.exists():
-        warn("  scans/         — scan export directories")
+        warn("  scans/         — per-scan working directories")
     _console_global.print()
     info("Shell completions (e.g. ~/.bashrc entries) are NOT affected.")
     _console_global.print()
@@ -3448,7 +3480,7 @@ def reset_installation() -> None:
     # Delete each item, continuing past failures
     had_error = False
 
-    for target in [db_path, config_path, *log_files]:
+    for target in [*db_files, *config_files, *log_files, proxy_conf]:
         if target.exists():
             try:
                 target.unlink()

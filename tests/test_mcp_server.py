@@ -106,6 +106,27 @@ def test_gating_summary_reflects_flags():
     )
 
 
+@pytest.mark.unit
+def test_gating_summary_reports_cred_and_batch_gates():
+    off = mcp.gating_summary(CernoConfig())
+    assert "cred_injection=off" in off
+    assert "cred_reveal=off" in off
+    assert "batch=off" in off
+    on = mcp.gating_summary(
+        CernoConfig(
+            mcp_allow_execution=True,
+            mcp_allow_batch=True,
+            mcp_allow_cred_injection=True,
+            mcp_allow_cred_reveal=True,
+        )
+    )
+    assert "cred_injection=on" in on
+    assert "cred_reveal=on" in on
+    assert "batch=on" in on
+    # Batch also needs execution: the flag alone does not register execute_batch.
+    assert "batch=off" in mcp.gating_summary(CernoConfig(mcp_allow_batch=True))
+
+
 # ---------------------------------------------------------------------------
 # Read tools
 # ---------------------------------------------------------------------------
@@ -1192,6 +1213,23 @@ def test_get_capabilities_reports_empty_allowlist_as_is():
     )
     assert caps["exec_allowlist"] == []
     assert caps["exec_denylist"] == []
+
+
+@pytest.mark.unit
+def test_get_capabilities_reports_batch_state():
+    """batch_enabled mirrors execute_batch registration (execution AND batch)."""
+    assert mcp.tool_get_capabilities(CernoConfig())["batch_enabled"] is False
+    assert (
+        mcp.tool_get_capabilities(CernoConfig(mcp_allow_batch=True))["batch_enabled"]
+        is False
+    )
+    caps = mcp.tool_get_capabilities(
+        CernoConfig(
+            mcp_allow_execution=True, mcp_allow_batch=True, mcp_batch_concurrency=3
+        )
+    )
+    assert caps["batch_enabled"] is True
+    assert caps["batch_concurrency"] == 3
 
 
 @pytest.mark.integration

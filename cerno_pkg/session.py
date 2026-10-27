@@ -16,7 +16,7 @@ class SessionState:
     """
     Represents the state of a cerno review session.
 
-    In database-only mode, file lists are replaced with counts queried
+    In database-only mode, finding lists are replaced with counts queried
     from the findings table review_state field.
 
     Attributes:
@@ -53,10 +53,11 @@ def save_session(
     Args:
         scan_id: Scan ID
         session_start: Session start datetime
-        in_progress_count: Count of in-progress findings
-        done_count: Count of done findings
-        tool_executions: Count of tool executions
-        cve_extractions: Count of CVE extractions
+        in_progress_count: Accepted for compatibility; not stored (counts come
+            from the v_session_stats view)
+        done_count: Accepted for compatibility; not stored
+        tool_executions: Accepted for compatibility; not stored
+        cve_extractions: Accepted for compatibility; not stored
         additional_scan_ids: Additional scan IDs for multi-scan sessions
 
     Returns:
@@ -81,7 +82,7 @@ def load_session(scan_id: int) -> Optional[SessionState]:
     Load active session state from database.
 
     Queries the database for the most recent active session (session_end IS NULL)
-    and retrieves file counts by querying the findings review_state field.
+    and retrieves finding counts by querying the findings review_state field.
 
     Args:
         scan_id: Scan ID
@@ -168,10 +169,10 @@ def _db_save_session(
     Args:
         scan_id: Scan ID
         session_start: Session start datetime
-        in_progress_count: Count of in-progress findings
-        done_count: Count of done findings
-        tool_executions: Tool execution count
-        cve_extractions: CVE extraction count
+        in_progress_count: Not stored (see v_session_stats)
+        done_count: Not stored
+        tool_executions: Not stored
+        cve_extractions: Not stored
         additional_scan_ids: Additional scan IDs in a multi-scan session; their
             last_reviewed_at is stamped alongside the primary scan
 

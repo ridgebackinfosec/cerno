@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.6.1] - 2026-10-27
+
+### Changed
+- **MCP gating is fully visible:** `get_capabilities` now reports `batch_enabled` (true only when both `mcp_allow_execution` and `mcp_allow_batch` are on, matching when `execute_batch` is registered) and `batch_concurrency`. The startup gating line in `~/.cerno/cerno.log` now shows batch, credential-injection and credential-reveal state alongside execution and mutations, and the `cerno mcp --help` text lists every gating flag.
+- **`cerno scan delete` warning is complete:** it now lists everything the delete removes (findings and host:port data, discovered services, sessions, verification verdicts and evidence, per-finding Claude chat history), and notes that tool executions, artifacts and their ingested results are kept.
+
+### Fixed
+- **Remote scan mode suggested a command that doesn't exist:** after a pivot-side nmap run, Cerno told you to run `cerno import nmap …`. It now shows only the `scp` step, copying all `-oA` outputs into your configured `results_root`.
+- **Session statistics never showed the per-severity table:** the breakdown was built but not printed. It now prints, ordered Critical → Info and labelled as all-session Done counts.
+- **Findings-list help showed the wrong sort mode:** `[?]` described `[S]` as a host-count/name toggle and labelled the default severity sort as "Name". It now names the active mode (Severity, Plugin ID, Name or Hosts) like the footer does, and describes the full cycle.
+- **`cerno reset` left files behind:** `proxychains4.conf`, `config.yaml.backup` and the database's `-wal`/`-shm` files survived, so `~/.cerno` was never removed. They are now deleted too.
+- **CLI help text and messages:** `cerno scan --help` mentions compare and history, `cerno workflow --help` no longer advertises a "view" command, `cerno review --help` marks `--export-root` as ignored, `cerno config show` describes `default_tool` (now listing `metasploit`), `nxc_enrichment_enabled` and the remote-scan HTTPS server accurately, the onboarding tour says `[1-5]` for severities, and the import error now says "Import failed" instead of "Export failed".
+- **Documentation brought up to date with 2.x:** `docs/MCP.md` (all 46 tools, the verdict/results resources, every gating flag, the verification loop, jobs/batch and credentials), README (keyboard shortcuts, commands, a full config-key reference), `docs/CUSTOM_WORKFLOWS.md` (workflow `<TARGET>`-style placeholders instead of the custom-command `{TCP_IPS}` set), `docs/DATABASE.md` and `schema.sql` (schema v4: all 25 tables, 11 views and indexes; broken example queries fixed), `docs/TOOL_SYSTEM_GUIDE.md`, `docs/ADDING_TOOLS_QUICKSTART.md`, `docs/ERROR_HANDLING.md`, `TESTING.md`, the demo README, and docstrings across the codebase.
+
 ## [2.6.0] - 2026-10-27
 
 ### Added

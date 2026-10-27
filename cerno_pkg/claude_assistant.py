@@ -9,11 +9,14 @@ Provides on-demand AI-assisted analysis via the Claude CLI (`claude -p`) at thre
                    Context covers all findings in the selected scan(s).
 
   - Findings list: [A] in findings list footer → build_aggregate_context() + run_aggregate_exchange()
-                   Context covers the current candidates (respects severity/name/group filters).
+                   Context covers the current candidates (respects severity, name, group,
+                   [I] status and host filters).
                    History keyed by a deterministic context_key in claude_aggregate_conversations.
 
-Availability gate: only active when `claude` is on PATH and claude_assistant_enabled=True
-in user config. Matches the pattern used for nmap/netexec/msfconsole availability checks.
+Availability gate: chats run only when `claude` is on PATH and claude_assistant_enabled=True
+(claude_enabled()). When `claude` is installed but the assistant is disabled, [A] is still
+shown and triggers the one-time consent prompt (ensure_enabled()). [A] is hidden only when
+`claude` is not on PATH.
 
 Aggregate context caps at 50 findings, ordered Critical→Info, with a note on what was
 excluded when the cap is hit.
@@ -167,7 +170,7 @@ def build_finding_context(
     Args:
         plugin: Plugin database object with metadata
         finding: Finding database object with review state
-        hosts: List of affected host strings (host:port format)
+        hosts: List of affected hosts (bare host strings from get_hosts_and_ports())
         plugin_outputs: Optional list of (host, port, plugin_output) tuples from
             finding_affected_hosts. When provided, the raw Nessus scanner output
             is appended to the context so Claude can reference specific banners,
@@ -406,6 +409,7 @@ def build_aggregate_context(
         scan_names: Display names of the selected scan(s)
         scope_description: Human-readable description of what's in scope
         findings_with_plugins: List of (Finding, Plugin) tuples in scope
+        conn: Optional database connection
 
     Returns:
         Formatted context string to prepend to the prompt

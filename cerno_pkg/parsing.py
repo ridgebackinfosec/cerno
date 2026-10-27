@@ -284,10 +284,10 @@ def build_item_set(
 
 def extract_plugin_id_from_filename(name_or_path) -> Optional[str]:
     """
-    Extract Nessus plugin ID from filename.
+    Extract a leading Nessus plugin ID from a (legacy) plugin filename.
 
-    Handles both regular filenames (12345.txt) and review-complete
-    prefixed files (REVIEW_COMPLETE-12345.txt, review-complete-12345.txt).
+    Only a leading run of digits is recognized (e.g. "12345.txt" or
+    "12345_Plugin_Name.txt"). Prefixed names are not handled.
 
     Args:
         name_or_path: Filename string or Path object
@@ -297,11 +297,9 @@ def extract_plugin_id_from_filename(name_or_path) -> Optional[str]:
 
     Examples:
         >>> extract_plugin_id_from_filename("12345.txt")
-        "12345"
-        >>> extract_plugin_id_from_filename("REVIEW_COMPLETE-12345.txt")
-        "12345"
-        >>> extract_plugin_id_from_filename("vulnerability-name-12345.txt")
-        "12345"
+        '12345'
+        >>> extract_plugin_id_from_filename("REVIEW_COMPLETE-12345.txt") is None
+        True
     """
     # Handle both Path and str
     if hasattr(name_or_path, 'name'):
@@ -316,7 +314,7 @@ def extract_plugin_id_from_filename(name_or_path) -> Optional[str]:
 
 def group_findings_by_workflow(files: list[tuple[Any, Any]], workflow_mapper: "WorkflowMapper") -> dict[str, list[tuple[Any, Any]]]:
     """
-    Group files by their workflow name.
+    Group findings by their workflow name.
 
     Args:
         files: List of (Finding, Plugin) tuples from database query
@@ -324,7 +322,7 @@ def group_findings_by_workflow(files: list[tuple[Any, Any]], workflow_mapper: "W
 
     Returns:
         Dict mapping workflow_name -> list of (Finding, Plugin) tuples
-        Files without workflows are excluded.
+        Findings without workflows are excluded.
 
     Example:
         >>> # With database tuples:

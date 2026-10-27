@@ -9,7 +9,7 @@ unreviewed criticals", "nxc smb every signing-disabled host"):
   and an executable/manual classification for every matched finding, so the plan
   can be reviewed before anything runs. It is always available.
 * :func:`execute_batch` runs only the runnable, non-skipped items, each through
-  the Phase-3 job registry (bounded concurrency, per-command timeout), attributed
+  the job registry (``mcp_server.jobs``; bounded concurrency, per-command timeout), attributed
   to its finding and auto-ingested — identical to a single ``execute_command``.
   Every command is re-validated against the exec policy at run time (defense in
   depth), and the MCP layer registers ``execute_batch`` only when both

@@ -37,8 +37,9 @@ class ExportResult:
 
     Attributes:
         plugins_exported: Total number of plugins exported
-        total_hosts: Total number of unique host:port combinations
-        scan_name: Name of the scan (derived from .nessus filename)
+        total_hosts: Sum of host:port entries across plugins (a host affected by
+            several plugins is counted once per plugin)
+        scan_name: Name of the scan (from the report name, unless overridden)
         severities: Mapping of severity level to plugin count
     """
 
@@ -281,8 +282,8 @@ def _build_index_stream(filename: Path, include_ports: bool = True) -> Tuple[
 
     Returns:
         Tuple of:
-          - plugins dict: plugin_id -> {name, severity_int, msf}
-          - plugin_hosts dict: plugin_id -> set of host entries
+          - plugins dict: plugin_id -> {name, severity_int, msf, msf_names, cves}
+          - plugin_hosts dict: plugin_id -> set of (host_entry, plugin_output) tuples
           - host_metadata dict: scan_target -> HostMetadata
           - service_entries set: (scan_target, port, protocol, svc_name) tuples
 
@@ -465,7 +466,7 @@ def import_nessus_file(
     Parses the .nessus XML file and populates the database with:
     - Scan metadata (scan name, file path, hash)
     - Plugin information (ID, name, severity, CVEs, Metasploit modules)
-    - Plugin files per scan (host counts, port counts, review state)
+    - One finding row per plugin per scan (review state starts as unreviewed)
     - Host:port combinations with plugin output
 
     The output_dir parameter is used to set the scan's export_root in the database,
@@ -523,7 +524,8 @@ def import_nessus_file(
 
     # Export each plugin (DATABASE-ONLY MODE - no file creation)
     for pid, meta in sorted(plugins.items(), key=sort_key):
-        # Generate virtual file path for database reference (no actual file created)
+        # Leftover from the old per-plugin file export: this expression has no
+        # effect and nothing is written.
         msf_suffix = "-MSF" if meta.get("msf") else ""
         f"{pid}_{sanitize_filename(meta['name'])}{msf_suffix}.txt"
 
@@ -580,7 +582,7 @@ def _write_to_database(
     Args:
         nessus_file: Path to original .nessus file
         scan_name: Sanitized scan name
-        base_scan_dir: Base directory where plugin files are exported
+        base_scan_dir: Base directory used to derive scans.export_root (no files are written)
         plugins: Plugin metadata dictionary
         plugin_hosts: Plugin hosts dictionary (plugin_id -> set of host:port entries)
         host_metadata: Host metadata dictionary (scan_target -> HostMetadata)
@@ -755,7 +757,7 @@ def _write_to_database(
                         service_records,
                     )
 
-            # ========== Step 5: Insert plugins and plugin files ==========
+            # ========== Step 5: Insert plugins and finding rows ==========
             total_plugins = len(plugins)
             for idx, (plugin_id_str, meta) in enumerate(plugins.items(), 1):
                 plugin_id = int(plugin_id_str)
@@ -778,7 +780,7 @@ def _write_to_database(
                 )
                 plugin.save(conn)
 
-                # Create plugin file entry
+                # Create the finding row for this plugin
                 hosts_data = plugin_hosts.get(plugin_id_str, set())
 
                 # Count unique hosts and ports for this plugin

@@ -6,15 +6,30 @@ This document explains how to run and write tests for the Cerno project.
 
 ```
 tests/
-├── conftest.py                    # Shared fixtures and pytest configuration
+├── conftest.py                 # Shared fixtures; autouse isolation of config path + caches
 ├── fixtures/
-│   ├── GOAD.nessus               # Full real-world scan (51K lines)
-│   └── minimal.nessus            # Minimal test scan (3 plugins, 3 hosts)
-├── test_parsing.py               # Host/port parsing functions
-├── test_database.py              # Database operations and transactions
-├── test_models.py                # ORM model CRUD operations
-└── test_nessus_export.py         # Nessus XML parsing and export
+│   ├── GOAD.nessus             # Full real-world scan (74 plugins, 755 hosts)
+│   ├── minimal.nessus          # Minimal scan (3 plugins, 3 hosts)
+│   ├── nmap/                   # nmap XML for ingest tests (MS17-010, no hosts up)
+│   └── nxc/                    # NetExec protocol databases (smb, ldap, winrm, …)
+└── test_*.py                   # 36 test modules, roughly one per cerno_pkg module
 ```
+
+The modules group roughly as:
+
+| Area | Test files |
+|---|---|
+| Core data | `test_database.py`, `test_models.py`, `test_parsing.py`, `test_nessus_import.py`, `test_cross_scan.py`, `test_analysis.py`, `test_scan_list.py` |
+| Review TUI | `test_render.py`, `test_fs.py`, `test_session.py`, `test_review_states.py`, `test_multi_scan_review.py`, `test_color_scheme.py`, `test_demo_command.py` |
+| Tools & execution | `test_ops.py`, `test_tool_registry.py`, `test_exec_chain.py`, `test_workflow_mapper.py`, `test_workflow_prep.py`, `test_nxc_db.py` |
+| Verification loop | `test_nmap_parse.py`, `test_ingest.py`, `test_verdicts.py`, `test_query.py`, `test_batch.py`, `test_jobs.py`, `test_workflow_contrib.py` |
+| Credentials | `test_creds.py`, `test_cred_injection.py` |
+| MCP server | `test_mcp_server.py`, `test_mcp_contract.py` (frozen tool/resource/prompt inventory), `test_mcp_config.py` (every config key classified for MCP) |
+| Config & misc | `test_config.py`, `test_claude_assistant.py`, `test_version.py` |
+
+`test_database.py` also checks that the reference `schema.sql` defines the same
+tables, views and indexes as `cerno_pkg/database.py`. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for the TUI ↔ MCP contract tests.
 
 ## Running Tests
 
@@ -24,7 +39,7 @@ tests/
 pip install -e ".[dev]"
 ```
 
-This installs:
+This installs (among others):
 - pytest
 - pytest-cov (coverage reporting)
 - pytest-mock (mocking utilities)
@@ -36,11 +51,14 @@ This installs:
 pytest
 ```
 
+`pyproject.toml` already adds coverage (`--cov=cerno_pkg` with terminal, HTML and
+XML reports), `--strict-markers` and a 300-second per-test timeout to every run.
+Add `--no-cov` for a faster run when you don't need the report.
+
 ### Run with Coverage
 
-```bash
-pytest --cov=cerno_pkg --cov-report=term-missing --cov-report=html
-```
+Coverage is on by default (see above). The reports land in `htmlcov/` and
+`coverage.xml`:
 
 View HTML coverage report:
 ```bash
@@ -86,7 +104,7 @@ pytest -s                                   # Show print statements
 
 ```bash
 pytest tests/test_parsing.py::TestSplitHostPort::test_ipv4_with_port
-pytest tests/test_database.py::test_transaction_commits_on_success
+pytest tests/test_database.py::TestDatabaseTransaction::test_transaction_commits_on_success
 ```
 
 ## Test Markers
@@ -99,27 +117,23 @@ Tests are marked with the following markers:
 
 ## Available Fixtures
 
-### Database Fixtures
+### Shared (`tests/conftest.py`)
 
-- `temp_db` - In-memory SQLite database with schema initialized
-- Perfect for testing database operations without file I/O
-
-### Filesystem Fixtures
-
+- `temp_db` - In-memory SQLite database with the full schema initialized
 - `temp_dir` - Temporary directory (automatically cleaned up)
-- `sample_scan_dir` - Scan directory structure (Critical/High/Medium/Low/Info)
-- `sample_plugin_file` - Pre-created plugin file with host entries
-
-### Nessus Fixtures
-
-- `minimal_nessus_fixture` - Minimal Nessus XML (3 plugins, 3 hosts)
-- `goad_nessus_fixture` - Full GOAD scan (74 plugins, 755 hosts)
-- `sample_nessus_xml` - Generated minimal XML for basic tests
-
-### Data Fixtures
-
+- `goad_nessus_fixture` - Path to the full GOAD scan (74 plugins, 755 hosts)
+- `sample_nessus_xml` - Generated minimal Nessus XML in `temp_dir`
 - `sample_hosts_list` - List of mixed host formats (IPv4, IPv6, hostnames)
-- `mock_session_state` - Mock session state dictionary
+- `reset_environment` (autouse) - Points `config.get_config_path()` at a temp
+  file, clears legacy env vars and resets cached config, so a test never reads
+  or writes your real `~/.cerno/config.yaml`
+
+### Module-local
+
+- `minimal_nessus_fixture` - Path to `fixtures/minimal.nessus` (3 plugins, 3
+  hosts), defined in `tests/test_nessus_import.py`
+- Many modules define their own seeded-database fixtures (e.g. `seeded` in
+  `tests/test_mcp_server.py`)
 
 ## Writing New Tests
 
@@ -139,7 +153,7 @@ def test_ipv4_with_port():
     """Test IPv4 address with port."""
     host, port = split_host_port("192.168.1.1:80")
     assert host == "192.168.1.1"
-    assert port == 80
+    assert port == "80"  # ports are returned as strings
 ```
 
 ### Example Integration Test
@@ -170,9 +184,9 @@ from cerno_pkg.parsing import split_host_port
 @pytest.mark.parametrize(
     "input_str,expected_host,expected_port",
     [
-        ("192.168.1.1:80", "192.168.1.1", 80),
+        ("192.168.1.1:80", "192.168.1.1", "80"),
         ("10.0.0.1", "10.0.0.1", None),
-        ("[::1]:8080", "::1", 8080),
+        ("[::1]:8080", "::1", "8080"),
     ],
 )
 def test_split_host_port_parametrized(input_str, expected_host, expected_port):
@@ -185,10 +199,10 @@ def test_split_host_port_parametrized(input_str, expected_host, expected_port):
 ## Continuous Integration
 
 Tests run automatically on GitHub Actions for:
-- Python 3.11 and 3.12
+- Python 3.11, 3.12 and 3.13 (3.13 is allowed to fail)
 - Ubuntu, Windows, and macOS
 - Every push to `main` or `develop`
-- Every pull request
+- Every pull request targeting `main` or `develop`
 
 See `.github/workflows/test.yml` for configuration.
 
@@ -199,7 +213,7 @@ See `.github/workflows/test.yml` for configuration.
   - `database.py` - Database operations
   - `models.py` - ORM models
   - `parsing.py` - Host/port parsing
-  - `nessus_export.py` - XML parsing and export
+  - `nessus_import.py` - XML parsing and import
 
 ## Common Issues
 

@@ -116,6 +116,28 @@ def test_actions_help_mentions_status_toggle(monkeypatch):
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    "mode,label",
+    [("severity", "Severity"), ("plugin_id", "Plugin ID"), ("name", "Name"), ("hosts", "Hosts")],
+)
+def test_actions_help_shows_current_sort_mode(monkeypatch, mode, label):
+    """[S] help names the active sort mode, matching the footer."""
+    from cerno_pkg import render as render_module
+
+    console = _record_console(monkeypatch, render_module)
+    render_module.show_actions_help(
+        group_applied=False,
+        candidates_count=0,
+        sort_mode=mode,
+        can_next=False,
+        can_prev=False,
+    )
+    out = console.export_text()
+    assert f"Sort: {label} -" in out
+    assert "Cycle" in out
+
+
+@pytest.mark.unit
 def test_empty_state_status_mismatch(monkeypatch):
     from cerno_pkg import render as render_module
 

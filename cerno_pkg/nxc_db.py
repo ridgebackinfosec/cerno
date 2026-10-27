@@ -720,7 +720,8 @@ class NxcDatabaseManager:
         """List non-secret references to every stored credential in the workspace.
 
         Reads each protocol's credential table (``users``/``credentials``) for its
-        rowid, username, domain and credtype — never the password/hash value. The
+        rowid, username, domain and credtype. The password column is read only to
+        classify ``secret_kind`` (password vs hash) and is never returned. The
         rowid-based ``ref`` is stable within the workspace and is what
         :meth:`resolve_credential_secret` consumes.
         """
@@ -876,7 +877,10 @@ def get_nxc_manager() -> Optional[NxcDatabaseManager]:
 
 
 def reset_nxc_manager() -> None:
-    """Reset the singleton manager (useful for testing)."""
+    """Reset the singleton manager so the next get_nxc_manager() re-reads config.
+
+    Called after imports, `cerno demo` and enrichment toggles (and in tests).
+    """
     global _nxc_manager
     if _nxc_manager:
         _nxc_manager.close()

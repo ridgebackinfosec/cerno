@@ -1,10 +1,12 @@
 """Terminal User Interface (TUI) components for cerno.
 
-This module handles interactive navigation, menus, and action handling:
+This module handles interactive menus and findings-list action handling:
 - Generic menu selectors (choose_from_list, parse_severity_selection, parse_scan_selection)
-- File list browser with filtering, sorting, pagination
-- Workflow group browser
-- Action handlers for file operations
+- Findings-list actions: filtering, sorting, pagination, grouping, Done list
+- Multi-line Claude Assistant input
+
+The findings-list and workflow-group browsers themselves (browse_file_list,
+browse_workflow_groups) live in cerno.py.
 """
 
 from __future__ import annotations
@@ -306,22 +308,25 @@ def handle_finding_list_actions(
     status_filter_active: bool = False,
 ) -> ActionResult:
     """
-    Handle file list actions (filter, sort, navigate, group, etc.).
+    Handle findings-list actions (filter, sort, navigate, group, etc.).
 
     Args:
         ans: User input command
         candidates: Filtered candidate records (Finding, Plugin) tuples
         page_items: Records on current page
         display: All records to display (after sort)
-        file_filter: Current file filter string
-        reviewed_filter: Current reviewed filter string
-        group_filter: Optional group filter tuple (index, filenames)
-        sort_mode: Current sort mode ("plugin_id", "hosts", or "name")
+        file_filter: Current name filter string
+        reviewed_filter: Current Done-list filter string
+        group_filter: Optional group filter tuple (index, set of
+            "Plugin <id>: <name>" labels, description)
+        sort_mode: Current sort mode ("severity", "plugin_id", "name" or "hosts")
         page_idx: Current page index
         total_pages: Total number of pages
-        reviewed: List of reviewed records
+        reviewed: Done (Finding, Plugin) records, for the [D] Done list
         sev_map: Map of file to severity dir (deprecated, unused)
         get_counts_for: Function to get host counts for a Finding (database-driven)
+        unique_cve_count: Unique CVEs across candidates (help display only)
+        unique_host_count: Unique hosts across candidates (help display only)
         status_filter_active: Whether the [I] In Progress-only filter is on (help display only)
 
     Returns:
@@ -516,7 +521,7 @@ def handle_finding_list_actions(
             )
         if choice == "f":
             info("Filter help: Enter any text to match finding names (case-insensitive)")
-            info("Examples: 'apache' matches 'Apache_2.4', 'ssl' matches 'SSL_Certificate'")
+            info("Examples: 'apache' matches 'Apache HTTP Server', 'ssl' matches 'SSL Certificate'")
             reviewed_filter = Prompt.ask(
                 "Enter substring to filter by (e.g., 'apache', 'ssl', 'windows') or press Enter for none",
                 default=""
@@ -716,8 +721,9 @@ def handle_finding_list_actions(
 def ask_claude_multiline() -> str:
     """Prompt for Claude assistant input with multi-line support.
 
-    Enter inserts a newline; Ctrl+Enter (c-j) submits.
-    Returns "" on Ctrl+C or Ctrl+D so callers can continue their loop.
+    Enter inserts a newline; Alt+Enter (prompt_toolkit default) or Ctrl+J
+    (the custom c-j binding; many terminals send it for Ctrl+Enter) submits.
+    Returns "" on Ctrl+D; Ctrl+C re-raises KeyboardInterrupt for the caller.
     """
     from prompt_toolkit import PromptSession
     from prompt_toolkit.key_binding import KeyBindings
@@ -737,12 +743,4 @@ def ask_claude_multiline() -> str:
         return ""
 
 
-# Note: browse_file_list and browse_workflow_groups are complex, large functions
-# They will be implemented in cerno.py for now and moved in Phase 6 during cleanup
-
-
-# ===================================================================
-# Workflow Navigation
-# ===================================================================
-
-# Note: browse_workflow_groups will be moved from cerno.py in Phase 6
+# Note: browse_file_list and browse_workflow_groups live in cerno.py.

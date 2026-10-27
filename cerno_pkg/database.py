@@ -48,7 +48,8 @@ older schema version is rejected by ``initialize_database()`` with
 
 History:
 - 1: Initial normalized schema
-- 2: Review states renamed to pending / in_progress / done
+- 2: Review states renamed to pending / in_progress / done (development only;
+     1.7.0 shipped v3 directly)
 - 3: 'pending' renamed to 'unreviewed'; transitions enforced in the app layer
 - 4: Execution->data loop: verified_ports / nse_script_results /
      nxc_flag_observations fact tables (provenance = execution_id),
@@ -59,9 +60,10 @@ History:
 
 Schema features:
 - Normalized host and port tables (cross-scan tracking)
-- Foundation lookup tables (severity_levels, artifact_types)
+- Lookup tables (severity_levels, artifact_types, verdict_types, nse_verdicts,
+  port_states)
 - SQL views for computed statistics
-- Audit logging with triggers
+- audit_log table (reserved; no triggers or writers yet)
 
 Note: SCHEMA_SQL has been split into SCHEMA_SQL_TABLES and SCHEMA_SQL_VIEWS
       for organization purposes.
@@ -73,7 +75,8 @@ class SchemaVersionError(RuntimeError):
 
 
 SCHEMA_SQL_TABLES = """
--- See schema.sql for full documentation
+-- schema.sql is a reference copy of this DDL (tests/test_database.py checks parity);
+-- column-by-column documentation lives in docs/DATABASE.md
 -- This creates all tables (but NOT views - those are created separately)
 
 CREATE TABLE IF NOT EXISTS scans (
@@ -767,8 +770,10 @@ def _check_schema_version(conn: sqlite3.Connection, db_path: Path) -> None:
 def initialize_database(database_path: Optional[Path] = None) -> bool:
     """Initialize database schema with final structure.
 
-    Creates all tables, views, and populates foundation tables.
-    Safe to call multiple times (CREATE TABLE IF NOT EXISTS).
+    Creates all tables and views, seeds the lookup tables (severity_levels,
+    artifact_types, verdict_types, nse_verdicts, port_states) and writes
+    SCHEMA_VERSION to PRAGMA user_version. Safe to call multiple times
+    (CREATE TABLE IF NOT EXISTS / INSERT OR IGNORE).
 
     Args:
         database_path: Path to database file (default: DATABASE_PATH)

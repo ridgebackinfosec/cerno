@@ -148,6 +148,49 @@ cerno config set proxychains_host 127.0.0.1      # proxychains4 SOCKS5 proxy hos
 cerno config set proxychains_port 9000           # proxychains4 SOCKS5 proxy port (matches ssh -D default)
 ```
 
+**All settings** (`cerno config show` prints the same list with current values):
+
+| Key | Default | Purpose |
+| --- | --- | --- |
+| **General / UI** | | |
+| `results_root` | `~/.cerno/artifacts` | Where tool output and artifacts are written |
+| `log_path` | `~/.cerno/cerno.log` | Log file location |
+| `debug_logging` | `false` | Log at DEBUG level |
+| `default_page_size` | auto (terminal height) | Rows per page in lists (min 8); also the MCP default `limit` |
+| `top_ports_count` | `5` | Top ports shown in the scan overview (capped at 100) |
+| `color_scheme` | `light` | Terminal background the colors are tuned for: `light` or `dark` |
+| `no_color` | `false` | Disable ANSI colors |
+| `term_override` | unset | Force a terminal type (`dumb` disables colors) |
+| **Tools & workflows** | | |
+| `default_tool` | unset | Pre-select a tool in the Run Tool menu (`nmap`, `netexec`, `metasploit`, `custom`) |
+| `default_netexec_protocol` | unset (`smb`) | Default NetExec protocol |
+| `nmap_default_profile` | unset | Default NSE profile name |
+| `custom_workflows_path` | unset | Custom workflows YAML merged over the bundled ones (TUI default and MCP) |
+| **NetExec** | | |
+| `nxc_workspace_path` | `~/.nxc/workspaces/default` | NetExec workspace to read (`""` disables) |
+| `nxc_enrichment_enabled` | `true` | NetExec enrichment, credential refs (`cerno creds`) and nxc ingest |
+| **Proxy & remote scan** | | |
+| `proxychains_enabled` | `false` | Route tools through `proxychains4` |
+| `proxychains_host` | `127.0.0.1` | SOCKS5 proxy host |
+| `proxychains_port` | `9000` | SOCKS5 proxy port (matches `ssh -D 9000`) |
+| `pivot_interface` | unset | Interface whose IP serves targets in remote scan mode |
+| `pivot_http_port` | `8877` | HTTPS port for the remote scan target server |
+| **Claude Assistant** | | |
+| `claude_assistant_enabled` | `false` | Opt in to the `[A]` assistant (sends finding data to the local `claude` CLI) |
+| **MCP server** | | |
+| `mcp_allow_execution` | `false` | Allow `execute_command` and background jobs |
+| `mcp_allow_mutations` | `false` | Allow review-state, notes, verdicts, ingest and import |
+| `mcp_allow_batch` | `false` | Allow `execute_batch` (also needs execution) |
+| `mcp_batch_concurrency` | `1` | Max commands `execute_batch` runs at once |
+| `mcp_batch_timeout` | `300` | Per-command timeout (seconds) for `execute_batch` |
+| `mcp_allow_cred_injection` | `false` | Resolve `@cred:<ref>@` placeholders to real secrets at run time |
+| `mcp_allow_cred_reveal` | `false` | Allow `reveal_credential` to return cleartext secrets |
+| `mcp_exec_allowlist` | `nmap, nxc, netexec, msfconsole` | Binaries `execute_command` may run (`*` = any; empty = none) |
+| `mcp_exec_denylist` | `rm, dd, mkfs*, shred, …` | Binaries `execute_command` may never run (always wins) |
+| `contribution_export_dir` | `<results_root>/contributions` | Where exported workflow contributions are written |
+
+List keys take CSV: `cerno config set mcp_exec_allowlist "nmap,nxc"`.
+
 <p align="center">
   <img src="docs/images/default-config-values.png" alt="Output of cerno config show listing all configuration values" width="800">
   <br>
@@ -220,7 +263,7 @@ Ask Claude questions about findings without leaving the TUI. Powered by the `cla
 - **Severity menu** — press `[A]` at the severity selection screen to discuss all findings across the selected scan(s)
 - **Findings list** — press `[A]` in the findings list footer to discuss the current set of findings (respects any active severity, name, or group filter)
 
-**Conversation persistence:** History is saved per-scope in SQLite and resumed automatically on re-entry. Press `C` inside the chat to clear history for the current scope.
+**Conversation persistence:** History is saved per-scope in SQLite and resumed automatically on re-entry. Inside the chat, Enter adds a new line, Alt+Enter (or Ctrl+J) sends, `/clear` clears history for the current scope, and Ctrl+C goes back.
 
 **Setup:**
 ```bash
@@ -283,6 +326,19 @@ Launch nmap NSE scripts, NetExec, Metasploit, or custom commands with placeholde
 
 ---
 
+### ✅ Verification results & verdicts
+
+*Record what you actually proved, not just what Nessus claimed.*
+
+- Tool runs from the TUI and the MCP server are logged and attributed to their finding.
+- Any logged nmap run (open ports, NSE vuln verdicts) or NetExec run, including TUI runs, can be ingested into structured results with the MCP `ingest_results` tool. MCP runs are ingested automatically when mutations are enabled.
+- Verdicts (`confirmed` / `false_positive` / `unable`) are recorded with evidence, separately from review status.
+- `cerno creds list` shows NetExec credential refs without secrets; `cerno creds reveal <ref>` prints one cleartext secret (audited).
+
+Verdicts, ingestion and batch runs are driven through the [MCP server](docs/MCP.md#verification-loop).
+
+---
+
 ### 💾 SQLite-backed persistence
 
 *Never lose review progress, and see how a host's risk profile changes over time.*
@@ -325,6 +381,8 @@ cerno review --no-proxy   # Force-disable proxychains4 routing for this session
 
 > **Requires:** `proxychains4` installed and available on PATH.
 
+**Remote scan mode (pivot SYN scans):** SOCKS can't carry raw-socket scans. In the nmap tool menu, `[R]` toggles remote mode: Cerno serves the target list over HTTPS on `pivot_interface`:`pivot_http_port` and gives you a `curl … | nmap` one-liner to run on the pivot host, plus an `scp` line to copy the results back into `results_root`.
+
 ---
 
 ### 🔌 MCP server (BETA)
@@ -341,7 +399,11 @@ cerno review --no-proxy   # Force-disable proxychains4 routing for this session
 # Import and review
 cerno import nessus <scan.nessus>              # Import a single .nessus file
 cerno import nessus <directory>                # Recursively import all .nessus files in a directory
-cerno review [--custom-workflows PATH]         # Start interactive review
+cerno demo [--overwrite] [--no-nxc]            # Import the bundled demo scans + NetExec workspace
+cerno review [--custom-workflows PATH]         # Start interactive review (custom workflows merged over bundled)
+cerno review --custom-workflows-only PATH      # Use only this workflow YAML
+cerno review --no-tools                        # Review only, no tool prompts
+cerno review -q                                # Skip the banner
 cerno review --proxy                           # Force-enable proxychains4 routing for this session
 cerno review --no-proxy                        # Force-disable proxychains4 routing for this session
 cerno review --check                           # Check tool availability and exit
@@ -355,6 +417,10 @@ cerno scan history <host_ip>                   # View vulnerability timeline for
 # View workflows
 cerno workflow list [--custom-workflows PATH]
 
+# NetExec credentials (local only)
+cerno creds list                               # Credential refs, usernames, domains (never secrets)
+cerno creds reveal <ref>                       # Print one cleartext secret (SENSITIVE; audited)
+
 # Configuration
 cerno config show                              # Display all settings with current values
 cerno config get <key>                         # Get a single config value
@@ -367,6 +433,7 @@ cerno mcp                                      # Serve scan data/tooling over MC
 
 # Maintenance
 cerno reset                                    # Purge ~/.cerno and return to fresh state
+cerno --version                                # Show version
 ```
 
 ---
@@ -395,8 +462,11 @@ The server is **read-only by default** — execution and mutation tools stay
 hidden until you enable them:
 
 ```bash
-cerno config set mcp_allow_execution true        # permit execute_command
-cerno config set mcp_allow_mutations true        # permit set_review_state / import_nessus
+cerno config set mcp_allow_execution true        # execute_command + background jobs
+cerno config set mcp_allow_mutations true        # review state, notes, verdicts, ingest, import
+cerno config set mcp_allow_batch true            # execute_batch over a query (also needs execution)
+cerno config set mcp_allow_cred_injection true   # resolve @cred:<ref>@ placeholders at run time
+cerno config set mcp_allow_cred_reveal true      # reveal_credential (cleartext; audited)
 cerno config set mcp_exec_allowlist "nmap,nxc"   # restrict which binaries execute_command may run ("*" = any)
 cerno config set mcp_exec_denylist "rm,dd,sh"    # binaries execute_command may never run (always wins)
 ```
@@ -413,21 +483,20 @@ scopes, and management commands.
 ## Keyboard Shortcuts
 
 **In the findings list view:**
+- `Enter` - Open the first finding on the page; type a row number to open that finding
 - `[S]` - Cycle sort modes (severity, plugin ID, name, host count)
 - `[F]` - Filter findings by text (plugin name, description, etc.)
 - `[I]` - Toggle In Progress only / all statuses
 - `[C]` - Clear active text and status filters
 - `[V]` - View all unique hosts across the filtered findings
-- `[H]` - Compare: group findings by identical host:port combinations
+- `[H]` - Compare: group findings by identical host:port combinations (when a group has more than 8 findings, answer `D` at the prompt to page through every group)
 - `[O]` - Overlapping: find findings whose affected hosts are a superset of another's
 - `[X]` - Clear group filter (when a comparison/overlap group is active)
-- `[D]` - View full group details in pager (when a group filter is active)
 - `[E]` - Extract CVEs for all findings matching current filter
 - `[M]` - Move to next status: every filtered finding moves one step (Unreviewed → In Progress, In Progress → Done)
 - `[D]` - Done list; inside it, `[M]` moves selected findings back to Unreviewed
 - Status column: `○` Unreviewed, `◐` In Progress
 - `[A]` - Ask Claude — chat about the current filtered findings set
-- `[W]` - View workflow verification steps (when available for selected finding)
 - `[N]` / `[P]` - Next / previous page
 - `[B]` - Back to severity menu
 - `[?]` - Show help menu with all available actions
@@ -435,10 +504,12 @@ scopes, and management commands.
 **In the finding detail view:**
 - `[I]` - Finding Info (plugin metadata, CVSS, CVEs)
 - `[D]` - Finding Details (host list, port distribution, plugin output)
+- `[V]` - View host(s) (grouped `host:port` or raw list; copy to clipboard)
+- `[E]` - CVE info for this finding
 - `[N]` - NetExec Data (per-host credential and access breakdown)
 - `[T]` - Run Tool (launch nmap, NetExec, Metasploit, or custom workflow)
 - `[A]` - Ask Claude — chat about this specific finding
-- `[W]` - View workflow verification steps
+- `[W]` - View workflow verification steps (when one is mapped)
 - `[M]` - Move to In Progress / Move to Done (label follows the finding's status)
 - `[B]` - Back to findings list
 
@@ -446,7 +517,7 @@ scopes, and management commands.
 
 ## Custom Workflows
 
-Add plugin-specific verification workflows with `--custom-workflows` (merges & supplements with defaults) or `--custom-workflows-only` (replaces defaults):
+Add plugin-specific verification workflows with `--custom-workflows` (merged over the defaults; custom wins on conflict) or `--custom-workflows-only` (replaces defaults):
 
 ```bash
 cerno review --custom-workflows my_workflows.yaml
@@ -460,10 +531,14 @@ workflows:
     workflow_name: "SMB Signing Not Required"
     steps:
       - title: "Verify SMB signing"
-        commands: ["netexec smb <target> -u <user> -p <pass>"]
+        commands: ["netexec smb <TARGET> -u <USERNAME> -p <PASSWORD>"]
 ```
 
-**Custom command placeholders:** `{TCP_IPS}`, `{UDP_IPS}`, `{TCP_HOST_PORTS}`, `{PORTS}`, `{WORKDIR}`, `{RESULTS_DIR}`, `{OABASE}`
+**Workflow placeholders:** `<TARGET>`, `<PORT>`, `<USERNAME>`, `<PASSWORD>`, `<DOMAIN>`, `<INTERFACE>`. Workflows are shown as reference steps in the TUI (`[W]`); the MCP `prepare_workflow` tool fills them in from the finding's hosts, ports and a chosen credential.
+
+**Custom command placeholders** (the "Custom command" option in Run Tool, not workflows): `{TCP_IPS}`, `{UDP_IPS}`, `{TCP_HOST_PORTS}`, `{PORTS}`, `{WORKDIR}`, `{RESULTS_DIR}`, `{OABASE}`
+
+Set `custom_workflows_path` in config to load your workflows by default (the MCP server uses it too).
 
 **For comprehensive documentation**, see [Custom Workflows Guide](docs/CUSTOM_WORKFLOWS.md) covering:
 - Complete YAML schema reference
@@ -507,7 +582,7 @@ cerno reset   # Prompts for typed confirmation before deleting
 **Import failures:**
 - Ensure the `.nessus` file is valid XML (not corrupted or truncated)
 - Check file permissions and path
-- Try importing with `--verbose` for detailed output
+- Turn on `cerno config set debug_logging true` and check `~/.cerno/cerno.log` for the parse error
 
 **Tool execution issues:**
 - Verify tools (nmap, netexec) are installed and on PATH
@@ -518,10 +593,13 @@ cerno reset   # Prompts for typed confirmation before deleting
 ## Documentation
 
 - [MCP server](docs/MCP.md)
+- [Custom workflows](docs/CUSTOM_WORKFLOWS.md)
 - [Database schema & queries](docs/DATABASE.md)
 - [Adding custom tools](docs/ADDING_TOOLS_QUICKSTART.md)
 - [Tool system guide](docs/TOOL_SYSTEM_GUIDE.md)
 - [Error handling](docs/ERROR_HANDLING.md)
+- [Demo data](docs/demo/README.md)
+- [Contributing](CONTRIBUTING.md) and [Testing](TESTING.md)
 
 ---
 

@@ -362,3 +362,28 @@ class TestConcurrency:
 
         write_conn.close()
         read_conn.close()
+
+
+@pytest.mark.unit
+def test_schema_sql_reference_matches_database_py():
+    """schema.sql (reference copy) defines the same tables, views and indexes."""
+    import sqlite3
+    from pathlib import Path
+
+    from cerno_pkg.database import SCHEMA_SQL_TABLES, SCHEMA_SQL_VIEWS
+
+    def objects(sql: str) -> set[tuple[str, str]]:
+        conn = sqlite3.connect(":memory:")
+        try:
+            conn.executescript(sql)
+            return set(
+                conn.execute(
+                    "SELECT type, name FROM sqlite_master "
+                    "WHERE name NOT LIKE 'sqlite_%'"
+                ).fetchall()
+            )
+        finally:
+            conn.close()
+
+    reference = (Path(__file__).parent.parent / "schema.sql").read_text()
+    assert objects(reference) == objects(SCHEMA_SQL_TABLES + SCHEMA_SQL_VIEWS)

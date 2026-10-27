@@ -46,7 +46,7 @@ Workflows are **display-only** - they provide guidance but do not execute automa
 - Copy commands to your clipboard
 - Use workflows as checklists for manual verification
 
-Commands can contain placeholders (e.g., `{TCP_IPS}`, `{PORTS}`) that Cerno automatically expands with scan-specific data when you run tools interactively.
+Commands use placeholders such as `<TARGET>` and `<PORT>` (see [Placeholder System](#placeholder-system)). The TUI shows them as written; the MCP `prepare_workflow` tool fills them in with the finding's real hosts, ports and (optionally) a NetExec credential.
 
 ---
 
@@ -89,12 +89,12 @@ workflows:
     steps:
       - title: "Check certificate details with OpenSSL"
         commands:
-          - "echo | openssl s_client -connect {TCP_HOST_PORTS} 2>/dev/null | openssl x509 -noout -dates"
+          - "echo | openssl s_client -connect <TARGET>:<PORT> 2>/dev/null | openssl x509 -noout -dates"
         notes: "Look for notBefore and notAfter dates. Certificates expiring within 30 days should be flagged."
 
       - title: "Enumerate all certificates in chain"
         commands:
-          - "nmap --script ssl-cert -p {PORTS} {TCP_IPS}"
+          - "nmap --script ssl-cert -p <PORT> <TARGET>"
         notes: "Verify the entire certificate chain for validity and trust issues."
 
     references:
@@ -117,16 +117,16 @@ When you review plugin 10863, press **[W]** to see your custom workflow.
 ### Complete Field Documentation
 
 ```yaml
-version: "1.0"  # Required: Schema version (currently always "1.0")
+version: "1.0"  # Recommended: Schema version (currently always "1.0")
 
 workflows:      # Required: List of workflow definitions
   - plugin_id: "12345"           # Required: Plugin ID(s) - string, can be comma-separated
-    workflow_name: "Workflow Name"  # Required: Human-readable workflow name
-    description: "Brief description"  # Required: What this workflow verifies
+    workflow_name: "Workflow Name"  # Recommended: Human-readable workflow name
+    description: "Brief description"  # Recommended: What this workflow verifies
 
-    steps:                        # Required: List of verification steps (at least 1)
-      - title: "Step title"       # Required: Step description
-        commands:                 # Required: List of commands (can be empty list [])
+    steps:                        # Recommended: List of verification steps
+      - title: "Step title"       # Recommended: Step description
+        commands:                 # Optional: List of commands (defaults to [])
           - "command 1"
           - "command 2"
         notes: "Additional context"  # Optional: Notes explaining what to look for
@@ -138,16 +138,18 @@ workflows:      # Required: List of workflow definitions
 
 ### Field Details
 
+The loader only enforces `workflows` and `plugin_id`: an entry without a `plugin_id` is skipped, and every other field falls back to an empty value. Fill in the recommended fields anyway, since an empty workflow isn't much use.
+
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `version` | string | Yes | Schema version (currently "1.0") |
+| `version` | string | Recommended | Schema version (currently "1.0") |
 | `workflows` | list | Yes | List of workflow definitions |
 | `plugin_id` | string | Yes | Nessus plugin ID (can be comma-separated for multi-plugin workflows) |
-| `workflow_name` | string | Yes | Human-readable workflow name (used as unique identifier) |
-| `description` | string | Yes | Brief description of what the workflow verifies |
-| `steps` | list | Yes | List of verification steps (minimum 1 step required) |
-| `steps[].title` | string | Yes | Title/description of this step |
-| `steps[].commands` | list | Yes | List of commands to execute (can be empty list) |
+| `workflow_name` | string | Recommended | Human-readable workflow name (shown in the TUI and `cerno workflow list`) |
+| `description` | string | Recommended | Brief description of what the workflow verifies |
+| `steps` | list | Recommended | List of verification steps |
+| `steps[].title` | string | Recommended | Title/description of this step |
+| `steps[].commands` | list | Optional | List of commands (defaults to an empty list) |
 | `steps[].notes` | string | Optional | Additional notes or context for this step |
 | `references` | list | Optional | List of reference URLs (documentation, exploits, etc.) |
 
@@ -179,7 +181,7 @@ workflows:
     steps:
       - title: "Enumerate the supported encryption protocol versions and algorithms"
         commands:
-          - "sudo nmap -A --script=ssl-enum-ciphers,ssl-cert,ssl-date {TCP_IPS}"
+          - "sudo nmap -A --script=ssl-enum-ciphers,ssl-cert,ssl-date <TARGET>"
         notes: "SSLv2, SSLv3, and TLSv1.0 are all considered deprecated and should not be supported anymore. TLSv1.1 is also outdated but not of terrible concern."
 
     references:
@@ -207,54 +209,55 @@ Use multi-plugin workflows when:
 
 ## Placeholder System
 
-### Available Placeholders
+### Workflow Placeholders
 
-Cerno provides 7 placeholders that are automatically expanded when you use them in workflow commands:
+Workflow commands use six angle-bracket placeholders:
 
-| Placeholder | Description | Example Value |
-|-------------|-------------|---------------|
-| `{TCP_IPS}` | Path to file containing TCP host IP addresses (one per line) | `/home/user/.cerno/artifacts/scan1/tcp_ips.txt` |
-| `{UDP_IPS}` | Path to file containing UDP host IP addresses (one per line) | `/home/user/.cerno/artifacts/scan1/udp_ips.txt` |
-| `{TCP_HOST_PORTS}` | Path to file containing host:port combinations (one per line) | `/home/user/.cerno/artifacts/scan1/tcp_sockets.txt` |
-| `{PORTS}` | Comma-separated port list string | `80,443,8080,8443` |
-| `{WORKDIR}` | Working directory for temporary files | `/home/user/.cerno/artifacts/scan1/workdir` |
-| `{RESULTS_DIR}` | Directory for final results/output | `/home/user/.cerno/artifacts/scan1/High` |
-| `{OABASE}` | Output file base path (for -oA style nmap outputs) | `/home/user/.cerno/artifacts/scan1/High/plugin_12345` |
+| Placeholder | Filled with | Also accepted (normalized automatically) |
+|-------------|-------------|------------------------------------------|
+| `<TARGET>` | The affected host(s) | `<target>`, `IP_address`, `$IP` |
+| `<PORT>` | The finding's port(s) | `<port>`, `$PORT` |
+| `<USERNAME>` | The selected NetExec credential's username | `<username>`, `<user>` |
+| `<PASSWORD>` | An `@cred:<ref>@` placeholder (the secret is resolved only at run time) | `<password>` |
+| `<DOMAIN>` | The selected credential's domain | `<domain>` |
+| `<INTERFACE>` | Not filled automatically; always reported unresolved for you to supply | `<interface>` |
 
-### How Placeholders are Expanded
+Use the canonical uppercase form in new workflows; the variants exist so older
+files keep working. Anything else in angle brackets (for example `<pass>`) is
+left as-is.
 
-Placeholders use simple string replacement - Cerno replaces `{PLACEHOLDER}` with the actual value before displaying or executing commands.
+### How Placeholders are Filled
 
-**Important**: Placeholders are expanded based on the current finding context (scan, severity, affected hosts/ports).
+- **In the TUI** (`[W]`), workflows are reference material: commands are shown
+  exactly as written, and you copy and adapt them yourself.
+- **Through the MCP server**, `prepare_workflow(finding_id, use_credential=…)`
+  fills the placeholders from the finding's hosts and ports. For a multi-host
+  finding, `nmap`/`masscan`/`nxc`/`netexec` get all hosts on one line; any other
+  tool is expanded to one command per host. Each command is marked
+  executable or manual, with a reason, and unresolved placeholders are reported
+  (for example `<DOMAIN>` when no credential is selected). See
+  [MCP.md](MCP.md).
 
 ### Example Commands Using Placeholders
 
-From the bundled workflows and custom command examples:
-
 ```bash
-# HTTP enumeration with httpx
-httpx -l {TCP_IPS} -silent -o {OABASE}.urls.txt
-
-# Vulnerability scanning with Nuclei
-nuclei -l {OABASE}.urls.txt -o {OABASE}.nuclei.txt
-
-# Parallel nmap scanning
-cat {TCP_IPS} | xargs -I{} sh -c 'echo {}; nmap -Pn -p {PORTS} {}'
-
 # Port-specific SSL enumeration
-nmap --script ssl-enum-ciphers -p {PORTS} {TCP_IPS}
+nmap --script ssl-enum-ciphers -p <PORT> <TARGET>
 
-# Responder with specific interface
-responder -I eth0 -A > {RESULTS_DIR}/responder.log
+# Authenticated share enumeration
+netexec smb <TARGET> -u <USERNAME> -p <PASSWORD> -d <DOMAIN> --shares
+
+# Poisoning on a chosen interface
+responder -I <INTERFACE> -A
 ```
 
-### Placeholder Best Practices
+### Custom Command Placeholders Are Different
 
-1. **Use `{TCP_IPS}` for tool input files** - Most tools accept file input with `-iL` or similar flags
-2. **Use `{OABASE}` for consistent output naming** - Creates predictable output filenames
-3. **Use `{PORTS}` for port-specific scans** - Ensures you only scan affected ports
-4. **Use `{RESULTS_DIR}` for final output** - Keeps results organized by severity
-5. **Use `{WORKDIR}` for intermediate files** - Temporary files that don't need to persist
+The `{TCP_IPS}`, `{UDP_IPS}`, `{TCP_HOST_PORTS}`, `{PORTS}`, `{WORKDIR}`,
+`{RESULTS_DIR}` and `{OABASE}` tokens belong to the **Custom command** option in
+the Run Tool menu (`[T]`), not to workflows. They are expanded only there. See
+[TOOL_SYSTEM_GUIDE.md](TOOL_SYSTEM_GUIDE.md). In a workflow they are displayed
+literally and `prepare_workflow` never fills them.
 
 ---
 
@@ -272,16 +275,21 @@ cerno config set custom_workflows_path /path/to/my_workflows.yaml
 cerno review
 ```
 
+The config key is used only when neither `--custom-workflows` nor
+`--custom-workflows-only` is passed, and it always works in supplement mode. The
+MCP server honours it too: every MCP workflow lookup merges this file over the
+bundled set.
+
 View your current configuration:
 
 ```bash
 cerno config show
 ```
 
-Reset to defaults:
+Unset it again:
 
 ```bash
-cerno config reset
+cerno config reset custom_workflows_path
 ```
 
 ### When to Use Config vs CLI Flags
@@ -376,14 +384,10 @@ workflows:
     # ... workflow details ...
 ```
 
-2. **Split into multiple files** and combine:
-
-```bash
-# Load multiple workflow files (last file's conflicts win)
-cerno review \
-  --custom-workflows ssl_workflows.yaml \
-  --custom-workflows smb_workflows.yaml
-```
+2. **Keep one file per engagement or team.** `--custom-workflows` accepts a
+   single file (if you pass it twice, only the last one is used), so keep the
+   workflows you want together in one YAML, or concatenate category files into
+   one before a review.
 
 3. **Use version control** (Git) to track changes and share with team
 
@@ -463,12 +467,12 @@ workflows:
     steps:
       - title: "Enumerate SNMP info against the internal scope"
         commands:
-          - "sudo nmap -sU -sV -p161 -T4 --script \"snmp* and not snmp-brute\" {TCP_IPS}"
+          - "sudo nmap -sU -sV -p161 -T4 --script \"snmp* and not snmp-brute\" <TARGET>"
         notes: ""
 
       - title: "Specifically use snmp-brute to verify this issue and to check for additional commonly used SNMP community strings"
         commands:
-          - "sudo nmap -sU -sV -p161 -T4 --script snmp-brute {TCP_IPS}"
+          - "sudo nmap -sU -sV -p161 -T4 --script snmp-brute <TARGET>"
         notes: ""
 
     references:
@@ -491,7 +495,7 @@ workflows:
     steps:
       - title: "Enumerate the supported encryption protocol versions and algorithms"
         commands:
-          - "sudo nmap -A --script=ssl-enum-ciphers,ssl-cert,ssl-date {TCP_IPS}"
+          - "sudo nmap -A --script=ssl-enum-ciphers,ssl-cert,ssl-date <TARGET>"
         notes: "SSLv2, SSLv3, and TLSv1.0 are all considered deprecated and should not be supported anymore. TLSv1.1 is also outdated but not of terrible concern."
 
     references:
@@ -500,7 +504,7 @@ workflows:
       - "https://www.tenable.com/plugins/nessus/157288"
 ```
 
-### Example 3: Workflow with Placeholders
+### Example 3: Workflow with Local Output Files
 
 Using multiple placeholders for flexible command generation:
 
@@ -515,13 +519,12 @@ workflows:
     steps:
       - title: "Download browsable directory contents"
         commands:
-          - "cd {WORKDIR}"
-          - "wget -nc -r -l inf -i browsable.urls -P {RESULTS_DIR}/browsable"
+          - "wget -nc -r -l inf -i browsable.urls -P ./browsable"
         notes: "Downloads all files from browsable directories for offline analysis"
 
       - title: "Scan for secrets with Trufflehog"
         commands:
-          - "trufflehog filesystem --json \"{RESULTS_DIR}/browsable\" > {OABASE}_trufflehog.json"
+          - "trufflehog filesystem --json ./browsable > trufflehog.json"
         notes: "Searches downloaded files for API keys, passwords, tokens, and other secrets"
 
     references:
@@ -544,13 +547,13 @@ workflows:
     steps:
       - title: "Verify Telnet usage"
         commands:
-          - "sudo nmap -A -p 23 {TCP_IPS}"
+          - "sudo nmap -A -p 23 <TARGET>"
         notes: ""
 
       - title: "Intercept cleartext traffic for proof-of-concept"
         commands:
-          - "tcpdump tcp port 23 and dst {TCP_IPS} -i eth0 -w {OABASE}_telnet.pcap -tttt"
-          - "telnet {TCP_IPS} 23"
+          - "tcpdump tcp port 23 and dst <TARGET> -i eth0 -w telnet.pcap -tttt"
+          - "telnet <TARGET> 23"
         notes: "Start tcpdump to capture packets then trigger a telnet connection. Enter any credentials you want. We're just trying to prove the capturing."
 
       - title: "Wireshark Analysis"
@@ -576,20 +579,20 @@ workflows:
     steps:
       - title: "Verify SMB signing is disabled"
         commands:
-          - "netexec smb {TCP_IPS} -u guest -p ''"
-          - "nmap -p445 --script smb-security-mode {TCP_IPS}"
+          - "netexec smb <TARGET> -u guest -p ''"
+          - "nmap -p445 --script smb-security-mode <TARGET>"
         notes: "Check output for 'Message signing: disabled' or similar. NetExec shows signing status in its output banner."
 
       - title: "Test NTLM relay attack feasibility"
         commands:
           - "responder -I eth0 -A"
-          - "ntlmrelayx.py -tf {WORKDIR}/relay_targets.txt -smb2support"
-        notes: "Start Responder in analyze mode to capture NTLM authentication attempts. Use ntlmrelayx to relay captured hashes to target systems. Create relay_targets.txt with hosts from {TCP_IPS}."
+          - "ntlmrelayx.py -tf relay_targets.txt -smb2support"
+        notes: "Start Responder in analyze mode to capture NTLM authentication attempts. Use ntlmrelayx to relay captured hashes to target systems. Create relay_targets.txt with the affected hosts."
 
       - title: "Enumerate accessible shares"
         commands:
-          - "netexec smb {TCP_IPS} -u <username> -p <password> --shares"
-          - "smbclient -L //{TCP_IPS} -U <username>"
+          - "netexec smb <TARGET> -u <USERNAME> -p <PASSWORD> --shares"
+          - "smbclient -L //<TARGET> -U <USERNAME>"
         notes: "List available SMB shares and permissions. If you've relayed credentials, use those to enumerate further access."
 
     references:
@@ -639,19 +642,17 @@ steps:
       - "command"
 ```
 
-3. **Missing required fields**:
+3. **Missing `plugin_id`**: entries without one are skipped silently:
 
 ```yaml
-# ❌ Wrong - missing 'commands' field
-steps:
-  - title: "Step 1"
-    notes: "Some notes"
+# ❌ Wrong - no plugin_id, entry is ignored
+- workflow_name: "SMB Signing"
+  steps: []
 
-# ✅ Correct - include commands (can be empty)
-steps:
-  - title: "Step 1"
-    commands: []
-    notes: "Some notes"
+# ✅ Correct
+- plugin_id: "57608"
+  workflow_name: "SMB Signing"
+  steps: []
 ```
 
 **Solution**: Validate YAML syntax:
@@ -673,10 +674,10 @@ python -c "import yaml; yaml.safe_load(open('my_workflows.yaml'))"
 cerno review  # Navigate to finding, check displayed plugin ID
 ```
 
-2. **Workflow file not loaded** - Verify you passed the `--custom-workflows` flag:
+2. **Workflow file not loaded** - Pass the `--custom-workflows` flag, or set `custom_workflows_path`:
 
 ```bash
-# ❌ Wrong - workflows not loaded
+# ❌ Wrong - workflows not loaded (unless custom_workflows_path is set)
 cerno review
 
 # ✅ Correct - explicitly load workflows
@@ -701,17 +702,15 @@ tail -f ~/.cerno/cerno.log
 
 ### Placeholder Not Expanding
 
-**Symptom**: Command shows literal `{TCP_IPS}` instead of file path
+**Symptom**: `[W]` shows a literal `<TARGET>` (or `{TCP_IPS}`) instead of a host
 
-**Cause**: Placeholders are only expanded in **custom commands** (when you choose "Custom" tool option), not in workflow display.
+**Cause**: That is expected. The TUI displays workflows as written, and only the
+MCP `prepare_workflow` tool fills `<…>` placeholders. `{TCP_IPS}`-style tokens are
+custom-command placeholders and are never filled in a workflow (see
+[Placeholder System](#placeholder-system)).
 
-**Expected behavior**:
-
-- **Workflow display**: Shows placeholders as-is (e.g., `{TCP_IPS}`)
-- **Custom commands**: Expands placeholders to actual values
-- **Copied commands**: Placeholders remain as-is (you must manually replace)
-
-**Solution**: If you need expanded values, use the **Copy** option in the TUI and manually replace placeholders with the actual file paths shown in Cerno's output.
+**Solution**: Copy the command and substitute the hosts/ports shown in the finding
+view (`[V]`), or use `prepare_workflow` from an MCP client.
 
 ### File Not Found Errors
 
@@ -779,17 +778,18 @@ Output shows:
 
 ### Reloading Workflows (Auto-Reload on File Modification)
 
-Cerno automatically reloads workflow files when they're modified:
+Cerno re-reads the **primary** workflow file when its modification time changes,
+checking before each lookup. The primary file is your file only in
+`--custom-workflows-only` mode. In supplement mode (`--custom-workflows` or
+`custom_workflows_path`) it is the bundled YAML, so edits to your file are picked
+up only after restarting the review. (The MCP server rebuilds its mapper on every
+call, so it always sees your latest edits.)
 
-1. **During review session**: Workflow files are checked for modifications before each access
-2. **No restart required**: Edit your workflow YAML, save, and immediately use it
-3. **Modification tracking**: Uses file modification time (`mtime`) to detect changes
-
-This enables rapid workflow development:
+For rapid workflow development, use replace mode:
 
 ```bash
 # Terminal 1: Start review
-cerno review --custom-workflows my_workflows.yaml
+cerno review --custom-workflows-only my_workflows.yaml
 
 # Terminal 2: Edit workflows while review is running
 vim my_workflows.yaml
@@ -877,7 +877,7 @@ git push --tags
 
 ## Additional Resources
 
-- **Bundled workflows**: See `cerno_pkg/workflow_mappings.yaml` for 8 complete examples
+- **Bundled workflows**: See `cerno_pkg/workflow_mappings.yaml` for 9 complete examples
 - **Configuration guide**: Run `cerno config show` to see all available settings
 - **Main documentation**: See [README.md](../README.md) for general Cerno usage
 - **Tool system guide**: See [TOOL_SYSTEM_GUIDE.md](TOOL_SYSTEM_GUIDE.md) for tool integration details
@@ -914,4 +914,4 @@ Found an issue or want to improve this guide? Contributions welcome:
 
 ---
 
-**Last Updated**: 2026-01-14
+**Last Updated**: 2026-10-27

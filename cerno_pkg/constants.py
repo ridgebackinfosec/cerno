@@ -50,10 +50,10 @@ def reset_results_root_cache() -> None:
 
 
 SCANS_ROOT: Path = Path.home() / ".cerno" / "scans"
-"""Root directory for scan exports (plugin host lists)."""
+"""Per-scan working directories (only http_urls.txt is written here, when web services exist)."""
 
 REVIEW_PREFIX: str = "REVIEW_COMPLETE-"
-"""Prefix added to filenames that have been reviewed."""
+"""Legacy filename prefix from before review state moved to the database (unused)."""
 
 REVIEW_STATE_UNREVIEWED: str = "unreviewed"
 """Finding not yet reviewed (default on import)."""
@@ -184,7 +184,9 @@ NSE_PROFILES: list[tuple[str, str, list[str], bool]] = [
 
 # ========== Severity color mapping ==========
 # Format: severity_level -> (rich_color_name, ansi_color_code)
-# This is the single source of truth for severity colors across the app
+# Used by ansi.colorize_severity_label() and render.severity_style(). Only the Rich
+# name is read; ANSI codes are derived from it via the color_scheme remap. A few
+# tables in render.py/cerno.py still define their own severity colors.
 SEVERITY_COLORS: dict[str, tuple[str, str]] = {
     "critical": ("red", "\u001b[31m"),
     "high": ("yellow", "\u001b[33m"),
@@ -259,7 +261,7 @@ HNAME_RE: re.Pattern[str] = re.compile(
 
 # ========== Validation functions ==========
 def validate_results_root(path: Path) -> tuple[bool, str]:
-    """Validate that RESULTS_ROOT is writable.
+    """Validate that the results root (get_results_root()) is writable.
 
     Args:
         path: Path to validate for writability
