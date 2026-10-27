@@ -138,7 +138,7 @@ default:
 | `results_root` | Where `_mcp/<finding_id>/run-*/` target files and run outputs are written |
 | `custom_workflows_path` (contributions) | Also decides "new" vs "enhanced" vs nothing-to-contribute for `get_workflow_candidate` and the `workflow_candidate` verdict hint |
 | `contribution_export_dir` | Where `export_workflow_contribution` writes files (default `<results_root>/contributions`) |
-| `mcp_batch_concurrency` / `mcp_batch_timeout` | Defaults for `execute_batch`'s `concurrency` (default 1) and `per_command_timeout` (default 300s, clamped to [1, 3600]) |
+| `mcp_batch_concurrency` / `mcp_batch_timeout` | Defaults for `execute_batch`'s `concurrency` (default 3, clamped to [1, 8]) and `per_command_timeout` (default 300s, clamped to [1, 3600]) |
 | `nxc_workspace_path` / `nxc_enrichment_enabled` | NetExec workspace for `get_host_nxc`, `list_nxc_credentials`, credential refs, `@cred:` injection, `reveal_credential` and nxc ingest. With enrichment off, all of these report NetExec as unavailable |
 | `log_path` / `debug_logging` | Where (and how verbosely) the server logs; stdout is reserved for JSON-RPC |
 | `proxychains_enabled` / `proxychains_host` / `proxychains_port` | `execute_command(use_proxy=true)` wraps the run in `proxychains4 -q -f ~/.cerno/proxychains4.conf` (SOCKS5 host:port) when `proxychains_enabled` is on; otherwise `use_proxy` is ignored. `check_tools` reports the installed proxychains-ng version |
@@ -291,8 +291,11 @@ timestamped, and `set_review_state(notes=…)` appends rather than overwrites.
   generated command and whether it is runnable or manual; findings already
   resolved are skipped when `skip_done` (default). Review the plan, then
   `execute_batch` with the same arguments runs the runnable items as tracked,
-  attributed jobs, at most `mcp_batch_concurrency` at a time with
-  `mcp_batch_timeout` per command.
+  attributed jobs, at most `mcp_batch_concurrency` at a time (default 3;
+  the config value and the per-call `concurrency` arg are clamped to [1, 8])
+  with `mcp_batch_timeout` per command. Queued batch items don't hold worker
+  threads, so `execute_command` / `start_execution` calls made during a batch
+  run immediately.
 
 ---
 

@@ -367,16 +367,17 @@ class CernoConfig:
     execute_command because a batch amplifies blast radius."""
 
     mcp_batch_concurrency: int = field(
-        default=1,
+        default=3,
         metadata={
             "section": "MCP Server",
             "kind": "int",
             "help": "Max commands execute_batch runs at once",
         },
     )
-    """Maximum number of batch commands execute_batch runs concurrently (default: 1 =
-    sequential). nmap/nxc are already internally parallel, so keep this small (2-3) to
-    avoid overwhelming the host/network."""
+    """Maximum number of batch commands execute_batch runs concurrently (default: 3;
+    clamped to [1, 8] along with the per-call ``concurrency`` arg). nmap/nxc are already
+    internally parallel, so keep this small; lower it to 1 when routing through a single
+    SOCKS pivot (proxychains) or under strict rate limits."""
 
     mcp_batch_timeout: int = field(
         default=300,

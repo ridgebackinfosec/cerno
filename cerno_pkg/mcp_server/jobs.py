@@ -118,15 +118,17 @@ class JobRegistry:
         finding_id: Optional[int] = None,
         use_proxy: bool = False,
         timeout: int = 300,
-        gate: Optional[threading.Semaphore] = None,
+        gate: Optional[asyncio.Semaphore] = None,
     ) -> Job:
         """Validate, register, and launch a job; returns immediately with the Job.
 
         The exec policy / cred-gate is checked synchronously (so a bad command
         fails fast here, before scheduling). The run itself executes on the event
         loop via ``asyncio.to_thread`` and is not awaited. ``gate`` (a shared
-        ``threading.Semaphore``) caps how many jobs run their subprocess at once —
-        used by ``execute_batch`` to bound concurrency across a batch.
+        ``asyncio.Semaphore``) caps how many jobs run their subprocess at once —
+        used by ``execute_batch`` to bound concurrency across a batch. Queued jobs
+        wait on the gate in the event loop, not in a worker thread, so a large
+        batch never ties up the default executor and starves other executions.
         """
         from .server import _mask_command_text, _preflight_exec
 
@@ -140,19 +142,16 @@ class JobRegistry:
         with self._lock:
             self._jobs[job.job_id] = job
         loop = asyncio.get_running_loop()
-        job._task = loop.create_task(
-            asyncio.to_thread(
-                self._run_job,
-                job,
-                command,
-                tool_name,
-                use_proxy,
-                timeout,
-                finding_id,
-                config,
-                gate,
-            )
-        )
+
+        async def run() -> None:
+            args = (job, command, tool_name, use_proxy, timeout, finding_id, config)
+            if gate is None:
+                await asyncio.to_thread(self._run_job, *args)
+                return
+            async with gate:
+                await asyncio.to_thread(self._run_job, *args)
+
+        job._task = loop.create_task(run())
         return job
 
     def get(self, job_id: str) -> Optional[Job]:
@@ -227,15 +226,12 @@ class JobRegistry:
         timeout: int,
         finding_id: Optional[int],
         config: CernoConfig,
-        gate: Optional[threading.Semaphore] = None,
     ) -> None:
         # Imported lazily to avoid a jobs<->server import cycle at module load.
         from .server import _run_and_record
 
-        # A cancel that arrived while queued on the gate should skip the run.
-        if gate is not None:
-            gate.acquire()
         try:
+            # A cancel that arrived while queued on the gate should skip the run.
             if job._cancel_requested:
                 with self._lock:
                     job.ended_at = time.time()
@@ -265,9 +261,6 @@ class JobRegistry:
                 job.ended_at = time.time()
                 if job.status != "cancelled":
                     job.status = "failed"
-        finally:
-            if gate is not None:
-                gate.release()
 
 
 _REGISTRY: Optional[JobRegistry] = None

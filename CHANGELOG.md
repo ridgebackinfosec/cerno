@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.0] - 2026-10-27
+
+### Changed
+- **MCP batch runs 3 commands at a time by default:** `mcp_batch_concurrency` now defaults to `3` instead of `1`, so enabling `mcp_allow_batch` no longer also requires raising concurrency to get any parallelism. Both the config value and `execute_batch`'s per-call `concurrency` argument are now clamped to [1, 8] (previously the argument had no upper bound). A config file that already sets `mcp_batch_concurrency` keeps its value; set it to `1` when routing through a single SOCKS pivot (proxychains) or under strict rate limits, or run `cerno config reset mcp_batch_concurrency` to adopt the new default.
+
+### Fixed
+- **A large MCP batch no longer blocks other executions:** queued `execute_batch` items each held a worker thread while waiting their turn, so an `execute_command` or `start_execution` call made during a batch of more than about a dozen findings waited until most of the batch had finished. Queued items now wait without holding a thread (`mcp_server/jobs.py:JobRegistry.start()`), and other executions start immediately.
+
 ## [2.7.0] - 2026-10-27
 
 ### Changed

@@ -3239,8 +3239,8 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
 
             Builds the same plan as plan_batch, then runs each runnable, non-skipped
             item as a tracked, cancellable job attributed to its finding (and auto-
-            ingested), capped at mcp_batch_concurrency with an mcp_batch_timeout per
-            command. Every command is re-validated against the exec policy at run
+            ingested), capped at mcp_batch_concurrency (default 3; concurrency is
+            clamped to [1, 8]) with an mcp_batch_timeout per command. Every command is re-validated against the exec policy at run
             time. Returns the plan plus per-item results. Registered only when both
             mcp_allow_execution and mcp_allow_batch are set.
             """
