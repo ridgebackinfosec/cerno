@@ -132,6 +132,7 @@ Auto-created with defaults on first run. All settings managed via config file.
 cerno config show                    # View all settings with current values
 cerno config get <key>               # Get a single config value
 cerno config set <key> <value>       # Change a setting
+cerno config reset <key>             # Reset one setting to its default
 cerno config reset                   # Reset to defaults (creates backup)
 ```
 
@@ -353,6 +354,7 @@ cerno workflow list [--custom-workflows PATH]
 cerno config show                              # Display all settings with current values
 cerno config get <key>                         # Get a single config value
 cerno config set <key> <value>                 # Set a config value
+cerno config reset <key>                       # Reset one setting to its default
 cerno config reset                             # Reset to defaults (creates backup)
 
 # MCP server (BETA)
@@ -484,6 +486,9 @@ cerno import nessus scan.nessus
 
 **Config file issues:**
 ```bash
+# Reset a single setting to its default
+cerno config reset <key>
+
 # Reset config to defaults (creates backup)
 cerno config reset
 ```

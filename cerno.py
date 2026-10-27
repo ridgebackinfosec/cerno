@@ -3036,11 +3036,37 @@ def host_history_cmd(
 # Grouped under 'cerno config'
 
 
-@config_app.command(name="reset", help="Reset configuration file to defaults")
-def config_reset() -> None:
-    """Reset config file at ~/.cerno/config.yaml to defaults."""
+@config_app.command(
+    name="reset", help="Reset all settings, or a single KEY, to defaults"
+)
+def config_reset(
+    key: Optional[str] = typer.Argument(
+        None, help="Config key to reset (omit to reset the whole file)"
+    ),
+) -> None:
+    """Reset ~/.cerno/config.yaml (or just one key) to defaults."""
     from cerno_pkg import create_example_config, get_config_path
     import shutil
+
+    if key is not None:
+        from cerno_pkg import load_config, save_config
+        from cerno_pkg.config import config_key_names, reset_config_key
+
+        config = load_config()
+        try:
+            value = reset_config_key(config, key)
+        except KeyError:
+            err(f"Unknown config key: {key}")
+            info("Available keys: " + ", ".join(config_key_names()))
+            raise typer.Exit(1)
+
+        if not save_config(config):
+            err("Failed to save config")
+            info(f"Check permissions on {get_config_path().parent}")
+            raise typer.Exit(1)
+        shown = "unset" if value is None else value
+        ok(f"Reset {key} to default ({shown})")
+        return
 
     config_path = get_config_path()
 
@@ -3133,6 +3159,7 @@ def config_show() -> None:
         info("All settings are at their defaults.")
     info(f"Edit config: {config_path}")
     info("Change values: cerno config set <key> <value>")
+    info("Reset one setting: cerno config reset <key>")
     info("Reset to defaults: cerno config reset")
 
 

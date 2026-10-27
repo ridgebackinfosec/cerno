@@ -587,6 +587,7 @@ Only after user confirms the changelog content:
 - `cerno config show` - Display all configuration settings with current values
 - `cerno config set <key> <value>` - Change a configuration value
 - `cerno config get <key>` - Get current value of a setting
+- `cerno config reset <key>` - Reset a single setting to its default (`config.reset_config_key()`; nullable keys drop out of the YAML)
 - `cerno config reset` - Reset configuration to defaults (creates backup)
 
 **Note**: Environment variables are not used for configuration. Use `config.yaml` for all settings including:

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5.0] - 2026-10-27
+
+### Added
+- **Reset a single config setting:** `cerno config reset <key>` restores one key to its default and leaves the rest of `config.yaml` alone. Unlike `config set`, it handles nullable keys (e.g. `custom_workflows_path` goes back to unset) and list keys (`mcp_exec_allowlist` gets its default list back, not an empty deny-all list). `cerno config reset` with no key still resets the whole file with a backup. New helper `config.reset_config_key()`.
+
 ## [2.4.0] - 2026-10-27
 
 ### Added

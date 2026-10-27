@@ -457,6 +457,30 @@ def config_field_kind(name: str) -> Optional[str]:
     return None
 
 
+def reset_config_key(config: CernoConfig, key: str) -> Any:
+    """Restore a single config key to its default value, in place.
+
+    The default is read from a fresh ``CernoConfig()`` so ``default_factory``
+    list fields get their real default (not None). Nullable defaults become None
+    and are then omitted from the YAML by ``save_config``.
+
+    Args:
+        config: Configuration object to modify
+        key: Config key name to reset
+
+    Returns:
+        The restored default value
+
+    Raises:
+        KeyError: If ``key`` is not a config field
+    """
+    if key not in config_key_names():
+        raise KeyError(key)
+    value = getattr(CernoConfig(), key)
+    setattr(config, key, value)
+    return value
+
+
 def config_from_dict(data: dict[str, Any]) -> CernoConfig:
     """Build a CernoConfig from a parsed-YAML dict, honoring per-field ``kind``.
 
