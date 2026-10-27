@@ -185,7 +185,7 @@ cerno config set proxychains_port 9000           # proxychains4 SOCKS5 proxy por
 | `mcp_batch_timeout` | `300` | Per-command timeout (seconds) for `execute_batch` |
 | `mcp_allow_cred_injection` | `false` | Resolve `@cred:<ref>@` placeholders to real secrets at run time |
 | `mcp_allow_cred_reveal` | `false` | Allow `reveal_credential` to return cleartext secrets |
-| `mcp_exec_allowlist` | `nmap, nxc, netexec, msfconsole` | Binaries `execute_command` may run (`*` = any; empty = none) |
+| `mcp_exec_allowlist` | `nmap, nxc, netexec, msfconsole` + recon utilities (curl, wget, dig, ssh-audit, sslscan, …; full list in [docs/MCP.md](docs/MCP.md)) | Binaries `execute_command` may run (`*` = any; empty = none) |
 | `mcp_exec_denylist` | `rm, dd, mkfs*, shred, …` | Binaries `execute_command` may never run (always wins) |
 | `contribution_export_dir` | `<results_root>/contributions` | Where exported workflow contributions are written |
 
@@ -473,7 +473,7 @@ cerno config set mcp_exec_denylist "rm,dd,sh"    # binaries execute_command may 
 
 > Gating flags are read once at startup; reconnect (remove + re-add, or restart the client) to apply a change.
 
-> Even with execution enabled, `execute_command` only runs binaries matching `mcp_exec_allowlist` (default: nmap, nxc, netexec, msfconsole; an empty list denies everything) and never runs binaries matching `mcp_exec_denylist` (default: destructive commands such as rm, dd, mkfs\*, shred, shutdown). Common wrapper prefixes (`sudo`, `env`, `timeout`, `nice`, `nohup`, …) are unwrapped so the real target is checked. The denylist is a guardrail, not a security boundary: with `"*"`, shells and interpreters can still run denied programs unless you deny them too.
+> Even with execution enabled, `execute_command` only runs binaries matching `mcp_exec_allowlist` (default: nmap, nxc, netexec, msfconsole plus low-impact recon utilities such as curl, wget, dig, whois, ssh-audit, sslscan and snmpwalk; an empty list denies everything) and never runs binaries matching `mcp_exec_denylist` (default: destructive commands such as rm, dd, mkfs\*, shred, shutdown). Common wrapper prefixes (`sudo`, `env`, `timeout`, `nice`, `nohup`, …) are unwrapped so the real target is checked. The denylist is a guardrail, not a security boundary: with `"*"`, shells and interpreters can still run denied programs unless you deny them too.
 
 **See [docs/MCP.md](docs/MCP.md)** for the full tool/resource/prompt reference,
 scopes, and management commands.

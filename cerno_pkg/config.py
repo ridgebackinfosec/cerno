@@ -16,7 +16,39 @@ from .constants import COLOR_SCHEMES
 
 #: Default binaries the MCP ``execute_command`` tool may run (single source of truth).
 #: Wrappers (sudo, proxychains4) need no entry: the wrapped target is what's checked.
-DEFAULT_MCP_EXEC_ALLOWLIST: tuple[str, ...] = ("nmap", "nxc", "netexec", "msfconsole")
+#: Beyond the core tools, only low-impact recon utilities with no built-in way to run
+#: a local command are included. Deliberately excluded (opt in via config): shells and
+#: interpreters, GTFOBins-style escapes (find, awk, sed, xargs, tar, git, ssh, nc,
+#: socat, tcpdump, smbclient/rpcclient `!`), and active-attack or noisy tools
+#: (responder, ntlmrelayx.py, hping3, ffuf, gobuster, feroxbuster, nuclei).
+DEFAULT_MCP_EXEC_ALLOWLIST: tuple[str, ...] = (
+    # Core tools
+    "nmap",
+    "nxc",
+    "netexec",
+    "msfconsole",
+    # HTTP fetch
+    "curl",
+    "wget",
+    # DNS / registry
+    "dig",
+    "host",
+    "nslookup",
+    "whois",
+    # Reachability
+    "ping",
+    "traceroute",
+    # Protocol auditing
+    "ssh-audit",
+    "sslscan",
+    "testssl*",
+    "whatweb",
+    # RPC / NFS / SNMP enumeration
+    "showmount",
+    "rpcinfo",
+    "snmpwalk",
+    "onesixtyone",
+)
 
 #: Default binaries the MCP ``execute_command`` tool may never run (destructive commands).
 DEFAULT_MCP_EXEC_DENYLIST: tuple[str, ...] = (

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.7.0] - 2026-10-27
+
+### Changed
+- **The MCP `execute_command` allowlist now includes common recon utilities by default:** besides `nmap`, `nxc`, `netexec` and `msfconsole`, the default `mcp_exec_allowlist` now allows `curl`, `wget`, `dig`, `host`, `nslookup`, `whois`, `ping`, `traceroute`, `ssh-audit`, `sslscan`, `testssl*`, `whatweb`, `showmount`, `rpcinfo`, `snmpwalk` and `onesixtyone`. Bundled workflow steps that use these tools (e.g. `ssh-audit`, `wget`) are now marked executable by `prepare_workflow` / `plan_batch` (and run by `execute_batch`) instead of manual-only. Shells, binaries with built-in command escapes (`find`, `ssh`, `nc`, `smbclient`, …) and active-attack tools are deliberately left out; see `docs/MCP.md`. A config file that already sets `mcp_exec_allowlist` keeps its list; run `cerno config reset mcp_exec_allowlist` to adopt the new default.
+
 ## [2.6.1] - 2026-10-27
 
 ### Changed

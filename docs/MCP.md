@@ -220,9 +220,25 @@ cerno config set mcp_exec_denylist "rm,dd,sh"    # binaries execute_command may 
      rejected. The denylist always wins over the allowlist, and adding `sudo` to it
      blocks privilege escalation. Default: `rm, rmdir, dd, shred, wipefs, mkfs*,
      fdisk, sfdisk, parted, shutdown, reboot, halt, poweroff`.
-  3. The target (last binary) must match `mcp_exec_allowlist` (default `nmap, nxc,
-     netexec, msfconsole`). Wrappers need no entry. `"*"` permits anything not
-     denied, and **an empty list denies everything**.
+  3. The target (last binary) must match `mcp_exec_allowlist`. Wrappers need no
+     entry. `"*"` permits anything not denied, and **an empty list denies
+     everything**. The default is the core tools plus low-impact recon utilities:
+     - core: `nmap, nxc, netexec, msfconsole`
+     - HTTP fetch: `curl, wget`
+     - DNS / registry: `dig, host, nslookup, whois`
+     - reachability: `ping, traceroute`
+     - protocol auditing: `ssh-audit, sslscan, testssl*, whatweb`
+     - RPC / NFS / SNMP: `showmount, rpcinfo, snmpwalk, onesixtyone`
+
+     Deliberately left out (add them yourself if you want them): shells and
+     interpreters, binaries with built-in command escapes (`find`, `awk`, `sed`,
+     `xargs`, `tar`, `git`, `ssh`, `nc`/`ncat`/`socat`, `tcpdump`, and
+     `smbclient`/`rpcclient`, whose `!` command runs a local shell), and
+     active-attack or noisy tools (`responder`, `ntlmrelayx.py`, `hping3`, `ffuf`,
+     `gobuster`, `feroxbuster`, `nuclei`). Even the defaults aren't inert: `curl`
+     can write files (`-o`) and read or upload local ones (`file://`, `-T`), and
+     `wget --use-askpass` runs a program. Because `sudo` isn't denied by default,
+     any allowed binary can run as root; add `sudo` to the denylist to prevent that.
 - Entries in both lists are glob patterns (`fnmatch`, case-sensitive) matched
   against the binary's **basename**, so `/usr/bin/rm` and `rm` are treated alike.
 - The denylist guards against mistakes; it is **not a security boundary**. With
