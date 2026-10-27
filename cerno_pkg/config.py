@@ -12,6 +12,8 @@ from typing import Any, Iterable, Optional, Sequence
 
 import yaml
 
+from .constants import COLOR_SCHEMES
+
 #: Default binaries the MCP ``execute_command`` tool may run (single source of truth).
 #: Wrappers (sudo, proxychains4) need no entry: the wrapped target is what's checked.
 DEFAULT_MCP_EXEC_ALLOWLIST: tuple[str, ...] = ("nmap", "nxc", "netexec", "msfconsole")
@@ -115,6 +117,17 @@ class CernoConfig:
         },
     )
     """Disable ANSI color output (default: False)."""
+
+    color_scheme: str = field(
+        default="light",
+        metadata={
+            "section": "Review & Display",
+            "kind": "str",
+            "choices": COLOR_SCHEMES,
+            "help": "Terminal background: light or dark",
+        },
+    )
+    """Terminal background the colors are tuned for: 'light' (default) or 'dark'."""
 
     term_override: Optional[str] = field(
         default=None,
@@ -417,6 +430,7 @@ class CernoConfig:
 MCP_NOT_APPLICABLE_KEYS: frozenset[str] = frozenset(
     {
         "no_color",
+        "color_scheme",
         "term_override",
         "default_tool",
         "claude_assistant_enabled",
@@ -479,6 +493,15 @@ def reset_config_key(config: CernoConfig, key: str) -> Any:
     value = getattr(CernoConfig(), key)
     setattr(config, key, value)
     return value
+
+
+def config_field_choices(name: str) -> Optional[tuple[str, ...]]:
+    """The allowed values of a config field, or None when it is free-form."""
+    for f in iter_config_fields():
+        if f.name == name:
+            choices = f.metadata.get("choices")
+            return tuple(choices) if choices else None
+    return None
 
 
 def config_from_dict(data: dict[str, Any]) -> CernoConfig:

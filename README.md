@@ -136,6 +136,11 @@ cerno config reset <key>             # Reset one setting to its default
 cerno config reset                   # Reset to defaults (creates backup)
 ```
 
+**Terminal colors:** colors are tuned for a light (white) terminal background by default. On a dark terminal, switch to the classic palette:
+```bash
+cerno config set color_scheme dark    # light (default) | dark
+```
+
 **Proxychains4 proxy settings:**
 ```bash
 cerno config set proxychains_enabled true        # Route tools through proxychains4 (default: false)

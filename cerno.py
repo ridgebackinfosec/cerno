@@ -3191,7 +3191,12 @@ def config_set(
 ) -> None:
     """Set a configuration value in ~/.cerno/config.yaml."""
     from cerno_pkg import load_config, save_config, get_config_path
-    from cerno_pkg.config import coerce_str_list, config_field_kind, config_key_names
+    from cerno_pkg.config import (
+        coerce_str_list,
+        config_field_choices,
+        config_field_kind,
+        config_key_names,
+    )
 
     config = load_config()
 
@@ -3199,6 +3204,12 @@ def config_set(
     if not hasattr(config, key):
         err(f"Unknown config key: {key}")
         info("Available keys: " + ", ".join(config_key_names()))
+        raise typer.Exit(1)
+
+    choices = config_field_choices(key)
+    if choices and value not in choices:
+        err(f"Invalid value for {key}: {value}")
+        info("Valid values: " + ", ".join(choices))
         raise typer.Exit(1)
 
     # Type conversion driven by the field's ``kind`` metadata (single source of
@@ -3323,9 +3334,9 @@ def workflow_list(
     """Display all available workflows with plugin IDs and descriptions."""
     from cerno_pkg.workflow_mapper import WorkflowMapper
     from rich.table import Table
-    from rich.console import Console
+    from cerno_pkg.ansi import get_console
 
-    console = Console()
+    console = get_console()
 
     # Initialize workflow mapper (loads bundled workflows)
     workflow_mapper = WorkflowMapper()

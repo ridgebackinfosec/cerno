@@ -125,7 +125,7 @@ default:
 | `proxychains_enabled` / `proxychains_host` / `proxychains_port` | `execute_command(use_proxy=true)` wraps the run in `proxychains4 -q -f ~/.cerno/proxychains4.conf` (SOCKS5 host:port) when `proxychains_enabled` is on; otherwise `use_proxy` is ignored. `check_tools` reports the installed proxychains-ng version |
 
 These keys are TUI-only and intentionally ignored by the server:
-`no_color`, `term_override`, `default_tool`, `claude_assistant_enabled`,
+`no_color`, `color_scheme`, `term_override`, `default_tool`, `claude_assistant_enabled`,
 `pivot_interface`, `pivot_http_port`, `top_ports_count`
 (`config.MCP_NOT_APPLICABLE_KEYS`).
 Config is read when the server starts, so reconnect after changing it. Edits to

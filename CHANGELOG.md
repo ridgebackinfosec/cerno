@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.6.0] - 2026-10-27
+
+### Added
+- **`color_scheme` config key (`light` | `dark`):** selects the palette for the terminal background. `cerno config set` now rejects values outside a key's allowed choices (e.g. `cerno config set color_scheme purple` lists `light, dark`).
+
+### Changed
+- **Colors now default to a light (white) terminal background:** yellow, cyan, white, bright and default ANSI colors were hard to read on white backgrounds. Under the default `light` scheme every color is swapped for a darker variant (e.g. yellow → dark orange, cyan → teal, white → default text) across the whole TUI and CLI. That covers tables, panels, markup, prompts, progress bars and `✓`/`⚠`/`✗` messages, in one place (`ansi.CernoConsole`, `ansi.initialize_colors`, palette in `constants.LIGHT_BG_COLOR_MAP`). **On a dark terminal, run `cerno config set color_scheme dark`** to get the previous colors back exactly.
+
 ## [2.5.0] - 2026-10-27
 
 ### Added

@@ -5,12 +5,85 @@ console output. Color configuration is managed via config.yaml.
 """
 
 import shutil
-from typing import Optional, TYPE_CHECKING
+from functools import lru_cache
+from typing import Any, Optional, TYPE_CHECKING, Union
+
+from rich.color import Color
+from rich.console import Console
+from rich.style import Style
+from rich.theme import Theme
 
 if TYPE_CHECKING:
     from .config import CernoConfig
 
-from .constants import SEVERITY_COLORS
+from .constants import LIGHT_BG_COLOR_MAP, SEVERITY_COLORS
+
+
+# ========== Color scheme (light/dark terminal background) ==========
+_color_scheme: str = "light"
+"""Active scheme for ANSI codes; set by initialize_colors()/get_console()."""
+
+
+@lru_cache(maxsize=512)
+def remap_style(style: str, scheme: str) -> str:
+    """Rewrite named colors in a Rich style string for the given scheme.
+
+    Under ``light`` (or any unknown scheme) each named color token, including a
+    background after ``on``, is swapped via ``LIGHT_BG_COLOR_MAP``. Theme names
+    (``prompt.choices``), hex/rgb colors and ``link`` URLs are left alone.
+    ``dark`` returns the style unchanged.
+
+    Args:
+        style: Rich style definition (e.g. "bold yellow", "black on cyan")
+        scheme: "light" or "dark"
+
+    Returns:
+        The style definition with colors remapped for the scheme
+    """
+    if scheme == "dark":
+        return style
+    tokens = style.split()
+    out = []
+    for i, token in enumerate(tokens):
+        after_link = i > 0 and tokens[i - 1] == "link"
+        out.append(token if after_link else LIGHT_BG_COLOR_MAP.get(token, token))
+    return " ".join(out)
+
+
+def _ansi_fg(color_name: str, scheme: str) -> str:
+    """ANSI foreground escape for a Rich color name under the given scheme."""
+    codes = Color.parse(remap_style(color_name, scheme)).get_ansi_codes()
+    return f"\u001b[{';'.join(codes)}m"
+
+
+class CernoConsole(Console):
+    """Rich Console that remaps every string style for a color scheme.
+
+    Rich resolves all string styles (markup tags, ``Text``/table/panel
+    ``style=``) through ``get_style()``, so remapping there covers the whole UI
+    without touching call sites. Rich's built-in theme (prompts, progress bars,
+    markdown) is remapped the same way.
+    """
+
+    def __init__(self, *args: Any, scheme: str = "light", **kwargs: Any) -> None:
+        from rich.default_styles import DEFAULT_STYLES
+
+        self.color_scheme = scheme
+        theme = Theme(
+            {
+                name: remap_style(str(style), scheme)
+                for name, style in DEFAULT_STYLES.items()
+                if str(style) != "none"
+            }
+        )
+        super().__init__(*args, theme=theme, **kwargs)
+
+    def get_style(
+        self, name: Union[str, Style], *, default: Optional[Union[Style, str]] = None
+    ) -> Style:
+        if isinstance(name, str):
+            name = remap_style(name, self.color_scheme)
+        return super().get_style(name, default=default)
 
 
 # ========== Color configuration ==========
@@ -42,20 +115,24 @@ def initialize_colors(config: Optional["CernoConfig"] = None) -> None:
         from .config import load_config
         config = load_config()
 
+    global _color_scheme
+    _color_scheme = config.color_scheme
+
     # Disable colors if configured
     if config.no_color or config.term_override == "dumb":
         # Colors already empty strings (defaults)
         return
 
-    # Enable colors
+    # Enable colors (derived from Rich color names so both schemes share one map)
+    scheme = config.color_scheme
     C.RESET = "\u001b[0m"
     C.BOLD = "\u001b[1m"
-    C.BLUE = "\u001b[34m"
-    C.GREEN = "\u001b[32m"
-    C.YELLOW = "\u001b[33m"
-    C.RED = "\u001b[31m"
-    C.CYAN = "\u001b[36m"
-    C.MAGENTA = "\u001b[35m"
+    C.BLUE = _ansi_fg("blue", scheme)
+    C.GREEN = _ansi_fg("green", scheme)
+    C.YELLOW = _ansi_fg("yellow", scheme)
+    C.RED = _ansi_fg("red", scheme)
+    C.CYAN = _ansi_fg("cyan", scheme)
+    C.MAGENTA = _ansi_fg("magenta", scheme)
 
 
 def get_no_color(config: Optional["CernoConfig"] = None) -> bool:
@@ -116,18 +193,23 @@ def get_console(config: Optional["CernoConfig"] = None):
     Returns:
         Console instance with no_color parameter set appropriately
     """
-    global _console_cache
+    global _console_cache, _color_scheme
 
     if _console_cache is None:
-        from rich.console import Console
+        import rich
 
         if config is None:
             from .config import load_config
             config = load_config()
 
-        _console_cache = Console(
-            no_color=config.no_color or config.term_override == "dumb"
+        _color_scheme = config.color_scheme
+        _console_cache = CernoConsole(
+            scheme=config.color_scheme,
+            no_color=config.no_color or config.term_override == "dumb",
         )
+        # Rich's Prompt/Confirm/Progress fall back to rich's global console
+        # when no console= is passed; point it at ours so they share the scheme.
+        rich._console = _console_cache
 
     return _console_cache
 
@@ -256,14 +338,14 @@ def colorize_severity_label(label: str) -> str:
     normalized_label = label.strip().lower()
 
     # Look up color from centralized mapping
-    for severity_key, (_, ansi_code) in SEVERITY_COLORS.items():
+    for severity_key, (rich_color, _) in SEVERITY_COLORS.items():
         if severity_key in normalized_label:
-            color = "" if get_no_color() else ansi_code
+            color = "" if get_no_color() else _ansi_fg(rich_color, _color_scheme)
             return f"{C.BOLD}{color}{label}{C.RESET}"
 
     # Default fallback
-    _, default_ansi = SEVERITY_COLORS["default"]
-    color = "" if get_no_color() else default_ansi
+    default_rich, _ = SEVERITY_COLORS["default"]
+    color = "" if get_no_color() else _ansi_fg(default_rich, _color_scheme)
     return f"{C.BOLD}{color}{label}{C.RESET}"
 
 
