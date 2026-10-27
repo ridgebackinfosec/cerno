@@ -159,6 +159,26 @@ def command_chain(command: Sequence[Any]) -> list[str]:
     )
 
 
+def split_wrappers(command: Sequence[Any]) -> tuple[list[str], list[str]]:
+    """Split ``command`` into ``(wrapper_basenames, wrapped_argv)``.
+
+    Non-raising: known wrappers (and their own options) are peeled off the front
+    and the remaining argv — starting at the real target binary — is returned. A
+    dangling wrapper yields an empty ``wrapped_argv``. Used by the workflow
+    contribution sanitizer to drop environment wrappers such as ``proxychains4 -q``.
+    """
+    wrappers: list[str] = []
+    i = 0
+    while i < len(command):
+        name = Path(str(command[i])).name
+        spec = EXEC_WRAPPERS.get(name)
+        if spec is None:
+            break
+        wrappers.append(name)
+        i = _skip_wrapper_options(command, i + 1, spec)
+    return wrappers, [str(arg) for arg in command[i:]]
+
+
 def resolve_target_binary(command: Sequence[Any]) -> Optional[str]:
     """Basename of the real target binary, or None if it can't be resolved.
 

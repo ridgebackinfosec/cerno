@@ -195,6 +195,32 @@ SEVERITY_COLORS: dict[str, tuple[str, str]] = {
 }
 """Severity level to color mapping for Rich and ANSI outputs."""
 
+# ========== Terminal background color schemes ==========
+COLOR_SCHEMES: tuple[str, ...] = ("light", "dark")
+"""Valid values for the ``color_scheme`` config key (default: light)."""
+
+LIGHT_BG_COLOR_MAP: dict[str, str] = {
+    "yellow": "dark_orange3",
+    "bright_yellow": "dark_orange3",
+    "cyan": "turquoise4",
+    "bright_cyan": "turquoise4",
+    "green": "green4",
+    "bright_green": "green4",
+    "magenta": "dark_magenta",
+    "bright_magenta": "dark_magenta",
+    "red": "red3",
+    "bright_red": "red3",
+    "blue": "blue3",
+    "bright_blue": "blue3",
+    "white": "default",
+    "bright_white": "default",
+}
+"""Named color -> darker 256-color variant readable on a white background.
+
+Applied to every Rich style string (``ansi.remap_style``) and ANSI code
+(``ansi.initialize_colors``) when ``color_scheme`` is ``light``. The dark scheme
+uses the named colors unchanged."""
+
 
 # ========== File processing limits ==========
 MAX_FILE_BYTES: int = 2_000_000

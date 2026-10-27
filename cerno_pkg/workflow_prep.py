@@ -8,9 +8,9 @@ placeholder — never a real secret) and marks each filled command as
 executable-via-``execute_command`` or manual-only.
 
 The placeholder vocabulary is normalized in the bundled YAML to the canonical
-``<TARGET>``/``<PORT>``/``<USERNAME>``/``<PASSWORD>``/``<INTERFACE>`` tokens, but
-a variant map is kept so historical and ``--custom-workflows`` YAMLs (which may
-still use ``IP_address``/``$IP``/``<target>``/``<user>`` etc.) fill correctly too.
+``<TARGET>``/``<PORT>``/``<USERNAME>``/``<PASSWORD>``/``<INTERFACE>``/``<DOMAIN>``
+tokens, but a variant map is kept so historical and ``--custom-workflows`` YAMLs
+(which may still use ``IP_address``/``$IP``/``<target>``/``<user>`` etc.) fill correctly too.
 
 Nothing here resolves or returns a secret: credential placeholders stay in the
 ``@cred:<ref>@`` form, gated and masked by ``execute_command`` at run time.
@@ -37,6 +37,7 @@ _CANONICAL = {
     "USERNAME": "<USERNAME>",
     "PASSWORD": "<PASSWORD>",
     "INTERFACE": "<INTERFACE>",
+    "DOMAIN": "<DOMAIN>",
 }
 
 #: Every token (canonical + historical variant) that fills a given role. No token
@@ -47,7 +48,20 @@ _VARIANT_TOKENS: dict[str, list[str]] = {
     "USERNAME": ["<USERNAME>", "<username>", "<user>"],
     "PASSWORD": ["<PASSWORD>", "<password>"],
     "INTERFACE": ["<INTERFACE>", "<interface>"],
+    "DOMAIN": ["<DOMAIN>", "<domain>"],
 }
+
+
+def canonicalize_placeholders(text: str) -> str:
+    """Rewrite every historical placeholder variant in ``text`` to its canonical token.
+
+    E.g. ``IP_address``/``$IP``/``<target>`` → ``<TARGET>``. Used to compare
+    workflow commands written in different placeholder dialects.
+    """
+    for role, tokens in _VARIANT_TOKENS.items():
+        for tok in tokens:
+            text = text.replace(tok, _CANONICAL[role])
+    return text
 
 
 @dataclass
@@ -93,7 +107,7 @@ def _default_is_installed(name: str) -> bool:
 _MULTI_TARGET_BINARIES = {"nmap", "masscan", "nxc", "netexec"}
 
 #: Roles filled with a single scalar value (everything except the host target).
-_SCALAR_ROLES = ("PORT", "USERNAME", "PASSWORD", "INTERFACE")
+_SCALAR_ROLES = ("PORT", "USERNAME", "PASSWORD", "INTERFACE", "DOMAIN")
 
 
 def _sub_target(text: str, value: str) -> str:
@@ -242,6 +256,7 @@ def prepare_workflow(
             else None
         ),
         "INTERFACE": None,  # no DB source; always operator-supplied
+        "DOMAIN": (credential.get("domain") or None) if credential else None,
     }
 
     unresolved_all: list[str] = []

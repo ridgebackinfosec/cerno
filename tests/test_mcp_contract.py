@@ -55,6 +55,8 @@ EXPECTED_TOOLS = {
     "get_finding_verdict",
     "list_workflow_gaps",
     "get_notes",
+    "get_workflow_candidate",
+    "export_workflow_contribution",  # writes a local sanitized file only
     # netexec (always on)
     "get_host_nxc",
     "list_nxc_credentials",
@@ -177,6 +179,12 @@ def contract(tmp_path, monkeypatch):
         "VALUES ('nmap', 'nmap -A', 't', 0)"
     )
     exec_id = cur.lastrowid
+    # An attributed, successful run so the workflow-contribution loop has a trail.
+    conn.execute(
+        "INSERT INTO tool_executions (finding_id, tool_name, command_text, executed_at, exit_code) "
+        "VALUES (?, 'mcp', 'nmap -p 445 --script smb2-security-mode 10.0.0.1', 't', 0)",
+        (finding_id,),
+    )
     artifact_file = tmp_path / "scan.nmap"
     artifact_file.write_text(
         "Nmap scan report for 10.0.0.1\n445/tcp open microsoft-ds\n"
@@ -305,6 +313,9 @@ def test_tools_callable_through_server(contract):
         "add_note": {"finding_id": fid, "note": "t"},
         "set_finding_verdict": {"finding_id": fid, "verdict": "confirmed"},
         "ingest_results": {"execution_id": contract["execution_id"]},
+        # after set_finding_verdict (export requires a verified finding)
+        "get_workflow_candidate": {"finding_id": fid},
+        "export_workflow_contribution": {"finding_id": fid},
     }
     # execute_command + the async job tools (start/get/cancel/list_jobs are
     # subprocess/async) and import_nessus (needs a file) are covered by the
@@ -344,6 +355,40 @@ def test_generate_tools_structured_output(contract):
     msf = results["generate_msf_search"].structuredContent
     assert set(msf) == {"command", "search_term", "has_metasploit", "metasploit_names"}
     assert msf["search_term"] == "ms17_010" and msf["has_metasploit"] is True
+
+
+@pytest.mark.integration
+def test_workflow_contribution_structured_output(contract):
+    """Verdict hint + candidate + export round-trip through the real MCP path
+    (output-schema validated), and the exported file carries no host data."""
+    s, fid = contract["server"], contract["finding_id"]
+    results = _client_call_tools(
+        s,
+        {
+            "set_finding_verdict": {"finding_id": fid, "verdict": "confirmed"},
+            "get_finding_verdict": {"finding_id": fid},
+            "get_workflow_candidate": {"finding_id": fid},
+            "export_workflow_contribution": {"finding_id": fid},
+        },
+    )
+    for name, result in results.items():
+        detail = result.content[0].text if result.content else ""
+        assert not result.isError, f"{name} failed: {detail}"
+
+    hint = {"available": True, "reason": "new"}
+    assert results["set_finding_verdict"].structuredContent["workflow_candidate"] == hint
+    assert results["get_finding_verdict"].structuredContent["workflow_candidate"] == hint
+
+    cand = results["get_workflow_candidate"].structuredContent
+    assert cand["exportable"] is True and cand["leak_warnings"] == []
+    assert cand["workflow"]["steps"][0]["commands"] == [
+        "nmap -p <PORT> --script smb2-security-mode <TARGET>"
+    ]
+
+    export = results["export_workflow_contribution"].structuredContent
+    assert set(export) == {"path", "reason", "plugin_id", "submission_instructions"}
+    text = open(export["path"], encoding="utf-8").read()
+    assert "10.0.0.1" not in text and "develop" in export["submission_instructions"]
 
 
 # ---------------------------------------------------------------------------

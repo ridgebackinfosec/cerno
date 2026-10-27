@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.6.0] - 2026-10-27
+
+### Added
+- **`color_scheme` config key (`light` | `dark`):** selects the palette for the terminal background. `cerno config set` now rejects values outside a key's allowed choices (e.g. `cerno config set color_scheme purple` lists `light, dark`).
+
+### Changed
+- **Colors now default to a light (white) terminal background:** yellow, cyan, white, bright and default ANSI colors were hard to read on white backgrounds. Under the default `light` scheme every color is swapped for a darker variant (e.g. yellow → dark orange, cyan → teal, white → default text) across the whole TUI and CLI. That covers tables, panels, markup, prompts, progress bars and `✓`/`⚠`/`✗` messages, in one place (`ansi.CernoConsole`, `ansi.initialize_colors`, palette in `constants.LIGHT_BG_COLOR_MAP`). **On a dark terminal, run `cerno config set color_scheme dark`** to get the previous colors back exactly.
+
+## [2.5.0] - 2026-10-27
+
+### Added
+- **Reset a single config setting:** `cerno config reset <key>` restores one key to its default and leaves the rest of `config.yaml` alone. Unlike `config set`, it handles nullable keys (e.g. `custom_workflows_path` goes back to unset) and list keys (`mcp_exec_allowlist` gets its default list back, not an empty deny-all list). `cerno config reset` with no key still resets the whole file with a backup. New helper `config.reset_config_key()`.
+
+## [2.4.0] - 2026-10-27
+
+### Added
+- **Workflow contribution loop (MCP):** turn the commands you actually ran to verify a finding into a workflow you can contribute to the bundled `workflow_mappings.yaml`. New always-on tools: `get_workflow_candidate` drafts a sanitized entry, and `export_workflow_contribution` writes it as a local, PR-ready YAML file with steps for opening a PR against `develop`. Nothing is ever submitted. A candidate exists when the plugin has no workflow (`"new"`) or you ran a non-baseline command the mapped workflow lacks (`"enhanced"`: existing steps kept, new commands appended, `possibly_superseded` flagged). Running the mapped workflow unchanged, or only Cerno's baseline nmap/nxc commands, yields none. Hosts, ports, credentials, target/output files and proxychains wrappers are templated or stripped (`<TARGET>`/`<PORT>`/`<USERNAME>`/`<PASSWORD>`/`<DOMAIN>`), and a fail-closed leak scan (IP literals, the scan's host names, scan names, NetExec domains and non-dictionary usernames, credential secret values, NT/LM:NT hash literals, local paths) refuses any export that still contains engagement data. Plugin-derived `workflow_name`/`description` are never checked for usernames, and dictionary usernames (`anonymous`, `root`, `admin` …) never count. Secret values are resolved from the NetExec workspace in memory only to compare against, and are never logged, returned or echoed in a hit. Export also requires a `confirmed`/`false_positive` verdict, and review/verdict notes are never included. New core module `cerno_pkg/workflow_contrib.py`, plus `ToolExecution.get_by_finding()`, `Finding.get_host_identifiers()`, `Host.identifiers_for_scans()` and `exec_chain.split_wrappers()`.
+- **`workflow_candidate` verdict hint:** `set_finding_verdict`, `get_finding_verdict` and `cerno://finding/{id}/verdict` now include `workflow_candidate: {available, reason}`. Drafting is best-effort and can never break a verdict call.
+- **`contribution_export_dir` config key:** where exported contributions are written (default `<results_root>/contributions`).
+- **`<DOMAIN>` workflow placeholder:** `prepare_workflow` fills `<DOMAIN>` from the selected credential's domain and reports it unresolved otherwise. New helper `workflow_prep.canonicalize_placeholders()`.
+
+### Changed
+- **TUI tool runs are attributed to their finding:** commands run from the review TUI now record `finding_id` in `tool_executions` (`tools.py:run_tool_workflow`), so they feed verified-fact stats, verdict suggestions and workflow contributions, the same as MCP runs.
+- **MCP execution guidance:** the `execute_command`/`start_execution` descriptions and the `triage_finding`/`exploit_plan` prompts now tell clients to always pass `finding_id` when verifying a finding.
+
+### Fixed
+- **Stale repository links:** `docs/CUSTOM_WORKFLOWS.md` linked to `DefensiveOrigins/cerno`. It now points to `ridgebackinfosec/cerno` (PRs target `develop`).
+
 ## [2.3.2] - 2026-10-26
 
 ### Changed

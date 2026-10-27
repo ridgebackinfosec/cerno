@@ -12,6 +12,8 @@ from typing import Any, Iterable, Optional, Sequence
 
 import yaml
 
+from .constants import COLOR_SCHEMES
+
 #: Default binaries the MCP ``execute_command`` tool may run (single source of truth).
 #: Wrappers (sudo, proxychains4) need no entry: the wrapped target is what's checked.
 DEFAULT_MCP_EXEC_ALLOWLIST: tuple[str, ...] = ("nmap", "nxc", "netexec", "msfconsole")
@@ -115,6 +117,17 @@ class CernoConfig:
         },
     )
     """Disable ANSI color output (default: False)."""
+
+    color_scheme: str = field(
+        default="light",
+        metadata={
+            "section": "Review & Display",
+            "kind": "str",
+            "choices": COLOR_SCHEMES,
+            "help": "Terminal background: light or dark",
+        },
+    )
+    """Terminal background the colors are tuned for: 'light' (default) or 'dark'."""
 
     term_override: Optional[str] = field(
         default=None,
@@ -340,6 +353,19 @@ class CernoConfig:
     """Per-command timeout in seconds for each command in an execute_batch run
     (default: 300), clamped to the same [1, 3600] ceiling as execute_command."""
 
+    contribution_export_dir: Optional[str] = field(
+        default=None,
+        metadata={
+            "section": "MCP Server",
+            "kind": "str",
+            "help": "Directory for exported workflow contributions",
+            "placeholder": "<results_root>/contributions",
+        },
+    )
+    """Directory where the MCP export_workflow_contribution tool writes sanitized,
+    PR-ready workflow YAML files (default: None = ``<results_root>/contributions``).
+    Export is local-only: nothing is sent anywhere."""
+
     # Proxychains4
     proxychains_enabled: bool = field(
         default=False,
@@ -404,6 +430,7 @@ class CernoConfig:
 MCP_NOT_APPLICABLE_KEYS: frozenset[str] = frozenset(
     {
         "no_color",
+        "color_scheme",
         "term_override",
         "default_tool",
         "claude_assistant_enabled",
@@ -441,6 +468,39 @@ def config_field_kind(name: str) -> Optional[str]:
         if f.name == name:
             kind = f.metadata.get("kind")
             return str(kind) if kind is not None else None
+    return None
+
+
+def reset_config_key(config: CernoConfig, key: str) -> Any:
+    """Restore a single config key to its default value, in place.
+
+    The default is read from a fresh ``CernoConfig()`` so ``default_factory``
+    list fields get their real default (not None). Nullable defaults become None
+    and are then omitted from the YAML by ``save_config``.
+
+    Args:
+        config: Configuration object to modify
+        key: Config key name to reset
+
+    Returns:
+        The restored default value
+
+    Raises:
+        KeyError: If ``key`` is not a config field
+    """
+    if key not in config_key_names():
+        raise KeyError(key)
+    value = getattr(CernoConfig(), key)
+    setattr(config, key, value)
+    return value
+
+
+def config_field_choices(name: str) -> Optional[tuple[str, ...]]:
+    """The allowed values of a config field, or None when it is free-form."""
+    for f in iter_config_fields():
+        if f.name == name:
+            choices = f.metadata.get("choices")
+            return tuple(choices) if choices else None
     return None
 
 

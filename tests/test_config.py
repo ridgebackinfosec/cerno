@@ -183,6 +183,9 @@ def test_every_field_round_trips_through_save_load(config_path):
             value = 4242
         elif kind == "list":
             value = ["sentinel-a", "sentinel-b"]
+        elif f.metadata.get("choices"):
+            # Pick a valid choice that differs from the default.
+            value = next(c for c in f.metadata["choices"] if c != getattr(cfg, f.name))
         else:  # str / path
             value = f"sentinel-{f.name}"
         setattr(cfg, f.name, value)
@@ -218,3 +221,91 @@ def test_proxy_settings_labelled_proxychains4():
     for f in proxy_fields:
         assert f.metadata["section"] == "Proxychains4"
         assert "proxychains4" in f.metadata["help"]
+
+
+# --- per-key reset (`cerno config reset <key>`) ---
+
+
+@pytest.mark.unit
+def test_reset_config_key_restores_scalar_nullable_and_list():
+    from cerno_pkg.config import reset_config_key
+
+    cfg = CernoConfig(
+        debug_logging=True,
+        custom_workflows_path="/tmp/custom.yaml",
+        mcp_exec_allowlist=["nmap"],
+    )
+    assert reset_config_key(cfg, "debug_logging") is False
+    assert cfg.debug_logging is False
+    assert reset_config_key(cfg, "custom_workflows_path") is None
+    assert cfg.custom_workflows_path is None
+    assert reset_config_key(cfg, "mcp_exec_allowlist") == _DEFAULT_ALLOWLIST
+    assert cfg.mcp_exec_allowlist == _DEFAULT_ALLOWLIST
+
+
+@pytest.mark.unit
+def test_reset_config_key_leaves_other_keys_alone():
+    from cerno_pkg.config import reset_config_key
+
+    cfg = CernoConfig(debug_logging=True, no_color=True)
+    reset_config_key(cfg, "debug_logging")
+    assert cfg.no_color is True
+
+
+@pytest.mark.unit
+def test_reset_config_key_unknown_key_raises():
+    from cerno_pkg.config import reset_config_key
+
+    with pytest.raises(KeyError):
+        reset_config_key(CernoConfig(), "not_a_real_key")
+
+
+@pytest.mark.integration
+def test_cli_config_reset_single_key(config_path):
+    from typer.testing import CliRunner
+
+    from cerno import app
+
+    runner = CliRunner()
+    assert runner.invoke(app, ["config", "set", "debug_logging", "true"]).exit_code == 0
+    assert runner.invoke(app, ["config", "set", "no_color", "true"]).exit_code == 0
+
+    result = runner.invoke(app, ["config", "reset", "debug_logging"])
+    assert result.exit_code == 0, result.output
+    loaded = load_config()
+    assert loaded.debug_logging is False
+    assert loaded.no_color is True  # untouched
+    # Single-key reset does not write a whole-file backup.
+    assert not config_path.with_suffix(".yaml.backup").exists()
+
+
+@pytest.mark.integration
+def test_cli_config_reset_unknown_key_exits_1(config_path):
+    from typer.testing import CliRunner
+
+    from cerno import app
+
+    result = CliRunner().invoke(app, ["config", "reset", "not_a_real_key"])
+    assert result.exit_code == 1
+
+
+# --- color_scheme ---
+
+
+@pytest.mark.unit
+def test_color_scheme_defaults_to_light():
+    assert CernoConfig().color_scheme == "light"
+
+
+@pytest.mark.integration
+def test_cli_config_set_color_scheme_validates_choices(config_path):
+    from typer.testing import CliRunner
+
+    from cerno import app
+
+    runner = CliRunner()
+    assert runner.invoke(app, ["config", "set", "color_scheme", "blue"]).exit_code == 1
+    assert load_config().color_scheme == "light"
+    result = runner.invoke(app, ["config", "set", "color_scheme", "dark"])
+    assert result.exit_code == 0, result.output
+    assert load_config().color_scheme == "dark"
