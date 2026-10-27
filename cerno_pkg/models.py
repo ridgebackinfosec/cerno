@@ -219,13 +219,14 @@ class Scan:
         """Delete a scan and all associated data by name.
 
         Due to CASCADE DELETE constraints, this will automatically delete:
-        - All findings entries
-        - All finding_affected_hosts entries
-        - All sessions
+        - findings, and per finding: finding_affected_hosts, workflow_executions,
+          claude_conversations, finding_verdicts (-> verdict_evidence)
+        - host_services
+        - sessions and session_scans
 
         Tool executions and artifacts are retained for audit/history, but their
-        finding_id/session_id or execution_id links are set to NULL by foreign
-        key constraints when referenced rows are deleted.
+        finding_id/session_id links are set to NULL by foreign key constraints
+        when referenced rows are deleted.
 
         Args:
             scan_name: Name of scan to delete
@@ -400,7 +401,8 @@ class Finding:
     reviewed_by: Optional[str] = None
     review_notes: Optional[str] = None
     # Transient (not stored in DB): extra finding_ids from other selected scans.
-    # Set by browse_file_list in multi-scan mode so all host/port queries cover all scans.
+    # Set by get_by_scan_ids_merged() (and query.py merged results) so all host/port
+    # queries cover every selected scan.
     extra_finding_ids: list[int] = field(default_factory=list)
 
     @classmethod
@@ -591,7 +593,7 @@ class Finding:
         Args:
             scan_id: Scan ID to filter by
             severity_dir: Optional single severity directory filter (e.g., "3_High")
-            severity_dirs: Optional list of severity directories to filter by (e.g., ["1_Critical", "2_High"])
+            severity_dirs: Optional list of severity directories to filter by (e.g., ["4_Critical", "3_High"])
             review_state: Optional review state filter ('unreviewed', 'in_progress', 'done')
             plugin_name_filter: Optional case-insensitive substring to match plugin names
             has_metasploit: Optional filter for metasploit plugins
@@ -617,7 +619,7 @@ class Finding:
             params: list[Any] = [scan_id]
 
             # Add optional filters
-            # severity_dir filter now uses severity_int from plugins table
+            # severity_dir filter uses severity_int from v_plugins_with_severity
             if severity_dir is not None:
                 # Parse severity_dir format like "4_Critical" to extract severity_int
                 try:
@@ -719,7 +721,7 @@ class Finding:
             scan_ids: List of scan IDs to query across.
             severity_dir: Optional single severity directory filter (e.g., "3_High").
             severity_dirs: Optional list of severity directories to filter by
-                (e.g., ["1_Critical", "2_High"]).
+                (e.g., ["4_Critical", "3_High"]).
             has_metasploit: Optional filter for plugins with Metasploit modules.
             plugin_ids: Optional list of specific plugin IDs to include.
             conn: Database connection.
@@ -918,16 +920,16 @@ class Finding:
         *,
         scan_ids: Optional[list[int]] = None,
     ) -> tuple[int, int]:
-        """Count total and reviewed files across all severities for a scan.
+        """Count total and Done findings across all severities for a scan.
 
         Args:
-            scan_id: Scan ID to count files for (ignored when scan_ids is provided)
+            scan_id: Scan ID to count findings for (ignored when scan_ids is provided)
             conn: Database connection
             scan_ids: Optional list of scan IDs for multi-scan queries (overrides scan_id);
                 uses COUNT(DISTINCT plugin_id) to deduplicate across scans
 
         Returns:
-            Tuple of (total_files, reviewed_files)
+            Tuple of (total_findings, done_findings)
             where reviewed means review_state == 'done'
         """
         with db_transaction(conn) as c:
@@ -1172,7 +1174,7 @@ class Finding:
         """Retrieve all host:port combinations as formatted lines.
 
         Queries the finding_affected_hosts table and returns each entry as a
-        "host:port" string, matching the format of plugin file contents.
+        "host:port" string (one line per affected host:port).
 
         Args:
             conn: Database connection
@@ -1366,7 +1368,7 @@ class ToolExecution:
         return [cls.from_row(row) for row in rows]
 
     def save(self, conn: Optional[sqlite3.Connection] = None) -> Optional[int]:
-        """Insert or update tool execution in database.
+        """Insert a tool execution, or update an existing one's exit_code and duration.
 
         Args:
             conn: Database connection
@@ -1465,7 +1467,7 @@ class Artifact:
         )
 
     def save(self, conn: Optional[sqlite3.Connection] = None) -> Optional[int]:
-        """Insert artifact in database.
+        """Insert or replace (upsert) an artifact row (unique on artifact_path).
 
         Args:
             conn: Database connection
@@ -1667,8 +1669,8 @@ class ArtifactType:
 class AuditLog:
     """Represents an audit log entry (change tracking).
 
-    Tracks INSERT, UPDATE, DELETE operations on critical tables
-    for compliance and debugging purposes.
+    Reader for the audit_log table. The table is reserved: no triggers or code
+    write to it yet, so it is currently always empty.
     """
 
     audit_id: Optional[int] = None

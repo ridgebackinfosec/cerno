@@ -1,7 +1,8 @@
 """Filesystem operations and path utilities.
 
-This module provides functions for file I/O, directory traversal, file
-renaming, and work file generation for security testing workflows.
+This module provides the finding view (handle_finding_view), review-state
+moves (move_review_state), page-size detection, file I/O helpers and work-file
+generation for tool runs. Review state lives in the database, not in filenames.
 """
 
 from __future__ import annotations
@@ -107,7 +108,8 @@ def build_results_paths(
 def pretty_severity_label(name: str) -> str:
     """Convert a severity directory name to a human-readable label.
 
-    Expects format like "1_critical" and converts to "Critical".
+    Expects format like "4_Critical" and converts to "Critical"; a plain
+    label such as "High" is returned title-cased.
 
     Args:
         name: Directory name to convert
@@ -263,7 +265,8 @@ def handle_finding_view(
     use_proxy: bool = False,
 ) -> Optional[str]:
     """
-    Interactive file viewing menu (raw/grouped/hosts-only/copy/CVE info/workflow/tool/mark).
+    Interactive finding view menu: Info [I], Details [D], View hosts [V], CVE info [E],
+    Workflow [W], NetExec data [N], Run tool [T], Ask Claude [A], Move status [M].
 
     NOTE: This function uses Plugin and Finding database objects directly for all operations.
     No filename parsing is performed - plugin_id comes from Plugin.plugin_id field.
@@ -272,7 +275,7 @@ def handle_finding_view(
         chosen: Synthetic plugin file path (used only for display, not parsing)
         finding: Finding database object (None if database not available)
         plugin: Plugin metadata object (None if database not available) - used for CVE lookup, workflow check
-        plugin_url: Optional Tenable plugin URL for CVE extraction
+        plugin_url: Unused (kept for call compatibility); CVEs come from plugin.cves
         workflow_mapper: Optional workflow mapper for plugin workflows
         scan_dir: Scan directory for tool workflow
         sev_dir: Severity directory for tool workflow
@@ -280,6 +283,7 @@ def handle_finding_view(
         ports_str: Comma-separated ports for tool workflow
         args: CLI arguments for tool workflow
         use_sudo: Whether to use sudo for tools
+        use_proxy: Whether to route tools through proxychains4
 
     Returns:
         "back": User wants to go back to file selection
@@ -568,10 +572,10 @@ def process_single_finding(
     use_proxy: bool = False,
 ) -> None:
     """
-    Process a single plugin file: preview, view, run tools, mark complete (database-only).
+    Process a single finding: preview, view, run tools, move status (database-only).
 
     Args:
-        chosen: Selected plugin file
+        chosen: Synthetic display path of the selected finding
         plugin: Plugin metadata object
         finding: Finding database object (required)
         scan_dir: Scan directory
@@ -582,6 +586,7 @@ def process_single_finding(
         done_total: List to track findings marked done
         show_severity: Whether to show severity label (for MSF mode)
         workflow_mapper: Optional workflow mapper for plugin workflows
+        use_proxy: Whether to route tools through proxychains4
     """
     # Lazy imports to avoid circular dependencies
     from .render import display_finding_preview
@@ -593,16 +598,15 @@ def process_single_finding(
     display_name = f"Plugin {plugin.plugin_id}: {plugin.plugin_name}"
 
     if not hosts:
-        info("File is empty (no hosts found). This usually means the vulnerability doesn't affect any hosts.")
+        info("Finding has no affected hosts. This usually means the vulnerability doesn't affect any hosts.")
         return
 
     # Display finding preview panel
     display_finding_preview(plugin, finding, sev_dir, chosen, workflow_mapper)
 
-    # Extract plugin URL for handle_finding_view
+    # plugin_url is no longer used by the finding view (CVEs and the Tenable
+    # link come from the Plugin row); passed as None for call compatibility.
     plugin_url = None
-    # Note: _plugin_details_line is no longer available after refactoring
-    # This functionality is handled by the database plugin metadata instead
 
     state_before = finding.review_state
 

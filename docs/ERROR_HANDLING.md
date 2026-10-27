@@ -201,16 +201,17 @@ except OSError as e:
 ### Logging Helpers
 
 ```python
-from .logging_setup import log_error, log_info, log_warning
+from .logging_setup import log_debug, log_error, log_info
 
-# ERROR: Technical details for debugging
+# ERROR: Technical details for debugging (also use for non-critical surprises;
+# there is no separate warning-level helper)
 log_error(f"Failed to fetch plugin {plugin_id}: {exception}")
 
 # INFO: Normal operations
-log_info(f"Successfully imported {file_count} plugin files")
+log_info(f"Successfully imported {finding_count} findings")
 
-# WARNING: Unexpected but non-critical
-log_warning(f"Plugin {plugin_id} missing metadata, using defaults")
+# DEBUG: Verbose detail, written only when debug_logging is enabled
+log_debug(f"Plugin {plugin_id} missing metadata, using defaults")
 ```
 
 ### User-Facing Helpers
@@ -339,5 +340,5 @@ When updating code to follow these standards:
 
 ---
 
-**Last Updated**: 2026-01-09
-**Applies To**: cerno v1.0+
+**Last Updated**: 2026-10-27
+**Applies To**: cerno v2.x

@@ -375,9 +375,9 @@ def render_pagination_indicator(
 
     Examples:
         >>> render_pagination_indicator(0, 5, 125)
-        '[████░░░░░░] Page 1/5 (125 total)'
+        '[██░░░░░░░░] Page **1/5** (125 total)'
         >>> render_pagination_indicator(2, 5, 125)
-        '[██████░░░░] Page 3/5 (125 total)'
+        '[██████░░░░] Page **3/5** (125 total)'
     """
     if total_pages <= 1:
         return f"Page 1/1 ({total_items} total)"
@@ -646,7 +646,7 @@ def render_finding_list_table(
 
     Args:
         display: List of (Finding, Plugin) tuples to display on this page
-        sort_mode: Current sort mode ("hosts", "name", or "plugin_id")
+        sort_mode: Current sort mode ("severity", "plugin_id", "name" or "hosts")
         get_counts_for: Function to get (host_count, ports_str) for a Finding object
         row_offset: Starting row number for pagination
         show_severity: Deprecated - severity column is now always shown
@@ -829,6 +829,15 @@ def render_compare_tables(
         info("\nAll filtered findings fall into a single identical group.")
 
 
+#: Display label per findings-list sort mode ([S] cycles severity → plugin_id → name → hosts).
+_SORT_LABELS = {
+    "severity": "Severity",
+    "plugin_id": "Plugin ID",
+    "hosts": "Hosts",
+    "name": "Name",
+}
+
+
 @log_timing
 def render_actions_footer(
     *,
@@ -850,11 +859,14 @@ def render_actions_footer(
 
     Args:
         group_applied: Whether a group filter is currently active
-        candidates_count: Number of files matching current filter
-        sort_mode: Current sort mode ("plugin_id", "hosts", or "name")
+        candidates_count: Number of findings matching current filter
+        unique_cve_count: Unique CVEs across the filtered findings
+        unique_host_count: Unique hosts across the filtered findings
+        sort_mode: Current sort mode ("severity", "plugin_id", "name" or "hosts")
         can_next: Whether next page is available
         can_prev: Whether previous page is available
         has_claude: Whether Claude Assistant is available and enabled
+        claude_installed: Whether `claude` is on PATH (shows [A] for the opt-in prompt)
         status_filter_active: Whether the [I] In Progress-only filter is on
     """
     from .ansi import get_terminal_width
@@ -867,13 +879,7 @@ def render_actions_footer(
             key_text("?", "Help"),
         ]
     )
-    # Determine sort label for display
-    sort_label = {
-        "severity": "Severity",
-        "plugin_id": "Plugin ID",
-        "hosts": "Hosts",
-        "name": "Name",
-    }.get(sort_mode, "Severity")
+    sort_label = _SORT_LABELS.get(sort_mode, "Severity")
 
     right_row1 = join_actions_texts(
         [
@@ -969,7 +975,8 @@ def render_finding_actions_footer(
         has_workflow: Whether workflow action is available for this plugin
         has_nxc_data: Whether NetExec data is available for these hosts
         has_claude: Whether Claude Assistant is enabled and available
-        claude_installed: Whether claude CLI is on PATH (used for grayed-out hint)
+        claude_installed: Whether claude CLI is on PATH (shows [A] for the opt-in prompt)
+        use_proxy: Whether proxychains4 routing is active (shows the [PROXY] badge)
     """
     from .ansi import get_terminal_width
 
@@ -1048,8 +1055,8 @@ def _build_claude_panel_renderables(
     """Build the renderables list for the Claude chat panel content.
 
     Pure function — no console I/O. Extracted for testability.
-    Uses plain cyan/magenta labels and unstyled body text for compatibility
-    with both light and dark terminals.
+    Uses cyan/magenta labels and unstyled body text; the active color_scheme
+    remaps the label colors for light or dark terminals (ansi.CernoConsole).
     """
     renderables: list[Any] = []
 
@@ -1137,7 +1144,7 @@ def render_claude_panel(
     for i, (key, label) in enumerate(
         [
             ("Enter", "new line"),
-            ("Alt+Enter", "submit"),
+            ("Alt+Enter / Ctrl+J", "submit"),
             ("/clear", "clear history"),
             ("Ctrl+C", "back"),
         ]
@@ -1165,8 +1172,8 @@ def render_tool_availability_table(include_unavailable: bool = True) -> None:
         ─────────────────────────────────────────
         nmap         ✅      v7.92
         netexec      ✅      v1.2.1
-        metasploit   ✅      Available (web-based)
-        custom       ✅      Available (user-defined)
+        metasploit   ✅      v6.4.0
+        Custom command ✅    Available
     """
     import shutil
     from .tool_registry import get_available_tools
@@ -1289,12 +1296,14 @@ def show_actions_help(
     can_prev: bool,
     status_filter_active: bool = False,
 ) -> None:
-    """Render a categorized help panel for main/MSF file lists.
+    """Render a categorized help panel for the main/MSF findings lists.
 
     Args:
         group_applied: Whether a group filter is currently active
-        candidates_count: Number of files matching current filter
-        sort_mode: Current sort mode ("hosts" or "name")
+        candidates_count: Number of findings matching current filter
+        unique_cve_count: Unique CVEs across the filtered findings
+        unique_host_count: Unique hosts across the filtered findings
+        sort_mode: Current sort mode ("severity", "plugin_id", "name" or "hosts")
         can_next: Whether next page is available
         can_prev: Whether previous page is available
         status_filter_active: Whether the [I] In Progress-only filter is on
@@ -1324,7 +1333,8 @@ def show_actions_help(
         Text("Sorting", style="bold"),
         key_text(
             "S",
-            f"Sort: {'Hosts' if sort_mode=='hosts' else 'Name'} - Toggle between host count and name sorting",
+            f"Sort: {_SORT_LABELS.get(sort_mode, 'Severity')} - "
+            "Cycle severity → plugin ID → name → host count",
         ),
     )
     table.add_row(

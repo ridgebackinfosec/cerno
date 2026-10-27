@@ -182,16 +182,18 @@ _console_cache = None
 
 
 def get_console(config: Optional["CernoConfig"] = None):
-    """Get Rich Console instance configured with no_color setting.
+    """Get the shared CernoConsole configured from no_color/term_override/color_scheme.
 
-    Returns a cached Console instance to ensure consistency across the application.
-    The Console is initialized with no_color parameter based on configuration.
+    Returns a cached CernoConsole so every module shares one instance. It honours
+    no_color (or term_override == "dumb"), remaps named colors for the active
+    color_scheme (light by default), and is installed as Rich's global console so
+    Prompt/Progress output uses the same palette.
 
     Args:
         config: Configuration object. If None, loads config.
 
     Returns:
-        Console instance with no_color parameter set appropriately
+        The cached CernoConsole instance
     """
     global _console_cache, _color_scheme
 
@@ -321,7 +323,8 @@ def colorize_severity_label(label: str) -> str:
     """Colorize a severity label based on its level.
 
     Uses centralized SEVERITY_COLORS mapping from constants.py.
-    Maps severity levels to colors:
+    Maps severity levels to colors (named for the dark scheme; the default
+    light scheme swaps each for a darker variant via LIGHT_BG_COLOR_MAP):
     - Critical: Red
     - High: Yellow
     - Medium: Blue

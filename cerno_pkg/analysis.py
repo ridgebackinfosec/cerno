@@ -436,7 +436,7 @@ def count_reviewed_in_scan(
     scan_id: int,
     scan_ids: Optional[list[int]] = None,
 ) -> tuple[int, int]:
-    """Count total and reviewed files in a scan directory (database-only).
+    """Count total and Done findings in a scan (database-only).
 
     Args:
         scan_dir: Path to the scan directory (unused, kept for API compatibility)
@@ -444,7 +444,7 @@ def count_reviewed_in_scan(
         scan_ids: Optional list of scan IDs for multi-scan queries (overrides scan_id)
 
     Returns:
-        Tuple of (total_files, reviewed_files)
+        Tuple of (total_findings, done_findings)
     """
     from .models import Finding
     return Finding.count_by_scan(scan_id, scan_ids=scan_ids)

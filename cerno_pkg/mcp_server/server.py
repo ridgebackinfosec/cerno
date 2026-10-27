@@ -178,6 +178,8 @@ class Capabilities(TypedDict, total=False):
     mutations_enabled: bool
     cred_injection_enabled: bool
     cred_reveal_enabled: bool
+    batch_enabled: bool
+    batch_concurrency: int
     exec_allowlist: list[str]
     exec_denylist: list[str]
     nxc_available: bool
@@ -591,6 +593,9 @@ def tool_get_capabilities(config: Optional[CernoConfig] = None) -> dict:
         "mutations_enabled": cfg.mcp_allow_mutations,
         "cred_injection_enabled": cfg.mcp_allow_cred_injection,
         "cred_reveal_enabled": cfg.mcp_allow_cred_reveal,
+        # execute_batch is registered only when BOTH flags are on.
+        "batch_enabled": bool(cfg.mcp_allow_execution and cfg.mcp_allow_batch),
+        "batch_concurrency": cfg.mcp_batch_concurrency,
         "exec_allowlist": list(cfg.mcp_exec_allowlist),
         "exec_denylist": list(cfg.mcp_exec_denylist),
         "nxc_available": get_nxc_manager() is not None,
@@ -2890,7 +2895,11 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
 
     @mcp.tool()
     def get_capabilities() -> Capabilities:
-        """Report which gated capabilities (execution/mutations/nxc) are live."""
+        """Report which gated capabilities are live.
+
+        Covers execution, mutations, batch, credential injection/reveal, the
+        exec allow/deny lists and NetExec availability.
+        """
         return cast("Capabilities", tool_get_capabilities(cfg))
 
     @mcp.tool()
@@ -3328,7 +3337,8 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
 
     else:
         log_info(
-            "mcp: set_review_state/import_nessus not registered (mcp_allow_mutations=false)"
+            "mcp: set_review_state/add_note/import_nessus/ingest_results/"
+            "set_finding_verdict not registered (mcp_allow_mutations=false)"
         )
 
     # --- Credential reveal (gated separately; strictly more sensitive) ---
@@ -3351,7 +3361,10 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
 
 
 def gating_summary(config: CernoConfig) -> str:
-    """One-line description of the server's active execution/mutation gating.
+    """One-line description of the server's active capability gating.
+
+    Covers execution (with allow/deny list sizes), mutations, batch (which needs
+    execution too), credential injection and credential reveal.
 
     Logged at startup so operators can see which capabilities are live. Because
     the flags are read only when the server boots, it also reminds the operator
@@ -3370,11 +3383,17 @@ def gating_summary(config: CernoConfig) -> str:
             f"on [allowlist={allow_desc}, "
             f"denylist={len(config.mcp_exec_denylist)} entries]"
         )
-    mutations = "on" if config.mcp_allow_mutations else "off"
+
+    def _onoff(flag: bool) -> str:
+        return "on" if flag else "off"
+
+    mutations = _onoff(config.mcp_allow_mutations)
+    batch = _onoff(config.mcp_allow_execution and config.mcp_allow_batch)
     return (
-        f"mcp: serving over stdio (execution={execution}, mutations={mutations}); "
-        "edit with 'cerno config set mcp_allow_execution/mcp_allow_mutations ...' "
-        "then reconnect to apply"
+        f"mcp: serving over stdio (execution={execution}, mutations={mutations}, "
+        f"batch={batch}, cred_injection={_onoff(config.mcp_allow_cred_injection)}, "
+        f"cred_reveal={_onoff(config.mcp_allow_cred_reveal)}); "
+        "edit with 'cerno config set mcp_allow_<flag> ...' then reconnect to apply"
     )
 
 

@@ -81,8 +81,10 @@ The MCP server speaks JSON-RPC over **stdout**, so MCP code paths must never
 Cerno's schema is created directly (no migrations yet), so schema changes
 require a major version bump and users re-importing scans. See the
 [Database Design Principles](CLAUDE.md#database-design-principles) in `CLAUDE.md`
-and [docs/DATABASE.md](docs/DATABASE.md). Always test schema changes against a
-fresh database.
+and [docs/DATABASE.md](docs/DATABASE.md). Mirror every DDL change in the
+reference `schema.sql` (a test checks it defines the same tables, views and
+indexes as `cerno_pkg/database.py`). Always test schema changes against a fresh
+database.
 
 ## Versioning & changelog
 

@@ -99,10 +99,10 @@ packages = ["cerno_pkg", "cerno_pkg.mcp_server"]
 py-modules = ["cerno"]
 
 [tool.setuptools.package-data]
-cerno_pkg = ["*.yaml"]
+cerno_pkg = ["*.yaml", "skills/*.md", "demo/*.nessus", "demo/nxc-workspace/*"]
 ```
 
-When adding a new `cerno_pkg/<subpkg>/` directory with `__init__.py`, add it to the `packages` list.
+When adding a new `cerno_pkg/<subpkg>/` directory with `__init__.py`, add it to the `packages` list. Non-Python files shipped with the package (YAML, the assistant skill prompt, demo data) must match a `package-data` glob.
 
 ## Build & Development Commands
 
@@ -196,155 +196,83 @@ Cerno uses a **fully normalized database architecture** with SQLite as the sourc
 - **Location**: `~/.cerno/cerno.db` (global, cross-scan)
 - **Schema version**: Tracked in `database.py:SCHEMA_VERSION` (current: 4; v2/v3 renamed review states — shipped in 1.7.0 as a minor bump by explicit user decision; v4 added the execution→data loop tables/views — major bump, forces re-import)
 - **Schema approach**: Normalized structure created on initialization
-- `.txt` files are **reference only** - all data lives in database
+- Import writes **no** per-plugin `.txt` files; all data lives in the database
 
 **Key design principles**:
 - Database is source of truth for review state, host:port data, session state
 - File browsing queries database directly (no filesystem walks during review)
-- Review state tracked in `findings.review_state` column, synchronized to filename prefixes
-- CVEs cached in `plugins.cves` JSON column after fetching from Tenable
+- Review state tracked only in the `findings.review_state` column
+- CVEs are read from the `.nessus` file at import and stored in the `plugins.cves` JSON column
 - Normalized host/port tables enable cross-scan tracking
 - SQL views compute statistics on-demand (no redundant cached data)
 
 ### Module Structure
 
 ```
-cerno.py                  # Main entry point (Typer CLI commands)
-                            # CLI layer: review/import/scan/config commands
-                            # Navigation: browse_file_list, browse_workflow_groups, show_session_statistics
-                            # Claude chat: browse_claude_chat() (per-finding), browse_claude_chat_aggregate() (scope-level)
+cerno.py                  # Typer CLI entry point: review/import/scan/config/workflow/creds/demo/mcp/reset
+                          # Navigation: browse_file_list, browse_workflow_groups, show_session_statistics
+                          # Claude chat: browse_claude_chat() (per-finding), browse_claude_chat_aggregate() (scope)
 cerno_pkg/
-  ├── database.py          # SQLite connection, schema, transactions
-  ├── models.py            # ORM models (Scan, Plugin, Finding, Session, ToolExecution, Artifact)
-  │                        # Single-scan: Finding.get_by_scan_with_plugin(); Multi-scan: Finding.get_by_scan_ids_merged()
-  │                        # Claude: ClaudeConversationTurn (per-finding), ClaudeAggregateConversationTurn (scope-level)
-  ├── nessus_import.py     # .nessus XML parsing and database import
+  ├── database.py          # SQLite connection, schema (SCHEMA_SQL_TABLES/VIEWS, SCHEMA_VERSION), db_transaction()
+  ├── models.py            # Data models: Scan, Plugin, Finding, Host, Port, ToolExecution, Artifact,
+  │                        # lookup models, verdict/ingest models (FindingVerdict, VerifiedPort, …),
+  │                        # ClaudeConversationTurn / ClaudeAggregateConversationTurn
+  │                        # Single-scan: Finding.get_by_scan_with_plugin(); multi-scan: get_by_scan_ids_merged()
+  ├── nessus_import.py     # .nessus XML parsing and database import (DB only; no files written)
+  ├── cross_scan.py        # `cerno scan compare` / `scan history` data (v_scan_plugin_summary, v_host_scan_findings)
+  ├── parsing.py           # Host:port parsing: parse_hosts_ports(), split_host_port()
+  ├── analysis.py          # Identical host:port groups ([H]) and superset/overlap analysis ([O])
+  ├── query.py             # FindingQuery + run_finding_query(): AND-combined, parameterized predicates
+  │                        # shared by MCP query_findings, list_workflow_gaps and batch
   ├── nmap_parse.py        # Pure nmap XML parser (open ports + NSE vuln verdicts; no DB)
-  ├── ingest.py            # Result ingestion: execution output -> structured facts
-  │                        # ingest_execution() (nmap XML -> verified_ports/nse_script_results;
-  │                        # nxc workspace re-read -> nxc_flag_observations); idempotent per
-  │                        # execution_id, forgiving of empty/partial/failed runs
-  ├── parsing.py           # Host:port parsing (canonical parser, ParsedHostsPorts model)
-  ├── query.py             # Composite finding query (FindingQuery + run_finding_query)
-  │                        # AND-combined, parameterized predicate set shared by MCP
-  │                        # query_findings and (future) TUI finding-list filtering
-  ├── workflow_prep.py     # prepare_workflow(): fill a mapped workflow's placeholders
-  │                        # (canonical <TARGET>/<PORT>/<USERNAME>/<PASSWORD>/<INTERFACE>
-  │                        # + variant map) from a finding's hosts/ports/@cred placeholder
-  │                        # and classify each command executable-vs-manual (exec_chain
-  │                        # is_runnable + PATH-installed check)
-  ├── workflow_contrib.py  # Workflow contribution loop: genericize_command() (real
-  │                        # command -> <TARGET>/<PORT>/<USERNAME>/<PASSWORD>/<DOMAIN>,
-  │                        # target/output files + proxychains wrappers stripped),
-  │                        # fail-closed scan_for_leaks()/scan_candidate() (no
-  │                        # username check on plugin-derived name/description;
-  │                        # dictionary usernames never count; nxc secret values
-  │                        # + NT/LM:NT hashes refused, never echoed),
-  │                        # assess_candidate() (new | enhanced | None from
-  │                        # ToolExecution.get_by_finding, exit 0 only; baseline
-  │                        # nmap/nxc never count as divergence), to_yaml_fragment()
-  ├── batch.py             # Scoped batch: plan_batch (reviewable dry run) + async
-  │                        # execute_batch over a FindingQuery; per-finding command
-  │                        # generation (nmap/netexec/msf/workflow) + skip_done,
-  │                        # runs via the job registry (bounded concurrency)
-  ├── analysis.py          # Cross-file comparison, superset analysis
-  ├── claude_assistant.py  # Claude Assistant integration
-  │                        # check_claude_available(), build_finding_context(), run_exchange()
-  │                        # build_aggregate_context(), run_aggregate_exchange()
-  │                        # load_skill_prompt() (loads .claude/skills/cerno-assistant.md or fallback)
-  ├── mcp_server/          # MCP server (BETA) — `cerno mcp` command, stdio transport
+  ├── ingest.py            # ingest_execution(): run output -> verified_ports / nse_script_results /
+  │                        # nxc_flag_observations; idempotent per execution_id (rows reconciled in place)
+  ├── nxc_db.py            # Read-only NetExec workspace access (creds as refs, shares, flags); get_nxc_manager()
+  ├── creds.py             # Audited credential reveal shared by `cerno creds` and MCP reveal_credential
+  ├── exec_chain.py        # Wrapper unwrapping (sudo/env/timeout/proxychains4…), allow/deny glob matching,
+  │                        # is_runnable(); shared by MCP exec policy, workflow_prep, batch, workflow_contrib
+  ├── workflow_mapper.py   # Workflow YAML loading; build_workflow_mapper(config) merges custom_workflows_path
+  ├── workflow_mappings.yaml  # Bundled verification workflows
+  ├── workflow_prep.py     # prepare_workflow(): fill <TARGET>/<PORT>/<USERNAME>/<PASSWORD>/<DOMAIN>/<INTERFACE>
+  │                        # (variants canonicalized) and mark each command executable or manual
+  ├── workflow_contrib.py  # Workflow contribution loop: genericize_command(), fail-closed leak scan,
+  │                        # assess_candidate() (new | enhanced | None), to_yaml_fragment()
+  ├── batch.py             # plan_batch (dry run) + execute_batch over a FindingQuery via the job registry
+  ├── mcp_server/          # MCP server (BETA), `cerno mcp`, stdio transport
   │   ├── __init__.py      #   build_server(), main()
-  │   ├── jobs.py          #   In-memory async job registry (start/status/cancel/
-  │   │                    #   list_jobs); cancellable ops.start_process runner
-  │   │                    #   (killpg); shares server._run_and_record for logging/ingest
-  │   └── server.py        #   Pure tool_*/resource_*/prompt_* adapters (testable w/ conn)
-  │                        #   + FastMCP registration. Read/generate tools, resources
-  │                        #   (cerno:// URIs incl. config + host/{ip}/nxc), and prompts
-  │                        #   always on; NetExec enrichment (get_host_nxc/
-  │                        #   list_nxc_credentials) + find_affected_by_cve + read_artifact +
-  │                        #   get_config + search_findings (all scans) + top_hosts +
-  │                        #   get_capabilities + get_finding_artifacts + get_finding_verdict +
-  │                        #   list_workflow_gaps (findings with NO mapped workflow, worst-first;
-  │                        #   complement of query_findings has_workflow) + get_notes (read
-  │                        #   append-only findings.review_notes as entries+raw)
-  │                        #   also always on. Resources add cerno://finding/{id}/verdict and
-  │                        #   cerno://finding/{id}/results.
-  │                        #   query_findings (composite AND-predicates:
-  │                        #   severity/verdict/cve/port/service/host/review_state/
-  │                        #   has_workflow/has_metasploit/plugin_name/scan_ids; cve exact-
-  │                        #   confirmed, has_workflow via mapper; shared cerno_pkg/query.py)
-  │                        #   also always on.
-  │                        #   list_findings supports merged/limit/offset; get_finding_detail
-  │                        #   caps per-host output via max_hosts. execute_command +
-  │                        #   async job tools (start_execution/get_execution_status/
-  │                        #   cancel_execution/list_jobs via mcp_server/jobs.py) gated by
-  │                        #   mcp_allow_execution; plan_batch always on + execute_batch
-  │                        #   gated by mcp_allow_execution AND mcp_allow_batch (cerno_pkg/
-  │                        #   batch.py). (async w/ progress heartbeats; common
-  │                        #   wrappers sudo/doas/proxychains4/env/nice/nohup/timeout/stdbuf/
-  │                        #   setsid/ionice/time unwrapped (_EXEC_WRAPPERS), chain checked
-  │                        #   against mcp_exec_denylist then target against mcp_exec_allowlist
-  │                        #   via _check_exec_policy, timeout clamped, optional
-  │                        #   finding_id threaded to ops.log_tool_execution for attribution;
-  │                        #   nmap runs (-oA present) register -oA artifacts via
-  │                        #   ops.log_artifacts_for_nmap + record host_count/ports, and refuse
-  │                        #   to overwrite existing -oA output; generate_* write unique
-  │                        #   _mcp/<fid>/run-XXXX/ dirs so runs don't clobber; auto-ingests
-  │                        #   best-effort when mutations also on; resolves @cred:<ref>@
-  │                        #   placeholders server-side (gated by mcp_allow_cred_injection),
-  │                        #   masks command_text + scrubs stdout/stderr);
-  │                        #   set_review_state/add_note/import_nessus/ingest_results/
-  │                        #   set_finding_verdict gated by mcp_allow_mutations (add_note appends
-  │                        #   a timestamped note to review_notes, never clobbering prior notes;
-  │                        #   set_review_state notes now append too). generate_netexec_cmd takes
-  │                        #   use_credential=<ref> (placeholder injection via nxc_db;
-  │                        #   ref->spec resolved by shared _resolve_credential_ref).
-  │                        #   prepare_workflow (always on) fills a finding's mapped
-  │                        #   workflow via cerno_pkg/workflow_prep.py and marks each
-  │                        #   command executable/manual (allow/deny glob + is_runnable
-  │                        #   shared through exec_chain.matches_any).
-  │                        #   get_workflow_candidate + export_workflow_contribution
-  │                        #   always on (cerno_pkg/workflow_contrib.py; export writes a
-  │                        #   local sanitized YAML to contribution_export_dir only,
-  │                        #   requires confirmed/false_positive verdict, refuses on any
-  │                        #   leak hit); get/set_finding_verdict carry a best-effort
-  │                        #   workflow_candidate {available, reason} hint.
-  │                        #   reveal_credential gated by mcp_allow_cred_reveal (returns
-  │                        #   cleartext; audited via cerno_pkg/creds.py, shared with the
-  │                        #   `cerno creds` CLI).
-  │                        #   Core read tools declare TypedDict output schemas. stdout is the
-  │                        #   JSON-RPC channel, so adapters never print (exec uses
-  │                        #   ops.run_command_captured)
-  ├── session.py           # Review session state management (396 lines)
-  │                        # Includes: scan summary, session statistics
-  ├── tool_context.py      # Context dataclasses for review operations (137 lines)
-  │                        # ToolContext, ReviewContext (15 fields; scan_ids: list[int] added for multi-scan)
-  ├── tools.py             # Tool execution and workflow orchestration (1,055 lines)
-  │                        # Command builders, NSE profiles, workflow building/execution
-  ├── tool_registry.py     # ToolSpec registry pattern
-  ├── render.py            # Rich UI rendering
-  │                        # Tables, menus, pagination, finding display, CVE display
-  │                        # render_claude_panel() — chat overlay; render_tool_availability_table() — includes claude row
-  ├── tui.py               # Terminal User Interface navigation (587 lines)
-  │                        # Interactive menus, file list actions, severity selection
-  ├── fs.py                # File operations and processing (591 lines)
-  │                        # File viewing, workflow display, review state management
-  │                        # handle_finding_view() — [A] key dispatches to browse_claude_chat()
-  ├── enums.py             # Type-safe enums (23 lines)
-  │                        # DisplayFormat, ViewFormat, SortMode
-  ├── ops.py               # Command execution, sudo handling
-  ├── workflow_mapper.py   # YAML workflow configuration
-  ├── config.py            # YAML config file management
-  │                        # claude_assistant_enabled: bool (default: False, opt-in)
-  ├── constants.py         # Global constants (paths, severities, NSE profiles)
-  ├── ansi.py              # ANSI color helpers
-  ├── logging_setup.py     # Loguru setup with rotation
+  │   ├── jobs.py          #   In-memory async job registry (start/status/cancel/list; killpg cancellation)
+  │   └── server.py        #   Pure tool_*/resource_*/prompt_* adapters (testable with a conn) + FastMCP
+  │                        #   registration gated by config flags. Tool reference: docs/MCP.md.
+  │                        #   stdout is the JSON-RPC channel: adapters never print
+  │                        #   (exec uses ops.run_command_captured)
+  ├── claude_assistant.py  # Claude Assistant: context builders, run_exchange()/run_aggregate_exchange(),
+  │                        # consent (ensure_enabled, claude_enabled); load_skill_prompt() reads
+  │                        # cerno_pkg/skills/cerno-assistant.md (inline fallback)
+  ├── session.py           # Review session persistence (sessions + session_scans), scan summary
+  ├── onboarding.py        # First-run guided tour, post-scan-selection tips
+  ├── tool_context.py      # ToolContext / CommandResult (workflow builder I/O); ReviewContext (exported, unused)
+  ├── tool_registry.py     # Tool dataclass + TOOL_REGISTRY helpers
+  ├── tool_definitions.py  # register_all_tools(): nmap, netexec, metasploit, custom command
+  ├── tools.py             # Command builders (build_*_cmd), workflow builders (build_*_workflow),
+  │                        # run_tool_workflow() dispatch, NSE profiles, remote scan mode
+  ├── ops.py               # Command execution, sudo/proxychains4 handling, logging runs, remote-scan HTTPS server
+  ├── render.py            # Rich rendering: tables, menus, pagers, finding display, Claude panel
+  ├── tui.py               # Findings-list action handling, severity selection, multi-line Claude input
+  ├── fs.py                # Finding view (handle_finding_view), host views, move_review_state(), page size
+  ├── enums.py             # DisplayFormat, ViewFormat, SortMode
+  ├── config.py            # CernoConfig dataclass, load/save, reset_config_key(), MCP_NOT_APPLICABLE_KEYS
+  ├── constants.py         # Paths, review-state constants, NSE profiles, LIGHT_BG_COLOR_MAP
+  ├── ansi.py              # CernoConsole (color_scheme remapping), err/warn/info/ok helpers
+  ├── banner.py            # Promotional startup banner (`review -q` hides it)
+  ├── logging_setup.py     # Loguru setup with rotation; log_info/log_debug/log_error
+  ├── skills/cerno-assistant.md  # Claude Assistant system prompt
+  ├── demo/                # Packaged copy of the demo scans + NetExec workspace (`cerno demo`)
   └── _version.py          # Version resolution (importlib.metadata → pyproject.toml)
 ```
 
 **Module organization**:
 - Modular design with clear separation of concerns
-- Context dataclasses eliminate massive parameter lists (`ReviewContext`: 14 fields)
+- `ToolContext`/`CommandResult` give every tool workflow builder the same signature
 - Clear separation: `tui.py` handles navigation, `fs.py` handles file operations, `render.py` handles display
 - Database objects (`Plugin`, `Finding`) flow through entire call chain
 
@@ -361,20 +289,21 @@ cerno_pkg/
 
 ### Parsing Architecture
 
-**Canonical parser**: `parsing.py:parse_hosts_ports()` returns `ParsedHostsPorts` model:
-- Stable host order (original order preserved)
-- Unique, sorted ports
-- Explicit `host:port` detection (IPv4, IPv6 with brackets)
-- In-process LRU cache for performance
+**Canonical parser**: `parsing.py:parse_hosts_ports(lines)` returns `(hosts, ports_str)`:
+- Hosts de-duplicated in original order
+- Ports unique and sorted numerically, comma-joined
+- Tokens split by `split_host_port()` (IPv4, bracketed IPv6, hostnames; port returned as a string)
 
 **Usage**: All host:port parsing must use `parse_hosts_ports()` to ensure consistency.
 
 ### Tool Registry Pattern
 
-`tool_registry.py` defines `ToolSpec` with `builder: Callable[[dict], tuple[Any, dict]]`:
-- Entries for `nmap`, `netexec`, legacy builders
-- Decouples tool definitions from execution logic
-- Enables adding new tools without modifying core code
+`tool_registry.py` defines the `Tool` dataclass (`id`, `name`, `description`,
+`workflow_builder`, `command_builder`, `requires`, `menu_order`, `options`);
+`tool_definitions.py:register_all_tools()` registers nmap, netexec, metasploit and
+the custom command. `tools.py:run_tool_workflow()` builds one `ToolContext` and calls
+`tool.workflow_builder(ctx)`, which returns a `CommandResult`, so adding a tool needs
+no dispatch changes. See `docs/TOOL_SYSTEM_GUIDE.md`.
 
 ### Database Schema
 
@@ -383,7 +312,7 @@ cerno_pkg/
 - `artifact_types`: Artifact type definitions
 - `hosts`: Normalized host data across ALL scans (enables cross-scan tracking)
 - `ports`: Port metadata
-- `audit_log`: Change tracking (future feature)
+- `audit_log`: Change tracking (reserved; nothing writes to it yet)
 
 **Core Tables**:
 - `scans`: Top-level scan metadata (scan_name, export_root, .nessus hash)
@@ -402,21 +331,21 @@ cerno_pkg/
 - `tool_executions`: Command history (tool_name, command_text, exit_code, duration, sudo usage)
 - `artifacts`: Generated files (artifact_path, artifact_type_id FK, file_hash, file_size, metadata JSON)
   - Uses `artifact_type_id` foreign key to `artifact_types` table
-- `workflow_executions`: Custom workflow tracking
+- `workflow_executions`: Workflow tracking (reserved; nothing writes to it yet)
 - `claude_conversations`: Per-finding Claude Assistant chat history (finding_id FK → findings, CASCADE delete)
   - Keyed to `finding_id`; each row is one turn (role: user|assistant, content, created_at)
   - Used by `browse_claude_chat()` / `ClaudeConversationTurn` model
 - `claude_aggregate_conversations`: Scope-level Claude Assistant chat history (no FK — free-form context_key)
+  - context_key format: `"sev_menu:{scan_ids}[:{host_filter}]"` (sorted, comma-joined IDs) or `"findings_list:{scan_ids}:{scope_hash}"`
+  - Used by `browse_claude_chat_aggregate()` / `ClaudeAggregateConversationTurn` model
 
 **Execution→Data Loop Tables** (schema v4):
 - `verdict_types` / `nse_verdicts` / `port_states`: lookup tables (seeded in init)
 - `verified_ports`: live-verified open ports from a tool run (FK `execution_id`→tool_executions CASCADE; idempotent per execution)
 - `nse_script_results`: NSE script results + vuln verdicts (FK `execution_id` CASCADE; `port_number` NULL = host script)
 - `nxc_flag_observations`: point-in-time nxc security-flag snapshot (FK `execution_id` CASCADE); creds/shares stay live-read via `nxc_db.py` (not duplicated)
-- `finding_verdicts`: append-only verification verdict history (FK `finding_id`→findings CASCADE); current = latest `created_at`
+- `finding_verdicts`: append-only verification verdict history (FK `finding_id`→findings CASCADE); current = latest `created_at`, ties broken by highest `verdict_id`
 - `verdict_evidence`: evidence backing a verdict (FK `verdict_id` CASCADE; `execution_id`/`artifact_id`/`nse_result_id` SET NULL)
-  - context_key format: `"sev_menu:{scan_ids}"` or `"findings_list:{scan_ids}:{scope_hash}"`
-  - Used by `browse_claude_chat_aggregate()` / `ClaudeAggregateConversationTurn` model
 
 **SQL Views** (Computed Statistics):
 - `v_finding_stats`: Host/port counts per finding
@@ -424,12 +353,14 @@ cerno_pkg/
 - `v_plugins_with_severity`: Plugins with severity labels
 - `v_host_findings`: Cross-scan host analysis
 - `v_artifacts_with_types`: Artifacts with type names
+- `v_scan_plugin_summary`: Plugin presence + host/port counts per scan (`cerno scan compare`)
+- `v_host_scan_findings`: Per-host stats by scan (`cerno scan history`)
 - `v_http_services`: HTTP/HTTPS services per scan (identifies web services by svc_name heuristics)
 - `v_finding_current_verdict`: latest verification verdict per finding (joined to `verdict_types`)
 - `v_nse_results_with_verdict`: `nse_script_results` with resolved verdict label
 - `v_finding_verified_stats`: per-finding verified_port/nse_result/vulnerable counts (via `tool_executions.finding_id`)
 
-**Schema changes**: Update `database.py:SCHEMA_SQL_TABLES` and `SCHEMA_SQL_VIEWS`. Test with fresh database before release.
+**Schema changes**: Update `database.py:SCHEMA_SQL_TABLES` and `SCHEMA_SQL_VIEWS`, then mirror the change in `schema.sql` (`tests/test_database.py` fails if its tables/views/indexes differ) and `docs/DATABASE.md`. Test with fresh database before release.
 
 ### Version Management
 
@@ -592,6 +523,12 @@ Only after user confirms the changelog content:
 
 **Note**: Environment variables are not used for configuration. Use `config.yaml` for all settings including:
 - `results_root` - Artifact storage path (default: `~/.cerno/artifacts`)
+- `top_ports_count` - Top ports shown in the scan overview (default `5`, capped at 100)
+- `term_override` - Force a terminal type (`dumb` disables colors)
+- `nxc_workspace_path` - NetExec workspace (default `~/.nxc/workspaces/default`; `""` disables)
+- `nxc_enrichment_enabled` - NetExec enrichment (default `true`); when off, `get_nxc_manager()` returns None, which also disables `cerno creds`, MCP credential tools/injection/reveal and nxc ingest
+- `proxychains_enabled` / `proxychains_host` / `proxychains_port` - Route tools through `proxychains4` (SOCKS5; default off, `127.0.0.1:9000`)
+- `pivot_interface` / `pivot_http_port` - Remote scan mode: interface and HTTPS port (default `8877`) serving the target list to a pivot host
 - `log_path` - Log file location (default: `~/.cerno/cerno.log`)
 - `debug_logging` - Enable DEBUG level logging (default: `false`)
 - `no_color` - Disable ANSI color output (default: `false`)
@@ -602,7 +539,7 @@ Only after user confirms the changelog content:
 - `custom_workflows_path` - Path to custom workflows YAML file; merged over bundled workflows everywhere in the MCP via `workflow_mapper.build_workflow_mapper(config)` (also the default in `query.run_finding_query` / `workflow_prep.prepare_workflow`)
 - `claude_assistant_enabled` - Enable/disable Claude Assistant (default: `false`, opt-in). Pressing `[A]` while installed-but-disabled shows a data-path disclosure (`claude_assistant.CONSENT_DISCLOSURE`) and persists consent via `claude_assistant.ensure_enabled()`; `claude_assistant.claude_enabled(config)` is the single availability gate. `[A]` is hidden only when `claude` is not on PATH
 - `mcp_allow_execution` - Allow the `cerno mcp` server to execute tool commands via `execute_command` (default: `false`)
-- `mcp_allow_mutations` - Allow the `cerno mcp` server to mutate state (`set_review_state`, `import_nessus`, `ingest_results`, `set_finding_verdict`) (default: `false`)
+- `mcp_allow_mutations` - Allow the `cerno mcp` server to mutate state (`set_review_state`, `add_note`, `import_nessus`, `ingest_results`, `set_finding_verdict`) (default: `false`)
 - `mcp_allow_cred_injection` - Allow `execute_command` to resolve `@cred:<ref>@` placeholders to real NetExec secrets server-side at run time (default: `false`). Independent of `mcp_allow_execution`; the resolved secret is never logged, returned, or written to an artifact (masked in `command_text`, scrubbed from stdout/stderr **and from registered `--log`/`-oA` artifact files**)
 - `mcp_allow_cred_reveal` - Allow the MCP `reveal_credential` tool to return a credential's **cleartext** secret to the caller (default: `false`). Strictly more sensitive than injection (reveal hands the secret back), gated independently — injection being on does NOT enable reveal. The local `cerno creds reveal <ref>` CLI works regardless of this flag; every reveal is audited to `tool_executions` (`tool_name='cred_reveal'`, ref only, never the value)
 - `mcp_exec_allowlist` - Glob patterns for the binaries the MCP `execute_command` tool may run, matched on the basename of the target binary after unwrapping `sudo`/`proxychains4` (default: `config.DEFAULT_MCP_EXEC_ALLOWLIST` = `nmap, nxc, netexec, msfconsole`). `*` = any binary not denied; **empty list = deny all**. Only consulted when `mcp_allow_execution` is on. Set via CSV: `cerno config set mcp_exec_allowlist "nmap,nxc"`
@@ -702,8 +639,8 @@ Set to `null` or omit for automatic detection from terminal height. Falls back t
 - **Streamlined file view**: Default to grouped format, offer post-view menu for Copy/Change format/Back (reduces 4 steps to 1-2)
 - **Smart CVE format**: Auto-selects combined format for 1-2 findings, separated for 3+ (shows preview before asking)
 - **MSF indicator**: Metasploit module indicator moved to panel subtitle for cleaner visual hierarchy
-- **Completed findings clarity**: Renamed from "Reviewed findings (read-only)" to "Completed Findings (Undo Available)" with updated help text
-- **Comparison groups pager**: Large group details (>8 findings) accessible via [D] option to view full list in pager
+- **Done list**: `[D]` in the findings list opens the Done list; `[M]` there moves selected findings back to Unreviewed
+- **Comparison groups pager**: After `[H]` Compare, groups with >8 findings can be paged in full by answering `D` at the prompt
 
 ## Testing Practices
 
@@ -711,9 +648,11 @@ Set to `null` or omit for automatic detection from terminal height. Falls back t
 
 **Database**: Use `temp_db` fixture (in-memory SQLite, schema initialized) for integration tests.
 
-**Filesystem**: Use `temp_dir`, `sample_scan_dir`, `sample_plugin_file` fixtures (auto-cleanup).
+**Filesystem**: Use `temp_dir` (auto-cleanup).
 
-**Nessus data**: Use `minimal_nessus_fixture` (3 plugins, 3 hosts) for fast tests, `goad_nessus_fixture` (74 plugins, 755 hosts) for slow tests.
+**Nessus data**: `goad_nessus_fixture` (74 plugins, 755 hosts; conftest) for slow tests, `sample_nessus_xml` (conftest) or the module-local `minimal_nessus_fixture` (3 plugins, 3 hosts; `tests/test_nessus_import.py`) for fast ones.
+
+**Isolation**: the autouse `reset_environment` fixture points `config.get_config_path()` at a temp file, so tests never touch the real `~/.cerno/config.yaml`. Code that uses `Path.home()` (e.g. `cerno reset`) must still be monkeypatched explicitly.
 
 ### Test Markers
 
@@ -745,7 +684,7 @@ that test's `EXPECTED_*` sets in the same change. See `CONTRIBUTING.md`.
 **Note**: Database schema changes currently require bumping the major version and having users re-import scans. A proper migration system will be implemented in a future release.
 
 1. Update `database.py:SCHEMA_SQL_TABLES` with new column
-2. Update `schema.sql` (documentation reference)
+2. Update `schema.sql` (reference copy; `tests/test_database.py` checks parity) and `docs/DATABASE.md`
 3. Update `models.py` dataclass if applicable
 4. Test with fresh database: `pytest tests/test_database.py`
 5. Document breaking change in CHANGELOG.md
@@ -769,20 +708,24 @@ sqlite3 ~/.cerno/cerno.db ".schema"
 # Check foundation tables populated
 sqlite3 ~/.cerno/cerno.db "SELECT COUNT(*) FROM severity_levels;"  # Expected: 5
 sqlite3 ~/.cerno/cerno.db "SELECT COUNT(*) FROM artifact_types;"   # Expected: 5
+sqlite3 ~/.cerno/cerno.db "SELECT COUNT(*) FROM verdict_types;"    # Expected: 3
+sqlite3 ~/.cerno/cerno.db "SELECT COUNT(*) FROM nse_verdicts;"     # Expected: 4
+sqlite3 ~/.cerno/cerno.db "SELECT COUNT(*) FROM port_states;"      # Expected: 6
+sqlite3 ~/.cerno/cerno.db "PRAGMA user_version;"                   # Expected: 4
 ```
 
 ### Adding a New Tool
 
-1. Add tool spec to `tool_registry.py:TOOL_REGISTRY`
-2. Implement builder function: `def build_<tool>_cmd(ctx: dict) -> tuple[Any, dict]`
-3. Add tool-specific constants to `constants.py` if needed
-4. Update `tools.py` to handle tool-specific prompts
-5. Test in TUI: `cerno review` → Run tool → Verify command generation
+1. Write a pure command builder `build_<tool>_cmd(...)` in `tools.py`
+2. Write a workflow builder `build_<tool>_workflow(ctx: ToolContext) -> Optional[CommandResult]` in `tools.py` (prompts, then calls the command builder)
+3. Register a `Tool(...)` in `tool_definitions.py:register_all_tools()`
+4. Add tool-specific constants to `constants.py` if needed
+5. Test in TUI: `cerno review` → Run tool → Verify command generation (see `docs/ADDING_TOOLS_QUICKSTART.md`)
 
 ### Updating Workflow Mappings
 
 1. Edit `cerno_pkg/workflow_mappings.yaml` (or create custom YAML)
-2. Follow schema: `version`, `workflows` list, each with `plugin_id`, `workflow_name`, `description`, `steps`, `references`
+2. Follow schema: `version`, `workflows` list, each with `plugin_id`, `workflow_name`, `description`, `steps`, `references`; use canonical `<TARGET>`/`<PORT>`/`<USERNAME>`/`<PASSWORD>`/`<DOMAIN>`/`<INTERFACE>` placeholders (see `docs/CUSTOM_WORKFLOWS.md`)
 3. Test in TUI: `cerno review --custom-workflows <path>` → Press `[W]` on matching plugin
 
 ### Debugging Database Issues
@@ -797,15 +740,15 @@ tail -f ~/.cerno/cerno.log
 sqlite3 ~/.cerno/cerno.db
 sqlite> .schema
 sqlite> SELECT * FROM scans;
-sqlite> SELECT * FROM v_review_progress;
+sqlite> SELECT review_state, COUNT(*) FROM findings GROUP BY review_state;
 ```
 
 ## Important Notes
 
-- **Database migrations**: ALWAYS test migrations with existing database before release
-- **Version bumps**: Update `pyproject.toml` version, create git tag, push tag for release workflow
-- **Breaking changes**: Document in README "Database-Only Architecture" section if schema changes
-- **Backward compatibility**: `.txt` files still created for human reference, but database is source of truth
-- **CI/CD**: GitHub Actions runs tests on Python 3.11/3.12, Ubuntu/Windows/macOS (see `.github/workflows/test.yml`)
+- **Schema changes**: no migration system. Verify an older DB is rejected with `SchemaVersionError` and a fresh DB initializes before release
+- **Version bumps**: Update `pyproject.toml` version only; the release workflow tags and publishes when it reaches `main`
+- **Breaking changes**: Document in CHANGELOG.md (and README if users must act, e.g. re-import)
+- **No per-plugin files**: import writes nothing but the database (and `scans/<name>/http_urls.txt` when web services exist)
+- **CI/CD**: GitHub Actions runs tests on Python 3.11/3.12/3.13 (3.13 allowed to fail), Ubuntu/Windows/macOS (see `.github/workflows/test.yml`)
 - **Dependencies**: Keep `requirements.txt` and `pyproject.toml:dependencies` in sync
 - **Nessus XML parsing**: Based on DefensiveOrigins/NessusPluginHosts (respect attribution)

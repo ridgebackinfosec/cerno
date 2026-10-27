@@ -40,8 +40,8 @@ class ToolContext:
         oabase: Output file base path (for -oA style outputs)
         scan_dir: Scan-level directory
         sev_dir: Severity-level directory
-        plugin_url: URL to Nessus plugin details (for metasploit search)
-        chosen_file: The selected plugin file being processed
+        plugin_url: URL to Nessus plugin details (optional; currently unused by builders)
+        chosen_file: Synthetic display path of the selected finding
     """
 
     # Input files
@@ -83,10 +83,10 @@ class CommandResult:
         is_remote: When True, cerno displays the command but does not execute it.
                    The operator runs the command manually on a pivot host.
         cleanup: Optional callable invoked when the user exits the remote command
-                 display screen (e.g. stops the HTTP server).
+                 display screen (e.g. stops the HTTPS target server).
         remote_output_path: The -oA output base path on the pivot host (e.g.
                             '/tmp/cerno_20260416_143022'). Used to generate
-                            scp + import guidance shown after the operator runs the scan.
+                            scp guidance shown after the operator runs the scan.
     """
 
     display_command: Union[str, List[str]]
@@ -103,8 +103,9 @@ class ReviewContext:
     """
     Consolidated context for review session operations.
 
-    Replaces 8-11 parameter function signatures with single context object.
-    Passed throughout the review workflow to eliminate parameter duplication.
+    Intended to replace the long parameter lists of the review functions. It is
+    exported from cerno_pkg but not yet instantiated anywhere; the review flow
+    still passes these values as individual parameters.
 
     Attributes:
         scan_dir: Scan directory path

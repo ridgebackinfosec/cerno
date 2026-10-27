@@ -10,8 +10,9 @@ It speaks over **stdio** (stdin/stdout), so it is **launched by the client**,
 not run directly in a terminal. The database is local and operator-specific, so
 stdio keeps the server off the network entirely.
 
-By default the server is **read-only**: execution and mutation tools are not
-registered until you opt in (see [Gating](#gating)).
+By default the server is **read-only**: execution, mutation, batch and
+credential-reveal tools are not registered until you opt in (see
+[Gating](#gating)).
 
 ---
 
@@ -73,7 +74,7 @@ Inside a `claude` session, `/mcp` shows server status and lists the tools,
 resources, and prompts Cerno exposes.
 
 > **Applying gating changes:** the gating flags are read **once at server
-> startup**. After `cerno config set mcp_allow_execution/mcp_allow_mutations …`,
+> startup**. After `cerno config set mcp_allow_<flag> …`,
 > reconnect — `claude mcp remove cerno` then re-add, or restart the client — for
 > the change to take effect. The active gating state is logged to
 > `~/.cerno/cerno.log` on startup.
@@ -86,26 +87,41 @@ resources, and prompts Cerno exposes.
 
 | Category | Tools | Gated by |
 | --- | --- | --- |
-| Read | `list_scans`, `list_findings`, `search_findings`, `get_finding_detail`, `get_finding_hosts`, `list_hosts`, `top_hosts`, `list_services`, `get_web_targets`, `list_cves`, `find_affected_by_cve`, `host_history`, `compare_scans`, `get_workflow`, `check_tools`, `list_executions`, `list_artifacts`, `get_finding_artifacts`, `read_artifact`, `get_config`, `get_capabilities` | always available |
-| NetExec | `get_host_nxc`, `list_nxc_credentials` (credentials, shares, security flags; needs a configured NetExec workspace) | always available |
-| Generate | `generate_nmap_cmd`, `generate_netexec_cmd`, `generate_msf_search` (return commands, do not run them) | always available |
+| Read | `list_scans`, `list_findings`, `search_findings`, `query_findings`, `get_finding_detail`, `get_finding_hosts`, `list_hosts`, `top_hosts`, `list_services`, `get_web_targets`, `list_cves`, `find_affected_by_cve`, `host_history`, `compare_scans`, `get_workflow`, `list_workflow_gaps`, `check_tools`, `list_executions`, `list_artifacts`, `get_finding_artifacts`, `read_artifact`, `get_finding_verdict`, `get_notes`, `get_config`, `get_capabilities` | always available |
+| NetExec | `get_host_nxc`, `list_nxc_credentials` (credentials as refs, never secrets; shares; security flags; needs a configured NetExec workspace) | always available |
+| Generate | `generate_nmap_cmd`, `generate_netexec_cmd`, `generate_msf_search`, `prepare_workflow`, `plan_batch` (return commands or a dry-run plan; never run anything) | always available |
 | Contribute | `get_workflow_candidate` (draft a sanitized workflow from the commands run against a finding), `export_workflow_contribution` (write it as a local, PR-ready YAML file; never submits). See [Workflow contributions](#workflow-contributions) | always available |
-| Execute | `execute_command` (runs a command, captures output, logs it; reports progress). Target binary must match `mcp_exec_allowlist` and no binary in the chain may match `mcp_exec_denylist` (common wrappers such as `sudo`/`env`/`timeout` are unwrapped); `timeout` clamped to [1, 3600]s; optional `finding_id` attributes the run (then surfaced by `get_finding_artifacts`, verdict evidence and [workflow contributions](#workflow-contributions); always pass it when verifying a finding). For an nmap command (`-oA` present) it registers the output files as artifacts and records `host_count`/`ports` even when no hosts are up, and refuses to overwrite an existing run's `-oA` output (use a fresh `generate_nmap_cmd` path) | `mcp_allow_execution` |
-| Mutate | `set_review_state` (`unreviewed` → `in_progress` → `done` → `unreviewed`; other changes rejected), `import_nessus` | `mcp_allow_mutations` |
+| Execute | `execute_command` (runs a command, captures output, logs it; reports progress). Target binary must match `mcp_exec_allowlist` and no binary in the chain may match `mcp_exec_denylist` (common wrappers such as `sudo`/`env`/`timeout` are unwrapped); `timeout` clamped to [1, 3600]s; optional `finding_id` attributes the run (then surfaced by `get_finding_artifacts`, verdict evidence and [workflow contributions](#workflow-contributions); always pass it when verifying a finding). For an nmap command (`-oA` present) it registers the output files as artifacts and records `host_count`/`ports` even when no hosts are up, and refuses to overwrite an existing run's `-oA` output (use a fresh `generate_nmap_cmd` path). `start_execution`, `get_execution_status`, `cancel_execution`, `list_jobs`: the same run as a background job. See [Jobs and batch](#jobs-and-batch) | `mcp_allow_execution` |
+| Batch | `execute_batch` (runs every runnable command from a `plan_batch` query) | `mcp_allow_execution` **and** `mcp_allow_batch` |
+| Mutate | `set_review_state` (`unreviewed` → `in_progress` → `done` → `unreviewed`; other changes rejected), `add_note` (append-only), `set_finding_verdict`, `ingest_results`, `import_nessus` | `mcp_allow_mutations` |
+| Reveal | `reveal_credential` (returns a credential's **cleartext** secret; audited) | `mcp_allow_cred_reveal` |
 
 Notes:
 
 - `list_findings` takes `merged` (dedup multi-scan results by plugin, matching
   the TUI), `limit`, and `offset` for paging.
+- `query_findings` AND-combines optional predicates: `scan_ids` (omit for all
+  scans), `severity_int`/`severity_min`, `review_state`, `verdict`
+  (`confirmed`/`false_positive`/`unable`/`none`), `cve` (exact id), `port`,
+  `service`, `host`, `plugin_name`, `has_metasploit`, `has_workflow`, plus
+  `merged`/`limit`/`offset`. `plan_batch`/`execute_batch` take the same predicates.
+- `list_workflow_gaps(scan_ids, severity_min)` lists findings with **no** mapped
+  workflow, worst first (the complement of `query_findings(has_workflow=True)`).
 - `generate_nmap_cmd` takes `nse_option` as NSE script names or categories,
   comma-separated (e.g. `smb-security-mode,smb2-security-mode` or `vuln`); a
   `--script=` prefix is optional and is added for you. Other nmap flags are rejected.
+- `generate_netexec_cmd` and `prepare_workflow` take `use_credential=<ref>` (a
+  ref from `list_nxc_credentials`); see [Credentials](#credentials).
+- `prepare_workflow(finding_id)` fills the finding's mapped workflow
+  (`<TARGET>`/`<PORT>`/`<USERNAME>`/`<PASSWORD>`/`<INTERFACE>`/`<DOMAIN>`) and marks
+  each command executable or manual (with a reason).
 - `search_findings` searches **all** scans at once (no `scan_ids`); each result
   carries its `scan_name`.
 - `get_finding_detail` caps per-host output at `max_hosts` (default 100) and
   reports `affected_total` / `affected_truncated`.
-- `get_capabilities` reports which gated capabilities are live, so a client can
-  self-orient without a failed call.
+- `get_capabilities` reports which gated capabilities are live (execution,
+  mutations, batch, credential injection/reveal, the exec allow/deny lists and
+  NetExec availability), so a client can self-orient without a failed call.
 
 #### Config defaults
 
@@ -122,6 +138,9 @@ default:
 | `results_root` | Where `_mcp/<finding_id>/run-*/` target files and run outputs are written |
 | `custom_workflows_path` (contributions) | Also decides "new" vs "enhanced" vs nothing-to-contribute for `get_workflow_candidate` and the `workflow_candidate` verdict hint |
 | `contribution_export_dir` | Where `export_workflow_contribution` writes files (default `<results_root>/contributions`) |
+| `mcp_batch_concurrency` / `mcp_batch_timeout` | Defaults for `execute_batch`'s `concurrency` (default 1) and `per_command_timeout` (default 300s, clamped to [1, 3600]) |
+| `nxc_workspace_path` / `nxc_enrichment_enabled` | NetExec workspace for `get_host_nxc`, `list_nxc_credentials`, credential refs, `@cred:` injection, `reveal_credential` and nxc ingest. With enrichment off, all of these report NetExec as unavailable |
+| `log_path` / `debug_logging` | Where (and how verbosely) the server logs; stdout is reserved for JSON-RPC |
 | `proxychains_enabled` / `proxychains_host` / `proxychains_port` | `execute_command(use_proxy=true)` wraps the run in `proxychains4 -q -f ~/.cerno/proxychains4.conf` (SOCKS5 host:port) when `proxychains_enabled` is on; otherwise `use_proxy` is ignored. `check_tools` reports the installed proxychains-ng version |
 
 These keys are TUI-only and intentionally ignored by the server:
@@ -141,6 +160,8 @@ resources:
 - `cerno://scan/{id}/cves` — unique CVEs mapped to plugins (JSON)
 - `cerno://finding/{id}/output` — raw per-host plugin output
 - `cerno://finding/{id}/workflow` — verification workflow for the finding's plugin
+- `cerno://finding/{id}/verdict` — current verification verdict, history and evidence (JSON)
+- `cerno://finding/{id}/results` — live-verified open ports and NSE verdicts ingested from runs (JSON)
 - `cerno://config` — all current (read-only) config settings
 - `cerno://host/{ip}/nxc` — NetExec enrichment for a host
 
@@ -150,31 +171,39 @@ One-click templates in clients that render MCP prompts:
 
 - `triage_finding` — draft a pentest-report brief for a finding
 - `exploit_plan` — outline the fastest viable exploitation/verification path
+- `triage_scope` — report brief across one or more scans (comma-separated
+  `scan_ids`, e.g. `1,3`; merged and deduplicated by plugin), optionally one severity
 
 Both finding prompts tell the client to pass `finding_id` on every execution and
 to offer `get_workflow_candidate` when a verdict reports a candidate.
-- `triage_scope` — report brief across one or more scans (comma-separated
-  `scan_ids`, e.g. `1,3`; merged and deduplicated by plugin), optionally one severity
 
 ---
 
 ## Gating
 
-Both flags default to `false`, so the server is read-only out of the box.
-Enable the capabilities you want:
+Every gating flag defaults to `false`, so the server is read-only out of the
+box. Enable only the capabilities you want:
 
 ```bash
-cerno config set mcp_allow_execution true        # permit execute_command
-cerno config set mcp_allow_mutations true        # permit set_review_state / import_nessus
+cerno config set mcp_allow_execution true        # execute_command + background jobs
+cerno config set mcp_allow_mutations true        # set_review_state, add_note, set_finding_verdict, ingest_results, import_nessus
+cerno config set mcp_allow_batch true            # execute_batch (also needs mcp_allow_execution)
+cerno config set mcp_allow_cred_injection true   # resolve @cred:<ref>@ placeholders at run time
+cerno config set mcp_allow_cred_reveal true      # reveal_credential (returns cleartext)
 cerno config set mcp_exec_allowlist "nmap,nxc"   # restrict which binaries execute_command may run ("*" = any)
 cerno config set mcp_exec_denylist "rm,dd,sh"    # binaries execute_command may never run (always wins)
 ```
 
+| Flag | Unlocks |
+| --- | --- |
+| `mcp_allow_execution` | `execute_command`, `start_execution`, `get_execution_status`, `cancel_execution`, `list_jobs` |
+| `mcp_allow_mutations` | `set_review_state`, `add_note`, `set_finding_verdict`, `ingest_results`, `import_nessus` (importing writes scans/findings, so it counts as a mutation). With execution also on, runs are auto-ingested best-effort |
+| `mcp_allow_batch` | `execute_batch`, only when `mcp_allow_execution` is also on. It authorizes the fan-out across a query; every command still passes the exec policy, the credential gate and the per-command timeout |
+| `mcp_allow_cred_injection` | `execute_command`/`start_execution`/`execute_batch` may resolve `@cred:<ref>@` placeholders to real secrets server-side. Independent of execution |
+| `mcp_allow_cred_reveal` | `reveal_credential`. Strictly more sensitive than injection, and gated separately: injection being on does **not** enable reveal |
+
 - When a flag is off, the corresponding tools are **not registered** and never
   appear in the client.
-- Enabling `mcp_allow_mutations` unlocks both `set_review_state` and
-  `import_nessus` (importing writes scans/findings to the database, so it is
-  treated as a mutation).
 - `execute_command` policy, applied on every call even when execution is enabled:
   1. Leading wrapper binaries (and their options) are unwrapped, so
      `["sudo", "-n", "proxychains4", "-q", "nmap", …]` yields the chain
@@ -202,6 +231,70 @@ cerno config set mcp_exec_denylist "rm,dd,sh"    # binaries execute_command may 
 - `sudo` runs non-interactively. If sudo would prompt for a password, the call is
   refused (pre-authenticate with `sudo -v`).
 - `get_capabilities` reports both lists as configured.
+
+---
+
+## Verification loop
+
+Turn a finding into a recorded, evidence-backed verdict:
+
+1. **Run with attribution.** `execute_command(command, finding_id=…)` (or
+   `start_execution`). Generate the command first with `generate_nmap_cmd`,
+   `generate_netexec_cmd` or `prepare_workflow`.
+2. **Ingest the output.** `ingest_results(execution_id)` parses nmap XML into
+   verified open ports and NSE vuln verdicts, and NetExec runs into a
+   security-flag snapshot. It is idempotent, and empty or partial runs return a
+   `skipped_reason` instead of an error. When mutations are on, executions are
+   ingested automatically (best-effort).
+3. **Review the evidence.** `cerno://finding/{id}/results` and
+   `get_finding_detail` show what was verified; `get_finding_verdict` also
+   returns a non-binding `suggested_verdict` from NSE evidence (never applied
+   automatically).
+4. **Record the verdict.** `set_finding_verdict(finding_id, verdict, note,
+   execution_id|artifact_id|nse_result_id)` with `confirmed`, `false_positive` or
+   `unable`. Verdicts are append-only history and separate from review state.
+   The result carries a `workflow_candidate` hint (see
+   [Workflow contributions](#workflow-contributions)).
+
+Use `add_note`/`get_notes` for free-text notes. Notes are append-only and
+timestamped, and `set_review_state(notes=…)` appends rather than overwrites.
+
+---
+
+## Jobs and batch
+
+- **Background jobs** (`mcp_allow_execution`): `start_execution` takes the same
+  arguments as `execute_command` but returns a `job_id` immediately; poll
+  `get_execution_status(job_id)` for status and an output tail, and
+  `cancel_execution(job_id)` kills the job's process group. Jobs live in memory
+  and are lost when the server restarts, but every completed run is still logged
+  to `tool_executions`.
+- **Batch:** `plan_batch(strategy, …query predicates…)` is an always-on dry run.
+  `strategy` is `"nmap"`, `"netexec:<proto>"` (bare `"netexec"` = configured
+  default protocol, else `smb`), `"msf"` or `"workflow"`. Each item shows the
+  generated command and whether it is runnable or manual; findings already
+  resolved are skipped when `skip_done` (default). Review the plan, then
+  `execute_batch` with the same arguments runs the runnable items as tracked,
+  attributed jobs, at most `mcp_batch_concurrency` at a time with
+  `mcp_batch_timeout` per command.
+
+---
+
+## Credentials
+
+- `list_nxc_credentials` returns **refs** (plus username, domain and secret
+  kind), never secret values.
+- Pass a ref as `use_credential` to `generate_netexec_cmd`, `prepare_workflow` or
+  `plan_batch`. The returned command carries an `@cred:<ref>@` placeholder instead
+  of the secret.
+- With `mcp_allow_cred_injection` on, the execution tools resolve the placeholder
+  server-side at run time. The secret is masked in the logged `command_text` and
+  scrubbed from stdout/stderr and from registered `--log`/`-oA` artifact files.
+  With it off, a command containing a placeholder is refused.
+- `reveal_credential(ref)` (`mcp_allow_cred_reveal`) returns the cleartext. Every
+  reveal is audited to `tool_executions` (`tool_name='cred_reveal'`, ref only, never
+  the value). The local `cerno creds list` / `cerno creds reveal <ref>` CLI offers
+  the same without the MCP flag.
 
 ---
 

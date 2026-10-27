@@ -53,7 +53,11 @@ bundled synthetic NetExec workspace. Use `cerno demo --no-nxc` to skip NetExec
 configuration or `cerno demo --overwrite` to replace previously imported demo
 scans if the fixture content changed.
 
-For screenshot capture, see [SCREENSHOT_GUIDE.md](SCREENSHOT_GUIDE.md).
+`cerno demo` reads these files from `docs/demo/` in a source checkout and falls
+back to the identical packaged copy in `cerno_pkg/demo/` (used by pipx/pip
+installs). If you regenerate the NetExec workspace with
+`scripts/create_demo_nxc_workspace.py` (which writes to `docs/demo/nxc-workspace`
+by default), copy the result into `cerno_pkg/demo/nxc-workspace` too.
 
 ## Demo Coverage
 

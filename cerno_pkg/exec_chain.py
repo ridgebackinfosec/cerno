@@ -1,12 +1,14 @@
-"""Shared command → target-binary resolution for the MCP execution path.
+"""Shared command → target-binary resolution for command execution and policy.
 
 A single source of truth for "what binary does this argv actually run, after
-stripping sudo/proxychains4/env/timeout/... wrappers". Three consumers rely on
+stripping sudo/proxychains4/env/timeout/... wrappers". These consumers rely on
 it and must never drift:
 
 - the execute_command allow/deny policy (``mcp_server/server.py``),
 - result-ingestion dispatch (``ingest.py``) — which ingester to run,
-- auth-flag masking scope (``ops.py``) — only mask secrets for nxc/netexec.
+- auth-flag masking scope (``ops.py``, TUI and MCP) — only mask secrets for nxc/netexec,
+- runnable/manual classification (``workflow_prep.py``, ``batch.py``) and
+  wrapper stripping for contributions (``workflow_contrib.py``).
 
 ``command_chain`` fails closed (raises) for the policy path; the softer
 ``resolve_target_binary`` / ``effective_tool`` return ``None`` for callers that

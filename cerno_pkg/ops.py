@@ -1,8 +1,9 @@
 """External command execution and process management utilities.
 
 This module provides functions for running external commands with progress
-indicators, cloning git repositories, and checking for command availability
-and privileges.
+indicators (TUI) or captured output (MCP), proxychains4 wrapping, sudo checks,
+tool version detection, logging tool executions and artifacts, and the HTTPS
+target server used by remote scan mode.
 """
 
 from __future__ import annotations
@@ -610,7 +611,7 @@ def log_tool_execution(
         host_count: Number of hosts targeted
         sampled: Whether host list was sampled
         ports: Port specification string
-        file_path: Path to plugin file being processed
+        file_path: Unused (kept for call compatibility; findings are referenced by ID)
         scan_dir: Scan directory for session linking
         finding_id: Explicit finding to attribute this execution to. Takes
             precedence over session/scan_dir derivation (used by the MCP server,
@@ -756,9 +757,8 @@ def _log_tool_execution_impl(
             if row:
                 session_id = row["session_id"]
 
-        # Note: finding_id is optional and can remain None
-        # File paths are not stored in the database - findings are referenced by IDs
-        # Tool executions are still tracked, just not linked to specific findings
+        # finding_id is optional: when None the execution is logged unattributed.
+        # File paths are not stored in the database - findings are referenced by IDs.
 
         # Create tool execution record
         tool_exec = ToolExecution(
@@ -979,14 +979,14 @@ def start_ips_server(
     port: int,
     bind_ip: str,
 ) -> tuple["http.server.HTTPServer", "threading.Thread", Callable[[], None]]:
-    """Start a temporary HTTPS server serving the IP list at /ips.txt.
+    """Start a temporary HTTPS server serving the IP list at /targets.txt.
 
     Binds to the specified interface IP only (not 0.0.0.0) to limit
     exposure. Uses a self-signed certificate generated at startup.
-    Serves ONLY GET /ips.txt — all other paths return 404.
+    Serves ONLY GET /targets.txt — all other paths return 404.
 
     Args:
-        ips_path: Path to the tcp_ips.list file to serve
+        ips_path: Path to the TCP or UDP IP list file to serve
         port: Port to listen on
         bind_ip: IP address of the interface to bind to (e.g. '10.10.14.5')
 

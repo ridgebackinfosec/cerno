@@ -11,7 +11,7 @@ Complete reference for the tool registry and unified workflow pattern.
 3. [Tool Registry System](#tool-registry-system)
 4. [Unified Workflow Pattern](#unified-workflow-pattern)
 5. [Adding a New Tool](#adding-a-new-tool)
-6. [Custom Tool Development Guide](#migration-guide)
+6. [Custom Tool Development Guide](#custom-tool-development-guide)
 7. [Troubleshooting](#troubleshooting)
 
 ---
@@ -60,7 +60,7 @@ Together, these eliminate hardcoded tool definitions and per-tool dispatch logic
                             │
 ┌──────────────────────┬────────────────────────────────────────┐
 │   COMMAND BUILDERS   │     WORKFLOW BUILDERS                  │
-│  File: tools.py      │     File: cerno.py                   │
+│  File: tools.py      │     File: tools.py                   │
 │  Pure functions      │     Interactive prompts               │
 │  Return: list[str]   │     Use: ToolContext                  │
 │                      │     Return: CommandResult             │
@@ -98,8 +98,7 @@ Command displayed for review/execution
 | `tool_registry.py` | Registry infrastructure | Tool dataclass, TOOL_REGISTRY, helper functions |
 | `tool_definitions.py` | Tool registration | register_all_tools(), Tool() entries |
 | `tool_context.py` | Unified types | ToolContext, CommandResult dataclasses |
-| `tools.py` | Command builders | build_*_cmd() functions |
-| `cerno.py` | Workflows & dispatch | _build_*_workflow() functions, dispatch logic |
+| `tools.py` | Builders & dispatch | build_*_cmd() command builders, build_*_workflow() workflow builders, run_tool_workflow() dispatch |
 
 ---
 
@@ -131,7 +130,7 @@ class Tool:
 - **id**: Lowercase, no spaces (e.g., "nmap", "netexec")
 - **name**: Human-readable (can match id)
 - **description**: Shown after "—" in menu (e.g., "Network mapper")
-- **workflow_builder**: Function reference (e.g., `cerno._build_nmap_workflow`)
+- **workflow_builder**: Function reference (e.g., `tools.build_nmap_workflow`)
 - **command_builder**: Function reference (e.g., `tools.build_nmap_cmd`) or None
 - **requires**: Binary names to check (e.g., `["nmap"]`)
 - **menu_order**: Integer (1, 2, 3...) - controls display order
@@ -192,13 +191,14 @@ class ToolContext:
     sev_dir: Path          # Severity directory
 
     # Optional metadata
-    plugin_url: Optional[str]    # Nessus plugin URL
-    chosen_file: Optional[Path]  # Selected file
+    plugin_url: Optional[str] = None    # Nessus plugin URL
+    chosen_file: Optional[Path] = None  # Selected finding's display path
+    use_proxy: bool = False             # Route through proxychains4
 ```
 
 **Usage:**
 ```python
-def _build_mytool_workflow(ctx: ToolContext) -> Optional[CommandResult]:
+def build_mytool_workflow(ctx: ToolContext) -> Optional[CommandResult]:
     # Access fields as needed
     ips = ctx.tcp_ips
     ports = ctx.ports_str
@@ -214,10 +214,13 @@ All workflows return a `CommandResult` object instead of tuples.
 class CommandResult:
     """Unified return type from workflow builders."""
 
-    command: Union[str, List[str]]          # Actual command
-    display_command: Union[str, List[str]]  # Shown to user
-    artifact_note: str                      # Output location note
-    relay_path: Optional[Path] = None       # Optional relay file
+    display_command: Union[str, List[str]]               # Shown to user
+    command: Optional[Union[str, List[str]]] = None      # Actual command (None in remote mode)
+    artifact_note: str = ""                              # Output location note
+    relay_path: Optional[Path] = None                    # Optional relay file (netexec)
+    is_remote: bool = False                              # Display only; operator runs it on a pivot
+    cleanup: Optional[Callable[[], None]] = None         # Called when leaving the remote screen
+    remote_output_path: Optional[str] = None             # -oA base path on the pivot host
 ```
 
 **Usage:**
@@ -231,7 +234,7 @@ return CommandResult(
 
 ### Dispatch Logic (Automatic)
 
-The dispatch code in `cerno.py` is completely generic:
+The dispatch code in `tools.py:run_tool_workflow()` is completely generic:
 
 ```python
 # Build context once (same for ALL tools)
@@ -289,12 +292,12 @@ def build_mytool_cmd(
     return ["mytool", "--flag", param1, "-i", str(param2), "-o", str(output)]
 ```
 
-#### Step 2: Write Workflow (`cerno.py`)
+#### Step 2: Write Workflow (`cerno_pkg/tools.py`)
 
 **Use ToolContext parameter and return CommandResult:**
 
 ```python
-def _build_mytool_workflow(ctx: ToolContext) -> Optional[CommandResult]:
+def build_mytool_workflow(ctx: ToolContext) -> Optional[CommandResult]:
     """
     Build mytool command through interactive prompts.
 
@@ -339,7 +342,6 @@ Add to `register_all_tools()` function:
 
 ```python
 def register_all_tools() -> None:
-    import cerno as cerno_module
     from . import tools
 
     # ... existing registrations ...
@@ -352,7 +354,7 @@ def register_all_tools() -> None:
             id="mytool",
             name="mytool",
             description="Brief description",
-            workflow_builder=cerno_module._build_mytool_workflow,
+            workflow_builder=tools.build_mytool_workflow,
             command_builder=tools.build_mytool_cmd,
             requires=["mytool"],
             menu_order=5,
@@ -373,7 +375,7 @@ If you're updating existing custom tools, here's the pattern comparison:
 #### Old Pattern
 
 ```python
-def _build_mytool_workflow(
+def build_mytool_workflow(
     tcp_ips: Path,
     udp_ips: Path,
     ports_str: str,
@@ -386,7 +388,7 @@ def _build_mytool_workflow(
 #### Current Pattern (Recommended)
 
 ```python
-def _build_mytool_workflow(ctx: ToolContext) -> Optional[CommandResult]:
+def build_mytool_workflow(ctx: ToolContext) -> Optional[CommandResult]:
     from cerno_pkg.tool_context import CommandResult
 
     # Access params via ctx
@@ -487,7 +489,7 @@ if not user_input:
 ### 4. Use Type Hints
 
 ```python
-def _build_mytool_workflow(ctx: ToolContext) -> Optional[CommandResult]:
+def build_mytool_workflow(ctx: ToolContext) -> Optional[CommandResult]:
     # Type hints enable IDE autocomplete
 ```
 
@@ -495,7 +497,7 @@ def _build_mytool_workflow(ctx: ToolContext) -> Optional[CommandResult]:
 
 ```python
 # Don't need to use all fields!
-def _build_simple_workflow(ctx: ToolContext) -> Optional[CommandResult]:
+def build_simple_workflow(ctx: ToolContext) -> Optional[CommandResult]:
     output = ctx.oabase  # Only use what you need
     # ...
 ```

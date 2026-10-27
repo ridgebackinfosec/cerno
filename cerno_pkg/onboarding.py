@@ -39,7 +39,6 @@ def show_guided_tour() -> str:
     Returns:
         "completed" - User finished tour
         "skipped" - User skipped tour
-        "exit" - User wants to exit and import scan
     """
     # Welcome screen
     print()  # Blank line for spacing
@@ -121,7 +120,7 @@ def show_tour_step(step: int) -> None:
         info("  Low (45 findings)")
         info("")
         info("Navigate with keyboard:")
-        info("  [1-4] Select severity level")
+        info("  [1-5] Select severity level")
         info("")
 
     elif step == 3:
@@ -135,7 +134,7 @@ def show_tour_step(step: int) -> None:
         info("  [W] View workflow steps [if available]")
         info("")
         info("Tools run against the exact hosts/ports affected by the finding.")
-        info("Results are saved to ~/.cerno/artifacts/")
+        info("Results are saved to ~/.cerno/artifacts/ (configurable: results_root)")
         info("")
 
     elif step == 4:
@@ -203,7 +202,7 @@ def show_workflow_guidance(
 
     total, unreviewed, in_progress, completed = stats[0], stats[1], stats[2], stats[3]
 
-    # Skip guidance if scan has no findings or all are reviewed
+    # Skip guidance if scan has no findings or none are still unreviewed
     if total == 0 or unreviewed == 0:
         return
 
@@ -303,7 +302,7 @@ def _show_context_aware_tips(
         scan_id: Database scan ID of the primary scan
         total: Total finding count (already aggregated across scan_ids if multi)
         unreviewed: Unreviewed finding count
-        completed: Completed finding count
+        completed: Done finding count
         scan_ids: All selected scan IDs (multi-scan mode); if None, single-scan
 
     Returns:

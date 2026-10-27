@@ -19,7 +19,8 @@ names, scan names, NetExec usernames/domains, local paths). Free-form review and
 verdict notes are never read. Export is a local YAML file only.
 
 The functions here are pure apart from the DB readers (``build_leak_context``,
-``assess_candidate``); the MCP adapters live in ``mcp_server/server.py``.
+``assess_candidate``, and ``build_candidate``/``candidate_from_override``, which
+read the finding's hosts/ports); the MCP adapters live in ``mcp_server/server.py``.
 """
 
 from __future__ import annotations

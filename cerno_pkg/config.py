@@ -78,7 +78,7 @@ class CernoConfig:
             "help": "Directory for tool output",
         },
     )
-    """Custom path for scan artifacts (overrides NPH_RESULTS_ROOT env var)."""
+    """Custom path for tool output and artifacts (default: ~/.cerno/artifacts)."""
 
     log_path: Optional[str] = field(
         default=None,
@@ -96,7 +96,8 @@ class CernoConfig:
             "placeholder": "auto",
         },
     )
-    """Default items per page. Use None for auto-detection from terminal height, or specify integer (min 8)."""
+    """Default items per page. Use None for auto-detection from terminal height.
+    The MCP default limit and fs.default_page_size() enforce a minimum of 8."""
 
     top_ports_count: Optional[int] = field(
         default=None,
@@ -146,11 +147,11 @@ class CernoConfig:
         metadata={
             "section": "Tools & Workflows",
             "kind": "str",
-            "help": "Pre-select: nmap/netexec/custom",
+            "help": "Pre-select: nmap/netexec/metasploit/custom",
             "placeholder": "(not set)",
         },
     )
-    """Default tool to pre-select (e.g., 'nmap', 'netexec', 'custom')."""
+    """Default tool to pre-select (a tool id: 'nmap', 'netexec', 'metasploit', 'custom')."""
 
     default_netexec_protocol: Optional[str] = field(
         default=None,
@@ -211,10 +212,13 @@ class CernoConfig:
         metadata={
             "section": "NetExec Integration",
             "kind": "bool",
-            "help": "Show NetExec context in findings",
+            "help": "NetExec enrichment, cred refs and nxc ingest",
         },
     )
-    """Enable NetExec enrichment in finding displays (default: True)."""
+    """Enable NetExec integration (default: True).
+
+    When False, get_nxc_manager() returns None, which also disables
+    `cerno creds`, MCP credential tools/injection/reveal and nxc ingest."""
 
     # Claude Assistant
     claude_assistant_enabled: bool = field(
@@ -403,11 +407,11 @@ class CernoConfig:
         metadata={
             "section": "Remote Scan Mode",
             "kind": "str",
-            "help": "Interface for remote scan HTTP server",
+            "help": "Interface for remote scan HTTPS server",
             "placeholder": "(not set)",
         },
     )
-    """Network interface whose IP is advertised in the remote scan HTTP server URL (e.g. 'tun0').
+    """Network interface whose IP is advertised in the remote scan HTTPS server URL (e.g. 'tun0').
     Set on first remote mode activation via the nmap options menu."""
 
     pivot_http_port: int = field(
@@ -415,10 +419,10 @@ class CernoConfig:
         metadata={
             "section": "Remote Scan Mode",
             "kind": "int",
-            "help": "Port for remote scan HTTP server",
+            "help": "Port for remote scan HTTPS server",
         },
     )
-    """Port for the temporary HTTP server used in remote scan mode (default: 8877)."""
+    """Port for the temporary HTTPS server used in remote scan mode (default: 8877)."""
 
 
 #: Config keys the ``cerno mcp`` server intentionally does NOT apply. They are

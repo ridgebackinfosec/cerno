@@ -309,3 +309,37 @@ def test_cli_config_set_color_scheme_validates_choices(config_path):
     result = runner.invoke(app, ["config", "set", "color_scheme", "dark"])
     assert result.exit_code == 0, result.output
     assert load_config().color_scheme == "dark"
+
+
+# --- cerno reset ---
+
+
+@pytest.mark.integration
+def test_reset_installation_removes_every_cerno_file(tmp_path, monkeypatch):
+    """`cerno reset` leaves no stray files, so ~/.cerno itself is removed."""
+    from pathlib import Path
+
+    import cerno
+
+    home = tmp_path / "home"
+    cerno_dir = home / ".cerno"
+    (cerno_dir / "artifacts").mkdir(parents=True)
+    (cerno_dir / "scans").mkdir()
+    for name in (
+        "cerno.db",
+        "cerno.db-wal",
+        "cerno.db-shm",
+        "config.yaml",
+        "config.yaml.backup",
+        "cerno.log",
+        "cerno.log.1",
+        "proxychains4.conf",
+    ):
+        (cerno_dir / name).write_text("x")
+
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    monkeypatch.setattr(cerno.Prompt, "ask", lambda *a, **k: "reset")
+
+    cerno.reset_installation()
+
+    assert not cerno_dir.exists()

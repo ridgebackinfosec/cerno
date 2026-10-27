@@ -23,10 +23,10 @@ def build_mytool_cmd(param1: str, output: Path) -> list[str]:
     return ["mytool", "--flag", param1, "-o", str(output)]
 ```
 
-### Step 2: Workflow (`cerno.py`)
+### Step 2: Workflow (`cerno_pkg/tools.py`)
 
 ```python
-def _build_mytool_workflow(ctx: ToolContext) -> Optional[CommandResult]:
+def build_mytool_workflow(ctx: ToolContext) -> Optional[CommandResult]:
     """Build mytool command through prompts."""
     from cerno_pkg.tool_context import CommandResult
     from cerno_pkg.tools import build_mytool_cmd
@@ -54,7 +54,6 @@ def _build_mytool_workflow(ctx: ToolContext) -> Optional[CommandResult]:
 
 ```python
 def register_all_tools() -> None:
-    import cerno as cerno_module
     from . import tools
 
     # ... existing tools ...
@@ -64,7 +63,7 @@ def register_all_tools() -> None:
             id="mytool",
             name="mytool",
             description="Brief description",
-            workflow_builder=cerno_module._build_mytool_workflow,
+            workflow_builder=tools.build_mytool_workflow,
             command_builder=tools.build_mytool_cmd,
             requires=["mytool"],
             menu_order=5,

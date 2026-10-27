@@ -1357,7 +1357,9 @@ def run_tool_workflow(
             from .database import get_connection
 
             if not plugin_id:
-                warn("Cannot extract plugin ID from filename.")
+                warn(
+                    "No plugin ID for this finding; cannot look up Metasploit modules."
+                )
                 continue
 
             # Query Metasploit module names from database (no web scraping)
@@ -1545,13 +1547,13 @@ def run_tool_workflow(
             if result.cleanup:
                 result.cleanup()
             if result.remote_output_path:
-                fname = result.remote_output_path.split("/")[-1]
+                from .constants import get_results_root
+
                 print()
-                _ok("When complete, retrieve and import results:")
+                _ok("When complete, retrieve the results from the pivot:")
                 print(
-                    f"  scp pivot:{result.remote_output_path}.xml ~/.cerno/artifacts/"
+                    f"  scp pivot:{result.remote_output_path}.* {get_results_root()}/"
                 )
-                print(f"  cerno import nmap ~/.cerno/artifacts/{fname}.xml")
                 print()
             continue  # back to tool menu — no execution, no artifact logging
         # ── End remote scan mode ──────────────────────────────────

@@ -25,12 +25,13 @@ The Cerno database tracks:
 
 - **Scans**: Nessus export metadata (scan name, export root, .nessus file hash)
 - **Plugins**: Vulnerability definitions (plugin ID, name, severity, CVSS scores, CVEs, Metasploit modules)
-- **Findings**: Individual vulnerability findings per scan (review state, reviewed timestamp)
-- **Hosts & Ports**: Normalized host/port data with cross-scan tracking
-- **Sessions**: Review session state (start time, duration via SQL view)
-- **Tool Executions**: Commands run during reviews (tool name, exit codes, duration)
-- **Artifacts**: Generated files from tool runs (file paths, SHA256 hashes, sizes)
-- **Workflows**: Custom workflow execution tracking
+- **Findings**: Individual vulnerability findings per scan (review state, append-only review notes)
+- **Hosts, Ports & Services**: Normalized host/port data with cross-scan tracking, plus per-scan discovered services
+- **Sessions**: Review sessions (start/end; duration via SQL view), including the scans of a multi-scan session
+- **Tool Executions & Artifacts**: Commands run (TUI and MCP), their exit codes, and the files they produced
+- **Verification results**: Live-verified open ports, NSE script verdicts and NetExec flag snapshots ingested from tool runs
+- **Verdicts**: Append-only verification verdicts per finding, with links to the evidence that supports them
+- **Claude Assistant history**: Per-finding and scope-level chat turns
 
 All operations work **transparently** - no manual database management required.
 
@@ -44,7 +45,7 @@ The database is global across all scans, enabling cross-scan queries and histori
 
 **Directory**: `~/.cerno/` is created automatically on first use.
 
-**Schema Version**: 1 (single-version, normalized structure - no migration system)
+**Schema Version**: 4, stored in `PRAGMA user_version`. There is no migration system: an older database is rejected at startup with `SchemaVersionError`, and you re-import your scans into a fresh one.
 
 ---
 
@@ -57,6 +58,7 @@ Cerno uses a **fully normalized database schema** following relational best prac
 1. **Normalized Lookup Tables**
    - `severity_levels` - Centralized severity reference data
    - `artifact_types` - Standardized artifact type definitions
+   - `verdict_types`, `nse_verdicts`, `port_states` - Verification lookup values
    - `hosts` - Deduplicated host data across scans
    - `ports` - Port metadata
 
@@ -67,12 +69,16 @@ Cerno uses a **fully normalized database schema** following relational best prac
 
 3. **SQL Views for Statistics**
    - `v_finding_stats` - Host/port counts per finding
-   - `v_session_stats` - Session duration and file counts
+   - `v_session_stats` - Session duration and finding counts
    - `v_plugins_with_severity` - Plugins with severity labels
    - `v_host_findings` - Cross-scan host analysis
    - `v_artifacts_with_types` - Artifacts with type names
    - `v_scan_plugin_summary` - Plugin presence per scan with host counts (cross-scan comparison)
    - `v_host_scan_findings` - Per-host vulnerability statistics by scan (host history)
+   - `v_http_services` - HTTP/HTTPS services per scan
+   - `v_finding_current_verdict` - Latest verification verdict per finding
+   - `v_nse_results_with_verdict` - NSE results with their verdict label
+   - `v_finding_verified_stats` - Verified port / NSE result counts per finding
 
 4. **Foreign Key Constraints Throughout**
    - All relationships enforced at database level
@@ -91,29 +97,47 @@ Cerno uses a **fully normalized database schema** following relational best prac
 
 ## Schema Overview
 
-The database consists of **13 tables** and **7 views**:
+The database consists of **25 tables** and **11 views**:
 
 ### Foundation Tables (Normalized Reference Data)
 
 1. **severity_levels** - Severity definitions (0-4, labels, colors)
 2. **artifact_types** - Artifact type definitions
-3. **audit_log** - Change tracking for critical tables
+3. **audit_log** - Change tracking (reserved; not yet populated)
+4. **verdict_types** - Verification verdict values
+5. **nse_verdicts** - NSE vuln-script verdict values
+6. **port_states** - nmap port states
 
 ### Core Tables
 
-4. **scans** - Top-level scan tracking
-5. **plugins** - Plugin metadata (Nessus plugin ID, severity, CVEs)
-6. **findings** - Vulnerability findings per scan (review state)
-7. **hosts** - Normalized host data (cross-scan tracking)
-8. **ports** - Port metadata
-9. **finding_affected_hosts** - Host:port combinations per finding (normalized FKs)
+7. **scans** - Top-level scan tracking
+8. **plugins** - Plugin metadata (Nessus plugin ID, severity, CVEs)
+9. **findings** - Vulnerability findings per scan (review state, notes)
+10. **hosts** - Normalized host data (cross-scan tracking)
+11. **ports** - Port metadata
+12. **finding_affected_hosts** - Host:port combinations per finding (normalized FKs)
+13. **host_services** - Services discovered per scan (from Nessus `svc_name`)
 
 ### Review & Execution Tracking
 
-10. **sessions** - Review session tracking
-11. **tool_executions** - Commands run during reviews
-12. **artifacts** - Generated output files
-13. **workflow_executions** - Custom workflow tracking
+14. **sessions** - Review session tracking
+15. **session_scans** - Scans included in a (multi-scan) session
+16. **tool_executions** - Commands run from the TUI or MCP server
+17. **artifacts** - Generated output files
+18. **workflow_executions** - Workflow tracking (reserved; not yet populated)
+
+### Verification (Execution → Data Loop)
+
+19. **verified_ports** - Open ports confirmed by an ingested nmap run
+20. **nse_script_results** - NSE script output and vuln verdicts from an ingested nmap run
+21. **nxc_flag_observations** - NetExec host-flag snapshot from an ingested nxc run
+22. **finding_verdicts** - Append-only verification verdicts per finding
+23. **verdict_evidence** - Evidence linked to a verdict
+
+### Claude Assistant
+
+24. **claude_conversations** - Per-finding chat history
+25. **claude_aggregate_conversations** - Scope-level chat history
 
 ### SQL Views (Computed Statistics)
 
@@ -124,6 +148,10 @@ The database consists of **13 tables** and **7 views**:
 - **v_artifacts_with_types** - Artifacts with type information (replaces column)
 - **v_scan_plugin_summary** - Plugin presence per scan with host counts (cross-scan comparison)
 - **v_host_scan_findings** - Per-host vulnerability statistics by scan (host history)
+- **v_http_services** - HTTP/HTTPS services per scan
+- **v_finding_current_verdict** - Latest verdict per finding
+- **v_nse_results_with_verdict** - NSE results with verdict labels
+- **v_finding_verified_stats** - Verified-fact counts per finding
 
 ---
 
@@ -141,7 +169,7 @@ Normalized severity reference data - enforces valid severity values.
 | `color_hint` | TEXT | Hex color code for UI rendering |
 
 **Pre-populated Data**:
-```sql
+```text
 (4, 'Critical', 4, '#8B0000')
 (3, 'High', 3, '#FF4500')
 (2, 'Medium', 2, '#FFA500')
@@ -168,7 +196,7 @@ Artifact type definitions - enforces consistent artifact categorization.
 **Pre-populated Data**:
 - `nmap_xml` - Nmap XML output (.xml)
 - `nmap_gnmap` - Nmap greppable output (.gnmap)
-- `nmap_txt` - Nmap text output (.txt)
+- `nmap_nmap` - Nmap normal output (.nmap)
 - `netexec_txt` - NetExec text output (.txt)
 - `log` - Tool execution log (.log)
 
@@ -178,7 +206,7 @@ Artifact type definitions - enforces consistent artifact categorization.
 
 ### audit_log
 
-Audit trail for changes to critical tables (future feature).
+Audit trail for changes to critical tables. **Reserved:** no triggers or code write to this table yet.
 
 | Column | Type | Description |
 |---|---|---|
@@ -190,6 +218,19 @@ Audit trail for changes to critical tables (future feature).
 | `changed_at` | TIMESTAMP | Change timestamp |
 | `old_values` | TEXT | JSON of old values |
 | `new_values` | TEXT | JSON of new values |
+
+---
+
+### verdict_types, nse_verdicts, port_states
+
+Lookup tables for the verification loop (schema v4). Each has an integer
+primary key and a unique `label`; `verdict_types` also has a `description`.
+
+| Table | Seeded labels | Referenced by |
+|---|---|---|
+| `verdict_types` | `confirmed`, `false_positive`, `unable` | `finding_verdicts.verdict_type_id` |
+| `nse_verdicts` | `VULNERABLE`, `NOT_VULNERABLE`, `LIKELY_VULNERABLE`, `UNKNOWN` | `nse_script_results.nse_verdict_id` |
+| `port_states` | `open`, `closed`, `filtered`, `open\|filtered`, `closed\|filtered`, `unfiltered` | `verified_ports.port_state_id` |
 
 ---
 
@@ -205,11 +246,11 @@ Top-level scan tracking - one row per Nessus export.
 | `scan_name` | TEXT | Unique scan name |
 | `nessus_file_path` | TEXT | Original .nessus file path |
 | `nessus_file_hash` | TEXT | SHA256 of .nessus file for change detection |
-| `export_root` | TEXT | Where plugin .txt files are stored |
+| `export_root` | TEXT | Root directory recorded at import (no files are written there) |
 | `created_at` | TIMESTAMP | Scan creation time |
 | `last_reviewed_at` | TIMESTAMP | Last review session timestamp |
 
-**Relationships**: One scan has many `findings` and `sessions`
+**Relationships**: One scan has many `findings`, `sessions`, `session_scans` and `host_services` (all CASCADE DELETE)
 
 ---
 
@@ -228,7 +269,7 @@ Plugin metadata - one row per Nessus plugin ID.
 | `metasploit_names` | TEXT | JSON array of Metasploit module names |
 | `cves` | TEXT | JSON array of CVE IDs |
 | `plugin_url` | TEXT | Tenable plugin URL |
-| `metadata_fetched_at` | TIMESTAMP | When CVEs were fetched |
+| `metadata_fetched_at` | TIMESTAMP | When metadata was last fetched |
 
 **Note**: The `severity_label` is accessed via the `v_plugins_with_severity` view or by JOINing with `severity_levels`.
 
@@ -269,7 +310,7 @@ Supports both IP-targeted (internal) and FQDN-targeted (external) scans:
 - `UNIQUE(ip_address, scan_target)` - Composite key allows same IP via different targets
 - `CHECK(scan_target_type IN ('ipv4', 'ipv6', 'fqdn'))`
 
-**Relationships**: Referenced by `finding_affected_hosts.host_id`
+**Relationships**: Referenced by `finding_affected_hosts`, `host_services`, `verified_ports`, `nse_script_results` and `nxc_flag_observations` (`host_id`)
 
 ---
 
@@ -280,7 +321,7 @@ Port metadata - one row per port number.
 | Column | Type | Description |
 |---|---|---|
 | `port_number` | INTEGER | Primary key (1-65535) |
-| `service_name` | TEXT | Common service name (future) |
+| `service_name` | TEXT | Service name, filled from nmap results during ingest (may be NULL) |
 | `description` | TEXT | Service description (future) |
 
 **Purpose**: Allows port metadata to be maintained separately from host:port combinations.
@@ -288,7 +329,7 @@ Port metadata - one row per port number.
 **Constraints**:
 - `CHECK(port_number BETWEEN 1 AND 65535)`
 
-**Relationships**: Referenced by `finding_affected_hosts.port_number`
+**Relationships**: Referenced by `finding_affected_hosts`, `host_services`, `verified_ports` and `nse_script_results` (`port_number`)
 
 ---
 
@@ -302,9 +343,9 @@ Finding records - one row per plugin per scan.
 | `scan_id` | INTEGER | Foreign key to scans |
 | `plugin_id` | INTEGER | Foreign key to plugins |
 | `review_state` | TEXT NOT NULL | 'unreviewed' (default), 'in_progress', 'done'. Transitions (unreviewed → in_progress → done → unreviewed) are enforced in the app layer by `Finding.transition_review_state()` |
-| `reviewed_at` | TIMESTAMP | When finding was reviewed |
+| `reviewed_at` | TIMESTAMP | Timestamp of the last review-state change |
 | `reviewed_by` | TEXT | User tracking (future feature) |
-| `review_notes` | TEXT | User notes (future feature) |
+| `review_notes` | TEXT | Append-only, timestamped notes (`Finding.append_note()`, MCP `add_note`, `set_review_state(notes=…)`) |
 
 **Note**: Host and port counts are computed via `v_finding_stats` view rather than stored as columns. File paths are not stored - findings are referenced by IDs.
 
@@ -316,7 +357,7 @@ Finding records - one row per plugin per scan.
 - `UNIQUE(scan_id, plugin_id)` - One finding per plugin per scan
 - `CHECK(review_state IN ('unreviewed', 'in_progress', 'done'))`
 
-**Relationships**: Has many `finding_affected_hosts`, `tool_executions`, and `workflow_executions`
+**Relationships**: Has many `finding_affected_hosts`, `workflow_executions`, `claude_conversations` and `finding_verdicts` (CASCADE DELETE), and `tool_executions` (SET NULL)
 
 ---
 
@@ -332,7 +373,7 @@ Host:port combinations per finding using normalized foreign keys.
 | `port_number` | INTEGER | Foreign key to ports table |
 | `plugin_output` | TEXT | Plugin output from Nessus scanner |
 
-**Note**: This table uses foreign keys to normalized `hosts` and `ports` tables rather than storing host addresses and port numbers directly. The host type (`ipv4`, `ipv6`, `hostname`) is stored in the `hosts` table.
+**Note**: This table uses foreign keys to normalized `hosts` and `ports` tables rather than storing host addresses and port numbers directly. The host type (`ipv4`, `ipv6`, `fqdn`) is stored in the `hosts` table.
 
 **Foreign Keys**:
 - `finding_id` → `findings.finding_id` (CASCADE DELETE)
@@ -360,9 +401,41 @@ Review session tracking.
 **Note**: Session duration and statistics are computed via the `v_session_stats` view rather than stored as columns.
 
 **Foreign Keys**:
-- `scan_id` → `scans.scan_id` (CASCADE DELETE)
+- `scan_id` → `scans.scan_id` (CASCADE DELETE). In a multi-scan session this is the primary scan; every scan in the session is listed in `session_scans`.
 
-**Relationships**: Has many `tool_executions`
+**Relationships**: Has many `session_scans` (CASCADE DELETE) and `tool_executions` (SET NULL)
+
+---
+
+### session_scans
+
+Junction table recording every scan in a multi-scan review session, so resuming
+restores the same set.
+
+| Column | Type | Description |
+|---|---|---|
+| `session_id` | INTEGER | Foreign key to sessions (CASCADE DELETE) |
+| `scan_id` | INTEGER | Foreign key to scans (CASCADE DELETE) |
+
+**Constraints**: `PRIMARY KEY (session_id, scan_id)`
+
+---
+
+### host_services
+
+Services discovered per scan, from the Nessus ReportItem `svc_name`/`protocol`
+attributes at import. Feeds `v_http_services` and MCP `list_services`/`get_web_targets`.
+
+| Column | Type | Description |
+|---|---|---|
+| `host_service_id` | INTEGER | Primary key |
+| `scan_id` | INTEGER | Foreign key to scans (CASCADE DELETE) |
+| `host_id` | INTEGER | Foreign key to hosts |
+| `port_number` | INTEGER | Foreign key to ports |
+| `protocol` | TEXT | `tcp` (default) or `udp` |
+| `svc_name` | TEXT | Nessus service name (e.g. `www`, `cifs`, `ssh`) |
+
+**Constraints**: `UNIQUE(scan_id, host_id, port_number, protocol)`
 
 ---
 
@@ -374,8 +447,8 @@ Command execution tracking - one row per tool run.
 |---|---|---|
 | `execution_id` | INTEGER | Primary key |
 | `session_id` | INTEGER | Foreign key to sessions (NULL if outside session) |
-| `finding_id` | INTEGER | Which plugin file triggered this |
-| `tool_name` | TEXT | 'nmap', 'netexec', 'metasploit', 'custom' |
+| `finding_id` | INTEGER | Finding the run is attributed to (NULL = unattributed) |
+| `tool_name` | TEXT | e.g. 'nmap', 'netexec', 'metasploit', 'custom' (TUI); 'mcp', 'mcp-batch' (MCP runs, unless the client names the tool); 'cred_reveal' (audit-only row for a credential reveal) |
 | `tool_protocol` | TEXT | For netexec: 'smb', 'ssh', 'rdp', etc. |
 | `command_text` | TEXT | Full command as string |
 | `command_args` | TEXT | JSON array of arguments |
@@ -391,7 +464,7 @@ Command execution tracking - one row per tool run.
 - `session_id` → `sessions.session_id` (SET NULL DELETE)
 - `finding_id` → `findings.finding_id` (SET NULL DELETE)
 
-**Relationships**: Has many `artifacts`
+**Relationships**: Has many `artifacts` and `verdict_evidence` (SET NULL), and `verified_ports`, `nse_script_results` and `nxc_flag_observations` (CASCADE DELETE)
 
 ---
 
@@ -417,13 +490,13 @@ Generated output files - one row per artifact file.
 - `execution_id` → `tool_executions.execution_id` (SET NULL DELETE)
 - `artifact_type_id` → `artifact_types.artifact_type_id`
 
-**Relationships**: Belongs to one `tool_execution` and one `artifact_type`
+**Relationships**: Belongs to one `tool_execution` and one `artifact_type`; referenced by `verdict_evidence.artifact_id` (SET NULL)
 
 ---
 
 ### workflow_executions
 
-Custom workflow tracking - one row per workflow execution.
+Workflow tracking - one row per workflow execution. **Reserved:** nothing writes to this table yet.
 
 | Column | Type | Description |
 |---|---|---|
@@ -438,6 +511,127 @@ Custom workflow tracking - one row per workflow execution.
 - `finding_id` → `findings.finding_id` (CASCADE DELETE)
 
 **Relationships**: Belongs to one `finding`
+
+---
+
+## Verification Tables (Execution → Data Loop)
+
+Added in schema v4. Facts are tied to the tool run that produced them
+(`execution_id`), and re-ingesting a run reconciles its rows in place, so
+ingestion is idempotent. Ingest is triggered by the MCP `ingest_results` tool, or
+automatically after MCP runs when mutations are enabled.
+
+### verified_ports
+
+Open ports confirmed by an ingested nmap run.
+
+| Column | Type | Description |
+|---|---|---|
+| `verified_port_id` | INTEGER | Primary key |
+| `execution_id` | INTEGER | Foreign key to tool_executions (CASCADE DELETE) |
+| `host_id` | INTEGER | Foreign key to hosts |
+| `port_number` | INTEGER | Foreign key to ports |
+| `protocol` | TEXT | `tcp` (default) or `udp` |
+| `port_state_id` | INTEGER | Foreign key to port_states |
+| `service_name` | TEXT | Service nmap reported |
+| `created_at` | TIMESTAMP | Ingest time |
+
+**Constraints**: `UNIQUE(execution_id, host_id, port_number, protocol)`
+
+### nse_script_results
+
+NSE script output and vuln verdicts from an ingested nmap run.
+
+| Column | Type | Description |
+|---|---|---|
+| `nse_result_id` | INTEGER | Primary key |
+| `execution_id` | INTEGER | Foreign key to tool_executions (CASCADE DELETE) |
+| `host_id` | INTEGER | Foreign key to hosts |
+| `port_number` | INTEGER | Foreign key to ports (NULL = host script) |
+| `script_id` | TEXT | NSE script name |
+| `nse_verdict_id` | INTEGER | Foreign key to nse_verdicts |
+| `output` | TEXT | Script output |
+| `created_at` | TIMESTAMP | Ingest time |
+
+**Constraints**: `UNIQUE(execution_id, host_id, port_number, script_id)`
+
+### nxc_flag_observations
+
+Point-in-time snapshot of NetExec boolean host attributes (signing, SMBv1, DC,
+spooler, NLA, …) from an ingested nxc run. Credentials and shares are not copied;
+they are read live from the NetExec workspace.
+
+| Column | Type | Description |
+|---|---|---|
+| `nxc_flag_id` | INTEGER | Primary key |
+| `execution_id` | INTEGER | Foreign key to tool_executions (CASCADE DELETE) |
+| `host_id` | INTEGER | Foreign key to hosts |
+| `protocol` | TEXT | NetExec protocol (e.g. `smb`) |
+| `flag_name` | TEXT | Attribute name |
+| `flag_value` | INTEGER | `0` or `1` (CHECK) |
+| `created_at` | TIMESTAMP | Ingest time |
+
+**Constraints**: `UNIQUE(execution_id, host_id, protocol, flag_name)`
+
+### finding_verdicts
+
+Append-only verification verdicts. The current verdict is the latest
+`created_at` (ties broken by the highest `verdict_id`); see
+`v_finding_current_verdict`. Separate from `findings.review_state`.
+
+| Column | Type | Description |
+|---|---|---|
+| `verdict_id` | INTEGER | Primary key |
+| `finding_id` | INTEGER | Foreign key to findings (CASCADE DELETE) |
+| `verdict_type_id` | INTEGER | Foreign key to verdict_types |
+| `note` | TEXT | Optional note |
+| `created_at` | TIMESTAMP | When the verdict was recorded |
+| `created_by` | TEXT | Optional recorder name (currently NULL for MCP-recorded verdicts) |
+
+### verdict_evidence
+
+Evidence linked to a verdict. Evidence links survive deletion of the underlying
+run, artifact or NSE result (SET NULL).
+
+| Column | Type | Description |
+|---|---|---|
+| `evidence_id` | INTEGER | Primary key |
+| `verdict_id` | INTEGER | Foreign key to finding_verdicts (CASCADE DELETE) |
+| `execution_id` | INTEGER | Foreign key to tool_executions (SET NULL) |
+| `artifact_id` | INTEGER | Foreign key to artifacts (SET NULL) |
+| `nse_result_id` | INTEGER | Foreign key to nse_script_results (SET NULL) |
+| `note` | TEXT | Optional note |
+
+---
+
+## Claude Assistant Tables
+
+### claude_conversations
+
+Per-finding chat history; one row per turn.
+
+| Column | Type | Description |
+|---|---|---|
+| `id` | INTEGER | Primary key |
+| `finding_id` | INTEGER | Foreign key to findings (CASCADE DELETE) |
+| `role` | TEXT | `user` or `assistant` (CHECK) |
+| `content` | TEXT | Message text |
+| `created_at` | TEXT | Defaults to `datetime('now')` |
+
+### claude_aggregate_conversations
+
+Scope-level chat history (severity menu or filtered findings list). It has no
+FK: the scope is identified by `context_key`, e.g. `sev_menu:1,3` (sorted,
+comma-joined scan IDs, plus `:<host>` when a host filter is active) or
+`findings_list:<scan_ids>:<scope_hash>`.
+
+| Column | Type | Description |
+|---|---|---|
+| `id` | INTEGER | Primary key |
+| `context_key` | TEXT | Scope identifier |
+| `role` | TEXT | `user` or `assistant` (CHECK) |
+| `content` | TEXT | Message text |
+| `created_at` | TEXT | Defaults to `datetime('now')` |
 
 ---
 
@@ -470,6 +664,10 @@ Replaces cached statistics columns from `sessions` table.
 - `duration_seconds` - Computed from start/end timestamps
 - `files_in_progress` - COUNT findings with review_state='in_progress'
 - `files_done` - COUNT findings with review_state='done'
+
+These counts cover findings of the session's own `scan_id` whose `reviewed_at`
+falls inside the session window. The other scans of a multi-scan session (in
+`session_scans`) are not counted.
 - `tools_executed` - COUNT tool executions in session
 - `cves_extracted` - COUNT plugins with non-NULL cves
 
@@ -548,11 +746,12 @@ ORDER BY total_mb DESC;
 Plugin presence per scan with affected host counts - used by `cerno scan compare` command.
 
 **Columns**:
-- `scan_id` - Foreign key to scans
+- `scan_id`, `scan_name`, `scan_date`
 - `plugin_id`, `plugin_name`, `severity_int`, `severity_label`
 - `has_metasploit` - Metasploit module availability
 - `cvss3_score` - CVSS v3 base score
 - `affected_hosts` - COUNT(DISTINCT host_id) for this plugin in this scan
+- `affected_ports` - COUNT(DISTINCT port_number) for this plugin in this scan
 
 **Usage**:
 ```sql
@@ -568,10 +767,11 @@ SELECT
     COALESCE(s1.plugin_name, s2.plugin_name) as plugin_name,
     s1.affected_hosts as scan1_hosts,
     s2.affected_hosts as scan2_hosts
-FROM v_scan_plugin_summary s1
-FULL OUTER JOIN v_scan_plugin_summary s2
-    ON s1.plugin_id = s2.plugin_id
-WHERE s1.scan_id = 1 AND s2.scan_id = 2;
+FROM (SELECT * FROM v_scan_plugin_summary WHERE scan_id = 1) s1
+FULL OUTER JOIN (SELECT * FROM v_scan_plugin_summary WHERE scan_id = 2) s2
+    ON s1.plugin_id = s2.plugin_id;
+-- Filter each side in a subquery: a WHERE on s1/s2 after the join would drop
+-- the NULL side and hide new/resolved plugins. FULL OUTER JOIN needs SQLite 3.39+.
 ```
 
 ---
@@ -607,17 +807,53 @@ ORDER BY ip_address;
 
 ---
 
-## Query Examples
+### v_http_services
 
-### Get Plugin File with Host/Port Counts
+HTTP/HTTPS services per scan, from `host_services`. A service matches on
+`svc_name` (`www`, `http`, `https`, `http?`, `https?`) or on port 80/443/8080/8443.
+
+**Columns**: `host_service_id`, `scan_id`, `host_id`, `scan_target`, `port_number`, `protocol`, `svc_name`, `http_scheme` (`http`/`https`)
+
+---
+
+### v_finding_current_verdict
+
+The latest `finding_verdicts` row per finding, joined to `verdict_types`.
+
+**Columns**: `finding_id`, `verdict_id`, `verdict_type_id`, `verdict_label`, `note`, `created_at`, `created_by`
+
+---
+
+### v_nse_results_with_verdict
+
+`nse_script_results` with the verdict label resolved.
+
+**Columns**: `nse_result_id`, `execution_id`, `host_id`, `port_number`, `script_id`, `nse_verdict_id`, `verdict_label`, `output`, `created_at`
+
+---
+
+### v_finding_verified_stats
+
+Per-finding counts of verified facts, joined through `tool_executions.finding_id`.
+
+**Columns**: `finding_id`, `verified_port_count`, `nse_result_count`, `vulnerable_count` (NSE results with verdict `VULNERABLE`)
 
 ```sql
--- Old (v1.x): Query findings table directly
-SELECT finding_id, scan_id, plugin_id, host_count, port_count
-FROM findings
-WHERE finding_id = 123;
+-- Findings with at least one VULNERABLE NSE result, and their current verdict
+SELECT s.finding_id, s.vulnerable_count, v.verdict_label
+FROM v_finding_verified_stats s
+LEFT JOIN v_finding_current_verdict v ON v.finding_id = s.finding_id
+WHERE s.vulnerable_count > 0;
+```
 
--- Query view for computed host/port counts
+---
+
+## Query Examples
+
+### Get a Finding with Host/Port Counts
+
+```sql
+-- Host/port counts are computed by the view (no stored columns)
 SELECT finding_id, scan_id, plugin_id, host_count, port_count
 FROM v_finding_stats
 WHERE finding_id = 123;
@@ -628,12 +864,7 @@ WHERE finding_id = 123;
 ### Get Plugin with Severity Label
 
 ```sql
--- Old (v1.x): Query plugin table directly
-SELECT plugin_id, plugin_name, severity_label, cvss3_score
-FROM plugins
-WHERE plugin_id = 57608;
-
--- Query view with severity labels from lookup table
+-- Severity labels come from the severity_levels lookup table
 SELECT plugin_id, plugin_name, severity_label, cvss3_score
 FROM v_plugins_with_severity
 WHERE plugin_id = 57608;
@@ -739,9 +970,8 @@ SELECT
     session_start,
     session_end,
     ROUND(duration_seconds / 60.0, 1) as duration_minutes,
-    files_completed,
-    files_reviewed,
-    files_skipped,
+    files_in_progress,
+    files_done,
     tools_executed,
     cves_extracted
 FROM v_session_stats
@@ -857,16 +1087,16 @@ ORDER BY max_severity DESC, finding_count DESC;
 
 ## Schema Reference
 
-Full schema available in [`../schema.sql`](../schema.sql).
+Full schema available in [`../schema.sql`](../schema.sql), a reference copy of `cerno_pkg/database.py` (`SCHEMA_SQL_TABLES` + `SCHEMA_SQL_VIEWS`) that a test keeps in sync.
 
 ### Database Initialization
 
 The database is initialized automatically on first use. Schema creation is handled by `cerno_pkg/database.py:initialize_database()`.
 
 **Key Points**:
-- Schema version: 3, stored in `PRAGMA user_version` (no migration system; an older database is rejected at startup and must be deleted and scans re-imported)
+- Schema version: 4, stored in `PRAGMA user_version` (no migration system; an older database raises `SchemaVersionError` at startup and must be deleted and scans re-imported)
 - All tables created with `CREATE TABLE IF NOT EXISTS` for idempotency
-- Foundation tables pre-populated automatically
+- Lookup tables pre-populated automatically (`severity_levels`, `artifact_types`, `verdict_types`, `nse_verdicts`, `port_states`)
 - Views created after tables
 - Foreign key constraints enforced on all connections
 
@@ -884,44 +1114,66 @@ PRAGMA cache_size=-64000;       -- 64MB cache
 
 ### Foreign Key Relationships
 
+Edges without an explicit `ON DELETE` clause use SQLite's default (NO ACTION):
+the parent row can't be deleted while it is still referenced.
+
 ```
 scans
-  ├── findings (scan_id) - CASCADE DELETE
-  └── sessions (scan_id) - CASCADE DELETE
+  ├── findings (scan_id) - CASCADE
+  ├── sessions (scan_id) - CASCADE
+  ├── session_scans (scan_id) - CASCADE
+  └── host_services (scan_id) - CASCADE
 
 plugins
-  └── findings (plugin_id) - RESTRICT DELETE
+  └── findings (plugin_id) - NO ACTION
 
 severity_levels
-  └── plugins (severity_int) - RESTRICT DELETE
+  └── plugins (severity_int) - NO ACTION
 
 hosts
-  └── finding_affected_hosts (host_id) - RESTRICT DELETE
+  └── finding_affected_hosts, host_services, verified_ports,
+      nse_script_results, nxc_flag_observations (host_id) - NO ACTION
 
 ports
-  └── finding_affected_hosts (port_number) - RESTRICT DELETE
+  └── finding_affected_hosts, host_services, verified_ports,
+      nse_script_results (port_number) - NO ACTION
 
 findings
-  ├── finding_affected_hosts (finding_id) - CASCADE DELETE
-  ├── tool_executions (finding_id) - SET NULL DELETE
-  └── workflow_executions (finding_id) - CASCADE DELETE
+  ├── finding_affected_hosts (finding_id) - CASCADE
+  ├── workflow_executions (finding_id) - CASCADE
+  ├── claude_conversations (finding_id) - CASCADE
+  ├── finding_verdicts (finding_id) - CASCADE
+  └── tool_executions (finding_id) - SET NULL
 
 sessions
-  └── tool_executions (session_id) - SET NULL DELETE
+  ├── session_scans (session_id) - CASCADE
+  └── tool_executions (session_id) - SET NULL
 
 tool_executions
-  └── artifacts (execution_id) - SET NULL DELETE
+  ├── verified_ports (execution_id) - CASCADE
+  ├── nse_script_results (execution_id) - CASCADE
+  ├── nxc_flag_observations (execution_id) - CASCADE
+  ├── artifacts (execution_id) - SET NULL
+  └── verdict_evidence (execution_id) - SET NULL
 
-artifact_types
-  └── artifacts (artifact_type_id) - RESTRICT DELETE
+finding_verdicts
+  └── verdict_evidence (verdict_id) - CASCADE
+
+artifacts
+  └── verdict_evidence (artifact_id) - SET NULL
+
+nse_script_results
+  └── verdict_evidence (nse_result_id) - SET NULL
+
+artifact_types / verdict_types / nse_verdicts / port_states
+  └── artifacts / finding_verdicts / nse_script_results / verified_ports - NO ACTION
 ```
 
 **Cascade Rules**:
-- Deleting a scan removes all findings, sessions, and dependent review records
-- Deleting a finding removes all finding_affected_hosts and workflow_executions
-- Deleting a finding or session sets matching tool execution foreign keys to NULL, preserving execution history
-- Deleting a tool_execution sets artifact foreign keys to NULL, preserving artifact records
-- Cannot delete severity_levels, hosts, ports, or artifact_types if referenced
+- Deleting a scan (`cerno scan delete`) removes its findings and, through them, host:port rows, workflow executions, Claude chat history, verdicts and verdict evidence. It also removes the scan's sessions, session_scans and host_services.
+- Tool executions and artifacts survive a scan delete: their `finding_id`/`session_id` links are set to NULL, and the verified ports, NSE results and nxc flags hanging off those executions are kept.
+- Deleting a tool execution deletes its verified ports, NSE results and nxc flags, and sets `artifacts.execution_id` and `verdict_evidence.execution_id` to NULL.
+- Lookup rows (severity levels, artifact/verdict types, NSE verdicts, port states), plugins, hosts and ports can't be deleted while referenced.
 
 ---
 
@@ -963,10 +1215,7 @@ sqlite3 ~/.cerno/cerno.db "
 ### Backup Database
 
 ```bash
-# Simple copy
-cp ~/.cerno/cerno.db ~/.cerno/cerno.db.backup
-
-# SQLite backup command (safer during active use)
+# SQLite backup command (consistent even with WAL mode and an open session)
 sqlite3 ~/.cerno/cerno.db ".backup ~/.cerno/cerno.db.backup"
 ```
 
@@ -978,13 +1227,12 @@ Planned database features:
 
 - **Enhanced cross-scan analytics**: Trend analysis, risk scoring over time
 - **Reverse DNS resolution**: Automatically populate `hosts.reverse_dns`
-- **Port service detection**: Populate `ports.service_name` from nmap results
 - **Audit triggers**: Automatically track changes to critical tables
 - **Export utilities**: Generate reports from database queries
 - **Web UI**: Database-backed web interface for team collaboration
 
 ---
 
-**Last Updated**: 2026-01-22 (v1.2.21)
+**Last Updated**: 2026-10-27 (v2.6.0)
 **Maintained By**: Ridgeback InfoSec, LLC
-**Schema Version**: 1
+**Schema Version**: 4

@@ -802,3 +802,37 @@ class TestSessionLifecycle:
         )
         row = cursor.fetchone()
         assert row["ended_count"] == 2
+
+@pytest.mark.unit
+def test_show_session_statistics_prints_severity_breakdown(monkeypatch, tmp_path):
+    """The per-severity Done table is printed, not just built."""
+    from contextlib import contextmanager
+    from io import StringIO
+
+    from rich.console import Console
+
+    import cerno
+    import cerno_pkg.database as database
+
+    buf = StringIO()
+    console = Console(file=buf, width=120, force_terminal=False)
+    monkeypatch.setattr(cerno, "get_console", lambda: console)
+    monkeypatch.setattr(cerno, "_console_global", console)
+
+    @contextmanager
+    def fake_tx(conn=None):
+        yield None
+
+    monkeypatch.setattr(database, "db_transaction", fake_tx)
+    monkeypatch.setattr(
+        database, "query_all", lambda *a, **k: [("High", 2), ("Critical", 1)]
+    )
+
+    cerno.show_session_statistics(
+        datetime.now(), [], ["f1", "f2", "f3"], tmp_path, scan_id=1
+    )
+
+    out = buf.getvalue()
+    assert "Done by severity" in out
+    # Ordered by severity (Critical before High), not alphabetically.
+    assert out.index("Critical") < out.index("High")

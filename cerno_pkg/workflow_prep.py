@@ -130,7 +130,7 @@ def _fill_command(
     """Substitute placeholder tokens in ``raw``, expanding <TARGET> over hosts.
 
     Returns ``(filled_commands, unresolved_canonical_tokens, needs_credential)``.
-    Scalar roles (PORT/USERNAME/PASSWORD/INTERFACE) are substituted first; a role
+    Scalar roles (PORT/USERNAME/PASSWORD/INTERFACE/DOMAIN) are substituted first; a role
     whose value is None is normalized to its canonical token and recorded
     unresolved. <TARGET> then fills from ``hosts``: no hosts leaves the canonical
     marker (unresolved); a single host substitutes directly; multiple hosts join
@@ -228,6 +228,9 @@ def prepare_workflow(
     Returns:
         A :class:`PreparedWorkflow`, or None if no workflow is mapped to the
         finding's plugin.
+
+    Raises:
+        ValueError: If ``finding_id`` does not exist.
     """
     mapper = workflow_mapper or build_workflow_mapper(config)
     checker = is_installed or _default_is_installed
