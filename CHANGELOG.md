@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-10-27
+
+### Added
+- **Workflow contribution loop (MCP):** turn the commands you actually ran to verify a finding into a workflow you can contribute to the bundled `workflow_mappings.yaml`. New always-on tools: `get_workflow_candidate` drafts a sanitized entry, and `export_workflow_contribution` writes it as a local, PR-ready YAML file with steps for opening a PR against `develop`. Nothing is ever submitted. A candidate exists when the plugin has no workflow (`"new"`) or you ran a non-baseline command the mapped workflow lacks (`"enhanced"`: existing steps kept, new commands appended, `possibly_superseded` flagged). Running the mapped workflow unchanged, or only Cerno's baseline nmap/nxc commands, yields none. Hosts, ports, credentials, target/output files and proxychains wrappers are templated or stripped (`<TARGET>`/`<PORT>`/`<USERNAME>`/`<PASSWORD>`/`<DOMAIN>`), and a fail-closed leak scan (IP literals, the scan's host names, scan names, NetExec domains and non-dictionary usernames, credential secret values, NT/LM:NT hash literals, local paths) refuses any export that still contains engagement data. Plugin-derived `workflow_name`/`description` are never checked for usernames, and dictionary usernames (`anonymous`, `root`, `admin` …) never count. Secret values are resolved from the NetExec workspace in memory only to compare against, and are never logged, returned or echoed in a hit. Export also requires a `confirmed`/`false_positive` verdict, and review/verdict notes are never included. New core module `cerno_pkg/workflow_contrib.py`, plus `ToolExecution.get_by_finding()`, `Finding.get_host_identifiers()`, `Host.identifiers_for_scans()` and `exec_chain.split_wrappers()`.
+- **`workflow_candidate` verdict hint:** `set_finding_verdict`, `get_finding_verdict` and `cerno://finding/{id}/verdict` now include `workflow_candidate: {available, reason}`. Drafting is best-effort and can never break a verdict call.
+- **`contribution_export_dir` config key:** where exported contributions are written (default `<results_root>/contributions`).
+- **`<DOMAIN>` workflow placeholder:** `prepare_workflow` fills `<DOMAIN>` from the selected credential's domain and reports it unresolved otherwise. New helper `workflow_prep.canonicalize_placeholders()`.
+
+### Changed
+- **TUI tool runs are attributed to their finding:** commands run from the review TUI now record `finding_id` in `tool_executions` (`tools.py:run_tool_workflow`), so they feed verified-fact stats, verdict suggestions and workflow contributions, the same as MCP runs.
+- **MCP execution guidance:** the `execute_command`/`start_execution` descriptions and the `triage_finding`/`exploit_plan` prompts now tell clients to always pass `finding_id` when verifying a finding.
+
+### Fixed
+- **Stale repository links:** `docs/CUSTOM_WORKFLOWS.md` linked to `DefensiveOrigins/cerno`. It now points to `ridgebackinfosec/cerno` (PRs target `develop`).
+
 ## [2.3.2] - 2026-10-26
 
 ### Changed

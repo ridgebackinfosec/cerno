@@ -385,6 +385,47 @@ def test_nxc_enrichment_disabled_reported_unavailable(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Workflow contributions: contribution_export_dir + custom_workflows_path
+# ---------------------------------------------------------------------------
+
+
+def _verified_with_run(seeded, cfg, command="nmap -p 445 --script smb2-security-mode 10.0.0.1"):
+    from cerno_pkg.models import ToolExecution
+
+    conn, fid = seeded["conn"], seeded["f1"]
+    ToolExecution(finding_id=fid, tool_name="mcp", command_text=command, exit_code=0).save(conn)
+    conn.commit()
+    return mcp.tool_set_finding_verdict(fid, "confirmed", conn=conn, config=cfg)
+
+
+def test_contribution_export_dir_from_config(seeded, tmp_path):
+    cfg = CernoConfig(contribution_export_dir=str(tmp_path / "contribs"))
+    _verified_with_run(seeded, cfg)
+    res = mcp.tool_export_workflow_contribution(seeded["f1"], config=cfg, conn=seeded["conn"])
+    assert Path(res["path"]).parent == tmp_path / "contribs"
+
+
+def test_contribution_export_dir_defaults_under_results_root(seeded, tmp_path):
+    from cerno_pkg.constants import reset_results_root_cache
+
+    reset_results_root_cache()
+    cfg = CernoConfig(results_root=str(tmp_path / "rr"))
+    _verified_with_run(seeded, cfg)
+    res = mcp.tool_export_workflow_contribution(seeded["f1"], config=cfg, conn=seeded["conn"])
+    assert Path(res["path"]).parent == tmp_path / "rr" / "contributions"
+
+
+def test_contribution_hint_uses_custom_workflows(seeded, custom_wf, tmp_path):
+    # Unmapped plugin 100 -> "new"; once custom_workflows_path maps it -> "enhanced".
+    plain = _verified_with_run(seeded, CernoConfig())
+    assert plain["workflow_candidate"] == {"available": True, "reason": "new"}
+    custom = mcp.tool_get_finding_verdict(
+        seeded["f1"], conn=seeded["conn"], config=CernoConfig(custom_workflows_path=str(custom_wf))
+    )
+    assert custom["workflow_candidate"] == {"available": True, "reason": "enhanced"}
+
+
+# ---------------------------------------------------------------------------
 # Contract: every config key is either applied by the MCP or explicitly N/A
 # ---------------------------------------------------------------------------
 
@@ -408,6 +449,7 @@ MCP_APPLIED = {
     "mcp_allow_batch",
     "mcp_batch_concurrency",
     "mcp_batch_timeout",
+    "contribution_export_dir",
     "proxychains_enabled",
     "proxychains_host",
     "proxychains_port",

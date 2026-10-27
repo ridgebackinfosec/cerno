@@ -228,12 +228,42 @@ class VerdictInfo(TypedDict, total=False):
     created_by: Optional[str]
 
 
+class WorkflowCandidateHint(TypedDict):
+    # Workflow-contribution hint: available when a verified finding's execution
+    # trail yields a new/enhanced workflow (reason "new" | "enhanced").
+    available: bool
+    reason: Optional[str]
+
+
 class VerdictResult(TypedDict, total=False):
     finding_id: int
     current: Optional[VerdictInfo]
     suggested_verdict: Optional[str]
     history: list[VerdictInfo]
     evidence: list[dict]
+    workflow_candidate: WorkflowCandidateHint
+
+
+class WorkflowCandidateResult(TypedDict):
+    finding_id: int
+    plugin_id: int
+    available: bool
+    reason: Optional[str]
+    verdict: Optional[str]
+    exportable: bool
+    workflow: Optional[dict]
+    new_commands: list[str]
+    possibly_superseded: list[str]
+    review_hints: list[str]
+    leak_warnings: list[str]
+    excluded: list[dict]
+
+
+class WorkflowExportResult(TypedDict):
+    path: str
+    reason: str
+    plugin_id: int
+    submission_instructions: str
 
 
 @contextmanager
@@ -792,13 +822,18 @@ def _verdict_info(v: Any) -> dict:
 
 
 def tool_get_finding_verdict(
-    finding_id: int, conn: Optional[sqlite3.Connection] = None
+    finding_id: int,
+    conn: Optional[sqlite3.Connection] = None,
+    config: Optional[CernoConfig] = None,
 ) -> dict:
     """Return a finding's current verdict, full history, evidence, and a suggestion.
 
     The verdict is a verification truth value (confirmed / false_positive /
     unable), distinct from review_state. ``suggested_verdict`` is a non-binding
     hint derived from ingested NSE evidence; it is never applied automatically.
+    ``workflow_candidate`` says whether a verified (confirmed / false_positive)
+    finding's execution trail yields a new or enhanced workflow worth
+    contributing (see get_workflow_candidate).
     """
     from ..models import Finding, FindingVerdict, VerdictEvidence
 
@@ -824,6 +859,9 @@ def tool_get_finding_verdict(
                         "note": ev.note,
                     }
                 )
+        hint = _workflow_candidate_hint(
+            finding, current.verdict_label if current is not None else None, c, config
+        )
 
     return {
         "finding_id": finding_id,
@@ -831,6 +869,247 @@ def tool_get_finding_verdict(
         "suggested_verdict": suggested,
         "history": [_verdict_info(v) for v in history],
         "evidence": evidence,
+        "workflow_candidate": hint,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Workflow contribution feedback loop (draft -> review -> local export)
+# ---------------------------------------------------------------------------
+
+
+def _nxc_leak_material(
+    config: CernoConfig,
+) -> tuple[list[str], list[str], list[str]]:
+    """NetExec ``(usernames, domains, secrets)`` for the contribution leak scan.
+
+    Best effort: any failure (no workspace, enrichment disabled) yields empty
+    lists. Secret values are resolved server-side only so the scan can refuse an
+    export that contains one; they are compared in memory and never logged,
+    returned or audited as a reveal.
+    """
+    usernames: list[str] = []
+    domains: list[str] = []
+    secrets: list[str] = []
+    if not config.nxc_enrichment_enabled:
+        return usernames, domains, secrets
+    try:
+        from ..nxc_db import list_credential_refs, resolve_credential_secret
+
+        refs = list_credential_refs()
+    except Exception as exc:  # enrichment is optional
+        log_debug(f"workflow contrib: nxc identifiers unavailable: {exc}")
+        return usernames, domains, secrets
+    for ref in refs:
+        if ref.username:
+            usernames.append(ref.username)
+        if ref.domain:
+            domains.append(ref.domain)
+        if not ref.secret_kind:
+            continue
+        try:
+            resolved = resolve_credential_secret(ref.ref)
+        except Exception:  # skip this ref; never log the value or the error text
+            log_debug(f"workflow contrib: secret for {ref.ref} unavailable")
+            continue
+        if resolved is not None and resolved.secret_value:
+            secrets.append(resolved.secret_value)
+    return usernames, domains, secrets
+
+
+def _contribution_assessment(
+    finding: Any, conn: sqlite3.Connection, config: CernoConfig
+) -> tuple[Any, Any, Any]:
+    """Return ``(assessment, leak_context, mapper)`` for a finding."""
+    from ..workflow_contrib import assess_candidate, build_leak_context
+    from ..workflow_mapper import build_workflow_mapper
+
+    mapper = build_workflow_mapper(config)
+    usernames, domains, secrets = _nxc_leak_material(config)
+    ctx = build_leak_context(
+        finding, conn, extra=domains, usernames=usernames, secrets=secrets
+    )
+    return assess_candidate(finding, conn, mapper, ctx), ctx, mapper
+
+
+def _workflow_candidate_hint(
+    finding: Any,
+    verdict: Optional[str],
+    conn: sqlite3.Connection,
+    config: Optional[CernoConfig],
+) -> dict:
+    """``{available, reason}`` for a verified finding; never raises.
+
+    Drafting is best-effort: an error is logged and reported as unavailable so it
+    can never break verdict reads/writes.
+    """
+    from ..workflow_contrib import CONTRIBUTABLE_VERDICTS
+
+    unavailable = {"available": False, "reason": None}
+    if verdict not in CONTRIBUTABLE_VERDICTS:
+        return unavailable
+    try:
+        assessment, _, _ = _contribution_assessment(
+            finding, conn, config or load_config()
+        )
+    except Exception as exc:
+        log_error(
+            f"workflow contrib: drafting failed for finding {finding.finding_id}: {exc}"
+        )
+        return unavailable
+    candidate = assessment.candidate
+    if candidate is None:
+        return unavailable
+    return {"available": True, "reason": candidate.reason}
+
+
+def tool_get_workflow_candidate(
+    finding_id: int,
+    config: Optional[CernoConfig] = None,
+    conn: Optional[sqlite3.Connection] = None,
+) -> dict:
+    """Draft (regenerate) a workflow candidate from a finding's execution trail.
+
+    Read-only. ``reason`` is "new" (plugin unmapped) or "enhanced" (non-baseline
+    commands absent from the mapped workflow); ``available`` is False when there
+    is nothing to contribute. ``workflow`` is the sanitized entry to review/edit;
+    ``leak_warnings`` must be empty and the verdict confirmed/false_positive for
+    ``exportable``. ``excluded`` lists runs dropped because they still held
+    engagement data after sanitizing.
+    """
+    from ..models import Finding, FindingVerdict
+    from ..workflow_contrib import CONTRIBUTABLE_VERDICTS, scan_candidate
+
+    cfg = config or load_config()
+    with _db(conn) as c:
+        finding = Finding.get_by_id(finding_id, c)
+        if finding is None:
+            raise ValueError(f"No finding with id {finding_id}")
+        assessment, ctx, _ = _contribution_assessment(finding, c, cfg)
+        current = FindingVerdict.get_current(finding_id, c)
+
+    verdict = current.verdict_label if current is not None else None
+    candidate = assessment.candidate
+    leaks = scan_candidate(candidate, ctx) if candidate is not None else []
+    return {
+        "finding_id": finding_id,
+        "plugin_id": finding.plugin_id,
+        "available": candidate is not None,
+        "reason": candidate.reason if candidate is not None else None,
+        "verdict": verdict,
+        "exportable": candidate is not None
+        and verdict in CONTRIBUTABLE_VERDICTS
+        and not leaks,
+        "workflow": candidate.to_entry() if candidate is not None else None,
+        "new_commands": list(candidate.new_commands) if candidate else [],
+        "possibly_superseded": list(candidate.possibly_superseded) if candidate else [],
+        "review_hints": list(candidate.review_hints) if candidate else [],
+        "leak_warnings": leaks,
+        "excluded": list(assessment.excluded),
+    }
+
+
+def _contribution_dir(config: CernoConfig) -> Path:
+    """Export directory: ``contribution_export_dir`` or ``<results_root>/contributions``."""
+    from ..constants import get_results_root
+
+    if config.contribution_export_dir:
+        return Path(config.contribution_export_dir).expanduser()
+    return get_results_root(config) / "contributions"
+
+
+def tool_export_workflow_contribution(
+    finding_id: int,
+    workflow: Optional[dict] = None,
+    config: Optional[CernoConfig] = None,
+    conn: Optional[sqlite3.Connection] = None,
+) -> dict:
+    """Write a sanitized, PR-ready workflow YAML file for a verified finding.
+
+    Local file only: no DB mutation, nothing sent anywhere. Uses the regenerated
+    draft, or ``workflow`` (an edited entry: workflow_name, description, steps
+    [{title, commands, notes}], references; plugin_id is always the finding's).
+    Refuses unless the current verdict is confirmed/false_positive, and refuses
+    (writing nothing) when the fail-closed leak scan finds any engagement data.
+    """
+    import contextlib
+    import sys
+    from datetime import datetime
+
+    from ..models import Finding, FindingVerdict
+    from ..workflow_contrib import (
+        CONTRIBUTABLE_VERDICTS,
+        SUBMISSION_INSTRUCTIONS,
+        candidate_from_override,
+        scan_candidate,
+        to_yaml_fragment,
+    )
+    from ..workflow_mapper import WorkflowMapper
+
+    cfg = config or load_config()
+    with _db(conn) as c:
+        finding = Finding.get_by_id(finding_id, c)
+        if finding is None:
+            raise ValueError(f"No finding with id {finding_id}")
+        current = FindingVerdict.get_current(finding_id, c)
+        verdict = current.verdict_label if current is not None else None
+        if verdict not in CONTRIBUTABLE_VERDICTS:
+            raise ValueError(
+                f"Finding {finding_id} has no confirmed/false_positive verdict "
+                f"(current: {verdict}); only verified findings can be contributed. "
+                "Record one with set_finding_verdict first."
+            )
+        assessment, ctx, mapper = _contribution_assessment(finding, c, cfg)
+        if workflow is not None:
+            candidate = candidate_from_override(
+                finding, workflow, assessment.candidate, c, mapper
+            )
+        elif assessment.candidate is not None:
+            candidate = assessment.candidate
+        else:
+            raise ValueError(
+                f"No workflow candidate for finding {finding_id}: the mapped workflow "
+                "already covers what was run (or no attributed successful runs exist). "
+                "Pass an edited `workflow` to contribute one manually."
+            )
+
+    hits = scan_candidate(candidate, ctx)
+    if hits:
+        raise ValueError(
+            "Refusing to export: leak scan found engagement data — "
+            + "; ".join(hits)
+            + ". No file was written."
+        )
+
+    text = to_yaml_fragment(candidate)
+    out_dir = _contribution_dir(cfg)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stem = f"{finding.plugin_id}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    path: Optional[Path] = None
+    for n in range(100):
+        attempt = out_dir / (f"{stem}.yaml" if n == 0 else f"{stem}-{n}.yaml")
+        try:
+            with open(attempt, "x", encoding="utf-8") as fh:  # never overwrite
+                fh.write(text)
+        except FileExistsError:
+            continue
+        path = attempt
+        break
+    if path is None:
+        raise ValueError(f"Could not allocate a unique export file in {out_dir}")
+
+    # Sanity check: the file must load as a workflow file mapping this plugin.
+    with contextlib.redirect_stdout(sys.stderr):
+        loaded = WorkflowMapper(yaml_path=path).get_workflow(str(finding.plugin_id))
+    if loaded is None:
+        path.unlink(missing_ok=True)
+        raise ValueError("Exported YAML failed to re-load as a workflow; nothing kept.")
+
+    return {
+        "path": str(path),
+        "reason": candidate.reason,
+        "plugin_id": finding.plugin_id,
+        "submission_instructions": SUBMISSION_INSTRUCTIONS,
     }
 
 
@@ -1988,12 +2267,14 @@ def tool_set_finding_verdict(
     nse_result_id: Optional[int] = None,
     created_by: Optional[str] = None,
     conn: Optional[sqlite3.Connection] = None,
+    config: Optional[CernoConfig] = None,
 ) -> dict:
     """Record a verification verdict for a finding (truth, not workflow state).
 
     ``verdict`` must be one of confirmed / false_positive / unable. Optional
     evidence (execution_id / artifact_id / nse_result_id) links the proof. This
-    appends to the finding's verdict history; the latest becomes current.
+    appends to the finding's verdict history; the latest becomes current. The
+    returned verdict carries the ``workflow_candidate`` contribution hint.
     """
     from ..models import Finding, FindingVerdict, VerdictEvidence
 
@@ -2024,7 +2305,7 @@ def tool_set_finding_verdict(
             conn=c,
         )
         c.commit()
-    return tool_get_finding_verdict(finding_id, conn=conn)
+    return tool_get_finding_verdict(finding_id, conn=conn, config=config)
 
 
 def tool_import_nessus(nessus_path: str) -> dict:
@@ -2149,10 +2430,14 @@ def resource_finding_workflow(
 
 
 def resource_finding_verdict(
-    finding_id: int, conn: Optional[sqlite3.Connection] = None
+    finding_id: int,
+    conn: Optional[sqlite3.Connection] = None,
+    config: Optional[CernoConfig] = None,
 ) -> str:
     """`cerno://finding/{finding_id}/verdict` — JSON verification verdict + evidence."""
-    return json.dumps(tool_get_finding_verdict(finding_id, conn=conn), indent=2)
+    return json.dumps(
+        tool_get_finding_verdict(finding_id, conn=conn, config=config), indent=2
+    )
 
 
 def resource_finding_results(
@@ -2226,6 +2511,17 @@ def _finding_context(
     return build_finding_context(plugin, finding, hosts, outputs, workflow)
 
 
+def _execution_attribution_note(finding_id: int) -> str:
+    """Prompt guidance so runs are attributed and contributions surface."""
+    return (
+        "If you run any verification command through Cerno (execute_command / "
+        f"start_execution), always pass finding_id={finding_id} so the run is "
+        "attributed to this finding. After recording a verdict, if "
+        "workflow_candidate.available is true, offer to review the drafted workflow "
+        "with get_workflow_candidate before exporting it."
+    )
+
+
 def prompt_triage_finding(
     finding_id: int,
     conn: Optional[sqlite3.Connection] = None,
@@ -2234,7 +2530,10 @@ def prompt_triage_finding(
     """Report-brief prompt for a single finding."""
     from ..claude_assistant import REPORT_BRIEF_QUERY
 
-    return f"{_finding_context(finding_id, conn, config)}\n\n{REPORT_BRIEF_QUERY}"
+    return (
+        f"{_finding_context(finding_id, conn, config)}\n\n{REPORT_BRIEF_QUERY}"
+        f"\n\n{_execution_attribution_note(finding_id)}"
+    )
 
 
 def prompt_exploit_plan(
@@ -2250,7 +2549,10 @@ def prompt_exploit_plan(
         "verification step (an nmap, netexec, or msfconsole command). Be concise and "
         "flag uncertainty. Always verify before acting."
     )
-    return f"{_finding_context(finding_id, conn, config)}\n\n{instruction}"
+    return (
+        f"{_finding_context(finding_id, conn, config)}\n\n{instruction}"
+        f"\n\n{_execution_attribution_note(finding_id)}"
+    )
 
 
 def prompt_triage_scope(
@@ -2488,7 +2790,38 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         from review_state. suggested_verdict is a non-binding hint from ingested NSE
         evidence and is never applied automatically.
         """
-        return cast("VerdictResult", tool_get_finding_verdict(finding_id))
+        return cast("VerdictResult", tool_get_finding_verdict(finding_id, config=cfg))
+
+    @mcp.tool()
+    def get_workflow_candidate(finding_id: int) -> WorkflowCandidateResult:
+        """Draft a workflow contribution from the commands run against a finding.
+
+        reason "new" = plugin has no mapped workflow; "enhanced" = non-baseline
+        commands absent from the mapped one; available=false = nothing new.
+        Hosts/ports/creds are templated (<TARGET>/<PORT>/<USERNAME>/<PASSWORD>/
+        <DOMAIN>). Review/edit per review_hints, then export_workflow_contribution.
+        """
+        return cast(
+            "WorkflowCandidateResult",
+            tool_get_workflow_candidate(finding_id, config=cfg),
+        )
+
+    @mcp.tool()
+    def export_workflow_contribution(
+        finding_id: int, workflow: Optional[dict] = None
+    ) -> WorkflowExportResult:
+        """Export a sanitized, PR-ready workflow YAML file (local file only).
+
+        Uses the draft, or `workflow` (edited entry: workflow_name, description,
+        steps [{title, commands, notes}], references). Requires a confirmed/
+        false_positive verdict; refuses and writes nothing if the leak scan finds
+        real IPs/hostnames/paths. Returns the path + PR-against-develop steps.
+        Never submits anything.
+        """
+        return cast(
+            "WorkflowExportResult",
+            tool_export_workflow_contribution(finding_id, workflow, config=cfg),
+        )
 
     @mcp.tool()
     def list_hosts(scan_id: Optional[int] = None) -> list[HostInfo]:
@@ -2730,7 +3063,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
     @mcp.resource("cerno://finding/{finding_id}/verdict", mime_type="application/json")
     def finding_verdict_resource(finding_id: int) -> str:
         """Verification verdict + evidence for a finding."""
-        return resource_finding_verdict(finding_id)
+        return resource_finding_verdict(finding_id, config=cfg)
 
     @mcp.resource("cerno://finding/{finding_id}/results", mime_type="application/json")
     def finding_results_resource(finding_id: int) -> str:
@@ -2778,8 +3111,9 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
             empty allowlist denies all). Call get_capabilities to see both lists.
             use_proxy=true routes the run through proxychains4 (requires the
             proxychains_enabled config key; Cerno's ~/.cerno/proxychains4.conf).
-            timeout is clamped to [1, 3600]s. Pass finding_id to attribute the run
-            to a finding (so get_finding_artifacts can later find its output).
+            timeout is clamped to [1, 3600]s. ALWAYS pass finding_id when the run
+            verifies a finding: it attributes the run (get_finding_artifacts,
+            verdict evidence, verified stats, workflow contributions).
 
             Runs the blocking command in a worker thread and emits periodic
             progress heartbeats so long scans (e.g. nmap) show liveness in
@@ -2824,7 +3158,9 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
             policy (allow/denylist) and cred-injection gate are checked up front, so
             a disallowed command fails here. Poll get_execution_status(job_id) and
             cancel_execution(job_id). Jobs are in-memory and lost on server restart,
-            but every completed run is still logged to tool_executions.
+            but every completed run is still logged to tool_executions. ALWAYS pass
+            finding_id when the run verifies a finding (attribution, verdict
+            evidence, workflow contributions).
             """
             from .jobs import get_registry
 
@@ -2974,6 +3310,8 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
 
             This is the truth value, distinct from review_state. Optional
             execution_id/artifact_id/nse_result_id link the evidence that proves it.
+            The result's workflow_candidate says whether the commands run yield a
+            workflow worth contributing (then call get_workflow_candidate).
             """
             return cast(
                 "VerdictResult",
@@ -2984,6 +3322,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
                     execution_id=execution_id,
                     artifact_id=artifact_id,
                     nse_result_id=nse_result_id,
+                    config=cfg,
                 ),
             )
 

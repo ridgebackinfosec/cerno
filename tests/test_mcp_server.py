@@ -1202,3 +1202,242 @@ def test_triage_scope_multi_scan(temp_db):
     _seed_finding(temp_db, s2, 800, ["10.0.0.2"], [22], severity=3)
     text = mcp.prompt_triage_scope([s1, s2], conn=temp_db)
     assert "alpha" in text and "beta" in text
+
+
+# ---------------------------------------------------------------------------
+# Workflow contribution loop (verdict hint, candidate, export)
+# ---------------------------------------------------------------------------
+
+
+def _attributed_run(conn, fid, command, exit_code=0):
+    from cerno_pkg.models import ToolExecution
+
+    ToolExecution(
+        finding_id=fid, tool_name="mcp", command_text=command, exit_code=exit_code
+    ).save(conn)
+    conn.commit()
+
+
+@pytest.fixture
+def contrib(seeded, tmp_path):
+    """Seeded finding f1 (plugin 100, unmapped) with one attributed nmap run."""
+    _attributed_run(
+        seeded["conn"],
+        seeded["f1"],
+        "nmap -p 445 --script smb-protocols 10.0.0.1 10.0.0.2 -oA /home/op/x/run",
+    )
+    cfg = CernoConfig(contribution_export_dir=str(tmp_path / "contribs"))
+    return {**seeded, "cfg": cfg, "dir": tmp_path / "contribs"}
+
+
+@pytest.mark.integration
+class TestWorkflowContribution:
+    def test_hint_on_set_and_get(self, contrib):
+        c, fid, cfg = contrib["conn"], contrib["f1"], contrib["cfg"]
+        res = mcp.tool_set_finding_verdict(fid, "confirmed", conn=c, config=cfg)
+        assert res["workflow_candidate"] == {"available": True, "reason": "new"}
+        got = mcp.tool_get_finding_verdict(fid, conn=c, config=cfg)
+        assert got["workflow_candidate"] == {"available": True, "reason": "new"}
+
+    def test_no_hint_without_verified_verdict(self, contrib):
+        c, fid, cfg = contrib["conn"], contrib["f1"], contrib["cfg"]
+        unavailable = {"available": False, "reason": None}
+        assert mcp.tool_get_finding_verdict(fid, conn=c, config=cfg)["workflow_candidate"] == unavailable
+        res = mcp.tool_set_finding_verdict(fid, "unable", conn=c, config=cfg)
+        assert res["workflow_candidate"] == unavailable
+
+    def test_drafting_error_never_breaks_verdict(self, contrib, monkeypatch):
+        def boom(*a, **k):
+            raise RuntimeError("draft exploded")
+
+        monkeypatch.setattr("cerno_pkg.workflow_contrib.assess_candidate", boom)
+        c, fid, cfg = contrib["conn"], contrib["f1"], contrib["cfg"]
+        res = mcp.tool_set_finding_verdict(fid, "confirmed", conn=c, config=cfg)
+        assert res["current"]["verdict"] == "confirmed"
+        assert res["workflow_candidate"] == {"available": False, "reason": None}
+
+    def test_candidate_is_templated_and_clean(self, contrib):
+        c, fid, cfg = contrib["conn"], contrib["f1"], contrib["cfg"]
+        mcp.tool_set_finding_verdict(fid, "confirmed", conn=c, config=cfg)
+        cand = mcp.tool_get_workflow_candidate(fid, config=cfg, conn=c)
+        assert cand["available"] and cand["reason"] == "new" and cand["exportable"]
+        assert cand["workflow"]["steps"][0]["commands"] == [
+            "nmap -p <PORT> --script smb-protocols <TARGET>"
+        ]
+        assert cand["leak_warnings"] == [] and cand["excluded"] == []
+
+    def test_candidate_not_exportable_without_verdict(self, contrib):
+        cand = mcp.tool_get_workflow_candidate(
+            contrib["f1"], config=contrib["cfg"], conn=contrib["conn"]
+        )
+        assert cand["available"] and not cand["exportable"] and cand["verdict"] is None
+
+    def test_export_writes_loadable_sanitized_file(self, contrib):
+        from cerno_pkg.workflow_mapper import WorkflowMapper
+
+        c, fid, cfg = contrib["conn"], contrib["f1"], contrib["cfg"]
+        mcp.tool_set_finding_verdict(fid, "confirmed", conn=c, config=cfg)
+        res = mcp.tool_export_workflow_contribution(fid, config=cfg, conn=c)
+        path = Path(res["path"])
+        assert path.parent == contrib["dir"] and path.name.startswith("100-")
+        text = path.read_text()
+        assert "10.0.0." not in text and "/home/op" not in text and "engagement" not in text
+        m = WorkflowMapper(yaml_path=contrib["dir"] / "none.yaml")
+        assert m.load_additional_workflows(path) == 1
+        assert res["reason"] == "new" and "develop" in res["submission_instructions"]
+
+    def test_export_never_overwrites(self, contrib):
+        c, fid, cfg = contrib["conn"], contrib["f1"], contrib["cfg"]
+        mcp.tool_set_finding_verdict(fid, "confirmed", conn=c, config=cfg)
+        first = mcp.tool_export_workflow_contribution(fid, config=cfg, conn=c)
+        second = mcp.tool_export_workflow_contribution(fid, config=cfg, conn=c)
+        assert first["path"] != second["path"]
+        assert len(list(contrib["dir"].iterdir())) == 2
+
+    def test_export_requires_verified_verdict(self, contrib):
+        with pytest.raises(ValueError, match="verdict"):
+            mcp.tool_export_workflow_contribution(
+                contrib["f1"], config=contrib["cfg"], conn=contrib["conn"]
+            )
+        assert not contrib["dir"].exists()
+
+    def test_export_refuses_override_with_ip(self, contrib):
+        c, fid, cfg = contrib["conn"], contrib["f1"], contrib["cfg"]
+        mcp.tool_set_finding_verdict(fid, "confirmed", conn=c, config=cfg)
+        override = {
+            "workflow_name": "Confirm SMBv1",
+            "description": "d",
+            "steps": [
+                {
+                    "title": "Enumerate dialects",
+                    "commands": ["nmap -p 445 --script smb-protocols <TARGET>"],
+                    "notes": "worst offender was 10.9.9.9",
+                }
+            ],
+            "references": [],
+        }
+        with pytest.raises(ValueError, match="10.9.9.9"):
+            mcp.tool_export_workflow_contribution(fid, override, config=cfg, conn=c)
+        assert not contrib["dir"].exists()
+
+    def test_export_refuses_custom_workflow_carrying_engagement_data(
+        self, contrib, tmp_path
+    ):
+        import yaml
+
+        custom = tmp_path / "custom.yaml"
+        custom.write_text(
+            yaml.safe_dump(
+                {
+                    "version": "1.0",
+                    "workflows": [
+                        {
+                            "plugin_id": "100",
+                            "workflow_name": "local",
+                            "description": "d",
+                            "steps": [
+                                {"title": "t", "commands": ["nmap -sV 10.0.0.2"], "notes": ""}
+                            ],
+                            "references": [],
+                        }
+                    ],
+                }
+            )
+        )
+        cfg = CernoConfig(
+            contribution_export_dir=str(contrib["dir"]), custom_workflows_path=str(custom)
+        )
+        c, fid = contrib["conn"], contrib["f1"]
+        res = mcp.tool_set_finding_verdict(fid, "confirmed", conn=c, config=cfg)
+        assert res["workflow_candidate"]["reason"] == "enhanced"
+        cand = mcp.tool_get_workflow_candidate(fid, config=cfg, conn=c)
+        assert cand["leak_warnings"] and not cand["exportable"]
+        with pytest.raises(ValueError, match="Refusing to export"):
+            mcp.tool_export_workflow_contribution(fid, config=cfg, conn=c)
+
+    def test_prompts_ask_for_finding_id(self, contrib):
+        c, fid = contrib["conn"], contrib["f1"]
+        assert f"finding_id={fid}" in mcp.prompt_triage_finding(fid, conn=c)
+        assert f"finding_id={fid}" in mcp.prompt_exploit_plan(fid, conn=c)
+
+    def test_anonymous_username_does_not_block_export(self, contrib, monkeypatch):
+        """Regression: a nxc cred username 'anonymous' (anon-FTP) must not block a
+        workflow whose plugin-derived name/description say 'Anonymous'."""
+        monkeypatch.setattr(
+            mcp, "_nxc_leak_material", lambda cfg: (["anonymous"], [], ["anonymous"])
+        )
+        c, fid, cfg = contrib["conn"], contrib["f1"], contrib["cfg"]
+        mcp.tool_set_finding_verdict(fid, "confirmed", conn=c, config=cfg)
+        override = {
+            "workflow_name": "FTP Anonymous Login",
+            "description": "Verify: FTP Anonymous Login",
+            "steps": [
+                {
+                    "title": "Check anonymous login",
+                    "commands": ["nmap -p 21 --script ftp-anon <TARGET>"],
+                    "notes": "Look for 'Anonymous FTP login allowed'.",
+                }
+            ],
+            "references": [],
+        }
+        res = mcp.tool_export_workflow_contribution(fid, override, config=cfg, conn=c)
+        assert Path(res["path"]).exists()
+        assert "FTP Anonymous Login" in Path(res["path"]).read_text()
+
+    def test_secret_value_refused_and_never_echoed(self, contrib, monkeypatch):
+        monkeypatch.setattr(
+            mcp, "_nxc_leak_material", lambda cfg: (["svc_scan"], ["ACME"], ["Winter2026!"])
+        )
+        c, fid, cfg = contrib["conn"], contrib["f1"], contrib["cfg"]
+        mcp.tool_set_finding_verdict(fid, "confirmed", conn=c, config=cfg)
+        override = {
+            "workflow_name": "x",
+            "description": "x",
+            "steps": [
+                {
+                    "title": "t",
+                    "commands": ["smbclient -U x%Winter2026! //<TARGET>/c$"],
+                    "notes": "",
+                }
+            ],
+            "references": [],
+        }
+        with pytest.raises(ValueError, match="credential secret value") as exc:
+            mcp.tool_export_workflow_contribution(fid, override, config=cfg, conn=c)
+        assert "Winter2026" not in str(exc.value)
+        assert not contrib["dir"].exists()
+
+
+@pytest.mark.unit
+class TestNxcLeakMaterial:
+    def test_disabled_returns_empty(self):
+        cfg = CernoConfig(nxc_enrichment_enabled=False)
+        assert mcp._nxc_leak_material(cfg) == ([], [], [])
+
+    def test_collects_and_skips_failures(self, monkeypatch):
+        from cerno_pkg import nxc_db
+
+        refs = [
+            nxc_db.NxcCredentialRef(
+                ref="smb:1", protocol="smb", username="svc", domain="ACME",
+                secret_kind="password",
+            ),
+            nxc_db.NxcCredentialRef(
+                ref="smb:2", protocol="smb", username="broken", secret_kind="hash"
+            ),
+            nxc_db.NxcCredentialRef(ref="ftp:1", protocol="ftp", username="anonymous"),
+        ]
+
+        def resolve(ref):
+            if ref == "smb:2":
+                raise RuntimeError("db locked")
+            return nxc_db.ResolvedSecret("svc", "ACME", "password", "Pw-123456")
+
+        monkeypatch.setattr(nxc_db, "list_credential_refs", lambda: refs)
+        monkeypatch.setattr(nxc_db, "resolve_credential_secret", resolve)
+        cfg = CernoConfig(nxc_enrichment_enabled=True)
+        assert mcp._nxc_leak_material(cfg) == (
+            ["svc", "broken", "anonymous"],
+            ["ACME"],
+            ["Pw-123456"],
+        )

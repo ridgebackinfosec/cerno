@@ -89,7 +89,8 @@ resources, and prompts Cerno exposes.
 | Read | `list_scans`, `list_findings`, `search_findings`, `get_finding_detail`, `get_finding_hosts`, `list_hosts`, `top_hosts`, `list_services`, `get_web_targets`, `list_cves`, `find_affected_by_cve`, `host_history`, `compare_scans`, `get_workflow`, `check_tools`, `list_executions`, `list_artifacts`, `get_finding_artifacts`, `read_artifact`, `get_config`, `get_capabilities` | always available |
 | NetExec | `get_host_nxc`, `list_nxc_credentials` (credentials, shares, security flags; needs a configured NetExec workspace) | always available |
 | Generate | `generate_nmap_cmd`, `generate_netexec_cmd`, `generate_msf_search` (return commands, do not run them) | always available |
-| Execute | `execute_command` (runs a command, captures output, logs it; reports progress). Target binary must match `mcp_exec_allowlist` and no binary in the chain may match `mcp_exec_denylist` (common wrappers such as `sudo`/`env`/`timeout` are unwrapped); `timeout` clamped to [1, 3600]s; optional `finding_id` attributes the run (then surfaced by `get_finding_artifacts`). For an nmap command (`-oA` present) it registers the output files as artifacts and records `host_count`/`ports` even when no hosts are up, and refuses to overwrite an existing run's `-oA` output (use a fresh `generate_nmap_cmd` path) | `mcp_allow_execution` |
+| Contribute | `get_workflow_candidate` (draft a sanitized workflow from the commands run against a finding), `export_workflow_contribution` (write it as a local, PR-ready YAML file; never submits). See [Workflow contributions](#workflow-contributions) | always available |
+| Execute | `execute_command` (runs a command, captures output, logs it; reports progress). Target binary must match `mcp_exec_allowlist` and no binary in the chain may match `mcp_exec_denylist` (common wrappers such as `sudo`/`env`/`timeout` are unwrapped); `timeout` clamped to [1, 3600]s; optional `finding_id` attributes the run (then surfaced by `get_finding_artifacts`, verdict evidence and [workflow contributions](#workflow-contributions); always pass it when verifying a finding). For an nmap command (`-oA` present) it registers the output files as artifacts and records `host_count`/`ports` even when no hosts are up, and refuses to overwrite an existing run's `-oA` output (use a fresh `generate_nmap_cmd` path) | `mcp_allow_execution` |
 | Mutate | `set_review_state` (`unreviewed` → `in_progress` → `done` → `unreviewed`; other changes rejected), `import_nessus` | `mcp_allow_mutations` |
 
 Notes:
@@ -119,6 +120,8 @@ default:
 | `nmap_default_profile` | NSE scripts for `generate_nmap_cmd` when `nse_option` is omitted (`nse_option=""` = no scripts); a UDP profile (SNMP/IPMI) also turns on `-sU` unless `udp` is given |
 | `default_page_size` | Default `limit` for `list_findings`, `query_findings`, `search_findings` (minimum 8; else 500). Page past it with `offset` |
 | `results_root` | Where `_mcp/<finding_id>/run-*/` target files and run outputs are written |
+| `custom_workflows_path` (contributions) | Also decides "new" vs "enhanced" vs nothing-to-contribute for `get_workflow_candidate` and the `workflow_candidate` verdict hint |
+| `contribution_export_dir` | Where `export_workflow_contribution` writes files (default `<results_root>/contributions`) |
 | `proxychains_enabled` / `proxychains_host` / `proxychains_port` | `execute_command(use_proxy=true)` wraps the run in `proxychains4 -q -f ~/.cerno/proxychains4.conf` (SOCKS5 host:port) when `proxychains_enabled` is on; otherwise `use_proxy` is ignored. `check_tools` reports the installed proxychains-ng version |
 
 These keys are TUI-only and intentionally ignored by the server:
@@ -147,6 +150,9 @@ One-click templates in clients that render MCP prompts:
 
 - `triage_finding` — draft a pentest-report brief for a finding
 - `exploit_plan` — outline the fastest viable exploitation/verification path
+
+Both finding prompts tell the client to pass `finding_id` on every execution and
+to offer `get_workflow_candidate` when a verdict reports a candidate.
 - `triage_scope` — report brief across one or more scans (comma-separated
   `scan_ids`, e.g. `1,3`; merged and deduplicated by plugin), optionally one severity
 
@@ -196,6 +202,60 @@ cerno config set mcp_exec_denylist "rm,dd,sh"    # binaries execute_command may 
 - `sudo` runs non-interactively. If sudo would prompt for a password, the call is
   refused (pre-authenticate with `sudo -v`).
 - `get_capabilities` reports both lists as configured.
+
+---
+
+## Workflow contributions
+
+When you verify a finding with a method the bundled `workflow_mappings.yaml`
+doesn't cover, Cerno can turn the commands you actually ran into a workflow
+you can contribute upstream.
+
+1. **Run with attribution.** Pass `finding_id` to `execute_command` /
+   `start_execution`. TUI tool runs are attributed automatically.
+2. **Record a verdict.** `set_finding_verdict` and `get_finding_verdict` return
+   `workflow_candidate: {available, reason}`. It is available only when the
+   verdict is `confirmed` or `false_positive` and either the plugin has no
+   workflow (`reason: "new"`) or you ran a command the mapped workflow lacks
+   (`reason: "enhanced"`). Cerno's own baseline commands (nmap without NSE
+   scripts, bare nxc with auth/`--shares`) never count as divergence, and running
+   the mapped workflow unchanged yields nothing.
+3. **Review the draft.** `get_workflow_candidate(finding_id)` returns the entry
+   with hosts → `<TARGET>`, finding ports → `<PORT>`, nxc `-u`/`-d`/`-p`/`-H` →
+   `<USERNAME>`/`<DOMAIN>`/`<PASSWORD>`, `-iL`/target files → `<TARGET>`, output
+   paths (`-oA`, `--log`) dropped and proxychains/timeout wrappers stripped. It
+   also lists `review_hints`, `possibly_superseded` (enhanced only: existing
+   commands for the same tool that you didn't run; never auto-replaced),
+   `excluded` runs and `leak_warnings`. Only successful runs (exit code 0) count.
+4. **Export.** `export_workflow_contribution(finding_id, workflow=None)` writes
+   `<contribution_export_dir>/<plugin_id>-<timestamp>.yaml`. Pass an edited
+   `workflow` (`workflow_name`, `description`, `steps[{title, commands, notes}]`,
+   `references`) to polish titles and notes. Its commands are sanitized again, and
+   the plugin_id always comes from the finding. The file never overwrites an
+   existing one, loads as-is via `--custom-workflows`, and its header carries the
+   steps for opening a PR against `develop`.
+
+**Safety:** export requires a `confirmed`/`false_positive` verdict and runs a
+**fail-closed leak scan** over every field and the serialized file. Every field is
+checked for:
+
+- IPv4/IPv6 literals;
+- every host name/IP in the finding's scan(s), scan names and NetExec domains;
+- NetExec credential secret values and NT/`LM:NT` hash literals;
+- local paths (`~`, `/home/`, `/tmp/`, `.cerno`, `C:\` …).
+
+NetExec usernames are flagged in commands, step titles, notes and references, but
+not in `workflow_name`/`description`. Those come from plugin metadata, and a plugin
+like "FTP Anonymous Login" shouldn't collide with an `anonymous` credential.
+Dictionary usernames (`anonymous`, `root`, `admin`, `guest` …) never count as
+engagement data. Contributed commands also get a strict check for any absolute
+path. Secret values are resolved from the NetExec workspace in memory, only to
+compare against. They are never logged or returned, and a hit reads
+"credential secret value (redacted)". Any hit refuses the export and writes
+nothing. Review notes and verdict notes are never included.
+Nothing is ever sent anywhere; you submit the PR yourself. Known limitation:
+MCP-logged commands are space-joined, so an argument that contained spaces
+can't be restored exactly. Check quoted NSE expressions before you submit.
 
 ---
 

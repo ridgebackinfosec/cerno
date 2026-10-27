@@ -1636,6 +1636,7 @@ def run_tool_workflow(
                     ports=ports_str if ports_str else None,
                     file_path=synthetic_path,
                     scan_dir=scan_dir,
+                    finding_id=finding.finding_id,
                 )
 
                 # Track artifacts (nmap outputs, etc.)

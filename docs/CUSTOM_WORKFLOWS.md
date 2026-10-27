@@ -13,6 +13,7 @@
 - [Complete Examples](#complete-examples)
 - [Troubleshooting](#troubleshooting)
 - [Advanced Topics](#advanced-topics)
+- [Contributing Workflows Upstream](#contributing-workflows-upstream)
 
 ---
 
@@ -884,12 +885,32 @@ git push --tags
 
 ---
 
+## Contributing Workflows Upstream
+
+If you verified a finding with a method the bundled workflows don't cover, the
+MCP server can draft a contribution from the commands you actually ran (see
+[MCP.md → Workflow contributions](MCP.md#workflow-contributions)). The exported
+file uses the canonical tokens `<TARGET>`, `<PORT>`, `<USERNAME>`,
+`<PASSWORD>`, `<DOMAIN>` and `<INTERFACE>`. These are filled by
+`prepare_workflow`: `<DOMAIN>` comes from the selected NetExec credential's
+domain and is reported unresolved without one. To submit:
+
+1. Fork [ridgebackinfosec/cerno](https://github.com/ridgebackinfosec/cerno) and branch from `develop`.
+2. Merge the exported `workflows` entry into
+   [`cerno_pkg/workflow_mappings.yaml`](https://github.com/ridgebackinfosec/cerno/blob/develop/cerno_pkg/workflow_mappings.yaml)
+   (for an enhancement, update the existing entry).
+3. Test locally with `cerno review --custom-workflows <exported file>` and `[W]`.
+4. Run `pytest`, `black`, `mypy`, then open a PR against **`develop`** (see
+   [CONTRIBUTING.md](../CONTRIBUTING.md)).
+
+---
+
 ## Contributing
 
 Found an issue or want to improve this guide? Contributions welcome:
 
-- **Issues**: [GitHub Issues](https://github.com/DefensiveOrigins/cerno/issues)
-- **Pull Requests**: [GitHub Pull Requests](https://github.com/DefensiveOrigins/cerno/pulls)
+- **Issues**: [GitHub Issues](https://github.com/ridgebackinfosec/cerno/issues)
+- **Pull Requests**: [GitHub Pull Requests](https://github.com/ridgebackinfosec/cerno/pulls) (target the `develop` branch)
 
 ---
 

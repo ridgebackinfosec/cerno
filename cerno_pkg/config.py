@@ -340,6 +340,19 @@ class CernoConfig:
     """Per-command timeout in seconds for each command in an execute_batch run
     (default: 300), clamped to the same [1, 3600] ceiling as execute_command."""
 
+    contribution_export_dir: Optional[str] = field(
+        default=None,
+        metadata={
+            "section": "MCP Server",
+            "kind": "str",
+            "help": "Directory for exported workflow contributions",
+            "placeholder": "<results_root>/contributions",
+        },
+    )
+    """Directory where the MCP export_workflow_contribution tool writes sanitized,
+    PR-ready workflow YAML files (default: None = ``<results_root>/contributions``).
+    Export is local-only: nothing is sent anywhere."""
+
     # Proxychains4
     proxychains_enabled: bool = field(
         default=False,

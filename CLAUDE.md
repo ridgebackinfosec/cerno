@@ -233,6 +233,16 @@ cerno_pkg/
   │                        # + variant map) from a finding's hosts/ports/@cred placeholder
   │                        # and classify each command executable-vs-manual (exec_chain
   │                        # is_runnable + PATH-installed check)
+  ├── workflow_contrib.py  # Workflow contribution loop: genericize_command() (real
+  │                        # command -> <TARGET>/<PORT>/<USERNAME>/<PASSWORD>/<DOMAIN>,
+  │                        # target/output files + proxychains wrappers stripped),
+  │                        # fail-closed scan_for_leaks()/scan_candidate() (no
+  │                        # username check on plugin-derived name/description;
+  │                        # dictionary usernames never count; nxc secret values
+  │                        # + NT/LM:NT hashes refused, never echoed),
+  │                        # assess_candidate() (new | enhanced | None from
+  │                        # ToolExecution.get_by_finding, exit 0 only; baseline
+  │                        # nmap/nxc never count as divergence), to_yaml_fragment()
   ├── batch.py             # Scoped batch: plan_batch (reviewable dry run) + async
   │                        # execute_batch over a FindingQuery; per-finding command
   │                        # generation (nmap/netexec/msf/workflow) + skip_done,
@@ -293,6 +303,12 @@ cerno_pkg/
   │                        #   workflow via cerno_pkg/workflow_prep.py and marks each
   │                        #   command executable/manual (allow/deny glob + is_runnable
   │                        #   shared through exec_chain.matches_any).
+  │                        #   get_workflow_candidate + export_workflow_contribution
+  │                        #   always on (cerno_pkg/workflow_contrib.py; export writes a
+  │                        #   local sanitized YAML to contribution_export_dir only,
+  │                        #   requires confirmed/false_positive verdict, refuses on any
+  │                        #   leak hit); get/set_finding_verdict carry a best-effort
+  │                        #   workflow_candidate {available, reason} hint.
   │                        #   reveal_credential gated by mcp_allow_cred_reveal (returns
   │                        #   cleartext; audited via cerno_pkg/creds.py, shared with the
   │                        #   `cerno creds` CLI).
@@ -592,6 +608,7 @@ Only after user confirms the changelog content:
 - `mcp_allow_batch` - Allow the MCP `execute_batch` tool to RUN the generated command for every finding matched by a query (default: `false`). `plan_batch` (the reviewable dry run) is always available; `execute_batch` is registered only when BOTH `mcp_allow_execution` and `mcp_allow_batch` are on, and every command still passes `_check_exec_policy`, the cred gate, and the per-command timeout — this flag only authorizes the fan-out across a query
 - `mcp_batch_concurrency` - Max commands `execute_batch` runs concurrently (default: `1` = sequential; keep small, 2-3, since nmap/nxc are already internally parallel). Implemented via a shared semaphore gate on the job registry
 - `mcp_batch_timeout` - Per-command timeout in seconds for each `execute_batch` command (default: `300`), clamped to the same [1, 3600] ceiling as `execute_command`
+- `contribution_export_dir` - Where the MCP `export_workflow_contribution` tool writes sanitized, PR-ready workflow YAML files (default: `None` = `<results_root>/contributions`). Local file only; nothing is submitted
 
 **MCP config contract**: the MCP server honors every config key with precedence explicit tool arg > config > hardcoded default (`default_page_size` → default `limit` for `list_findings`/`query_findings`/`search_findings`, min 8, else 500), except the TUI-only keys in `config.MCP_NOT_APPLICABLE_KEYS` (`no_color`, `term_override`, `default_tool`, `claude_assistant_enabled`, `pivot_interface`, `pivot_http_port`, `top_ports_count`). `tests/test_mcp_config.py` fails when a new key is added without classifying it. Tests isolate `config.get_config_path()` to a temp file (autouse `conftest.reset_environment`), so the developer's real config never leaks in.
 

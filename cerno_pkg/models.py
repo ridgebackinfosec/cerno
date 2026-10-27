@@ -1083,6 +1083,41 @@ class Finding:
 
             return hosts, ports_str
 
+    def get_host_identifiers(
+        self, conn: Optional[sqlite3.Connection] = None
+    ) -> list[str]:
+        """Every name this finding's hosts are known by (IP, scan target, FQDN,
+        NetBIOS, reverse DNS), de-duplicated in first-seen order.
+
+        Used by the workflow contribution sanitizer to replace a host however it
+        was written in a command (``10.0.0.5``, ``dc01.corp.local``, ``DC01``).
+
+        Args:
+            conn: Database connection
+
+        Returns:
+            List of non-empty identifier strings (empty for an unsaved Finding).
+        """
+        if self.finding_id is None:
+            return []
+
+        with db_transaction(conn) as c:
+            all_ids = [self.finding_id] + self.extra_finding_ids
+            placeholders = ",".join("?" * len(all_ids))
+            rows = query_all(
+                c,
+                f"""
+                SELECT DISTINCT h.ip_address, h.scan_target, h.fqdn,
+                       h.netbios_name, h.reverse_dns
+                FROM finding_affected_hosts fah
+                JOIN hosts h ON fah.host_id = h.host_id
+                WHERE fah.finding_id IN ({placeholders})
+                ORDER BY h.host_id
+                """,
+                tuple(all_ids),
+            )
+        return _dedupe_identifiers(rows)
+
     def get_port_distribution(
         self, conn: Optional[sqlite3.Connection] = None
     ) -> dict[str, int]:
@@ -1304,6 +1339,31 @@ class ToolExecution:
             ports=row["ports"],
             used_sudo=bool(row["used_sudo"]),
         )
+
+    @classmethod
+    def get_by_finding(
+        cls, finding_id: int, conn: Optional[sqlite3.Connection] = None
+    ) -> list[ToolExecution]:
+        """All executions attributed to a finding, oldest first.
+
+        Args:
+            finding_id: Finding the runs were attributed to (``tool_executions.finding_id``)
+            conn: Database connection
+
+        Returns:
+            List of ToolExecution (uses ``idx_tool_executions_finding``).
+        """
+        with db_transaction(conn) as c:
+            rows = query_all(
+                c,
+                """
+                SELECT * FROM tool_executions
+                WHERE finding_id = ?
+                ORDER BY executed_at, execution_id
+                """,
+                (finding_id,),
+            )
+        return [cls.from_row(row) for row in rows]
 
     def save(self, conn: Optional[sqlite3.Connection] = None) -> Optional[int]:
         """Insert or update tool execution in database.
@@ -1949,6 +2009,57 @@ class Host:
         with db_transaction(conn) as c:
             rows = query_all(c, query, tuple(params))
             return [row["plugin_id"] for row in rows]
+
+    @classmethod
+    def identifiers_for_scans(
+        cls, scan_ids: list[int], conn: Optional[sqlite3.Connection] = None
+    ) -> list[str]:
+        """Every host name/address seen in the given scans (findings + services).
+
+        Returns IPs, scan targets, FQDNs, NetBIOS names and reverse DNS names,
+        de-duplicated. The workflow contribution leak scan treats each of these as
+        engagement data that must never appear in an exported workflow.
+
+        Args:
+            scan_ids: Scans to collect hosts from (empty list → empty result)
+            conn: Database connection (optional)
+
+        Returns:
+            List of non-empty identifier strings.
+        """
+        if not scan_ids:
+            return []
+        placeholders = ",".join("?" * len(scan_ids))
+        query = f"""
+            SELECT h.ip_address, h.scan_target, h.fqdn, h.netbios_name, h.reverse_dns
+            FROM hosts h
+            WHERE h.host_id IN (
+                SELECT fah.host_id
+                FROM finding_affected_hosts fah
+                JOIN findings f ON fah.finding_id = f.finding_id
+                WHERE f.scan_id IN ({placeholders})
+                UNION
+                SELECT hs.host_id FROM host_services hs
+                WHERE hs.scan_id IN ({placeholders})
+            )
+            ORDER BY h.host_id
+        """
+        with db_transaction(conn) as c:
+            rows = query_all(c, query, tuple(scan_ids) * 2)
+        return _dedupe_identifiers(rows)
+
+
+def _dedupe_identifiers(rows: Iterable[Any]) -> list[str]:
+    """Flatten host rows into unique, non-empty identifier strings (first-seen order)."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for row in rows:
+        for value in tuple(row):
+            text = str(value).strip() if value is not None else ""
+            if text and text not in seen:
+                seen.add(text)
+                out.append(text)
+    return out
 
 
 # ========== Model: Port ==========
