@@ -181,7 +181,7 @@ cerno config set proxychains_port 9000           # proxychains4 SOCKS5 proxy por
 | `mcp_allow_execution` | `false` | Allow `execute_command` and background jobs |
 | `mcp_allow_mutations` | `false` | Allow review-state, notes, verdicts, ingest and import |
 | `mcp_allow_batch` | `false` | Allow `execute_batch` (also needs execution) |
-| `mcp_batch_concurrency` | `1` | Max commands `execute_batch` runs at once |
+| `mcp_batch_concurrency` | `3` | Max commands `execute_batch` runs at once (clamped to 1-8; use `1` through a single SOCKS pivot) |
 | `mcp_batch_timeout` | `300` | Per-command timeout (seconds) for `execute_batch` |
 | `mcp_allow_cred_injection` | `false` | Resolve `@cred:<ref>@` placeholders to real secrets at run time |
 | `mcp_allow_cred_reveal` | `false` | Allow `reveal_credential` to return cleartext secrets |

@@ -24,9 +24,9 @@ uses the config ``default_netexec_protocol``, else smb), ``"msf"`` or
 
 from __future__ import annotations
 
+import asyncio
 import shlex
 import sqlite3
-import threading
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
@@ -219,6 +219,17 @@ def plan_batch(
     return plan
 
 
+#: Hard ceiling on simultaneous batch commands (per-call arg and config alike);
+#: each item is already an internally parallel scanner.
+_MAX_BATCH_CONCURRENCY = 8
+
+
+def _batch_cap(concurrency: Optional[int], config: CernoConfig) -> int:
+    """Resolve batch concurrency: explicit arg > config, clamped to [1, 8]."""
+    requested = concurrency if concurrency is not None else config.mcp_batch_concurrency
+    return min(_MAX_BATCH_CONCURRENCY, max(1, requested))
+
+
 async def execute_batch(
     query: FindingQuery,
     strategy: str,
@@ -235,7 +246,8 @@ async def execute_batch(
 
     Each runnable item is started as a tracked, cancellable job attributed to its
     finding (and auto-ingested), with a shared semaphore capping concurrency at
-    ``mcp_batch_concurrency`` and a per-command ``mcp_batch_timeout``. Returns the
+    ``mcp_batch_concurrency`` (clamped to [1, 8]) and a per-command
+    ``mcp_batch_timeout``. Returns the
     plan plus per-item run results once all have finished. Gating
     (``mcp_allow_batch``) is enforced at the MCP registration layer.
     """
@@ -243,7 +255,7 @@ async def execute_batch(
 
     cfg = config or load_config()
     reg = registry or get_registry()
-    cap = max(1, concurrency if concurrency is not None else cfg.mcp_batch_concurrency)
+    cap = _batch_cap(concurrency, cfg)
     timeout = (
         per_command_timeout
         if per_command_timeout is not None
@@ -259,7 +271,7 @@ async def execute_batch(
         conn=conn,
     )
 
-    gate = threading.Semaphore(cap)
+    gate = asyncio.Semaphore(cap)
     started: list[tuple[int, Any]] = []  # (finding_id, job)
     for item in plan.items:
         if not item.executable or item.generated_command is None:

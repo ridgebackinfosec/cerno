@@ -229,3 +229,147 @@ def test_execute_reruns_the_policy_per_command(seeded, monkeypatch):
     finally:
         c.close()
     assert n == 0
+
+
+# -- concurrency: default, clamp, gate-in-event-loop ---------------------------
+
+
+def test_default_batch_concurrency_is_three():
+    assert CernoConfig().mcp_batch_concurrency == 3
+
+
+@pytest.mark.parametrize(
+    "arg, configured, expected",
+    [
+        (None, 3, 3),  # config default
+        (None, 50, 8),  # config clamped
+        (100, 3, 8),  # per-call arg clamped
+        (2, 3, 2),  # arg wins over config within the clamp
+        (0, 3, 1),  # floor
+        (-5, 3, 1),
+    ],
+)
+def test_batch_cap_clamps_arg_and_config(arg, configured, expected):
+    cfg = CernoConfig(mcp_batch_concurrency=configured)
+    assert batch._batch_cap(arg, cfg) == expected
+
+
+def _exec_cfg(tmp_path):
+    return CernoConfig(
+        mcp_exec_allowlist=["sh"],
+        mcp_allow_execution=True,
+        results_root=str(tmp_path / "artifacts"),
+    )
+
+
+def _peak_overlap(intervals):
+    events = sorted([(s, 1) for s, _ in intervals] + [(e, -1) for _, e in intervals])
+    cur = peak = 0
+    for _, delta in events:
+        cur += delta
+        peak = max(peak, cur)
+    return peak
+
+
+def test_gate_bounds_simultaneous_jobs(seeded, tmp_path):
+    from cerno_pkg.mcp_server.jobs import JobRegistry
+
+    cfg = _exec_cfg(tmp_path)
+    marks = tmp_path / "marks"
+    marks.mkdir()
+
+    async def go():
+        reg = JobRegistry()
+        gate = asyncio.Semaphore(2)
+        jobs = [
+            reg.start(
+                command=[
+                    "sh",
+                    "-c",
+                    f"date +%s.%N > {marks}/{i}.s; sleep 0.3; date +%s.%N > {marks}/{i}.e",
+                ],
+                tool_name="t",
+                config=cfg,
+                gate=gate,
+            )
+            for i in range(4)
+        ]
+        for j in jobs:
+            await j._task
+
+    _run(go())
+    intervals = [
+        (float((marks / f"{i}.s").read_text()), float((marks / f"{i}.e").read_text()))
+        for i in range(4)
+    ]
+    assert _peak_overlap(intervals) == 2
+
+
+def test_queued_batch_jobs_do_not_starve_other_executions(seeded, tmp_path):
+    """Jobs waiting on the batch gate must not hold executor threads, or a
+    single execution started mid-batch queues behind the whole batch."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from cerno_pkg.mcp_server.jobs import JobRegistry
+
+    cfg = _exec_cfg(tmp_path)
+
+    async def go():
+        loop = asyncio.get_running_loop()
+        loop.set_default_executor(ThreadPoolExecutor(max_workers=4))
+        reg = JobRegistry()
+        gate = asyncio.Semaphore(1)
+        batch_jobs = [
+            reg.start(
+                command=["sh", "-c", "sleep 0.4"],
+                tool_name="t",
+                config=cfg,
+                gate=gate,
+            )
+            for _ in range(10)
+        ]
+        await asyncio.sleep(0.05)
+        single = reg.start(command=["sh", "-c", "true"], tool_name="t", config=cfg)
+        try:
+            await asyncio.wait_for(asyncio.shield(single._task), timeout=1.5)
+            finished_early = True
+        except asyncio.TimeoutError:
+            finished_early = False
+        for j in batch_jobs:
+            reg.cancel(j.job_id)
+        await asyncio.gather(single._task, *(j._task for j in batch_jobs))
+        return finished_early, single.status
+
+    finished_early, status = _run(go())
+    assert finished_early
+    assert status == "done"
+
+
+def test_job_cancelled_while_queued_never_runs(seeded, tmp_path):
+    from cerno_pkg.mcp_server.jobs import JobRegistry
+
+    cfg = _exec_cfg(tmp_path)
+
+    async def go():
+        reg = JobRegistry()
+        gate = asyncio.Semaphore(1)
+        first = reg.start(
+            command=["sh", "-c", "sleep 0.3"], tool_name="t", config=cfg, gate=gate
+        )
+        queued = reg.start(
+            command=["sh", "-c", "true"], tool_name="t", config=cfg, gate=gate
+        )
+        reg.cancel(queued.job_id)
+        await asyncio.gather(first._task, queued._task)
+        return first, queued
+
+    first, queued = _run(go())
+    assert first.status == "done"
+    assert queued.status == "cancelled"
+    assert queued.execution_id is None
+    c = _conn(seeded["dbfile"])
+    try:
+        n = c.execute("SELECT COUNT(*) FROM tool_executions").fetchone()[0]
+    finally:
+        c.close()
+    assert n == 1
