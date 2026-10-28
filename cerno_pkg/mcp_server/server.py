@@ -6,7 +6,7 @@ This module is intentionally structured in two layers:
    connection plus plain arguments and return JSON-serializable dicts/lists.
    These contain no MCP-specific code and are unit-testable with the
    ``temp_db`` fixture by passing ``conn`` explicitly.
-2. **``build_server``**, which wraps the adapters as ``FastMCP`` tools,
+2. **``build_server``**, which wraps the adapters as ``MCPServer`` tools,
    opening a real database connection per call and registering the
    execution/mutation tools only when the corresponding config flag is on.
 
@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import functools
 import json
 import re
 import sqlite3
@@ -31,11 +32,12 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, Generator, Optional, Sequence, cast
 
-# Pydantic (via FastMCP output schemas) requires typing_extensions.TypedDict on
+# Pydantic (via MCPServer output schemas) requires typing_extensions.TypedDict on
 # Python < 3.12; typing_extensions ships with mcp/pydantic, so always use it.
 from typing_extensions import TypedDict
 
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context, MCPServer
+from mcp.server.mcpserver.exceptions import ResourceError, ToolError
 from mcp.types import ToolAnnotations
 
 from ..config import CernoConfig, load_config
@@ -47,8 +49,8 @@ from ..logging_setup import log_debug, log_error, log_info
 _VALID_REVIEW_STATES = set(REVIEW_STATES)
 
 
-# Result shapes for the core read tools. Note: FastMCP serializes every
-# declared key into structuredContent, emitting absent keys as null, and then
+# Result shapes for the core read tools. Note: MCPServer serializes every
+# declared key into structured_content, emitting absent keys as null, and then
 # validates against the generated schema. So any key an adapter may omit, or a
 # DB column may leave NULL, must be typed Optional[...] -- and a TypedDict must
 # not be shared between tools that return different key sets.
@@ -3045,19 +3047,74 @@ def build_server_instructions(cfg: CernoConfig) -> str:
 
 
 # Shared MCP tool annotations (advisory hints clients use to decide auto-approval).
-_READONLY_ANN = ToolAnnotations(readOnlyHint=True)
-_IDEMPOTENT_ANN = ToolAnnotations(idempotentHint=True)
-_DESTRUCTIVE_ANN = ToolAnnotations(destructiveHint=True, openWorldHint=True)
+_READONLY_ANN = ToolAnnotations(read_only_hint=True)
+_IDEMPOTENT_ANN = ToolAnnotations(idempotent_hint=True)
+_DESTRUCTIVE_ANN = ToolAnnotations(destructive_hint=True, open_world_hint=True)
+
+
+def _visible_errors(fn: Callable[..., Any]) -> Callable[..., Any]:
+    """Re-raise an adapter's deliberate ``ValueError`` as the SDK's ``ToolError``.
+
+    The pure ``tool_*`` adapters signal not-found / invalid-input conditions with
+    ``ValueError`` (e.g. "No finding with id 42"). The mcp 2.x ``Tool.run`` masks
+    every non-``ToolError`` exception as a generic "Error executing tool <name>",
+    dropping the message — whereas a ``ToolError`` keeps its text for the client.
+    (mcp 1.x FastMCP surfaced all exception messages; this restores that.) Only
+    ``ValueError`` is translated, so genuine crashes still mask their internals.
+    """
+
+    @functools.wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return fn(*args, **kwargs)
+        except ValueError as exc:
+            raise ToolError(str(exc)) from exc
+
+    return wrapper
+
+
+def _visible_resource_errors(fn: Callable[..., Any]) -> Callable[..., Any]:
+    """Resource-path twin of :func:`_visible_errors` (raises ``ResourceError``)."""
+
+    @functools.wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return fn(*args, **kwargs)
+        except ValueError as exc:
+            raise ResourceError(str(exc)) from exc
+
+    return wrapper
 
 
 def build_server(config: Optional[CernoConfig] = None) -> Any:
-    """Build and return a FastMCP server with tools registered per config flags.
+    """Build and return an ``MCPServer`` with tools registered per config flags.
 
     Read and command-generation tools are always registered. Execution and
     mutation tools are registered only when their config flag is enabled.
     """
     cfg = config or load_config()
-    mcp = FastMCP("cerno", instructions=build_server_instructions(cfg))
+    mcp = MCPServer("cerno", instructions=build_server_instructions(cfg))
+
+    # mcp 2.x masks a tool/resource's plain-exception message as a generic
+    # "Error executing tool <name>"; only a ToolError/ResourceError keeps its text
+    # for the client. Shadow the registrars so every @mcp.tool / @mcp.resource site
+    # below (including the config-gated exec/mutation tools) wraps its handler to
+    # surface the adapters' deliberate ValueErrors — restoring mcp 1.x behavior.
+    _orig_tool = mcp.tool
+
+    def _tool(*dargs: Any, **dkwargs: Any) -> Callable[[Callable[..., Any]], Any]:
+        deco = _orig_tool(*dargs, **dkwargs)
+        return lambda fn: deco(_visible_errors(fn))
+
+    mcp.tool = _tool  # type: ignore[method-assign]
+
+    _orig_resource = mcp.resource
+
+    def _resource(*dargs: Any, **dkwargs: Any) -> Callable[[Callable[..., Any]], Any]:
+        deco = _orig_resource(*dargs, **dkwargs)
+        return lambda fn: deco(_visible_resource_errors(fn))
+
+    mcp.resource = _resource  # type: ignore[method-assign]
 
     # --- Read tools (always on) ---
     @mcp.tool(annotations=_READONLY_ANN)

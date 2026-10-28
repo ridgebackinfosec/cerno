@@ -16,7 +16,7 @@ import asyncio
 import sqlite3
 
 import pytest
-from mcp.shared.memory import create_connected_server_and_client_session
+from mcp import Client
 
 import cerno_pkg.database as database
 from cerno_pkg.config import CernoConfig
@@ -250,17 +250,16 @@ def _run(coro):
 def _client_call_tools(server, calls: dict[str, dict]) -> dict:
     """Call tools through a real in-memory client session.
 
-    Unlike ``FastMCP.call_tool()``, this goes through the low-level server's
-    request handler, which validates ``structuredContent`` against each tool's
-    output schema — the path real MCP clients (e.g. Claude CLI) hit.
+    Unlike ``MCPServer.call_tool()``, driving an in-memory ``Client`` connected
+    to the server goes through the full request handler, which validates
+    ``structured_content`` against each tool's output schema — the path real MCP
+    clients (e.g. Claude CLI) hit.
     """
 
     async def go():
-        async with create_connected_server_and_client_session(
-            server._mcp_server
-        ) as session:
+        async with Client(server) as client:
             return {
-                name: await session.call_tool(name, kw) for name, kw in calls.items()
+                name: await client.call_tool(name, kw) for name, kw in calls.items()
             }
 
     return _run(go())
@@ -276,7 +275,7 @@ def test_mcp_inventory_frozen(contract):
     s = contract["server"]
     tools = {t.name for t in _run(s.list_tools())}
     statics = {str(r.uri) for r in _run(s.list_resources())}
-    templates = {t.uriTemplate for t in _run(s.list_resource_templates())}
+    templates = {t.uri_template for t in _run(s.list_resource_templates())}
     prompts = {p.name for p in _run(s.list_prompts())}
 
     assert (
@@ -294,12 +293,14 @@ def test_tool_annotations_frozen(contract):
     ann = {t.name: t.annotations for t in _run(s.list_tools())}
 
     for name in EXPECTED_READONLY_TOOLS:
-        assert ann[name] is not None and ann[name].readOnlyHint is True, name
+        assert ann[name] is not None and ann[name].read_only_hint is True, name
     for name in EXPECTED_IDEMPOTENT_TOOLS:
-        assert ann[name] is not None and ann[name].idempotentHint is True, name
+        assert ann[name] is not None and ann[name].idempotent_hint is True, name
     for name in EXPECTED_DESTRUCTIVE_TOOLS:
         a = ann[name]
-        assert a is not None and a.destructiveHint is True and a.openWorldHint is True, name
+        assert (
+            a is not None and a.destructive_hint is True and a.open_world_hint is True
+        ), name
     for name in EXPECTED_UNANNOTATED_TOOLS:
         assert ann[name] is None, name
 
@@ -370,13 +371,13 @@ def test_tools_callable_through_server(contract):
     # add platform/side-effect flakiness.
     for name, result in _client_call_tools(s, args).items():
         detail = result.content[0].text if result.content else ""
-        assert not result.isError, f"{name} failed via MCP client: {detail}"
+        assert not result.is_error, f"{name} failed via MCP client: {detail}"
 
 
 @pytest.mark.integration
 def test_generate_tools_structured_output(contract):
     """Each generate_* tool returns exactly its own keys, with no nulls for
-    required fields (regression: a shared total=False TypedDict made FastMCP
+    required fields (regression: a shared total=False TypedDict made MCPServer
     emit absent keys as null, failing output validation)."""
     s, fid = contract["server"], contract["finding_id"]
     results = _client_call_tools(
@@ -387,7 +388,7 @@ def test_generate_tools_structured_output(contract):
             "generate_msf_search": {"finding_id": fid},
         },
     )
-    nmap = results["generate_nmap_cmd"].structuredContent
+    nmap = results["generate_nmap_cmd"].structured_content
     assert set(nmap) == {"command", "ips_file", "output_base"}
     assert isinstance(nmap["command"], list) and "nmap" in nmap["command"]
     # Bare NSE script name must arrive with its --script flag (runnable argv).
@@ -395,11 +396,11 @@ def test_generate_tools_structured_output(contract):
     assert "smb-security-mode" not in nmap["command"]
     assert nmap["ips_file"].endswith("targets.txt")
 
-    nxc = results["generate_netexec_cmd"].structuredContent
+    nxc = results["generate_netexec_cmd"].structured_content
     assert set(nxc) == {"command", "ips_file", "log_path", "relay_path"}
     assert isinstance(nxc["command"], list) and isinstance(nxc["log_path"], str)
 
-    msf = results["generate_msf_search"].structuredContent
+    msf = results["generate_msf_search"].structured_content
     assert set(msf) == {"command", "search_term", "has_metasploit", "metasploit_names"}
     assert msf["search_term"] == "ms17_010" and msf["has_metasploit"] is True
 
@@ -420,22 +421,54 @@ def test_workflow_contribution_structured_output(contract):
     )
     for name, result in results.items():
         detail = result.content[0].text if result.content else ""
-        assert not result.isError, f"{name} failed: {detail}"
+        assert not result.is_error, f"{name} failed: {detail}"
 
     hint = {"available": True, "reason": "new"}
-    assert results["set_finding_verdict"].structuredContent["workflow_candidate"] == hint
-    assert results["get_finding_verdict"].structuredContent["workflow_candidate"] == hint
+    assert (
+        results["set_finding_verdict"].structured_content["workflow_candidate"] == hint
+    )
+    assert (
+        results["get_finding_verdict"].structured_content["workflow_candidate"] == hint
+    )
 
-    cand = results["get_workflow_candidate"].structuredContent
+    cand = results["get_workflow_candidate"].structured_content
     assert cand["exportable"] is True and cand["leak_warnings"] == []
     assert cand["workflow"]["steps"][0]["commands"] == [
         "nmap -p <PORT> --script smb2-security-mode <TARGET>"
     ]
 
-    export = results["export_workflow_contribution"].structuredContent
+    export = results["export_workflow_contribution"].structured_content
     assert set(export) == {"path", "reason", "plugin_id", "submission_instructions"}
     text = open(export["path"], encoding="utf-8").read()
     assert "10.0.0.1" not in text and "develop" in export["submission_instructions"]
+
+
+# ---------------------------------------------------------------------------
+# Not-found error messages reach the client (regression: mcp 2.x masks a tool's
+# plain-exception message as a bare "Error executing tool <name>"). The adapters
+# raise ValueError; build_server must translate it to a ToolError so the text
+# propagates. See server.py:_visible_errors.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "tool_name, kwargs, expected",
+    [
+        ("get_finding_detail", {"finding_id": 999999}, "No finding with id 999999"),
+        ("get_finding_hosts", {"finding_id": 999999}, "No finding with id 999999"),
+        ("get_notes", {"finding_id": 999999}, "No finding with id 999999"),
+        ("get_finding_verdict", {"finding_id": 999999}, "No finding with id 999999"),
+        ("get_workflow_candidate", {"finding_id": 999999}, "No finding with id 999999"),
+        ("read_artifact", {"artifact_id": 999999}, "No artifact with id 999999"),
+    ],
+)
+def test_not_found_message_reaches_client(contract, tool_name, kwargs, expected):
+    s = contract["server"]
+    (result,) = _client_call_tools(s, {tool_name: kwargs}).values()
+    detail = result.content[0].text if result.content else ""
+    assert result.is_error, f"{tool_name} did not report an error for a bad id"
+    assert expected in detail, f"{tool_name} masked its message: {detail!r}"
 
 
 # ---------------------------------------------------------------------------

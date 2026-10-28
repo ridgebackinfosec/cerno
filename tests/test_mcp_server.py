@@ -742,7 +742,7 @@ def test_resources_and_prompts_registered():
     loop = asyncio.new_event_loop()
     static = {str(r.uri) for r in loop.run_until_complete(s.list_resources())}
     templates = {
-        t.uriTemplate for t in loop.run_until_complete(s.list_resource_templates())
+        t.uri_template for t in loop.run_until_complete(s.list_resource_templates())
     }
     prompts = {p.name for p in loop.run_until_complete(s.list_prompts())}
 
@@ -914,7 +914,7 @@ def test_new_resources_registered():
     loop = asyncio.new_event_loop()
     static = {str(r.uri) for r in loop.run_until_complete(s.list_resources())}
     templates = {
-        t.uriTemplate for t in loop.run_until_complete(s.list_resource_templates())
+        t.uri_template for t in loop.run_until_complete(s.list_resource_templates())
     }
     assert "cerno://config" in static
     assert "cerno://host/{host_ip}/nxc" in templates
@@ -932,7 +932,7 @@ def test_core_read_tools_have_output_schema():
         "list_services",
         "list_cves",
     ]:
-        assert tools[name].outputSchema is not None
+        assert tools[name].output_schema is not None
 
 
 # ---------------------------------------------------------------------------
