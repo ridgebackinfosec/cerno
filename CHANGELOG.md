@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.10.0] - 2026-10-28
+
+### Changed
+- **Migrated the MCP server to the `mcp` Python SDK 2.x** (dependency floor raised to `>=2,<3` from `>=1.9,<2`; v1 is now maintenance-only). The SDK's v1→v2 rename of `FastMCP` to `MCPServer` is adopted internally (`mcp_server/server.py` now imports from `mcp.server.mcpserver`), tool annotations use the new snake_case fields (`read_only_hint`/`idempotent_hint`/`destructive_hint`/`open_world_hint`), and the cross-interface contract test drives the server through the new in-memory `mcp.Client`. No change to the Cerno MCP tool/resource/prompt surface or behavior. **Action required:** reinstall so the new SDK is pulled in (`pipx reinstall cerno`, or `pip install -e ".[dev]"` for development).
+
+### Fixed
+- **MCP tool errors no longer come back as a bare "Error executing tool &lt;name&gt;" with no reason.** The mcp 2.x SDK masks any plain exception a tool raises (keeping the message server-side only), so after the migration every not-found / invalid-input / scope-refusal message (e.g. `get_finding_detail` on a non-existent id) was swallowed — mcp 1.x had surfaced them. `build_server` now translates the adapters' deliberate `ValueError`s into the SDK's `ToolError`/`ResourceError`, so the client again receives the descriptive text (e.g. `No finding with id 999999`) while genuine crashes stay masked. Affects every id-lookup and refusal tool/resource uniformly; the pure adapter functions are unchanged.
+
 ## [2.9.0] - 2026-10-28
 
 ### Added

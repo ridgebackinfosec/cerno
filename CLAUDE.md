@@ -241,7 +241,7 @@ cerno_pkg/
   ├── mcp_server/          # MCP server (BETA), `cerno mcp`, stdio transport
   │   ├── __init__.py      #   build_server(), main()
   │   ├── jobs.py          #   In-memory async job registry (start/status/cancel/list; killpg cancellation)
-  │   └── server.py        #   Pure tool_*/resource_*/prompt_* adapters (testable with a conn) + FastMCP
+  │   └── server.py        #   Pure tool_*/resource_*/prompt_* adapters (testable with a conn) + MCPServer
   │                        #   registration gated by config flags. Tool reference: docs/MCP.md.
   │                        #   stdout is the JSON-RPC channel: adapters never print
   │                        #   (exec uses ops.run_command_captured)
