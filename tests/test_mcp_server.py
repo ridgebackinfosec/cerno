@@ -418,7 +418,9 @@ def test_execute_command_records_host_count_and_ports(seeded, tmp_path):
         ["python3", "-c", _WRITE_OA, "-oA", str(base), "-iL", str(ips), "-p", "445"],
         tool_name="nmap",
         finding_id=seeded["f1"],
-        config=CernoConfig(mcp_exec_allowlist=["python3"]),
+        # host_count is about line counting, not scope; 10.0.0.3 is outside the
+        # seeded scan hosts, so disable the scope guard for this focused test.
+        config=CernoConfig(mcp_exec_allowlist=["python3"], mcp_enforce_scope=False),
         conn=seeded["conn"],
     )
     row = (
@@ -1479,3 +1481,246 @@ class TestNxcLeakMaterial:
             ["ACME"],
             ["Pw-123456"],
         )
+
+
+# ---------------------------------------------------------------------------
+# Target scope enforcement
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_scope_allows_in_scope_ip(seeded):
+    """An IP belonging to the seeded scan hosts runs without error."""
+    out = mcp.tool_execute_command(
+        ["python3", "-c", "print(1)", "10.0.0.1"],
+        config=CernoConfig(mcp_exec_allowlist=["python3"]),
+        conn=seeded["conn"],
+    )
+    assert out["exit_code"] == 0
+    assert "scope_warnings" not in out
+
+
+@pytest.mark.integration
+def test_scope_refuses_out_of_scope_ip(seeded):
+    with pytest.raises(ValueError, match="outside the engagement scope"):
+        mcp.tool_execute_command(
+            ["python3", "-c", "print(1)", "8.8.8.8"],
+            config=CernoConfig(mcp_exec_allowlist=["python3"]),
+            conn=seeded["conn"],
+        )
+
+
+@pytest.mark.integration
+def test_scope_extra_cidr_widens_scope(seeded):
+    out = mcp.tool_execute_command(
+        ["python3", "-c", "print(1)", "192.168.5.9"],
+        config=CernoConfig(
+            mcp_exec_allowlist=["python3"], mcp_scope_extra=["192.168.5.0/24"]
+        ),
+        conn=seeded["conn"],
+    )
+    assert out["exit_code"] == 0
+
+
+@pytest.mark.integration
+def test_scope_refuses_cidr_not_covered(seeded):
+    with pytest.raises(ValueError, match="outside the engagement scope"):
+        mcp.tool_execute_command(
+            ["python3", "-c", "print(1)", "10.0.0.0/24"],
+            config=CernoConfig(mcp_exec_allowlist=["python3"]),
+            conn=seeded["conn"],
+        )
+
+
+@pytest.mark.integration
+def test_scope_iL_file_mixed_in_and_out(seeded, tmp_path):
+    ips = tmp_path / "t.txt"
+    ips.write_text("10.0.0.1\n9.9.9.9\n")
+    with pytest.raises(ValueError, match="9.9.9.9"):
+        mcp.tool_execute_command(
+            ["python3", "-c", "print(1)", "-iL", str(ips)],
+            config=CernoConfig(mcp_exec_allowlist=["python3"]),
+            conn=seeded["conn"],
+        )
+
+
+@pytest.mark.integration
+def test_scope_disabled_bypasses_check(seeded):
+    out = mcp.tool_execute_command(
+        ["python3", "-c", "print(1)", "8.8.8.8"],
+        config=CernoConfig(mcp_exec_allowlist=["python3"], mcp_enforce_scope=False),
+        conn=seeded["conn"],
+    )
+    assert out["exit_code"] == 0
+
+
+@pytest.mark.integration
+def test_scope_unknown_hostname_warns_not_refuses(seeded):
+    out = mcp.tool_execute_command(
+        ["python3", "-c", "print(1)", "scanme.example.org"],
+        config=CernoConfig(mcp_exec_allowlist=["python3"]),
+        conn=seeded["conn"],
+    )
+    assert out["exit_code"] == 0
+    assert out["scope_warnings"]
+    assert "scanme.example.org" in out["scope_warnings"][0]
+
+
+@pytest.mark.integration
+def test_scope_skips_credential_flag_values(seeded):
+    """A dotted username after -u must not be treated as a hostname target."""
+    out = mcp.tool_execute_command(
+        ["python3", "-c", "print(1)", "10.0.0.1", "-u", "first.last"],
+        config=CernoConfig(mcp_exec_allowlist=["python3"]),
+        conn=seeded["conn"],
+    )
+    assert out["exit_code"] == 0
+    assert "scope_warnings" not in out
+
+
+# ---------------------------------------------------------------------------
+# Verification guidance (instructions, next_steps, verify_finding prompt)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_build_server_instructions_mutations_on_mentions_set_review_state():
+    text = mcp.build_server_instructions(CernoConfig(mcp_allow_mutations=True))
+    assert "set_review_state" in text
+    assert "set_finding_verdict" in text
+    assert "prepare_workflow" in text
+
+
+@pytest.mark.unit
+def test_build_server_instructions_mutations_off_defers_to_tui():
+    text = mcp.build_server_instructions(CernoConfig(mcp_allow_mutations=False))
+    assert "TUI" in text
+    assert "set_review_state(" not in text
+
+
+@pytest.mark.unit
+def test_next_steps_executed_without_finding_warns_attribution():
+    steps = mcp._next_steps("executed", cfg=CernoConfig(), finding_id=None)
+    assert any("finding_id" in s for s in steps)
+
+
+@pytest.mark.unit
+def test_next_steps_verdict_confirmed_moves_to_done():
+    steps = mcp._next_steps(
+        "verdict",
+        cfg=CernoConfig(mcp_allow_mutations=True),
+        finding_id=7,
+        verdict="confirmed",
+    )
+    assert any("done" in s for s in steps)
+
+
+@pytest.mark.unit
+def test_next_steps_verdict_unable_keeps_in_progress():
+    steps = mcp._next_steps(
+        "verdict",
+        cfg=CernoConfig(mcp_allow_mutations=True),
+        finding_id=7,
+        verdict="unable",
+    )
+    assert any("in_progress" in s for s in steps)
+    assert any("add_note" in s for s in steps)
+
+
+@pytest.mark.unit
+def test_next_steps_verdict_candidate_offered():
+    steps = mcp._next_steps(
+        "verdict",
+        cfg=CernoConfig(mcp_allow_mutations=True),
+        finding_id=7,
+        verdict="confirmed",
+        candidate_available=True,
+    )
+    assert any("get_workflow_candidate" in s for s in steps)
+
+
+@pytest.mark.integration
+def test_set_review_state_result_carries_next_steps(seeded):
+    out = mcp.tool_set_review_state(seeded["f1"], "in_progress", conn=seeded["conn"])
+    assert out["next_steps"]
+
+
+@pytest.mark.integration
+def test_execute_result_carries_next_steps(seeded):
+    out = mcp.tool_execute_command(
+        ["python3", "-c", "print(1)"],
+        config=CernoConfig(mcp_exec_allowlist=["python3"]),
+        conn=seeded["conn"],
+    )
+    assert out["next_steps"]
+    assert any("finding_id" in s for s in out["next_steps"])
+
+
+# ---------------------------------------------------------------------------
+# Timeout returns a structured envelope (not a bare error)
+# ---------------------------------------------------------------------------
+
+_SLEEP = "import time; time.sleep(5)"
+
+
+@pytest.mark.integration
+def test_execute_timeout_returns_structured_result(seeded):
+    out = mcp.tool_execute_command(
+        ["python3", "-c", _SLEEP],
+        timeout=1,
+        config=CernoConfig(mcp_exec_allowlist=["python3"]),
+        conn=seeded["conn"],
+    )
+    assert out["timed_out"] is True
+    assert out["exit_code"] == 124
+    assert out["next_steps"]
+    assert "timed out" in out["next_steps"][0].lower()
+    # Still logged like any run.
+    assert out["execution_id"] is not None
+
+
+@pytest.mark.integration
+def test_execute_timeout_preserves_partial_stdout(seeded):
+    out = mcp.tool_execute_command(
+        ["python3", "-c", "print('partial', flush=True); import time; time.sleep(5)"],
+        timeout=1,
+        config=CernoConfig(mcp_exec_allowlist=["python3"]),
+        conn=seeded["conn"],
+    )
+    assert out["timed_out"] is True
+    assert "partial" in out["stdout"]
+
+
+@pytest.mark.integration
+def test_execute_timeout_keeps_scope_warnings(seeded):
+    out = mcp.tool_execute_command(
+        ["python3", "-c", _SLEEP, "scanme.example.org"],
+        timeout=1,
+        config=CernoConfig(mcp_exec_allowlist=["python3"]),
+        conn=seeded["conn"],
+    )
+    assert out["timed_out"] is True
+    assert out["scope_warnings"]
+    assert "scanme.example.org" in out["scope_warnings"][0]
+
+
+@pytest.mark.integration
+def test_out_of_scope_ip_still_raises_before_timeout(seeded):
+    """Scope refusal short-circuits before the run; it is not swallowed as a timeout."""
+    with pytest.raises(ValueError, match="outside the engagement scope"):
+        mcp.tool_execute_command(
+            ["python3", "-c", _SLEEP, "8.8.8.8"],
+            timeout=1,
+            config=CernoConfig(mcp_exec_allowlist=["python3"]),
+            conn=seeded["conn"],
+        )
+
+
+@pytest.mark.integration
+def test_successful_run_has_no_timed_out_key(seeded):
+    out = mcp.tool_execute_command(
+        ["python3", "-c", "print(1)"],
+        config=CernoConfig(mcp_exec_allowlist=["python3"]),
+        conn=seeded["conn"],
+    )
+    assert "timed_out" not in out

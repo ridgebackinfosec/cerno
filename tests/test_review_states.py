@@ -284,3 +284,68 @@ class TestFilterFindingCandidates:
         group = (1, {"Plugin 3: SMB Signing", "Plugin 1: SSL Weak Cipher"}, "desc")
         assert self._ids(filter_finding_candidates(self._records(), "", group, None)) == [1, 3]
         assert self._ids(filter_finding_candidates(self._records(), "", group, "in_progress")) == [3]
+
+
+@pytest.mark.integration
+class TestRecordVerdict:
+    """TUI manual verdict entry (fs.record_verdict)."""
+
+    def _current(self, db_path, fid):
+        from cerno_pkg.models import FindingVerdict
+
+        conn = database.get_connection(db_path)
+        try:
+            v = FindingVerdict.get_current(fid, conn)
+            return None if v is None else v.verdict_label
+        finally:
+            conn.close()
+
+    def test_confirmed_records_and_offers_done(self, file_db, monkeypatch):
+        from cerno_pkg import fs
+
+        db_path, finding = file_db
+        monkeypatch.setattr(fs.Prompt, "ask", staticmethod(lambda *a, **k: "1"))
+        monkeypatch.setattr(fs.Confirm, "ask", staticmethod(lambda *a, **k: True))
+
+        moved = fs.record_verdict(finding)
+        assert moved is True
+        assert self._current(db_path, finding.finding_id) == "confirmed"
+        assert _state(db_path, finding.finding_id) == "done"
+
+    def test_confirmed_decline_move_keeps_state(self, file_db, monkeypatch):
+        from cerno_pkg import fs
+
+        db_path, finding = file_db
+        monkeypatch.setattr(fs.Prompt, "ask", staticmethod(lambda *a, **k: "1"))
+        monkeypatch.setattr(fs.Confirm, "ask", staticmethod(lambda *a, **k: False))
+
+        moved = fs.record_verdict(finding)
+        assert moved is False
+        assert self._current(db_path, finding.finding_id) == "confirmed"
+        assert _state(db_path, finding.finding_id) == "unreviewed"
+
+    def test_unable_records_without_move_offer(self, file_db, monkeypatch):
+        from cerno_pkg import fs
+
+        db_path, finding = file_db
+        monkeypatch.setattr(fs.Prompt, "ask", staticmethod(lambda *a, **k: "3"))
+
+        def _no_confirm(*a, **k):  # must not be called for 'unable'
+            raise AssertionError("Confirm.ask should not be called for 'unable'")
+
+        monkeypatch.setattr(fs.Confirm, "ask", staticmethod(_no_confirm))
+
+        moved = fs.record_verdict(finding)
+        assert moved is False
+        assert self._current(db_path, finding.finding_id) == "unable"
+        assert _state(db_path, finding.finding_id) == "unreviewed"
+
+    def test_cancel_records_nothing(self, file_db, monkeypatch):
+        from cerno_pkg import fs
+
+        db_path, finding = file_db
+        monkeypatch.setattr(fs.Prompt, "ask", staticmethod(lambda *a, **k: ""))
+
+        moved = fs.record_verdict(finding)
+        assert moved is False
+        assert self._current(db_path, finding.finding_id) is None

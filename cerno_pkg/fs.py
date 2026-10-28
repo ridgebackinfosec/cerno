@@ -22,6 +22,7 @@ from .constants import (
     REVIEW_STATE_DONE,
     REVIEW_STATE_IN_PROGRESS,
     REVIEW_TRANSITIONS,
+    VERDICT_LABELS,
     get_results_root,
 )
 
@@ -77,6 +78,81 @@ def move_review_state(
     if not quiet:
         ok(f"{moved}: {_display_name(finding, plugin)}")
     return target
+
+
+_VERDICT_CHOICES: dict[str, str] = {
+    "1": "confirmed",
+    "2": "false_positive",
+    "3": "unable",
+}
+
+
+def record_verdict(finding: "Finding", plugin: Optional["Plugin"] = None) -> bool:
+    """Prompt the operator to record a verification verdict for a finding.
+
+    Writes an append-only verdict (truth value, distinct from review status) via
+    ``FindingVerdict.set``. On a confirmed / false-positive verdict, offers to
+    advance the finding to Done.
+
+    Returns:
+        True if the finding was moved to Done as a result (so the caller can
+        refresh the list), else False.
+    """
+    from .models import FindingVerdict
+    from .database import db_transaction
+
+    fid = getattr(finding, "finding_id", None)
+    if not isinstance(fid, int):
+        warn("Finding not available - cannot record a verdict.")
+        return False
+
+    header("Record Verification Verdict")
+    info("1) Confirmed")
+    info("2) False Positive")
+    info("3) Unable to Verify")
+    try:
+        choice = Prompt.ask(
+            "Verdict (Enter to cancel)",
+            choices=["1", "2", "3", ""],
+            default="",
+            show_choices=False,
+        ).strip()
+    except KeyboardInterrupt:
+        choice = ""
+    label = _VERDICT_CHOICES.get(choice)
+    if label is None:
+        info("Cancelled - no verdict recorded.")
+        return False
+
+    note = Prompt.ask("Note (optional)", default="").strip() or None
+    try:
+        with db_transaction() as conn:
+            FindingVerdict.set(fid, label, note=note, conn=conn)
+    except Exception as e:
+        from .logging_setup import log_error
+
+        log_error(f"Failed to record verdict: {e}")
+        err(f"Could not record verdict: {e}")
+        return False
+
+    ok(f"Verdict recorded: {VERDICT_LABELS.get(label, label)}")
+
+    # A verified finding is a candidate to close out. Only confirmed / false
+    # positive offer the move; 'unable' stays open for follow-up.
+    if label in ("confirmed", "false_positive") and (
+        finding.review_state != REVIEW_STATE_DONE
+    ):
+        if Confirm.ask("Move this finding to Done now?", default=True):
+            # Advance through the allowed cycle (unreviewed -> in_progress -> done).
+            while finding.review_state != REVIEW_STATE_DONE:
+                nxt = REVIEW_TRANSITIONS[finding.review_state][0]
+                move_review_state(
+                    finding, plugin, target=nxt, quiet=(nxt != REVIEW_STATE_DONE)
+                )
+                if finding.review_state != nxt:
+                    break  # a transition failed; stop advancing
+            return finding.review_state == REVIEW_STATE_DONE
+    return False
 
 
 def build_results_paths(
@@ -266,7 +342,8 @@ def handle_finding_view(
 ) -> Optional[str]:
     """
     Interactive finding view menu: Info [I], Details [D], View hosts [V], CVE info [E],
-    Workflow [W], NetExec data [N], Run tool [T], Ask Claude [A], Move status [M].
+    Workflow [W], NetExec data [N], Run tool [T], Ask Claude [A], Record verdict [R],
+    Move status [M].
 
     NOTE: This function uses Plugin and Finding database objects directly for all operations.
     No filename parsing is performed - plugin_id comes from Plugin.plugin_id field.
@@ -354,6 +431,15 @@ def handle_finding_view(
             if move_review_state(finding, plugin) == REVIEW_STATE_DONE:
                 return "mark_complete"
             # Now In Progress (stay in view), or move_review_state() reported why not
+            continue
+
+        # Handle Record verdict action
+        if action_choice in ("r", "verdict"):
+            if finding is None:
+                warn("Database not available - cannot record a verdict")
+                continue
+            if record_verdict(finding, plugin):
+                return "mark_complete"
             continue
 
         # Handle Run tool action

@@ -119,3 +119,23 @@ def test_denylisted_command_is_rejected(exec_db):
 
     with pytest.raises(ValueError, match="denylist"):
         _run(go())
+
+
+def test_job_timeout_returns_structured_result(exec_db, cfg):
+    """A job that exceeds its per-command timeout finishes 'done' with a structured
+    result marked timed_out (not a bare failure)."""
+
+    async def go():
+        reg = JobRegistry()
+        job = reg.start(
+            command=["sh", "-c", "sleep 5"], tool_name="mcp", timeout=1, config=cfg
+        )
+        await job._task
+        return job
+
+    job = _run(go())
+    assert job.status == "done"
+    assert job.error is None
+    assert job.result is not None
+    assert job.result["timed_out"] is True
+    assert job.result["next_steps"]

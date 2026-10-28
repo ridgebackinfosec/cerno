@@ -449,6 +449,8 @@ MCP_APPLIED = {
     "mcp_allow_batch",
     "mcp_batch_concurrency",
     "mcp_batch_timeout",
+    "mcp_enforce_scope",
+    "mcp_scope_extra",
     "contribution_export_dir",
     "proxychains_enabled",
     "proxychains_host",

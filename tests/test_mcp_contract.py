@@ -90,7 +90,29 @@ EXPECTED_RESOURCE_TEMPLATES = {
     "cerno://finding/{finding_id}/results",
     "cerno://host/{host_ip}/nxc",
 }
-EXPECTED_PROMPTS = {"triage_finding", "exploit_plan", "triage_scope"}
+EXPECTED_PROMPTS = {"triage_finding", "exploit_plan", "triage_scope", "verify_finding"}
+
+# Advisory tool annotations (hints clients use to decide auto-approval). Tools not
+# listed here intentionally carry no annotations (export_workflow_contribution,
+# add_note, import_nessus, reveal_credential).
+EXPECTED_READONLY_TOOLS = {
+    "list_scans", "list_findings", "search_findings", "query_findings",
+    "get_finding_hosts", "get_web_targets", "host_history", "compare_scans",
+    "get_workflow", "list_workflow_gaps", "get_notes", "get_finding_detail",
+    "get_finding_verdict", "get_workflow_candidate", "list_hosts", "top_hosts",
+    "check_tools", "list_executions", "list_artifacts", "get_finding_artifacts",
+    "list_cves", "list_services", "find_affected_by_cve", "read_artifact",
+    "get_config", "get_capabilities", "get_host_nxc", "list_nxc_credentials",
+    "generate_nmap_cmd", "generate_netexec_cmd", "generate_msf_search",
+    "prepare_workflow", "plan_batch", "get_execution_status", "list_jobs",
+}
+EXPECTED_IDEMPOTENT_TOOLS = {
+    "ingest_results", "set_review_state", "set_finding_verdict", "cancel_execution",
+}
+EXPECTED_DESTRUCTIVE_TOOLS = {"execute_command", "start_execution", "execute_batch"}
+EXPECTED_UNANNOTATED_TOOLS = {
+    "export_workflow_contribution", "add_note", "import_nessus", "reveal_credential",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -263,6 +285,31 @@ def test_mcp_inventory_frozen(contract):
     assert statics == EXPECTED_STATIC_RESOURCES
     assert templates == EXPECTED_RESOURCE_TEMPLATES
     assert prompts == EXPECTED_PROMPTS
+
+
+def test_tool_annotations_frozen(contract):
+    """Each tool carries its expected advisory annotations (read-only / destructive /
+    idempotent), and intentionally-unannotated tools stay unannotated."""
+    s = contract["server"]
+    ann = {t.name: t.annotations for t in _run(s.list_tools())}
+
+    for name in EXPECTED_READONLY_TOOLS:
+        assert ann[name] is not None and ann[name].readOnlyHint is True, name
+    for name in EXPECTED_IDEMPOTENT_TOOLS:
+        assert ann[name] is not None and ann[name].idempotentHint is True, name
+    for name in EXPECTED_DESTRUCTIVE_TOOLS:
+        a = ann[name]
+        assert a is not None and a.destructiveHint is True and a.openWorldHint is True, name
+    for name in EXPECTED_UNANNOTATED_TOOLS:
+        assert ann[name] is None, name
+
+    classified = (
+        EXPECTED_READONLY_TOOLS
+        | EXPECTED_IDEMPOTENT_TOOLS
+        | EXPECTED_DESTRUCTIVE_TOOLS
+        | EXPECTED_UNANNOTATED_TOOLS
+    )
+    assert set(ann) == classified, f"unclassified tools: {set(ann) ^ classified}"
 
 
 # ---------------------------------------------------------------------------

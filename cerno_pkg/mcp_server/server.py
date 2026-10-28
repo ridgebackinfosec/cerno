@@ -24,6 +24,7 @@ import dataclasses
 import json
 import re
 import sqlite3
+import subprocess
 import tempfile
 import time
 from contextlib import contextmanager
@@ -35,6 +36,7 @@ from typing import Any, Callable, Generator, Optional, Sequence, cast
 from typing_extensions import TypedDict
 
 from mcp.server.fastmcp import Context, FastMCP
+from mcp.types import ToolAnnotations
 
 from ..config import CernoConfig, load_config
 from ..constants import REVIEW_STATES
@@ -182,6 +184,8 @@ class Capabilities(TypedDict, total=False):
     batch_concurrency: int
     exec_allowlist: list[str]
     exec_denylist: list[str]
+    scope_enforced: bool
+    scope_extra: list[str]
     nxc_available: bool
 
 
@@ -244,6 +248,7 @@ class VerdictResult(TypedDict, total=False):
     history: list[VerdictInfo]
     evidence: list[dict]
     workflow_candidate: WorkflowCandidateHint
+    next_steps: list[str]
 
 
 class WorkflowCandidateResult(TypedDict):
@@ -598,6 +603,8 @@ def tool_get_capabilities(config: Optional[CernoConfig] = None) -> dict:
         "batch_concurrency": cfg.mcp_batch_concurrency,
         "exec_allowlist": list(cfg.mcp_exec_allowlist),
         "exec_denylist": list(cfg.mcp_exec_denylist),
+        "scope_enforced": cfg.mcp_enforce_scope,
+        "scope_extra": list(cfg.mcp_scope_extra),
         "nxc_available": get_nxc_manager() is not None,
     }
 
@@ -875,6 +882,7 @@ def tool_get_finding_verdict(
         "history": [_verdict_info(v) for v in history],
         "evidence": evidence,
         "workflow_candidate": hint,
+        "next_steps": [],
     }
 
 
@@ -1850,6 +1858,175 @@ def _check_exec_policy(
     return target
 
 
+# ---------------------------------------------------------------------------
+# Target scope enforcement (execute_command / start_execution / execute_batch)
+# ---------------------------------------------------------------------------
+
+#: Option flags whose following token carries a credential / non-target value
+#: (so it is never examined as a scan target). Keeps usernames/passwords/domains
+#: and NT hashes from being mistaken for hostnames and warned about.
+_SCOPE_SKIP_VALUE_FLAGS: frozenset[str] = frozenset(
+    {"-u", "-p", "-d", "-H", "--username", "--password", "--domain", "--hash"}
+)
+
+#: A plausible DNS hostname (at least one dot, alphabetic TLD). Used only for the
+#: lenient warn path; an unmatched token that is not an IP/CIDR and does not look
+#: like a hostname is ignored entirely.
+_HOSTNAME_RE = re.compile(
+    r"^(?=.{1,253}$)([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,}$"
+)
+
+
+def _iter_scope_tokens(command: Sequence[Any]) -> list[str]:
+    """Candidate target tokens from a command (after unwrapping wrappers).
+
+    Reads ``-iL`` target files (one host per line). Skips flags and the values of
+    credential-bearing flags. URL arguments contribute their host component.
+    """
+    from urllib.parse import urlparse
+
+    from ..exec_chain import split_wrappers
+
+    _, argv = split_wrappers(command)
+    tokens: list[str] = []
+    i = 1  # argv[0] is the target binary
+    while i < len(argv):
+        tok = argv[i]
+        if tok == "-iL" and i + 1 < len(argv):
+            try:
+                with open(argv[i + 1], encoding="utf-8") as fh:
+                    tokens.extend(line.strip() for line in fh if line.strip())
+            except OSError:
+                pass
+            i += 2
+            continue
+        if tok in _SCOPE_SKIP_VALUE_FLAGS:
+            i += 2  # skip the flag and its value
+            continue
+        if tok.startswith("-"):
+            i += 1
+            continue
+        if "://" in tok:
+            host = urlparse(tok).hostname
+            if host:
+                tokens.append(host)
+            i += 1
+            continue
+        tokens.append(tok)
+        i += 1
+    return tokens
+
+
+def _load_scope(
+    conn: sqlite3.Connection, extra: Sequence[str]
+) -> tuple[set, list, set[str]]:
+    """Build the in-scope sets: (scan+extra IP objects, networks, lowercased names)."""
+    import ipaddress
+
+    from ..models import Host
+
+    ip_objs: set = set()
+    networks: list = []
+    names: set[str] = set()
+
+    for h in Host.get_all_with_stats(conn):
+        ip = h.get("ip_address")
+        if ip:
+            try:
+                ip_objs.add(ipaddress.ip_address(ip))
+            except ValueError:
+                pass
+        for key in ("fqdn", "netbios_name", "scan_target"):
+            val = h.get(key)
+            if val and not _looks_like_ip(val):
+                names.add(str(val).lower())
+
+    for entry in extra:
+        entry = str(entry).strip()
+        if not entry:
+            continue
+        try:
+            networks.append(ipaddress.ip_network(entry, strict=False))
+        except ValueError:
+            names.add(entry.lower())
+    return ip_objs, networks, names
+
+
+def _looks_like_ip(value: str) -> bool:
+    import ipaddress
+
+    try:
+        ipaddress.ip_address(str(value))
+        return True
+    except ValueError:
+        return False
+
+
+def _classify_scope_token(
+    token: str, ip_objs: set, networks: list, names: set[str]
+) -> str:
+    """Return 'ok', 'bad_ip', 'warn_name', or 'ignore' for one candidate token."""
+    import ipaddress
+
+    try:
+        net = ipaddress.ip_network(token, strict=False)
+    except ValueError:
+        net = None
+
+    if net is not None:
+        if net.num_addresses == 1:
+            addr = net.network_address
+            if addr in ip_objs or any(addr in n for n in networks):
+                return "ok"
+            return "bad_ip"
+        # A CIDR range is in scope only if fully contained in an extra network.
+        if any(net.subnet_of(n) for n in networks):
+            return "ok"
+        return "bad_ip"
+
+    low = token.lower()
+    if low in names:
+        return "ok"
+    if _HOSTNAME_RE.match(token):
+        return "warn_name"
+    return "ignore"
+
+
+def _check_scope(
+    command: Sequence[Any], cfg: CernoConfig, conn: sqlite3.Connection
+) -> list[str]:
+    """Enforce target scope. Raise ValueError on out-of-scope IP/CIDR targets;
+    return a (possibly empty) list of warnings for unresolved hostnames.
+
+    A no-op when ``mcp_enforce_scope`` is False.
+    """
+    if not cfg.mcp_enforce_scope:
+        return []
+
+    ip_objs, networks, names = _load_scope(conn, cfg.mcp_scope_extra)
+    out_of_scope: list[str] = []
+    warnings: list[str] = []
+    for token in _iter_scope_tokens(command):
+        verdict = _classify_scope_token(token, ip_objs, networks, names)
+        if verdict == "bad_ip" and token not in out_of_scope:
+            out_of_scope.append(token)
+        elif verdict == "warn_name" and token not in warnings:
+            warnings.append(token)
+
+    if out_of_scope:
+        raise ValueError(
+            "Target(s) outside the engagement scope: "
+            f"{', '.join(out_of_scope)}. In scope = hosts from imported scans plus "
+            "mcp_scope_extra. Add a range with "
+            "'cerno config set mcp_scope_extra \"10.0.0.0/24\"' (then reconnect), "
+            "or disable the check with 'cerno config set mcp_enforce_scope false'."
+        )
+    return [
+        f"Target {name!r} is not a known scan host; allowed but unverified against scope."
+        for name in warnings
+    ]
+
+
 def _flag_value(command: Sequence[Any], flag: str) -> Optional[str]:
     """Return the token following ``flag`` in ``command``, or None."""
     argv = [str(x) for x in command]
@@ -1997,6 +2174,8 @@ def _preflight_exec(command: list[str], config: Optional[CernoConfig]) -> None:
         raise ValueError("command must be a non-empty list of arguments")
     cfg = config or load_config()
     _check_exec_policy(command, cfg.mcp_exec_allowlist, cfg.mcp_exec_denylist)
+    with _db(None) as _scope_conn:
+        _check_scope(command, cfg, _scope_conn)
     if _has_cred_placeholder(command) and not cfg.mcp_allow_cred_injection:
         raise ValueError(
             "command contains a @cred:...@ placeholder but credential injection "
@@ -2023,6 +2202,7 @@ def _run_and_record(
     duplicating the masking/logging/ingest logic).
     """
     from ..ops import (
+        ExecutionMetadata,
         ProxyConfig,
         log_artifact,
         log_artifacts_for_nmap,
@@ -2035,6 +2215,9 @@ def _run_and_record(
     cfg = config or load_config()
 
     _check_exec_policy(command, cfg.mcp_exec_allowlist, cfg.mcp_exec_denylist)
+
+    with _db(conn) as _scope_conn:
+        scope_warnings = _check_scope(command, cfg, _scope_conn)
 
     timeout = max(1, min(int(timeout), _MAX_EXEC_TIMEOUT))
 
@@ -2074,7 +2257,29 @@ def _run_and_record(
             quiet=True,
         )
 
-    meta, stdout, stderr = runner(run_command, timeout, proxy)
+    # A timeout must not strip the structured envelope: catch it, keep any partial
+    # output, synthesize metadata, and flow through the same logging/next_steps body
+    # as a completed run (the run is still bounded — the process is already killed).
+    timed_out = False
+    try:
+        meta, stdout, stderr = runner(run_command, timeout, proxy)
+    except subprocess.TimeoutExpired as exc:
+        timed_out = True
+        stdout = (
+            exc.stdout.decode(errors="replace")
+            if isinstance(exc.stdout, bytes)
+            else (exc.stdout or "")
+        )
+        stderr = (
+            exc.stderr.decode(errors="replace")
+            if isinstance(exc.stderr, bytes)
+            else (exc.stderr or "")
+        )
+        meta = ExecutionMetadata(
+            exit_code=124,  # conventional timeout code; disambiguated by timed_out
+            duration_seconds=float(timeout),
+            used_sudo="sudo" in _command_chain(command),
+        )
 
     # Never persist or return a resolved secret: log the masked placeholder form
     # and scrub any secret value that leaked into captured output.
@@ -2117,6 +2322,8 @@ def _run_and_record(
         "stdout": stdout,
         "stderr": stderr,
     }
+    if scope_warnings:
+        result["scope_warnings"] = scope_warnings
 
     # Best-effort auto-ingest: only when mutations are also allowed (writing
     # structured facts is a mutation). Never fail the exec over ingestion.
@@ -2135,6 +2342,24 @@ def _run_and_record(
                 f"({execution_id}) to persist structured results."
             )
 
+    result["next_steps"] = _next_steps(
+        "executed",
+        cfg=cfg,
+        finding_id=finding_id,
+        execution_id=execution_id,
+        ingested=bool(result.get("ingested")),
+    )
+    if timed_out:
+        result["timed_out"] = True
+        retry = (
+            f"timeout, then retry with finding_id={finding_id}."
+            if finding_id is not None
+            else "timeout, then retry."
+        )
+        result["next_steps"] = [
+            f"Command timed out after {timeout}s; narrow the target/ports or raise the "
+            + retry
+        ] + result["next_steps"]
     return result
 
 
@@ -2222,7 +2447,14 @@ def tool_set_review_state(
             raise ValueError(f"No finding with id {finding_id}")
         finding.transition_review_state(new_state, notes=notes, conn=c)
         c.commit()
-    return {"finding_id": finding_id, "review_state": new_state}
+    cfg = load_config()
+    return {
+        "finding_id": finding_id,
+        "review_state": new_state,
+        "next_steps": _next_steps(
+            "review_state", cfg=cfg, finding_id=finding_id, new_state=new_state
+        ),
+    }
 
 
 def tool_add_note(
@@ -2310,7 +2542,17 @@ def tool_set_finding_verdict(
             conn=c,
         )
         c.commit()
-    return tool_get_finding_verdict(finding_id, conn=conn, config=config)
+    result = tool_get_finding_verdict(finding_id, conn=conn, config=config)
+    cfg = config or load_config()
+    candidate = bool((result.get("workflow_candidate") or {}).get("available"))
+    result["next_steps"] = _next_steps(
+        "verdict",
+        cfg=cfg,
+        finding_id=finding_id,
+        verdict=verdict,
+        candidate_available=candidate,
+    )
+    return result
 
 
 def tool_import_nessus(nessus_path: str) -> dict:
@@ -2604,7 +2846,208 @@ def prompt_triage_scope(
     return f"{context}\n\n{REPORT_BRIEF_QUERY}"
 
 
+def prompt_verify_finding(
+    finding_id: int,
+    conn: Optional[sqlite3.Connection] = None,
+    config: Optional[CernoConfig] = None,
+) -> str:
+    """Step-by-step verification-loop prompt for a single finding.
+
+    Drives the full procedure: check the mapped workflow (noting when none
+    exists), run attributed commands, ingest, record a verdict, move the review
+    state, and offer a workflow contribution when one is available.
+    """
+    cfg = config or load_config()
+    mutate = cfg.mcp_allow_mutations
+    steps = [
+        "Verify this finding using Cerno's tools, following these steps:",
+        "",
+        f"1. Call prepare_workflow({finding_id}) to get the mapped verification "
+        "workflow. If it returns null, state clearly that NO workflow is mapped for "
+        "this plugin, then build a command with generate_nmap_cmd / "
+        "generate_netexec_cmd.",
+    ]
+    if mutate:
+        steps.append(
+            f"2. Move the finding to in_progress: set_review_state({finding_id}, "
+            "'in_progress')."
+        )
+    else:
+        steps.append(
+            "2. Tell the user to move the finding to In Progress in the TUI "
+            "(mutations are disabled here)."
+        )
+    steps.append(
+        f"3. Run each executable command with execute_command(..., "
+        f"finding_id={finding_id}). Report any scope_warnings returned."
+    )
+    if mutate:
+        steps += [
+            f"4. Review the evidence with get_finding_verdict({finding_id}) (runs are "
+            "auto-ingested when mutations are on; otherwise call ingest_results).",
+            f"5. Record the outcome: set_finding_verdict({finding_id}, "
+            "'confirmed'|'false_positive'|'unable', execution_id=...). Then confirmed/"
+            f"false_positive -> set_review_state({finding_id}, 'done'); unable -> keep "
+            f"in_progress and add_note({finding_id}, why).",
+            "6. If the verdict response reports workflow_candidate.available, review "
+            f"it with get_workflow_candidate({finding_id}) and, once the user "
+            f"approves, export_workflow_contribution({finding_id}). Nothing is "
+            "submitted automatically.",
+        ]
+    else:
+        steps += [
+            "4. Review the captured output and tell the user which verdict "
+            "(confirmed / false_positive / unable) and review status to set in the "
+            "TUI.",
+            "5. Note whether the plugin had a workflow, so a missing one can be "
+            "contributed later.",
+        ]
+    instruction = "\n".join(steps)
+    return f"{_finding_context(finding_id, conn, config)}\n\n{instruction}"
+
+
 # ========== Server assembly ==========
+
+
+# ---------------------------------------------------------------------------
+# Verification-procedure guidance (soft: hints, never refusals)
+# ---------------------------------------------------------------------------
+
+
+def _next_steps(
+    stage: str,
+    *,
+    cfg: CernoConfig,
+    finding_id: Optional[int] = None,
+    execution_id: Optional[int] = None,
+    ingested: Optional[bool] = None,
+    verdict: Optional[str] = None,
+    candidate_available: bool = False,
+    new_state: Optional[str] = None,
+) -> list[str]:
+    """Return short, state-aware 'what to do next' hints for a tool response.
+
+    Keeps the verification loop (workflow -> execute with finding_id -> ingest ->
+    verdict -> review state -> contribute) discoverable without the client having
+    to remember it. Adapts to whether mutations are enabled.
+    """
+    steps: list[str] = []
+    mutate = cfg.mcp_allow_mutations
+
+    if stage == "executed":
+        if finding_id is None:
+            steps.append(
+                "Pass finding_id next time to attribute the run to a finding "
+                "(enables ingest, verdict evidence and workflow contribution)."
+            )
+            return steps
+        if mutate:
+            if ingested:
+                steps.append(
+                    "Results were auto-ingested. Review them with "
+                    f"get_finding_verdict({finding_id}), then record the outcome "
+                    f"with set_finding_verdict({finding_id}, ...)."
+                )
+            else:
+                steps.append(
+                    f"Call ingest_results({execution_id}) to persist structured "
+                    f"results, then set_finding_verdict({finding_id}, ...)."
+                )
+        else:
+            steps.append(
+                "Enable mcp_allow_mutations to ingest results and record a verdict, "
+                "or review the output and set the verdict/status in the TUI."
+            )
+        return steps
+
+    if stage == "verdict":
+        if verdict in ("confirmed", "false_positive"):
+            steps.append(
+                f"Move the finding to done: set_review_state({finding_id}, 'done')."
+            )
+        elif verdict == "unable":
+            steps.append(
+                f"Leave the finding in_progress and add_note({finding_id}, ...) "
+                "explaining why it could not be verified."
+            )
+        if candidate_available:
+            steps.append(
+                "A workflow contribution is available: review it with "
+                f"get_workflow_candidate({finding_id}), then "
+                f"export_workflow_contribution({finding_id})."
+            )
+        return steps
+
+    if stage == "review_state":
+        if new_state == "in_progress":
+            steps.append(
+                "Verify it: prepare_workflow (or generate_*), execute_command with "
+                "finding_id, then set_finding_verdict."
+            )
+        elif new_state == "done":
+            steps.append(
+                f"If not done yet, record set_finding_verdict({finding_id}, ...) to "
+                "capture the verification outcome."
+            )
+        return steps
+
+    return steps
+
+
+def build_server_instructions(cfg: CernoConfig) -> str:
+    """Server-level instructions describing Cerno's verification procedure.
+
+    Sent once on connect so any MCP client follows the same loop. Adapts to the
+    mutation gate: when mutations are off, the client is told to ask the operator
+    to set status/verdict in the TUI rather than calling the (unregistered) tools.
+    """
+    mutate = cfg.mcp_allow_mutations
+    lines = [
+        "Cerno exposes a Nessus review database and verification tooling. Follow "
+        "this procedure when verifying findings:",
+        "",
+        "1. Call get_capabilities first to see which actions are enabled.",
+        "2. Before verifying a finding, call prepare_workflow(finding_id) (or "
+        "get_workflow). If it returns null, tell the user NO workflow is mapped "
+        "for that plugin before falling back to generate_nmap_cmd / "
+        "generate_netexec_cmd.",
+    ]
+    if mutate:
+        lines.append(
+            "3. When you start verifying, move the finding to in_progress with "
+            "set_review_state(finding_id, 'in_progress')."
+        )
+    else:
+        lines.append(
+            "3. When you start verifying, tell the user to move the finding to "
+            "In Progress in the TUI (mutations are disabled)."
+        )
+    lines.append("4. Pass finding_id on every execute_command / start_execution.")
+    if mutate:
+        lines += [
+            "5. Ingest the output (ingest_results, or it is auto-ingested), review "
+            "the evidence with get_finding_verdict, then record the outcome with "
+            "set_finding_verdict (confirmed / false_positive / unable).",
+            "6. After the verdict: confirmed/false_positive -> set_review_state "
+            "'done'; unable -> leave in_progress and add_note why.",
+            "7. If the verdict response reports workflow_candidate.available, offer "
+            "get_workflow_candidate, then export_workflow_contribution once the "
+            "user has reviewed the draft (nothing is submitted automatically).",
+        ]
+    else:
+        lines += [
+            "5. Review the captured output and tell the user which verdict and "
+            "status to set in the TUI (mutations are disabled).",
+            "6. Note to the user when a plugin has no workflow, so a new one can be "
+            "contributed after verification.",
+        ]
+    return "\n".join(lines)
+
+
+# Shared MCP tool annotations (advisory hints clients use to decide auto-approval).
+_READONLY_ANN = ToolAnnotations(readOnlyHint=True)
+_IDEMPOTENT_ANN = ToolAnnotations(idempotentHint=True)
+_DESTRUCTIVE_ANN = ToolAnnotations(destructiveHint=True, openWorldHint=True)
 
 
 def build_server(config: Optional[CernoConfig] = None) -> Any:
@@ -2614,15 +3057,15 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
     mutation tools are registered only when their config flag is enabled.
     """
     cfg = config or load_config()
-    mcp = FastMCP("cerno")
+    mcp = FastMCP("cerno", instructions=build_server_instructions(cfg))
 
     # --- Read tools (always on) ---
-    @mcp.tool()
+    @mcp.tool(annotations=_READONLY_ANN)
     def list_scans() -> list[ScanInfo]:
         """List all imported scans with severity counts and review progress."""
         return cast("list[ScanInfo]", tool_list_scans())
 
-    @mcp.tool()
+    @mcp.tool(annotations=_READONLY_ANN)
     def list_findings(
         scan_ids: list[int],
         severity_int: Optional[int] = None,
@@ -2654,7 +3097,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
             ),
         )
 
-    @mcp.tool()
+    @mcp.tool(annotations=_READONLY_ANN)
     def search_findings(
         plugin_name: Optional[str] = None,
         severity_int: Optional[int] = None,
@@ -2676,7 +3119,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
             ),
         )
 
-    @mcp.tool()
+    @mcp.tool(annotations=_READONLY_ANN)
     def query_findings(
         scan_ids: Optional[list[int]] = None,
         severity_int: Optional[int] = None,
@@ -2725,34 +3168,34 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
             ),
         )
 
-    @mcp.tool()
+    @mcp.tool(annotations=_READONLY_ANN)
     def get_finding_hosts(finding_id: int) -> FindingHosts:
         """Get host list, ports, and ready-to-use host:port target lines for a finding."""
         return cast("FindingHosts", tool_get_finding_hosts(finding_id))
 
-    @mcp.tool()
+    @mcp.tool(annotations=_READONLY_ANN)
     def get_web_targets(scan_id: int) -> list[str]:
         """Get HTTP/HTTPS URLs discovered in a scan."""
         return tool_get_web_targets(scan_id)
 
-    @mcp.tool()
+    @mcp.tool(annotations=_READONLY_ANN)
     def host_history(host_ip: str) -> Optional[dict]:
         """Get a host's vulnerability timeline across all scans."""
         return tool_host_history(host_ip)
 
-    @mcp.tool()
+    @mcp.tool(annotations=_READONLY_ANN)
     def compare_scans(
         scan1_name: str, scan2_name: str, min_severity: int = 0
     ) -> Optional[dict]:
         """Compare two scans by name (new/resolved/persistent findings and hosts)."""
         return tool_compare_scans(scan1_name, scan2_name, min_severity=min_severity)
 
-    @mcp.tool()
+    @mcp.tool(annotations=_READONLY_ANN)
     def get_workflow(plugin_id: int) -> Optional[dict]:
         """Get the verification workflow mapped to a plugin, if any."""
         return tool_get_workflow(plugin_id, config=cfg)
 
-    @mcp.tool()
+    @mcp.tool(annotations=_READONLY_ANN)
     def list_workflow_gaps(
         scan_ids: list[int], severity_min: Optional[int] = None
     ) -> list[WorkflowGapResult]:
@@ -2768,7 +3211,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
             ),
         )
 
-    @mcp.tool()
+    @mcp.tool(annotations=_READONLY_ANN)
     def get_notes(finding_id: int) -> NotesResult:
         """Read a finding's review notes (timestamped entries + raw text).
 
@@ -2776,7 +3219,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         """
         return cast("NotesResult", tool_get_notes(finding_id))
 
-    @mcp.tool()
+    @mcp.tool(annotations=_READONLY_ANN)
     def get_finding_detail(finding_id: int, max_hosts: int = 100) -> FindingDetail:
         """Get full detail for a finding: plugin metadata + per-host plugin output (capped).
 
@@ -2787,7 +3230,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
             "FindingDetail", tool_get_finding_detail(finding_id, max_hosts=max_hosts)
         )
 
-    @mcp.tool()
+    @mcp.tool(annotations=_READONLY_ANN)
     def get_finding_verdict(finding_id: int) -> VerdictResult:
         """Get a finding's verification verdict (current + history + evidence + suggestion).
 
@@ -2797,7 +3240,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         """
         return cast("VerdictResult", tool_get_finding_verdict(finding_id, config=cfg))
 
-    @mcp.tool()
+    @mcp.tool(annotations=_READONLY_ANN)
     def get_workflow_candidate(finding_id: int) -> WorkflowCandidateResult:
         """Draft a workflow contribution from the commands run against a finding.
 
@@ -2828,39 +3271,39 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
             tool_export_workflow_contribution(finding_id, workflow, config=cfg),
         )
 
-    @mcp.tool()
+    @mcp.tool(annotations=_READONLY_ANN)
     def list_hosts(scan_id: Optional[int] = None) -> list[HostInfo]:
         """List hosts with finding counts and worst severity (all scans, or one scan)."""
         return cast("list[HostInfo]", tool_list_hosts(scan_id))
 
-    @mcp.tool()
+    @mcp.tool(annotations=_READONLY_ANN)
     def top_hosts(limit: int = 20) -> list[HostInfo]:
         """List hosts worst-severity-first for prioritization (cross-scan)."""
         return cast("list[HostInfo]", tool_top_hosts(limit))
 
-    @mcp.tool()
+    @mcp.tool(annotations=_READONLY_ANN)
     def check_tools() -> dict:
         """Report which security tools (nmap/netexec/msf/proxychains4) are installed."""
         return tool_check_tools()
 
-    @mcp.tool()
+    @mcp.tool(annotations=_READONLY_ANN)
     def list_executions(limit: int = 50) -> list[ExecutionInfo]:
         """List recent tool executions recorded in the database."""
         return cast("list[ExecutionInfo]", tool_list_executions(limit))
 
-    @mcp.tool()
+    @mcp.tool(annotations=_READONLY_ANN)
     def list_artifacts(
         execution_id: Optional[int] = None, limit: int = 50
     ) -> list[ArtifactInfo]:
         """List generated artifact files, optionally for one execution."""
         return cast("list[ArtifactInfo]", tool_list_artifacts(execution_id, limit))
 
-    @mcp.tool()
+    @mcp.tool(annotations=_READONLY_ANN)
     def get_finding_artifacts(finding_id: int) -> list[ArtifactInfo]:
         """List artifact files generated by executions attributed to a finding."""
         return cast("list[ArtifactInfo]", tool_get_finding_artifacts(finding_id))
 
-    @mcp.tool()
+    @mcp.tool(annotations=_READONLY_ANN)
     def list_cves(
         scan_ids: list[int], severity_int: Optional[int] = None
     ) -> list[CveEntry]:
@@ -2869,12 +3312,12 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
             "list[CveEntry]", tool_list_cves(scan_ids, severity_int=severity_int)
         )
 
-    @mcp.tool()
+    @mcp.tool(annotations=_READONLY_ANN)
     def list_services(scan_id: int) -> list[ServiceInfo]:
         """List discovered host/port/protocol/service-name tuples for a scan."""
         return cast("list[ServiceInfo]", tool_list_services(scan_id))
 
-    @mcp.tool()
+    @mcp.tool(annotations=_READONLY_ANN)
     def find_affected_by_cve(
         cve: str, scan_ids: Optional[list[int]] = None
     ) -> list[CveAffected]:
@@ -2883,17 +3326,17 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
             "list[CveAffected]", tool_find_affected_by_cve(cve, scan_ids=scan_ids)
         )
 
-    @mcp.tool()
+    @mcp.tool(annotations=_READONLY_ANN)
     def read_artifact(artifact_id: int, max_bytes: int = 100_000) -> dict:
         """Read the contents of a generated artifact file by id (capped)."""
         return tool_read_artifact(artifact_id, max_bytes=max_bytes)
 
-    @mcp.tool()
+    @mcp.tool(annotations=_READONLY_ANN)
     def get_config() -> dict:
         """Return all current Cerno config settings (read-only)."""
         return tool_get_config()
 
-    @mcp.tool()
+    @mcp.tool(annotations=_READONLY_ANN)
     def get_capabilities() -> Capabilities:
         """Report which gated capabilities are live.
 
@@ -2902,18 +3345,18 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         """
         return cast("Capabilities", tool_get_capabilities(cfg))
 
-    @mcp.tool()
+    @mcp.tool(annotations=_READONLY_ANN)
     def get_host_nxc(host_ip: str) -> dict:
         """NetExec enrichment for a host: credentials, shares, security flags."""
         return tool_get_host_nxc(host_ip)
 
-    @mcp.tool()
+    @mcp.tool(annotations=_READONLY_ANN)
     def list_nxc_credentials(host_ips: Optional[list[str]] = None) -> dict:
         """Deduplicated NetExec credentials across hosts (default: all known hosts)."""
         return tool_list_nxc_credentials(host_ips)
 
     # --- Command generation (always on; no execution) ---
-    @mcp.tool()
+    @mcp.tool(annotations=_READONLY_ANN)
     def generate_nmap_cmd(
         finding_id: int,
         udp: Optional[bool] = None,
@@ -2921,6 +3364,9 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         use_sudo: bool = False,
     ) -> NmapCommand:
         """Build an nmap command for a finding's hosts/ports (does not run it).
+
+        First call prepare_workflow(finding_id) to check for a mapped verification
+        workflow; use this only to supplement it or when none exists.
 
         nse_option: NSE script names or categories, comma-separated (e.g.
         "smb-security-mode,smb2-security-mode" or "vuln"); a "--script=" prefix
@@ -2940,13 +3386,16 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
             ),
         )
 
-    @mcp.tool()
+    @mcp.tool(annotations=_READONLY_ANN)
     def generate_netexec_cmd(
         finding_id: int,
         protocol: Optional[str] = None,
         use_credential: Optional[str] = None,
     ) -> NetexecCommand:
         """Build a netexec command for a finding's hosts (does not run it).
+
+        First call prepare_workflow(finding_id) to check for a mapped verification
+        workflow; use this only to supplement it or when none exists.
 
         protocol is case-insensitive; valid values: mssql, smb, ftp, ldap, nfs,
         rdp, ssh, vnc, winrm, wmi. An unknown protocol is rejected with an error.
@@ -2964,12 +3413,12 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
             ),
         )
 
-    @mcp.tool()
+    @mcp.tool(annotations=_READONLY_ANN)
     def generate_msf_search(finding_id: int) -> MsfSearchCommand:
         """Build an msfconsole search command for a finding's Metasploit modules."""
         return cast("MsfSearchCommand", tool_generate_msf_search(finding_id))
 
-    @mcp.tool()
+    @mcp.tool(annotations=_READONLY_ANN)
     def prepare_workflow(
         finding_id: int, use_credential: Optional[str] = None
     ) -> Optional[dict]:
@@ -2986,7 +3435,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
             finding_id, use_credential=use_credential, config=cfg
         )
 
-    @mcp.tool()
+    @mcp.tool(annotations=_READONLY_ANN)
     def plan_batch(
         strategy: str,
         scan_ids: Optional[list[int]] = None,
@@ -3091,6 +3540,11 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         return prompt_exploit_plan(finding_id, config=cfg)
 
     @mcp.prompt()
+    def verify_finding(finding_id: int) -> str:
+        """Step-by-step verification loop for a finding (workflow -> run -> verdict)."""
+        return prompt_verify_finding(finding_id, config=cfg)
+
+    @mcp.prompt()
     def triage_scope(scan_ids: str, severity_int: Optional[int] = None) -> str:
         """Draft a report brief across one or more scans (optionally one severity).
 
@@ -3103,7 +3557,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
     # --- Execution (gated) ---
     if cfg.mcp_allow_execution:
 
-        @mcp.tool()
+        @mcp.tool(annotations=_DESTRUCTIVE_ANN)
         async def execute_command(
             command: list[str],
             tool_name: str = "mcp",
@@ -3123,6 +3577,15 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
             timeout is clamped to [1, 3600]s. ALWAYS pass finding_id when the run
             verifies a finding: it attributes the run (get_finding_artifacts,
             verdict evidence, verified stats, workflow contributions).
+
+            Targets are checked against the engagement scope (scan hosts plus
+            mcp_scope_extra) unless mcp_enforce_scope is off; out-of-scope IPs are
+            refused and unresolved hostnames come back in scope_warnings. The
+            response's next_steps shows how to continue the verification loop.
+
+            On timeout the command is killed but still returns the normal structured
+            response (timed_out=true, exit_code 124, any partial stdout/stderr,
+            scope_warnings and a next_steps hint) rather than raising.
 
             Runs the blocking command in a worker thread and emits periodic
             progress heartbeats so long scans (e.g. nmap) show liveness in
@@ -3153,7 +3616,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
                         pass
             return task.result()
 
-        @mcp.tool()
+        @mcp.tool(annotations=_DESTRUCTIVE_ANN)
         async def start_execution(
             command: list[str],
             tool_name: str = "mcp",
@@ -3183,7 +3646,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
             )
             return {"job_id": job.job_id, "status": job.status}
 
-        @mcp.tool()
+        @mcp.tool(annotations=_READONLY_ANN)
         def get_execution_status(job_id: str) -> dict:
             """Return a background job's status (running/done/failed/cancelled) + tail."""
             from .jobs import get_registry
@@ -3193,7 +3656,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
                 raise ValueError(f"No job with id {job_id!r}")
             return job.status_dict()
 
-        @mcp.tool()
+        @mcp.tool(annotations=_IDEMPOTENT_ANN)
         def cancel_execution(job_id: str) -> dict:
             """Cancel a running job, killing its process group (no-op if finished)."""
             from .jobs import get_registry
@@ -3201,7 +3664,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
             job = get_registry().cancel(job_id)
             return {"job_id": job.job_id, "status": job.status}
 
-        @mcp.tool()
+        @mcp.tool(annotations=_READONLY_ANN)
         def list_jobs(limit: int = 50) -> list[dict]:
             """List background jobs (newest first) for this server process."""
             from .jobs import get_registry
@@ -3214,7 +3677,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
     # --- Scoped batch execution (gated by execution AND batch) ---
     if cfg.mcp_allow_execution and cfg.mcp_allow_batch:
 
-        @mcp.tool()
+        @mcp.tool(annotations=_DESTRUCTIVE_ANN)
         async def execute_batch(
             strategy: str,
             scan_ids: Optional[list[int]] = None,
@@ -3280,7 +3743,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
     # --- Mutations (gated) ---
     if cfg.mcp_allow_mutations:
 
-        @mcp.tool()
+        @mcp.tool(annotations=_IDEMPOTENT_ANN)
         def set_review_state(
             finding_id: int, new_state: str, notes: Optional[str] = None
         ) -> dict:
@@ -3297,7 +3760,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
             """Import a .nessus file into the database."""
             return tool_import_nessus(nessus_path)
 
-        @mcp.tool()
+        @mcp.tool(annotations=_IDEMPOTENT_ANN)
         def ingest_results(execution_id: int) -> IngestResult:
             """Parse a completed execution's output into structured facts (idempotent).
 
@@ -3306,7 +3769,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
             """
             return cast("IngestResult", tool_ingest_results(execution_id))
 
-        @mcp.tool()
+        @mcp.tool(annotations=_IDEMPOTENT_ANN)
         def set_finding_verdict(
             finding_id: int,
             verdict: str,
@@ -3389,10 +3852,11 @@ def gating_summary(config: CernoConfig) -> str:
 
     mutations = _onoff(config.mcp_allow_mutations)
     batch = _onoff(config.mcp_allow_execution and config.mcp_allow_batch)
+    scope = _onoff(config.mcp_enforce_scope)
     return (
         f"mcp: serving over stdio (execution={execution}, mutations={mutations}, "
         f"batch={batch}, cred_injection={_onoff(config.mcp_allow_cred_injection)}, "
-        f"cred_reveal={_onoff(config.mcp_allow_cred_reveal)}); "
+        f"cred_reveal={_onoff(config.mcp_allow_cred_reveal)}, scope_enforced={scope}); "
         "edit with 'cerno config set mcp_allow_<flag> ...' then reconnect to apply"
     )
 

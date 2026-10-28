@@ -120,8 +120,16 @@ Notes:
 - `get_finding_detail` caps per-host output at `max_hosts` (default 100) and
   reports `affected_total` / `affected_truncated`.
 - `get_capabilities` reports which gated capabilities are live (execution,
-  mutations, batch, credential injection/reveal, the exec allow/deny lists and
-  NetExec availability), so a client can self-orient without a failed call.
+  mutations, batch, credential injection/reveal, the exec allow/deny lists,
+  target-scope enforcement and NetExec availability), so a client can
+  self-orient without a failed call.
+- Every tool carries advisory MCP annotations (`readOnlyHint` on read/generate
+  tools, `idempotentHint` on ingest/verdict/state tools,
+  `destructiveHint`+`openWorldHint` on the execution tools), so clients can
+  auto-approve reads and warn before running commands. `reveal_credential` is
+  deliberately left unannotated so it is never auto-approved with reads.
+- `execute_command`, `set_review_state` and `set_finding_verdict` responses carry
+  a `next_steps` list with the state-aware next action in the verification loop.
 
 #### Config defaults
 
@@ -139,6 +147,7 @@ default:
 | `custom_workflows_path` (contributions) | Also decides "new" vs "enhanced" vs nothing-to-contribute for `get_workflow_candidate` and the `workflow_candidate` verdict hint |
 | `contribution_export_dir` | Where `export_workflow_contribution` writes files (default `<results_root>/contributions`) |
 | `mcp_batch_concurrency` / `mcp_batch_timeout` | Defaults for `execute_batch`'s `concurrency` (default 3, clamped to [1, 8]) and `per_command_timeout` (default 300s, clamped to [1, 3600]) |
+| `mcp_enforce_scope` / `mcp_scope_extra` | When `mcp_enforce_scope` is on (default), `execute_command`/`start_execution`/`execute_batch` refuse IP/CIDR targets outside the scan hosts plus `mcp_scope_extra` ranges; unresolved hostnames are allowed and returned in `scope_warnings` |
 | `nxc_workspace_path` / `nxc_enrichment_enabled` | NetExec workspace for `get_host_nxc`, `list_nxc_credentials`, credential refs, `@cred:` injection, `reveal_credential` and nxc ingest. With enrichment off, all of these report NetExec as unavailable |
 | `log_path` / `debug_logging` | Where (and how verbosely) the server logs; stdout is reserved for JSON-RPC |
 | `proxychains_enabled` / `proxychains_host` / `proxychains_port` | `execute_command(use_proxy=true)` wraps the run in `proxychains4 -q -f ~/.cerno/proxychains4.conf` (SOCKS5 host:port) when `proxychains_enabled` is on; otherwise `use_proxy` is ignored. `check_tools` reports the installed proxychains-ng version |
@@ -171,6 +180,9 @@ One-click templates in clients that render MCP prompts:
 
 - `triage_finding` — draft a pentest-report brief for a finding
 - `exploit_plan` — outline the fastest viable exploitation/verification path
+- `verify_finding` — step-by-step verification loop for one finding (check the
+  mapped workflow, run attributed commands, ingest, record a verdict, move the
+  review state, offer a workflow contribution)
 - `triage_scope` — report brief across one or more scans (comma-separated
   `scan_ids`, e.g. `1,3`; merged and deduplicated by plugin), optionally one severity
 
@@ -247,6 +259,35 @@ cerno config set mcp_exec_denylist "rm,dd,sh"    # binaries execute_command may 
 - `sudo` runs non-interactively. If sudo would prompt for a password, the call is
   refused (pre-authenticate with `sudo -v`).
 - `get_capabilities` reports both lists as configured.
+
+---
+
+## Target scope
+
+When `mcp_enforce_scope` is on (the default), every `execute_command`,
+`start_execution` and `execute_batch` run is checked against the engagement scope
+before it launches — including batch and finding-attributed runs, on a single code
+path.
+
+- **In scope** = every host from your imported scans (`ip_address`, `scan_target`,
+  `fqdn`, `netbios_name`) plus any CIDR / IP / hostname in `mcp_scope_extra`.
+- **Targets** are read from the command after unwrapping `sudo`/`proxychains4`/…:
+  positional IPv4/IPv6/CIDR arguments, URL hosts, and `-iL <file>` entries. The
+  values of credential flags (`-u`, `-p`, `-d`, `-H`, `--username`, …) are skipped.
+- An **IP or CIDR** target not covered by the scope **refuses** the run, listing the
+  offending targets. A CIDR is in scope only if fully contained in an
+  `mcp_scope_extra` range (a single scan host does not put its whole `/24` in scope).
+- A **bare hostname** that is neither a known scan host nor an IP is **allowed with a
+  warning** (returned in the response's `scope_warnings`): it cannot be resolved to
+  scope without DNS.
+
+```bash
+cerno config set mcp_scope_extra "10.0.0.0/24,192.168.50.10"  # widen scope
+cerno config set mcp_enforce_scope false                       # disable the check
+```
+
+The check is a guardrail against a misdirected scan, not a network boundary. It is
+only consulted when `mcp_allow_execution` is on.
 
 ---
 
