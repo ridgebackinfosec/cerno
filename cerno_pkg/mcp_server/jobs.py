@@ -206,8 +206,15 @@ class JobRegistry:
             try:
                 stdout, stderr = proc.communicate(timeout=timeout)
             except subprocess.TimeoutExpired:
+                # Timeout (not cancellation): terminate, drain partial output, then
+                # re-raise so _run_and_record builds the same structured envelope the
+                # sync path does. Cancellation kills the proc elsewhere, so
+                # communicate() returns normally and never reaches this branch.
                 _terminate(proc)
                 stdout, stderr = proc.communicate()
+                raise subprocess.TimeoutExpired(
+                    run_command, timeout, output=stdout, stderr=stderr
+                )
             meta = ExecutionMetadata(
                 exit_code=proc.returncode,
                 duration_seconds=time.time() - start,

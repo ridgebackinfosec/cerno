@@ -1004,7 +1004,9 @@ def render_finding_actions_footer(
     right_row2 = join_actions_texts([key_text("T", "Run tool")])
 
     # Row 3: Control actions (always present)
-    left_row3 = join_actions_texts([_move_action_text(review_state)])
+    left_row3 = join_actions_texts(
+        [_move_action_text(review_state), key_text("R", "Record verdict")]
+    )
     right_row3 = join_actions_texts([key_text("B", "Back")])
 
     # Row 4: Claude Assistant (conditional)

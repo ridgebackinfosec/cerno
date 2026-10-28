@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.9.0] - 2026-10-28
+
+### Added
+- **Record a verification verdict from the TUI:** the finding view has a new `[R]` key that prompts for a verdict (Confirmed / False Positive / Unable to Verify) plus an optional note and writes it to the finding's append-only verdict history. A Confirmed or False Positive verdict offers to move the finding to Done. This is the TUI counterpart to the MCP `set_finding_verdict` tool; previously verdicts could only be recorded over MCP or by auto-ingest.
+- **MCP verification guidance (soft, never blocking):** the server now sends connect-time `instructions` describing Cerno's verification loop (check the mapped workflow first and say when none exists → move to In Progress → run attributed commands → ingest → record a verdict → move review state → offer a workflow contribution), adapted to whether mutations are enabled. `execute_command`, `set_review_state` and `set_finding_verdict` responses now carry a `next_steps` list with the state-aware next action, and a new `verify_finding` prompt walks a client through the whole loop for one finding.
+- **MCP target scope enforcement:** `execute_command` / `start_execution` / `execute_batch` now refuse IP or CIDR targets that fall outside the engagement scope — the hosts from imported scans plus any ranges in the new `mcp_scope_extra` config key. Unresolved bare hostnames are allowed but returned in `scope_warnings`. Controlled by the new `mcp_enforce_scope` config key (default `true`); set it to `false` to disable the check. `get_capabilities` and the startup gating line report the scope state.
+- **MCP tool annotations:** every tool now advertises advisory annotations (`readOnlyHint` for read/generate tools, `idempotentHint` for ingest/verdict/state tools, `destructiveHint`+`openWorldHint` for the execution tools), so MCP clients can auto-approve reads and warn before running commands. `reveal_credential` is deliberately left unannotated so it is never auto-approved with ordinary reads.
+
+### Changed
+- **Minimum `mcp` dependency raised to `>=1.9`** (from `>=1.2`) for tool-annotation and server-instruction support.
+
+### Fixed
+- **MCP `execute_command` / `start_execution` / `execute_batch` no longer drop the structured response on timeout:** a command that exceeded its `timeout` raised a bare error, losing `next_steps`, `scope_warnings`, `ingested` and any partial output. The timeout path now returns the same structured envelope as a completed run — with `timed_out: true`, `exit_code` 124, the captured partial `stdout`/`stderr`, pre-run `scope_warnings`, and a `next_steps` hint to narrow the target/ports or raise the timeout — while still killing the process at the deadline. Scope and allow/deny refusals still short-circuit before the run, unchanged.
+
 ## [2.8.0] - 2026-10-27
 
 ### Changed

@@ -403,6 +403,36 @@ class CernoConfig:
     PR-ready workflow YAML files (default: None = ``<results_root>/contributions``).
     Export is local-only: nothing is sent anywhere."""
 
+    mcp_enforce_scope: bool = field(
+        default=True,
+        metadata={
+            "section": "MCP Server",
+            "kind": "bool",
+            "help": "Refuse execute_command targets outside the scan hosts / scope",
+        },
+    )
+    """Refuse MCP execute_command / start_execution / execute_batch runs whose IP or
+    CIDR targets fall outside scope (default: True). In-scope = every host in the
+    ``hosts`` table (from imported scans) plus any range in ``mcp_scope_extra``. IP and
+    CIDR literals (positional args, URL hosts, ``-iL`` file entries) are checked
+    fail-closed; a bare hostname that is neither a known scan host nor an IP is allowed
+    with a warning (it cannot be resolved to scope without DNS). Set False to disable
+    the check entirely. Only consulted when mcp_allow_execution is True."""
+
+    mcp_scope_extra: list[str] = field(
+        default_factory=list,
+        metadata={
+            "section": "MCP Server",
+            "kind": "list",
+            "help": "Extra in-scope CIDRs / IPs / hostnames for execute_command",
+            "list_default": (),
+            "placeholder": "(none)",
+        },
+    )
+    """Additional in-scope targets beyond the imported scan hosts, as a list of CIDRs,
+    IP addresses, or hostnames (default: empty). Widens what mcp_enforce_scope permits.
+    Ignored when mcp_enforce_scope is False."""
+
     # Proxychains4
     proxychains_enabled: bool = field(
         default=False,

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cerno"
-version = "2.8.0"
+version = "2.9.0"
 description = "Modern CLI for Nessus findings review and security tool orchestration"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -37,7 +37,7 @@ dependencies = [
     "beautifulsoup4>=4.14.2",
     "pyyaml>=6.0.0",
     "prompt_toolkit>=3.0",
-    "mcp>=1.2,<2",
+    "mcp>=1.9,<2",
 ]
 
 [project.optional-dependencies]
