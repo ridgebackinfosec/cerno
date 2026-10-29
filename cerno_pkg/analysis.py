@@ -22,6 +22,7 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 from rich.table import Table
+from rich.text import Text
 
 from .ansi import header, info, warn, style_if_enabled
 from .logging_setup import log_timing
@@ -397,7 +398,11 @@ def analyze_inclusions(
             sample = "\n".join(sample_names) + (
                 f"\n... (+{len(covered_list)-8} more)" if len(covered_list) > 8 else ""
             )
-            groups_table.add_row(str(i), root, str(len(covered_list)), sample or "—")
+            # Text, not str: root/covered names are scan-derived plugin names
+            # and Rich markup-parses any bare string handed to a cell.
+            groups_table.add_row(
+                str(i), Text(root), str(len(covered_list)), Text(sample or "—")
+            )
         _console_global.print(groups_table)
     else:
         info(

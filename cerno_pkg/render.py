@@ -523,7 +523,8 @@ def render_scan_table(scans: list[Path]) -> None:
     table.add_column("#", justify="right", no_wrap=True, max_width=5)
     table.add_column("Scan", overflow="fold")
     for i, scan_dir in enumerate(scans, 1):
-        table.add_row(str(i), scan_dir.name)
+        # Text: the scan name comes from the .nessus file or filename.
+        table.add_row(str(i), Text(scan_dir.name))
     _console_global.print(table)
 
 
@@ -715,7 +716,9 @@ def render_finding_list_table(
         # Color-code the severity label using severity_cell
         sev_colored = severity_cell(sev_display)
 
-        row_data = [str(row_number), sev_colored, plugin_id_str, plugin_name]
+        # Text, not str: plugin_name is scan-derived and Rich markup-parses any
+        # bare string handed to a cell, so brackets in it must not be tags.
+        row_data = [str(row_number), sev_colored, plugin_id_str, Text(plugin_name)]
 
         # Always retrieve and show host count from database
         host_count, _ports_str = get_counts_for(plugin_file)
@@ -794,9 +797,15 @@ def render_compare_tables(
         groups_table.add_column("Count", justify="right", no_wrap=True, max_width=12)
         groups_table.add_column("Findings (sample)", overflow="fold")
         for i, names in enumerate(groups_sorted, 1):
-            sample = "\n".join(names[:8])
+            # Text + append: the names are scan-derived, while the overflow
+            # notice is intentional styling. Building it as Text keeps the two
+            # apart without escaping either.
+            sample = Text("\n".join(names[:8]))
             if len(names) > 8:
-                sample += f"\n\n[bold yellow]Showing 8 of {len(names)} findings - Press [D] to view all[/]"
+                sample.append(
+                    f"\n\nShowing 8 of {len(names)} findings - Press [D] to view all",
+                    style=style_if_enabled("bold yellow"),
+                )
             groups_table.add_row(str(i), str(len(names)), sample)
         _console_global.print(groups_table)
 
@@ -2288,9 +2297,11 @@ def render_nxc_host_panel(host_ip: str, host_data: Any, has_data: bool = True) -
             )
 
             cred_table.add_row(
-                cred.protocol.upper(),
+                # Text: effectively enum-like, but still NetExec-DB values, and
+                # wrapping costs nothing. identity_text is already a Text.
+                Text(cred.protocol.upper()),
                 identity_text,
-                cred.credential_type[:8],  # Truncate long types
+                Text(cred.credential_type[:8]),  # Truncate long types
                 admin_indicator,
             )
         renderables.append(cred_table)
@@ -2316,7 +2327,8 @@ def render_nxc_host_panel(host_ip: str, host_data: Any, has_data: bool = True) -
                 access_text = Text("W", style="yellow")
             else:
                 access_text = Text("-", style="dim")
-            share_table.add_row(share.name, access_text)
+            # Text: share names come from the NetExec workspace DB.
+            share_table.add_row(Text(share.name), access_text)
         renderables.append(share_table)
 
     flags = _nxc_host_flags(host_data)
@@ -2812,7 +2824,7 @@ def render_host_history(history: "HostVulnerabilityHistory") -> None:
         prev_finding_count = scan.finding_count
 
         table.add_row(
-            scan.scan_name,
+            Text(scan.scan_name),  # Text: scan-derived
             format_date(scan.scan_date),
             str(scan.finding_count),
             str(scan.critical_count) if scan.critical_count else "-",

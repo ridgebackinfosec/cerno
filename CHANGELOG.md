@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.12.1] - 2026-10-29
+
+### Fixed
+- **The findings list no longer crashes on a plugin name containing brackets, and bracketed text is no longer silently dropped.** The 2.12.0 sanitization sweep was **incomplete**: it searched for f-strings *containing* markup tags, so it fixed the panel titles but missed every **table**, where a bare `str` cell is markup-parsed just the same while looking nothing like markup in the source. A plugin named `SMB [/] Signing` raised an uncaught `rich.errors.MarkupError` in `render_finding_list_table` and aborted the main review screen — the most-used view in `cerno review` — and `TLS 1.0 [deprecated] Detection` rendered as `TLS 1.0  Detection` because `[deprecated]` parses as a Rich style name. Scan-, NetExec- and user-derived values now reach Rich as `rich.text.Text`, which never parses markup, across six renderers: `render_finding_list_table`, `render_scan_table` (scan menu), `render_compare_tables` (`[H]` groups), `analysis.analyze_inclusions` (`[O]` groups), `render_nxc_host_panel` (share names plus credential protocol/type) and `render_host_history` (`cerno scan history`). Benign bracketed names such as `Apache Log4j [CVE-2021-44228] RCE` render exactly as before. `tests/test_markup_injection.py` gained 23 cases driving every one of those renderers with `[/]`, `[deprecated]`, `[link=…]` and a benign control, asserting both that nothing raises **and** that the bracketed text survives to the screen — the previous tests covered no table renderer at all, which is why 2.12.0 shipped broken. Verified end-to-end by importing a crafted `.nessus` and driving `cerno review`.
+
 ## [2.12.0] - 2026-10-29
 
 ### Added

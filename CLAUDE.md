@@ -587,7 +587,18 @@ Only after user confirms the changelog content:
 
 ### Rendering Untrusted Scan Text (Required)
 
-Plugin names, hostnames, scan names, workflow step titles, NetExec values and tool output are **attacker-influenced** — they come from third-party `.nessus` files, user-supplied workflow YAML and captured command output. Never interpolate them raw into a Rich markup string: a value containing `[/]` raises `MarkupError` and aborts rendering, and one containing a style word (e.g. `[deprecated]`) is silently swallowed.
+Plugin names, hostnames, scan names, workflow step titles, NetExec values and tool output are **attacker-influenced** — they come from third-party `.nessus` files, user-supplied workflow YAML and captured command output. A value containing `[/]` raises `MarkupError` and aborts rendering; one containing a style word (e.g. `[deprecated]`) is silently swallowed, which is worse — text disappears with no error at all.
+
+**The rule is about where the value lands, not what the source line looks like.** Rich markup-parses *any* bare `str` it is handed, so all of these are exposed even with no tag syntax in sight:
+
+```python
+table.add_row(plugin.plugin_name)        # a cell is parsed
+Panel(text), Panel(title=name)           # body and title are parsed
+console.print(value)                     # parsed
+f"[bold]{name}[/bold]"                   # parsed (the obvious one)
+```
+
+Do not audit this by grepping for markup-looking f-strings — that is exactly how the 2.12.0 sweep missed every table renderer and shipped a crash in the main findings list. Audit by asking *which values reach Rich*.
 
 - **Single style** → use `rich.text.Text(value, style=style_if_enabled("bold cyan"))`. `Text` never parses markup, so it is immune by construction. Preferred.
 - **Mixed styles in one string** → wrap each untrusted value in `ansi.safe_text()`, which strips control characters and escapes markup. Apply it **exactly once** (it is not idempotent).
