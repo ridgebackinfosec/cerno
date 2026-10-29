@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.11.3] - 2026-10-29
+
+### Changed
+- **Type checking moved to mypy 2.x** (`mypy>=2.4,<3`, from an unbounded `>=1.0`). mypy 2.0 turned `--local-partial-types` and `--strict-bytes` on by default and redefined `--allow-redefinition`; since CI runs mypy with `continue-on-error: true`, the old unbounded floor meant a silent jump to 2.x could have changed the reported baseline without ever failing a build. The floor is now bounded on both sides, and **the codebase is clean under it — 0 errors across 39 files, down from 14.** The fixes were type-level, not behavioral:
+  - `onboarding.py` narrows `scan_ids` inline and derives `is_multi` from the result instead of computing it separately (verified equivalent for `None` / empty / single / multi inputs).
+  - `ops.py` declares `http.server` and `threading` under `TYPE_CHECKING` so `start_ips_server()`'s return annotation resolves. Both were already imported lazily inside the function, and `from __future__ import annotations` meant the annotation was never evaluated at run time.
+  - `cerno.py` initializes `all_scan_ids` before the scan-selection loop rather than relying on a previous iteration having bound it — defensive only, as the existing `scan_id != 0` guard already prevented an unbound read — and renames a `names` local that held both a `str` and a `list[str]` within one function scope.
+  - Three no-longer-needed `# type: ignore` comments removed (`ops.py`, `fs.py`, `render.py`). The two `cast()` calls in `analysis.py` are deliberately kept, with a narrow `redundant-cast` ignore, because pyright — unlike mypy 2.x — does not narrow the union from the preceding `isinstance` check; removing them traded 2 mypy warnings for 4 pyright errors.
+  - The dead `[[tool.mypy.overrides]]` section for `tests.*` removed: it duplicated the global `disallow_untyped_defs` setting and `warn_unused_configs` reported it as unused.
+
+### Added
+- **`tests/test_onboarding.py`** (6 tests) covering the first-run workflow guidance and context-aware tips for `scan_ids` being `None`, single, or multi — including that a multi-scan selection aggregates Critical counts across every selected scan and pluralizes its wording. These paths previously had no test coverage.
+
 ## [2.11.2] - 2026-10-29
 
 ### Changed

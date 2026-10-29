@@ -1513,6 +1513,10 @@ def main(args: types.SimpleNamespace) -> None:
             return ids or None
 
         selected_scans: list[Scan] = []
+        # Carried across iterations of the scan-selection loop below: the
+        # previous scan's session is saved at the top of the next pass, after
+        # this has been populated from that selection.
+        all_scan_ids: list[int] = []
 
         # Outer loop for scan selection
         # Wrapped in try/finally to ensure session is saved on ALL exit paths
@@ -1761,11 +1765,11 @@ def main(args: types.SimpleNamespace) -> None:
 
                 # Build multi-scan display label for breadcrumb/header
                 if len(selected_scans) > 1:
-                    names = [s.scan_name for s in selected_scans]
-                    if len(names) == 2:
-                        _scan_label = f"{names[0]} + {names[1]}"
+                    _label_names = [s.scan_name for s in selected_scans]
+                    if len(_label_names) == 2:
+                        _scan_label = f"{_label_names[0]} + {_label_names[1]}"
                     else:
-                        _scan_label = f"{len(names)} scans"
+                        _scan_label = f"{len(_label_names)} scans"
                 else:
                     _scan_label = scan_dir.name
 

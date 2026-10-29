@@ -122,8 +122,12 @@ def compare_filtered(
     from .models import Finding, Plugin
 
     if files and isinstance(files[0], tuple) and len(files[0]) == 2:
-        # (Finding, Plugin) tuples - extract Findings with explicit cast for type narrowing
-        tuple_files = cast(list[tuple[Finding, Plugin]], files)
+        # (Finding, Plugin) tuples - extract Findings with explicit cast for type
+        # narrowing. mypy >=2 narrows the union from the isinstance check above and
+        # calls this redundant, but pyright does not, so the cast has to stay.
+        tuple_files = cast(  # type: ignore[redundant-cast]
+            list[tuple[Finding, Plugin]], files
+        )
         findings: list[Finding] = [pf for pf, _ in tuple_files]
         plugins_map = {pf.plugin_id: plugin for pf, plugin in tuple_files}
     else:
@@ -278,8 +282,12 @@ def analyze_inclusions(
     from .models import Finding, Plugin
 
     if files and isinstance(files[0], tuple) and len(files[0]) == 2:
-        # (Finding, Plugin) tuples - extract Findings with explicit cast for type narrowing
-        tuple_files = cast(list[tuple[Finding, Plugin]], files)
+        # (Finding, Plugin) tuples - extract Findings with explicit cast for type
+        # narrowing. mypy >=2 narrows the union from the isinstance check above and
+        # calls this redundant, but pyright does not, so the cast has to stay.
+        tuple_files = cast(  # type: ignore[redundant-cast]
+            list[tuple[Finding, Plugin]], files
+        )
         findings: list[Finding] = [pf for pf, _ in tuple_files]
         plugins_map = {pf.plugin_id: plugin for pf, plugin in tuple_files}
     else:

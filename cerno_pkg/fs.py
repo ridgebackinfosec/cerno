@@ -514,7 +514,7 @@ def handle_finding_view(
                 continue
             # Deferred import to avoid circular dependency (cerno.py imports fs.py)
             try:
-                from cerno import browse_claude_chat  # type: ignore[import]
+                from cerno import browse_claude_chat
 
                 _workflow = (
                     workflow_mapper.get_workflow(str(plugin.plugin_id))

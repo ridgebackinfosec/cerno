@@ -177,8 +177,12 @@ def show_workflow_guidance(
     """
     from .database import get_connection
 
-    is_multi = scan_ids is not None and len(scan_ids) > 1
-    effective_scan_ids = scan_ids if is_multi else [scan_id]
+    # Narrow scan_ids inline so the Optional is discharged for type checkers;
+    # is_multi then follows from the result rather than being computed twice.
+    effective_scan_ids = (
+        scan_ids if scan_ids is not None and len(scan_ids) > 1 else [scan_id]
+    )
+    is_multi = len(effective_scan_ids) > 1
 
     # Query scan statistics
     with get_connection() as conn:
@@ -322,8 +326,12 @@ def _show_context_aware_tips(
     """
     from .database import get_connection
 
-    is_multi = scan_ids is not None and len(scan_ids) > 1
-    effective_scan_ids = scan_ids if is_multi else [scan_id]
+    # Narrow scan_ids inline so the Optional is discharged for type checkers;
+    # is_multi then follows from the result rather than being computed twice.
+    effective_scan_ids = (
+        scan_ids if scan_ids is not None and len(scan_ids) > 1 else [scan_id]
+    )
+    is_multi = len(effective_scan_ids) > 1
     placeholders = ",".join("?" * len(effective_scan_ids))
 
     tips = []  # Collect tips as Text objects

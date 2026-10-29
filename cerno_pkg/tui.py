@@ -771,7 +771,7 @@ def ask_claude_multiline() -> str:
     def _submit(event):
         event.current_buffer.validate_and_handle()
 
-    session = PromptSession(key_bindings=kb, multiline=True)
+    session: PromptSession[str] = PromptSession(key_bindings=kb, multiline=True)
     try:
         return session.prompt("Ask Claude: ").strip()
     except KeyboardInterrupt:

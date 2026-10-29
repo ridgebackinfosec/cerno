@@ -18,7 +18,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
 from rich.progress import (
     Progress,
@@ -30,6 +30,13 @@ from rich.progress import (
 from .ansi import C, err, get_console
 from .constants import PROCESS_TERMINATE_TIMEOUT
 from .logging_setup import log_error, log_info, log_timing
+
+if TYPE_CHECKING:
+    # Imported lazily inside start_ips_server() at runtime; needed here only so
+    # its return annotation resolves (annotations are strings via __future__).
+    import http.server
+    import threading
+
 
 _console_global = get_console()
 
@@ -400,7 +407,7 @@ def root_or_sudo_available() -> bool:
         True if running as root (on Unix) or sudo command is available
     """
     try:
-        if os.name != "nt" and os.geteuid() == 0:  # type: ignore[attr-defined]
+        if os.name != "nt" and os.geteuid() == 0:
             return True
     except AttributeError:
         pass

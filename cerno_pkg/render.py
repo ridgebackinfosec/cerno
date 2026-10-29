@@ -730,7 +730,7 @@ def render_finding_list_table(
                 ai_cell = Text("✦", style="bold magenta")
             else:
                 ai_cell = Text("")
-            row_data.append(ai_cell)  # type: ignore[arg-type]
+            row_data.append(ai_cell)
 
         row_data.append(_review_state_cell(getattr(plugin_file, "review_state", None)))
 
