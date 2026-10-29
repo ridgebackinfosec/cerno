@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.11.1] - 2026-10-29
+
+### Changed
+- **`rich` dependency moved to `>=14.3,<16`** (from `>=13.7,<15`), so installs now resolve Rich 15.x. Rich 15.0.0's only breaking change is dropping Python 3.8, which Cerno never supported (it requires 3.11+). **No rendering behavior changes:** all 181 tests that assert on rendered output — including exact ANSI byte sequences and `Text` span internals — pass unchanged. This is a maintenance change rather than a feature one: none of Rich 15.0.0's fixes touch code paths Cerno uses (`Text.from_ansi`, `isatty` and Markdown rendering are unused, and neither `console.print(..., end=...)` call site is an *empty* print), and `TTY_COMPATIBLE=1` already worked under 14.3. The value is that the old `<15` cap had pinned Cerno a major version behind since April 2026 and would have blocked any future 15.x bug or security fix.
+- **Three regression guards added for Cerno's deepest Rich couplings** (`tests/test_color_scheme.py::TestRichCouplingGuards`). `ansi.py` overrides `Console.get_style()`, imports the semi-private `rich.default_styles.DEFAULT_STYLES`, and assigns Rich's private global `rich._console` so bare `Prompt`/`Confirm`/`Progress` calls inherit the color scheme. Each of these fails *silently* on a Rich upgrade — the palette reverts to Rich's defaults with no exception raised and no existing test failing — so all three are now asserted directly instead of being inferred from rendered output.
+
 ## [2.11.0] - 2026-10-29
 
 ### Changed

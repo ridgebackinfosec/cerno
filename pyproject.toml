@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cerno"
-version = "2.11.0"
+version = "2.11.1"
 description = "Modern CLI for Nessus findings review and security tool orchestration"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -27,7 +27,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "rich>=13.7,<15",
+    "rich>=14.3,<16",
     "typer>=0.12,<1",
     "shellingham>=1.5,<2",  # Required by typer for add_completion shell detection
     "pyperclip>=1.8,<2",

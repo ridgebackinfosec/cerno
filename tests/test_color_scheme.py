@@ -3,6 +3,8 @@
 import io
 
 import pytest
+import rich
+from rich.style import Style
 from rich.table import Table
 
 from cerno_pkg import ansi
@@ -67,6 +69,48 @@ class TestCernoConsole:
         table.add_column("c", style="cyan")
         table.add_row("v")
         assert "38;5;30" in _render("light", table)
+
+
+@pytest.mark.unit
+class TestRichCouplingGuards:
+    """Guards for the three points where ansi.py reaches into Rich's internals.
+
+    Each of these fails *silently* on a Rich upgrade — the palette quietly
+    reverts to Rich's defaults with no exception raised — so they are asserted
+    directly rather than inferred from rendered output.
+    """
+
+    def test_get_style_override_intercepts_named_colors(self):
+        """Rich routes every string style through ``Console.get_style()``.
+
+        If the override stops being called (signature change, added caching),
+        named colors stop being remapped for the active scheme.
+        """
+        assert CernoConsole(scheme="light").get_style("yellow") == Style.parse(
+            "dark_orange3"
+        )
+        assert CernoConsole(scheme="dark").get_style("yellow") == Style.parse("yellow")
+
+    def test_rich_default_styles_still_importable(self):
+        """``CernoConsole.__init__`` rebuilds Rich's built-in theme from this
+        semi-private mapping, so a rename or relocation breaks theming."""
+        from rich.default_styles import DEFAULT_STYLES
+
+        assert DEFAULT_STYLES, "rich.default_styles.DEFAULT_STYLES is empty"
+        assert "prompt.choices" in DEFAULT_STYLES
+
+    def test_installed_as_rich_global_console(self, monkeypatch):
+        """Bare ``Prompt``/``Confirm``/``Progress`` calls fall back to Rich's
+        global console, which ``get_console()`` sets via the private
+        ``rich._console``. If that attribute is renamed or lazily initialized
+        the assignment becomes a no-op and every prompt loses the scheme.
+        """
+        monkeypatch.setattr(rich, "_console", None, raising=False)
+        monkeypatch.setattr(ansi, "_console_cache", None)
+
+        console = ansi.get_console(CernoConfig(color_scheme="light"))
+
+        assert rich.get_console() is console
 
 
 @pytest.mark.unit

@@ -1,4 +1,4 @@
-rich>=13.7,<15
+rich>=14.3,<16
 typer>=0.12,<1
 shellingham>=1.5,<2
 pyperclip>=1.8,<2
