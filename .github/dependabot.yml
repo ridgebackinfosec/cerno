@@ -10,3 +10,14 @@ updates:
     target-branch: "develop"
     schedule:
       interval: "monthly"
+    # Batch the dev/test toolchain into a single PR; runtime deps stay
+    # individual so each one can be reviewed and smoke-tested on its own.
+    groups:
+      dev-tooling:
+        patterns:
+          - "pytest"
+          - "pytest-*"
+          - "black"
+          - "mypy"
+          - "pyright"
+          - "types-*"

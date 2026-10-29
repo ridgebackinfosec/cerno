@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.11.0] - 2026-10-29
+
+### Changed
+- **Dev-dependency floors raised to the versions actually in use:** `pytest-cov>=7.0` (from `>=4.0`), `pytest-mock>=3.15` (from `>=3.10`), `pytest-timeout>=2.4` (from `>=2.1`), `black>=26.3` (from `>=23.0`), `pyright>=1.1.408` (from `>=1.1.389`) and `types-PyYAML>=6.0.12.20260906` (from `>=6.0`). The old floors were three to four years stale; the `black>=23.0` floor in particular let a contributor format with a Black whose stable style predates the current one and produce spurious reformatting diffs. Runtime dependencies are unchanged by this entry. Development-only — no effect on installed CLI behavior.
+- **Dependabot batches the dev/test toolchain into a single monthly PR** (`pytest*`, `black`, `mypy`, `pyright`, `types-*`) instead of opening one per package. Runtime dependencies remain individual PRs so each can be reviewed and smoke-tested on its own.
+
+### Removed
+- **Three unused runtime dependencies dropped: `beautifulsoup4`, `requests` and `colorama`.** None of them was imported anywhere in Cerno — `.nessus` and nmap XML are parsed with the stdlib `xml.etree`, the remote-scan server is built on stdlib `http.server` + `ssl` (`ops.py:start_ips_server()`), and ANSI colors are generated in `ansi.py` without `colorama`. Removing them also drops the transitive `soupsieve`, `urllib3`, `certifi`, `charset-normalizer` and `idna`, so an install pulls roughly nine fewer packages and no longer ships a CA bundle that Cerno never consults. No functional change; a clean install was verified to import every module and run the CLI. **Action required:** reinstall to prune the now-unused packages (`pipx reinstall cerno`, or `pip install -e ".[dev]"` for development).
+
 ## [2.10.0] - 2026-10-28
 
 ### Changed

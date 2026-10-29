@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cerno"
-version = "2.10.0"
+version = "2.11.0"
 description = "Modern CLI for Nessus findings review and security tool orchestration"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -29,12 +29,9 @@ classifiers = [
 dependencies = [
     "rich>=13.7,<15",
     "typer>=0.12,<1",
-    "shellingham>=1.5,<2",
-    "colorama>=0.4.6,<1",
+    "shellingham>=1.5,<2",  # Required by typer for add_completion shell detection
     "pyperclip>=1.8,<2",
     "loguru>=0.7.3",
-    "requests>=2.32.5",
-    "beautifulsoup4>=4.14.2",
     "pyyaml>=6.0.0",
     "prompt_toolkit>=3.0",
     "mcp>=2,<3",
@@ -43,13 +40,13 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=9.1.1",
-    "pytest-cov>=4.0",
-    "pytest-mock>=3.10",
-    "pytest-timeout>=2.1",
-    "black>=23.0",
+    "pytest-cov>=7.0",
+    "pytest-mock>=3.15",
+    "pytest-timeout>=2.4",
+    "black>=26.3",  # Floor matters: Black's stable style changes across majors
     "mypy>=1.0",
-    "pyright>=1.1.389",  # Type checking (complementary to mypy)
-    "types-PyYAML>=6.0",  # Type stubs for pyyaml
+    "pyright>=1.1.408",  # Type checking (complementary to mypy)
+    "types-PyYAML>=6.0.12.20260906",  # Type stubs for pyyaml
 ]
 
 [project.urls]
