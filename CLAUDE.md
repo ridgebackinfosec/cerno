@@ -262,7 +262,8 @@ cerno_pkg/
   ├── enums.py             # DisplayFormat, ViewFormat, SortMode
   ├── config.py            # CernoConfig dataclass, load/save, reset_config_key(), MCP_NOT_APPLICABLE_KEYS
   ├── constants.py         # Paths, review-state constants, NSE profiles, LIGHT_BG_COLOR_MAP
-  ├── ansi.py              # CernoConsole (color_scheme remapping), err/warn/info/ok helpers
+  ├── ansi.py              # CernoConsole (color_scheme remapping), err/warn/info/ok helpers,
+  │                        # safe_text() / strip_unsafe_escapes() for untrusted scan text
   ├── banner.py            # Promotional startup banner (`review -q` hides it)
   ├── logging_setup.py     # Loguru setup with rotation; log_info/log_debug/log_error
   ├── skills/cerno-assistant.md  # Claude Assistant system prompt
@@ -583,6 +584,17 @@ Only after user confirms the changelog content:
 ### Data vs Render Separation
 
 **Pattern**: Compute pure data first, then render with Rich. Example: `analysis.py:build_compare_data()` returns data dict → `render_compare_table()` creates Rich table.
+
+### Rendering Untrusted Scan Text (Required)
+
+Plugin names, hostnames, scan names, workflow step titles, NetExec values and tool output are **attacker-influenced** — they come from third-party `.nessus` files, user-supplied workflow YAML and captured command output. Never interpolate them raw into a Rich markup string: a value containing `[/]` raises `MarkupError` and aborts rendering, and one containing a style word (e.g. `[deprecated]`) is silently swallowed.
+
+- **Single style** → use `rich.text.Text(value, style=style_if_enabled("bold cyan"))`. `Text` never parses markup, so it is immune by construction. Preferred.
+- **Mixed styles in one string** → wrap each untrusted value in `ansi.safe_text()`, which strips control characters and escapes markup. Apply it **exactly once** (it is not idempotent).
+- **`err()`/`warn()`/`ok()`/`header()`/`info()`** already sanitize via `ansi.strip_unsafe_escapes()`, which drops OSC/cursor escapes but keeps SGR colour — so passing deliberate `C.*` codes still works.
+- Do **not** sanitize at import time: the database should hold exactly what Nessus reported; only terminal rendering is unsafe.
+
+Regression tests live in `tests/test_markup_injection.py` — add a case there when introducing a new untrusted-text render site.
 
 ### Severity Handling
 

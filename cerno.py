@@ -80,7 +80,7 @@ from rich.table import Table
 from rich.traceback import install as rich_tb_install
 
 # Create a console for the interactive flow (configured with no_color setting)
-from cerno_pkg.ansi import get_console, get_terminal_width
+from cerno_pkg.ansi import get_console, get_terminal_width, safe_text
 from cerno_pkg.models import count_review_states
 from cerno_pkg.constants import (
     REVIEW_STATE_DONE,
@@ -251,7 +251,7 @@ def browse_claude_chat_aggregate(
         from cerno_pkg.claude_assistant import ASSISTANT_NOTICE
 
         _console_global.print(ASSISTANT_NOTICE)
-        _console_global.print(f"[dim]Scope: {scope_description}[/dim]")
+        _console_global.print(f"[dim]Scope: {safe_text(scope_description)}[/dim]")
 
         while True:
             render_claude_panel(turns, is_resumed=is_resumed)
@@ -2781,7 +2781,7 @@ def _import_nessus_directory(directory: Path) -> None:
     imported = 0
     skipped = 0
     for i, f in enumerate(files, 1):
-        _console_global.rule(f"[cyan][{i}/{n}] {f.name}[/cyan]")
+        _console_global.rule(f"[cyan][{i}/{n}] {safe_text(f.name)}[/cyan]")
         success = _import_single_nessus(f)
         if success:
             imported += 1

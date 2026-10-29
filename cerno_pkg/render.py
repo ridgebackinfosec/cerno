@@ -20,7 +20,7 @@ from rich.text import Text
 from contextlib import contextmanager
 import time
 
-from .ansi import info, warn, header, get_console, style_if_enabled
+from .ansi import info, warn, header, get_console, safe_text, style_if_enabled
 from .config import load_config
 from .constants import (
     PLUGIN_DETAILS_BASE,
@@ -2044,7 +2044,9 @@ def display_finding_preview(
 
     panel = Panel(
         content,
-        title=f"[bold cyan]{plugin.plugin_name}[/]",
+        # Text, not markup: plugin_name is scan-derived, so brackets in it must
+        # never be parsed as style tags.
+        title=Text(str(plugin.plugin_name), style=style_if_enabled("bold cyan")),
         subtitle=subtitle,
         subtitle_align="center",
         title_align="center",
@@ -2242,7 +2244,7 @@ def render_nxc_host_panel(host_ip: str, host_data: Any, has_data: bool = True) -
     if not has_data or host_data is None:
         return Panel(
             Text("  No NetExec data available", style=style_if_enabled("dim italic")),
-            title=f"[bold cyan]{host_ip}[/]",
+            title=Text(host_ip, style=style_if_enabled("bold cyan")),
             title_align="left",
             border_style=style_if_enabled("dim cyan"),
             box=box.ROUNDED,
@@ -2325,10 +2327,10 @@ def render_nxc_host_panel(host_ip: str, host_data: Any, has_data: bool = True) -
             flags_text.append(f"  • {flag}\n", style=style_if_enabled("red"))
         renderables.append(flags_text)
 
+    # Text, not markup: host_ip and hostname are scan-derived.
+    title = Text(host_ip, style=style_if_enabled("bold cyan"))
     if host_data.hostname:
-        title = f"[bold cyan]{host_ip}[/] [dim]({host_data.hostname})[/]"
-    else:
-        title = f"[bold cyan]{host_ip}[/]"
+        title.append(f" ({host_data.hostname})", style=style_if_enabled("dim"))
 
     return Panel(
         Group(*renderables),
@@ -2670,7 +2672,10 @@ def render_scan_comparison(result: "ScanComparisonResult") -> None:
     summary_text = "\n".join(summary_lines)
     summary_panel = Panel(
         summary_text,
-        title=f"[bold]Scan Comparison: {result.scan1_name} ({scan1_date}) → {result.scan2_name} ({scan2_date})[/bold]",
+        title=(
+            f"[bold]Scan Comparison: {safe_text(result.scan1_name)} ({scan1_date})"
+            f" → {safe_text(result.scan2_name)} ({scan2_date})[/bold]"
+        ),
         border_style=style_if_enabled("cyan"),
         padding=(1, 2),
     )
@@ -2756,8 +2761,8 @@ def render_host_history(history: "HostVulnerabilityHistory") -> None:
 
     # Header panel
     header_lines = [
-        f"[bold]IP Address:[/bold] {history.ip_address}",
-        f"[bold]Scan Target:[/bold] {history.scan_target}",
+        f"[bold]IP Address:[/bold] {safe_text(history.ip_address)}",
+        f"[bold]Scan Target:[/bold] {safe_text(history.scan_target)}",
         f"[bold]First Seen:[/bold] {format_date(history.first_seen)}",
         f"[bold]Last Seen:[/bold] {format_date(history.last_seen)}",
         f"[bold]Total Scans:[/bold] {history.scan_count}",

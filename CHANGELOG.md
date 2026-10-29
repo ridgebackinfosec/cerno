@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.12.0] - 2026-10-29
+
+### Added
+- **`ansi.safe_text()` and `ansi.strip_unsafe_escapes()`**, both exported from `cerno_pkg`, for neutralizing untrusted text. Use `safe_text()` on any scan-derived value interpolated into a Rich markup string; where a single style applies, prefer `rich.text.Text(value, style=...)`, which never parses markup and so is immune by construction rather than by being remembered. `safe_text()` is deliberately **not** idempotent — apply it exactly once. New `tests/test_markup_injection.py` (21 tests) covers both helpers plus the real render paths.
+
+### Fixed
+- **Scan-derived text can no longer crash the TUI, lose characters, or hijack the terminal.** Plugin names, hostnames, scan names and workflow step titles come from third-party `.nessus` files and were interpolated straight into Rich markup strings. Confirmed end-to-end by importing crafted scans: a plugin named `SMB [/] Signing` raised an unhandled `MarkupError` that aborted rendering; `TLS Version 1.0 [deprecated] Detection` displayed as `TLS Version 1.0  Detection` because `[deprecated]` parses as a Rich style tag and was silently swallowed; and `SMB [link=file:///etc/passwd]click[/link]` injected a clickable OSC-8 hyperlink into the operator's terminal. Panel titles carrying one style now use `rich.text.Text` (`render.py:display_finding_preview()`, `render_nxc_host_panel()`), and the mixed-style sites escape via `safe_text()` (`render.py:render_scan_comparison()`, `render_host_history()`, `fs.py` workflow step panels, `cerno.py` Claude scope line and import rule). Benign bracketed names such as `Apache Log4j [CVE-2021-44228] RCE` render exactly as before.
+- **Terminal escape sequences in status messages no longer reach the terminal.** `err()` / `warn()` / `ok()` / `header()` / `info()` write raw ANSI through `print()`, so an attacker-influenced value could emit an OSC window-title sequence or cursor-movement escape — reproducible with `cerno config get $'\x1b]0;title\x07'`. All five now filter through `strip_unsafe_escapes()`, which removes OSC, cursor-movement and other escape sequences while deliberately preserving SGR colour so captured nmap/NetExec output and `tools.py`'s bold label still render correctly. `.nessus` files cannot carry an ESC byte at all (it is invalid XML), so the remaining surface is tool output, NetExec workspace values and file names.
+
 ## [2.11.3] - 2026-10-29
 
 ### Changed

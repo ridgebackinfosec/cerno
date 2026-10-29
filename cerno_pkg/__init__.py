@@ -19,6 +19,8 @@ __all__ = [
     "initialize_colors",
     "get_no_color",
     "style_if_enabled",
+    "safe_text",
+    "strip_unsafe_escapes",
     # Banner module
     "display_banner",
     # Constants module
@@ -198,6 +200,8 @@ from .ansi import (
     initialize_colors,
     get_no_color,
     style_if_enabled,
+    safe_text,
+    strip_unsafe_escapes,
 )
 from .banner import display_banner
 from .constants import (

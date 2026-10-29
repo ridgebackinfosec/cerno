@@ -4,12 +4,14 @@ This module provides ANSI color codes and helper functions for colorized
 console output. Color configuration is managed via config.yaml.
 """
 
+import re
 import shutil
 from functools import lru_cache
 from typing import Any, Optional, TYPE_CHECKING, Union
 
 from rich.color import Color
 from rich.console import Console
+from rich.markup import escape
 from rich.style import Style
 from rich.theme import Theme
 
@@ -240,13 +242,92 @@ def style_if_enabled(style_name: str, config: Optional["CernoConfig"] = None) ->
     return style_name
 
 
+# ========== Untrusted-text sanitization ==========
+# Scan-derived text (plugin names, hostnames, scan names, NetExec values, tool
+# output) is attacker-influenced: it arrives from third-party .nessus files and
+# CLI arguments. Interpolating it raw into Rich markup lets a name containing
+# square brackets crash rendering, silently swallow text, restyle output or
+# inject an OSC-8 hyperlink; printing it raw lets escape sequences retitle the
+# operator's terminal or move the cursor.
+
+#: C0 controls plus DEL, keeping tab and newline (both legitimate in output).
+_CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+
+#: Whole escape sequences: OSC (ESC ] ... BEL|ST), CSI (ESC [ ... final byte),
+#: and the two-character ESC forms.
+_ESC_SEQ_RE = re.compile(
+    r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)" r"|\x1b\[[0-9;?]*[ -/]*[@-~]" r"|\x1b[@-_]"
+)
+
+#: SGR (color/style) sequences only - these are safe and often intentional.
+_SGR_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _scrub(chunk: str) -> str:
+    """Drop every escape sequence and control character from a fragment."""
+    return _CONTROL_RE.sub("", _ESC_SEQ_RE.sub("", chunk))
+
+
+def strip_unsafe_escapes(text: str) -> str:
+    """Remove dangerous terminal escapes, preserving SGR color sequences.
+
+    Used by the message helpers below, which write raw ANSI via ``print()``.
+    SGR is kept so deliberate coloring still works (captured nmap/NetExec
+    output is colored, and ``tools.py`` passes ``C.BOLD`` into ``info()``);
+    OSC (window title, OSC-8 hyperlinks) and cursor-movement sequences are
+    removed.
+
+    The trade-off is deliberate: an attacker-influenced string reaching these
+    helpers can still change *colors*, which is cosmetic, but can no longer
+    retitle the terminal, move the cursor or plant a hyperlink. Note that
+    ``.nessus`` data cannot carry an ESC byte at all (it is invalid XML), so
+    the residual surface is tool output, NetExec values and file names. Values
+    interpolated into Rich *markup* get no such carve-out -- see
+    :func:`safe_text`.
+
+    Args:
+        text: Text that may contain terminal escape sequences
+
+    Returns:
+        The text with only SGR escapes left intact
+    """
+    parts: list[str] = []
+    pos = 0
+    for match in _SGR_RE.finditer(text):
+        parts.append(_scrub(text[pos : match.start()]))
+        parts.append(match.group(0))  # keep intentional color verbatim
+        pos = match.end()
+    parts.append(_scrub(text[pos:]))
+    return "".join(parts)
+
+
+def safe_text(value: object) -> str:
+    """Neutralize untrusted text for interpolation into a Rich markup string.
+
+    Strips every terminal escape and control character, then escapes Rich
+    markup so brackets render literally. Use this wherever scan-derived text is
+    embedded in an f-string containing markup tags. Where a value carries a
+    single style, prefer ``rich.text.Text(value, style=...)`` instead: ``Text``
+    never parses markup, so it is immune by construction rather than by being
+    remembered.
+
+    Args:
+        value: Any value; coerced with ``str()``
+
+    Returns:
+        Markup-safe, control-character-free text
+    """
+    return escape(_scrub(str(value)))
+
+
+# ========== Message output ==========
 def header(msg: str) -> None:
     """Print a bold blue header message with newline prefix.
 
     Args:
         msg: The message to print as a header
     """
-    print(f"{C.BOLD}{C.BLUE}\n{msg}{C.RESET}")
+    print(f"{C.BOLD}{C.BLUE}\n{strip_unsafe_escapes(msg)}{C.RESET}")
 
 
 def ok(msg: str) -> None:
@@ -255,7 +336,7 @@ def ok(msg: str) -> None:
     Args:
         msg: The success message to print
     """
-    print(f"{C.GREEN}✓ {msg}{C.RESET}")
+    print(f"{C.GREEN}✓ {strip_unsafe_escapes(msg)}{C.RESET}")
 
 
 def warn(msg: str) -> None:
@@ -264,7 +345,7 @@ def warn(msg: str) -> None:
     Args:
         msg: The warning message to print
     """
-    print(f"{C.YELLOW}⚠ {msg}{C.RESET}")
+    print(f"{C.YELLOW}⚠ {strip_unsafe_escapes(msg)}{C.RESET}")
 
 
 def err(msg: str) -> None:
@@ -273,7 +354,7 @@ def err(msg: str) -> None:
     Args:
         msg: The error message to print
     """
-    print(f"{C.RED}✗ {msg}{C.RESET}")
+    print(f"{C.RED}✗ {strip_unsafe_escapes(msg)}{C.RESET}")
 
 
 def info(msg: str) -> None:
@@ -282,7 +363,7 @@ def info(msg: str) -> None:
     Args:
         msg: The informational message to print
     """
-    print(msg)
+    print(strip_unsafe_escapes(msg))
 
 
 def fmt_action(text: str) -> str:

@@ -16,7 +16,7 @@ from typing import Optional, List, Any, TYPE_CHECKING
 
 from rich.prompt import Prompt, Confirm
 
-from .ansi import err, header, ok, warn, get_console, info
+from .ansi import err, header, ok, warn, get_console, info, safe_text
 from .constants import (
     REVIEW_MOVE_LABELS,
     REVIEW_STATE_DONE,
@@ -301,9 +301,15 @@ def display_workflow(workflow: "Workflow") -> None:
 
     for idx, step in enumerate(workflow.steps, 1):
         step_panel = Panel(
-            f"[bold cyan]{step.title}[/bold cyan]\n\n"
+            # safe_text: workflow titles/notes come from YAML, which may be a
+            # user-supplied custom_workflows_path.
+            f"[bold cyan]{safe_text(step.title)}[/bold cyan]\n\n"
             + "\n".join(f"  {cmd}" for cmd in step.commands)
-            + (f"\n\n[yellow]Notes:[/yellow] {step.notes}" if step.notes else ""),
+            + (
+                f"\n\n[yellow]Notes:[/yellow] {safe_text(step.notes)}"
+                if step.notes
+                else ""
+            ),
             title=f"Step {idx}",
             border_style=style_if_enabled("cyan"),
         )
