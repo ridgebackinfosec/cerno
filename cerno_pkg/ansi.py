@@ -18,7 +18,6 @@ if TYPE_CHECKING:
 
 from .constants import LIGHT_BG_COLOR_MAP, SEVERITY_COLORS
 
-
 # ========== Color scheme (light/dark terminal background) ==========
 _color_scheme: str = "light"
 """Active scheme for ANSI codes; set by initialize_colors()/get_console()."""
@@ -113,6 +112,7 @@ def initialize_colors(config: Optional["CernoConfig"] = None) -> None:
     """
     if config is None:
         from .config import load_config
+
         config = load_config()
 
     global _color_scheme
@@ -146,6 +146,7 @@ def get_no_color(config: Optional["CernoConfig"] = None) -> bool:
     """
     if config is None:
         from .config import load_config
+
         config = load_config()
 
     return config.no_color or config.term_override == "dumb"
@@ -202,6 +203,7 @@ def get_console(config: Optional["CernoConfig"] = None):
 
         if config is None:
             from .config import load_config
+
             config = load_config()
 
         _color_scheme = config.color_scheme
@@ -380,7 +382,9 @@ def breadcrumb(*parts: str, max_width: int = 78) -> str:
     # Truncate if too long
     if len(display_str) > max_width:
         # Try truncating the last part
-        available = max_width - len(" > ".join(parts[:-1])) - 3 - 5  # -3 for " > ", -5 for "..."
+        available = (
+            max_width - len(" > ".join(parts[:-1])) - 3 - 5
+        )  # -3 for " > ", -5 for "..."
         if available > 10:
             last_part = parts[-1]
             truncated_last = last_part[:available] + "..."

@@ -87,8 +87,12 @@ class TestReviewStateCheckConstraint:
     def test_import_default_is_unreviewed(self, temp_db):
         scan_id = Scan(scan_name="s", export_root="/tmp").save(temp_db)
         Plugin(plugin_id=7, plugin_name="p", severity_int=1).save(temp_db)
-        temp_db.execute("INSERT INTO findings (scan_id, plugin_id) VALUES (?, 7)", (scan_id,))
-        row = temp_db.execute("SELECT review_state FROM findings WHERE plugin_id = 7").fetchone()
+        temp_db.execute(
+            "INSERT INTO findings (scan_id, plugin_id) VALUES (?, 7)", (scan_id,)
+        )
+        row = temp_db.execute(
+            "SELECT review_state FROM findings WHERE plugin_id = 7"
+        ).fetchone()
         assert row[0] == "unreviewed"
 
 
@@ -169,7 +173,9 @@ class TestMoveReviewState:
         assert move_review_state(finding, target="unreviewed") == "unreviewed"
         assert _state(db_path, finding.finding_id) == "unreviewed"
 
-    @pytest.mark.parametrize("steps,target", [(0, "done"), (0, "unreviewed"), (1, "unreviewed")])
+    @pytest.mark.parametrize(
+        "steps,target", [(0, "done"), (0, "unreviewed"), (1, "unreviewed")]
+    )
     def test_disallowed_target_leaves_status(self, file_db, steps, target):
         db_path, finding = file_db
         for _ in range(steps):
@@ -181,7 +187,10 @@ class TestMoveReviewState:
 
 @pytest.mark.unit
 def test_count_review_states():
-    findings = [Finding(review_state=s) for s in ("unreviewed", "unreviewed", "in_progress", "done")]
+    findings = [
+        Finding(review_state=s)
+        for s in ("unreviewed", "unreviewed", "in_progress", "done")
+    ]
     assert count_review_states(findings) == (2, 1, 1, 4)
 
 
@@ -190,11 +199,26 @@ class TestCountByScanSeverity:
     def test_counts_each_status(self, temp_db):
         scan_id = Scan(scan_name="s", export_root="/tmp").save(temp_db)
         assert scan_id is not None
-        for pid, state in ((1, "unreviewed"), (2, "in_progress"), (3, "done"), (4, "done")):
+        for pid, state in (
+            (1, "unreviewed"),
+            (2, "in_progress"),
+            (3, "done"),
+            (4, "done"),
+        ):
             Plugin(plugin_id=pid, plugin_name=f"p{pid}", severity_int=3).save(temp_db)
             Finding(scan_id=scan_id, plugin_id=pid, review_state=state).save(temp_db)
-        assert Finding.count_by_scan_severity(scan_id, "3_High", conn=temp_db) == (1, 1, 2, 4)
-        assert Finding.count_by_scan_severity(scan_id, "2_Medium", conn=temp_db) == (0, 0, 0, 0)
+        assert Finding.count_by_scan_severity(scan_id, "3_High", conn=temp_db) == (
+            1,
+            1,
+            2,
+            4,
+        )
+        assert Finding.count_by_scan_severity(scan_id, "2_Medium", conn=temp_db) == (
+            0,
+            0,
+            0,
+            0,
+        )
 
     def test_multi_scan_uses_most_advanced_instance(self, temp_db):
         a = Scan(scan_name="a", export_root="/tmp").save(temp_db)
@@ -203,7 +227,9 @@ class TestCountByScanSeverity:
         Plugin(plugin_id=1, plugin_name="p1", severity_int=3).save(temp_db)
         Finding(scan_id=a, plugin_id=1, review_state="unreviewed").save(temp_db)
         Finding(scan_id=b, plugin_id=1, review_state="in_progress").save(temp_db)
-        counts = Finding.count_by_scan_severity(a, "3_High", conn=temp_db, scan_ids=[a, b])
+        counts = Finding.count_by_scan_severity(
+            a, "3_High", conn=temp_db, scan_ids=[a, b]
+        )
         assert counts == (0, 1, 0, 1)
 
 
@@ -238,7 +264,10 @@ class TestSchemaVersionGuard:
 
 @pytest.mark.unit
 def test_status_legend_and_icons():
-    from cerno_pkg.render import _review_state_cell, _status_legend  # pyright: ignore[reportPrivateUsage]
+    from cerno_pkg.render import (
+        _review_state_cell,
+        _status_legend,
+    )  # pyright: ignore[reportPrivateUsage]
 
     assert _status_legend().plain == "Status: ○ Unreviewed  ◐ In Progress"
     assert _review_state_cell("unreviewed").plain == "○"
@@ -252,9 +281,18 @@ class TestFilterFindingCandidates:
     @staticmethod
     def _records():
         return [
-            (Finding(plugin_id=1, review_state="unreviewed"), Plugin(plugin_id=1, plugin_name="SSL Weak Cipher")),
-            (Finding(plugin_id=2, review_state="in_progress"), Plugin(plugin_id=2, plugin_name="SSL Self-Signed")),
-            (Finding(plugin_id=3, review_state="in_progress"), Plugin(plugin_id=3, plugin_name="SMB Signing")),
+            (
+                Finding(plugin_id=1, review_state="unreviewed"),
+                Plugin(plugin_id=1, plugin_name="SSL Weak Cipher"),
+            ),
+            (
+                Finding(plugin_id=2, review_state="in_progress"),
+                Plugin(plugin_id=2, plugin_name="SSL Self-Signed"),
+            ),
+            (
+                Finding(plugin_id=3, review_state="in_progress"),
+                Plugin(plugin_id=3, plugin_name="SMB Signing"),
+            ),
         ]
 
     @staticmethod
@@ -264,7 +302,9 @@ class TestFilterFindingCandidates:
     def test_no_filters_returns_all(self):
         from cerno_pkg.tui import filter_finding_candidates
 
-        assert self._ids(filter_finding_candidates(self._records(), "", None, None)) == [1, 2, 3]
+        assert self._ids(
+            filter_finding_candidates(self._records(), "", None, None)
+        ) == [1, 2, 3]
 
     def test_in_progress_only(self):
         from cerno_pkg.tui import filter_finding_candidates
@@ -282,8 +322,12 @@ class TestFilterFindingCandidates:
         from cerno_pkg.tui import filter_finding_candidates
 
         group = (1, {"Plugin 3: SMB Signing", "Plugin 1: SSL Weak Cipher"}, "desc")
-        assert self._ids(filter_finding_candidates(self._records(), "", group, None)) == [1, 3]
-        assert self._ids(filter_finding_candidates(self._records(), "", group, "in_progress")) == [3]
+        assert self._ids(
+            filter_finding_candidates(self._records(), "", group, None)
+        ) == [1, 3]
+        assert self._ids(
+            filter_finding_candidates(self._records(), "", group, "in_progress")
+        ) == [3]
 
 
 @pytest.mark.integration

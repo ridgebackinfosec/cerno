@@ -76,8 +76,18 @@ class TestCompareScan:
             temp_db,
             "test_scan",
             [
-                {"plugin_id": 100, "plugin_name": "Plugin A", "severity_int": 3, "hosts": ["192.168.1.1"]},
-                {"plugin_id": 101, "plugin_name": "Plugin B", "severity_int": 2, "hosts": ["192.168.1.2"]},
+                {
+                    "plugin_id": 100,
+                    "plugin_name": "Plugin A",
+                    "severity_int": 3,
+                    "hosts": ["192.168.1.1"],
+                },
+                {
+                    "plugin_id": 101,
+                    "plugin_name": "Plugin B",
+                    "severity_int": 2,
+                    "hosts": ["192.168.1.2"],
+                },
             ],
         )
 
@@ -95,8 +105,18 @@ class TestCompareScan:
             temp_db,
             "scan1",
             [
-                {"plugin_id": 100, "plugin_name": "Plugin A", "severity_int": 3, "hosts": ["192.168.1.1"]},
-                {"plugin_id": 101, "plugin_name": "Plugin B", "severity_int": 2, "hosts": ["192.168.1.1"]},
+                {
+                    "plugin_id": 100,
+                    "plugin_name": "Plugin A",
+                    "severity_int": 3,
+                    "hosts": ["192.168.1.1"],
+                },
+                {
+                    "plugin_id": 101,
+                    "plugin_name": "Plugin B",
+                    "severity_int": 2,
+                    "hosts": ["192.168.1.1"],
+                },
             ],
         )
 
@@ -105,9 +125,24 @@ class TestCompareScan:
             temp_db,
             "scan2",
             [
-                {"plugin_id": 100, "plugin_name": "Plugin A", "severity_int": 3, "hosts": ["192.168.1.1"]},
-                {"plugin_id": 101, "plugin_name": "Plugin B", "severity_int": 2, "hosts": ["192.168.1.1"]},
-                {"plugin_id": 102, "plugin_name": "Plugin C", "severity_int": 4, "hosts": ["192.168.1.1"]},
+                {
+                    "plugin_id": 100,
+                    "plugin_name": "Plugin A",
+                    "severity_int": 3,
+                    "hosts": ["192.168.1.1"],
+                },
+                {
+                    "plugin_id": 101,
+                    "plugin_name": "Plugin B",
+                    "severity_int": 2,
+                    "hosts": ["192.168.1.1"],
+                },
+                {
+                    "plugin_id": 102,
+                    "plugin_name": "Plugin C",
+                    "severity_int": 4,
+                    "hosts": ["192.168.1.1"],
+                },
             ],
         )
 
@@ -129,9 +164,24 @@ class TestCompareScan:
             temp_db,
             "scan1",
             [
-                {"plugin_id": 100, "plugin_name": "Plugin A", "severity_int": 3, "hosts": ["192.168.1.1"]},
-                {"plugin_id": 101, "plugin_name": "Plugin B", "severity_int": 2, "hosts": ["192.168.1.1"]},
-                {"plugin_id": 102, "plugin_name": "Plugin C", "severity_int": 4, "hosts": ["192.168.1.1"]},
+                {
+                    "plugin_id": 100,
+                    "plugin_name": "Plugin A",
+                    "severity_int": 3,
+                    "hosts": ["192.168.1.1"],
+                },
+                {
+                    "plugin_id": 101,
+                    "plugin_name": "Plugin B",
+                    "severity_int": 2,
+                    "hosts": ["192.168.1.1"],
+                },
+                {
+                    "plugin_id": 102,
+                    "plugin_name": "Plugin C",
+                    "severity_int": 4,
+                    "hosts": ["192.168.1.1"],
+                },
             ],
         )
 
@@ -140,8 +190,18 @@ class TestCompareScan:
             temp_db,
             "scan2",
             [
-                {"plugin_id": 100, "plugin_name": "Plugin A", "severity_int": 3, "hosts": ["192.168.1.1"]},
-                {"plugin_id": 101, "plugin_name": "Plugin B", "severity_int": 2, "hosts": ["192.168.1.1"]},
+                {
+                    "plugin_id": 100,
+                    "plugin_name": "Plugin A",
+                    "severity_int": 3,
+                    "hosts": ["192.168.1.1"],
+                },
+                {
+                    "plugin_id": 101,
+                    "plugin_name": "Plugin B",
+                    "severity_int": 2,
+                    "hosts": ["192.168.1.1"],
+                },
             ],
         )
 
@@ -163,9 +223,24 @@ class TestCompareScan:
             temp_db,
             "scan1",
             [
-                {"plugin_id": 100, "plugin_name": "Low Plugin", "severity_int": 1, "hosts": ["192.168.1.1"]},
-                {"plugin_id": 101, "plugin_name": "Medium Plugin", "severity_int": 2, "hosts": ["192.168.1.1"]},
-                {"plugin_id": 102, "plugin_name": "High Plugin", "severity_int": 3, "hosts": ["192.168.1.1"]},
+                {
+                    "plugin_id": 100,
+                    "plugin_name": "Low Plugin",
+                    "severity_int": 1,
+                    "hosts": ["192.168.1.1"],
+                },
+                {
+                    "plugin_id": 101,
+                    "plugin_name": "Medium Plugin",
+                    "severity_int": 2,
+                    "hosts": ["192.168.1.1"],
+                },
+                {
+                    "plugin_id": 102,
+                    "plugin_name": "High Plugin",
+                    "severity_int": 3,
+                    "hosts": ["192.168.1.1"],
+                },
             ],
         )
 
@@ -174,9 +249,24 @@ class TestCompareScan:
             temp_db,
             "scan2",
             [
-                {"plugin_id": 100, "plugin_name": "Low Plugin", "severity_int": 1, "hosts": ["192.168.1.1"]},
-                {"plugin_id": 101, "plugin_name": "Medium Plugin", "severity_int": 2, "hosts": ["192.168.1.1"]},
-                {"plugin_id": 102, "plugin_name": "High Plugin", "severity_int": 3, "hosts": ["192.168.1.1"]},
+                {
+                    "plugin_id": 100,
+                    "plugin_name": "Low Plugin",
+                    "severity_int": 1,
+                    "hosts": ["192.168.1.1"],
+                },
+                {
+                    "plugin_id": 101,
+                    "plugin_name": "Medium Plugin",
+                    "severity_int": 2,
+                    "hosts": ["192.168.1.1"],
+                },
+                {
+                    "plugin_id": 102,
+                    "plugin_name": "High Plugin",
+                    "severity_int": 3,
+                    "hosts": ["192.168.1.1"],
+                },
             ],
         )
 
@@ -197,7 +287,12 @@ class TestCompareScan:
             temp_db,
             "scan1",
             [
-                {"plugin_id": 100, "plugin_name": "Plugin A", "severity_int": 3, "hosts": ["192.168.1.1", "192.168.1.2"]},
+                {
+                    "plugin_id": 100,
+                    "plugin_name": "Plugin A",
+                    "severity_int": 3,
+                    "hosts": ["192.168.1.1", "192.168.1.2"],
+                },
             ],
         )
 
@@ -206,7 +301,12 @@ class TestCompareScan:
             temp_db,
             "scan2",
             [
-                {"plugin_id": 100, "plugin_name": "Plugin A", "severity_int": 3, "hosts": ["192.168.1.1", "192.168.1.3"]},
+                {
+                    "plugin_id": 100,
+                    "plugin_name": "Plugin A",
+                    "severity_int": 3,
+                    "hosts": ["192.168.1.1", "192.168.1.3"],
+                },
             ],
         )
 
@@ -230,7 +330,14 @@ class TestCompareScan:
         scan_id = _create_test_scan(
             temp_db,
             "test_scan",
-            [{"plugin_id": 100, "plugin_name": "Plugin A", "severity_int": 3, "hosts": ["192.168.1.1"]}],
+            [
+                {
+                    "plugin_id": 100,
+                    "plugin_name": "Plugin A",
+                    "severity_int": 3,
+                    "hosts": ["192.168.1.1"],
+                }
+            ],
         )
 
         result = compare_scans(scan_id, 99999, conn=temp_db)
@@ -249,8 +356,18 @@ class TestHostVulnerabilityHistory:
             temp_db,
             "scan1",
             [
-                {"plugin_id": 100, "plugin_name": "Critical", "severity_int": 4, "hosts": ["192.168.1.1"]},
-                {"plugin_id": 101, "plugin_name": "High", "severity_int": 3, "hosts": ["192.168.1.1"]},
+                {
+                    "plugin_id": 100,
+                    "plugin_name": "Critical",
+                    "severity_int": 4,
+                    "hosts": ["192.168.1.1"],
+                },
+                {
+                    "plugin_id": 101,
+                    "plugin_name": "High",
+                    "severity_int": 3,
+                    "hosts": ["192.168.1.1"],
+                },
             ],
         )
 
@@ -271,9 +388,24 @@ class TestHostVulnerabilityHistory:
             temp_db,
             "scan1",
             [
-                {"plugin_id": 100, "plugin_name": "Critical", "severity_int": 4, "hosts": ["192.168.1.1"]},
-                {"plugin_id": 101, "plugin_name": "High", "severity_int": 3, "hosts": ["192.168.1.1"]},
-                {"plugin_id": 102, "plugin_name": "Medium", "severity_int": 2, "hosts": ["192.168.1.1"]},
+                {
+                    "plugin_id": 100,
+                    "plugin_name": "Critical",
+                    "severity_int": 4,
+                    "hosts": ["192.168.1.1"],
+                },
+                {
+                    "plugin_id": 101,
+                    "plugin_name": "High",
+                    "severity_int": 3,
+                    "hosts": ["192.168.1.1"],
+                },
+                {
+                    "plugin_id": 102,
+                    "plugin_name": "Medium",
+                    "severity_int": 2,
+                    "hosts": ["192.168.1.1"],
+                },
             ],
         )
 
@@ -282,8 +414,18 @@ class TestHostVulnerabilityHistory:
             temp_db,
             "scan2",
             [
-                {"plugin_id": 100, "plugin_name": "Critical", "severity_int": 4, "hosts": ["192.168.1.1"]},
-                {"plugin_id": 101, "plugin_name": "High", "severity_int": 3, "hosts": ["192.168.1.1"]},
+                {
+                    "plugin_id": 100,
+                    "plugin_name": "Critical",
+                    "severity_int": 4,
+                    "hosts": ["192.168.1.1"],
+                },
+                {
+                    "plugin_id": 101,
+                    "plugin_name": "High",
+                    "severity_int": 3,
+                    "hosts": ["192.168.1.1"],
+                },
             ],
         )
 
@@ -300,7 +442,14 @@ class TestHostVulnerabilityHistory:
         _create_test_scan(
             temp_db,
             "scan1",
-            [{"plugin_id": 100, "plugin_name": "Plugin", "severity_int": 3, "hosts": ["192.168.1.1"]}],
+            [
+                {
+                    "plugin_id": 100,
+                    "plugin_name": "Plugin",
+                    "severity_int": 3,
+                    "hosts": ["192.168.1.1"],
+                }
+            ],
         )
 
         history = get_host_vulnerability_history("10.0.0.99", conn=temp_db)
@@ -312,8 +461,18 @@ class TestHostVulnerabilityHistory:
             temp_db,
             "scan1",
             [
-                {"plugin_id": 100, "plugin_name": "Plugin A", "severity_int": 4, "hosts": ["192.168.1.1"]},
-                {"plugin_id": 101, "plugin_name": "Plugin B", "severity_int": 3, "hosts": ["192.168.1.1"]},
+                {
+                    "plugin_id": 100,
+                    "plugin_name": "Plugin A",
+                    "severity_int": 4,
+                    "hosts": ["192.168.1.1"],
+                },
+                {
+                    "plugin_id": 101,
+                    "plugin_name": "Plugin B",
+                    "severity_int": 3,
+                    "hosts": ["192.168.1.1"],
+                },
             ],
         )
 
@@ -359,7 +518,11 @@ class TestDataclasses:
             scan2_date="2024-02-01",
             new_findings=[{"plugin_id": 100}, {"plugin_id": 101}],
             resolved_findings=[{"plugin_id": 102}],
-            persistent_findings=[{"plugin_id": 103}, {"plugin_id": 104}, {"plugin_id": 105}],
+            persistent_findings=[
+                {"plugin_id": 103},
+                {"plugin_id": 104},
+                {"plugin_id": 105},
+            ],
         )
 
         assert result.total_new == 2

@@ -67,7 +67,7 @@ class TestDatabaseTransaction:
         with db_transaction(temp_db) as conn:
             conn.execute(
                 "INSERT INTO scans (scan_name, export_root) VALUES (?, ?)",
-                ("test_scan", "/tmp/test")
+                ("test_scan", "/tmp/test"),
             )
 
         # Verify data was committed
@@ -81,7 +81,7 @@ class TestDatabaseTransaction:
             with db_transaction(temp_db) as conn:
                 conn.execute(
                     "INSERT INTO scans (scan_name, export_root) VALUES (?, ?)",
-                    ("test_scan", "/tmp/test")
+                    ("test_scan", "/tmp/test"),
                 )
                 # Force an error
                 raise ValueError("Test error")
@@ -98,14 +98,14 @@ class TestDatabaseTransaction:
         with db_transaction(temp_db) as conn:
             conn.execute(
                 "INSERT INTO scans (scan_name, export_root) VALUES (?, ?)",
-                ("scan1", "/tmp/test1")
+                ("scan1", "/tmp/test1"),
             )
 
             # Inner transaction should share same connection
             with db_transaction(conn) as inner_conn:
                 inner_conn.execute(
                     "INSERT INTO scans (scan_name, export_root) VALUES (?, ?)",
-                    ("scan2", "/tmp/test2")
+                    ("scan2", "/tmp/test2"),
                 )
 
         # Both should be committed
@@ -170,21 +170,21 @@ class TestForeignKeyConstraints:
         # Insert scan
         cursor = temp_db.execute(
             "INSERT INTO scans (scan_name, export_root) VALUES (?, ?)",
-            ("test_scan", "/tmp/test")
+            ("test_scan", "/tmp/test"),
         )
         scan_id = cursor.lastrowid
 
         # Insert plugin (severity_label fetched from view, not stored)
         temp_db.execute(
             "INSERT INTO plugins (plugin_id, plugin_name, severity_int) VALUES (?, ?, ?)",
-            (12345, "Test Plugin", 2)
+            (12345, "Test Plugin", 2),
         )
 
         # Insert plugin file
         temp_db.execute(
             """INSERT INTO findings (scan_id, plugin_id)
                VALUES (?, ?)""",
-            (scan_id, 12345)
+            (scan_id, 12345),
         )
 
         temp_db.commit()
@@ -204,7 +204,7 @@ class TestForeignKeyConstraints:
             temp_db.execute(
                 """INSERT INTO findings (scan_id, plugin_id)
                    VALUES (?, ?)""",
-                (9999, 12345)  # scan_id 9999 doesn't exist
+                (9999, 12345),  # scan_id 9999 doesn't exist
             )
             temp_db.commit()
 
@@ -262,18 +262,22 @@ class TestQueryHelpers:
         """Test query_one returns single row."""
         temp_db.execute(
             "INSERT INTO scans (scan_name, export_root) VALUES (?, ?)",
-            ("test_scan", "/tmp/test")
+            ("test_scan", "/tmp/test"),
         )
         temp_db.commit()
 
-        result = query_one(temp_db, "SELECT scan_name FROM scans WHERE scan_name = ?", ("test_scan",))
+        result = query_one(
+            temp_db, "SELECT scan_name FROM scans WHERE scan_name = ?", ("test_scan",)
+        )
 
         assert result is not None
         assert result["scan_name"] == "test_scan"
 
     def test_query_one_returns_none_when_empty(self, temp_db):
         """Test query_one returns None when no results."""
-        result = query_one(temp_db, "SELECT scan_name FROM scans WHERE scan_name = ?", ("nonexistent",))
+        result = query_one(
+            temp_db, "SELECT scan_name FROM scans WHERE scan_name = ?", ("nonexistent",)
+        )
 
         assert result is None
 
@@ -281,11 +285,11 @@ class TestQueryHelpers:
         """Test query_all returns multiple rows."""
         temp_db.execute(
             "INSERT INTO scans (scan_name, export_root) VALUES (?, ?)",
-            ("scan1", "/tmp/test1")
+            ("scan1", "/tmp/test1"),
         )
         temp_db.execute(
             "INSERT INTO scans (scan_name, export_root) VALUES (?, ?)",
-            ("scan2", "/tmp/test2")
+            ("scan2", "/tmp/test2"),
         )
         temp_db.commit()
 
@@ -315,7 +319,7 @@ class TestConcurrency:
         conn = get_connection(db_path)
         conn.execute(
             "INSERT INTO scans (scan_name, export_root) VALUES (?, ?)",
-            ("test_scan", "/tmp/test")
+            ("test_scan", "/tmp/test"),
         )
         conn.commit()
         conn.close()
@@ -345,7 +349,7 @@ class TestConcurrency:
         # Start a write transaction (don't commit yet)
         write_conn.execute(
             "INSERT INTO scans (scan_name, export_root) VALUES (?, ?)",
-            ("scan1", "/tmp/test1")
+            ("scan1", "/tmp/test1"),
         )
 
         # Read connection should still work (sees old data)

@@ -34,40 +34,46 @@ def temp_db() -> Generator[sqlite3.Connection, None, None]:
     conn.executemany(
         "INSERT INTO severity_levels VALUES (?, ?, ?, ?)",
         [
-            (4, 'Critical', 4, '#8B0000'),
-            (3, 'High', 3, '#FF4500'),
-            (2, 'Medium', 2, '#FFA500'),
-            (1, 'Low', 1, '#FFD700'),
-            (0, 'Info', 0, '#4682B4'),
-        ]
+            (4, "Critical", 4, "#8B0000"),
+            (3, "High", 3, "#FF4500"),
+            (2, "Medium", 2, "#FFA500"),
+            (1, "Low", 1, "#FFD700"),
+            (0, "Info", 0, "#4682B4"),
+        ],
     )
     conn.executemany(
         "INSERT INTO artifact_types (type_name, file_extension, description) VALUES (?, ?, ?)",
         [
-            ('nmap_xml', '.xml', 'Nmap XML output'),
-            ('nmap_gnmap', '.gnmap', 'Nmap greppable output'),
-            ('nmap_nmap', '.nmap', 'Nmap normal output'),
-            ('netexec_txt', '.txt', 'NetExec text output'),
-            ('log', '.log', 'Tool execution log'),
-        ]
+            ("nmap_xml", ".xml", "Nmap XML output"),
+            ("nmap_gnmap", ".gnmap", "Nmap greppable output"),
+            ("nmap_nmap", ".nmap", "Nmap normal output"),
+            ("netexec_txt", ".txt", "NetExec text output"),
+            ("log", ".log", "Tool execution log"),
+        ],
     )
     # Execution->data loop lookup tables (schema v4)
     conn.executemany(
         "INSERT INTO verdict_types (label, description) VALUES (?, ?)",
         [
-            ('confirmed', 'Finding verified as a true positive'),
-            ('false_positive', 'Finding verified as a false positive'),
-            ('unable', 'Unable to verify the finding'),
-        ]
+            ("confirmed", "Finding verified as a true positive"),
+            ("false_positive", "Finding verified as a false positive"),
+            ("unable", "Unable to verify the finding"),
+        ],
     )
     conn.executemany(
         "INSERT INTO nse_verdicts (label) VALUES (?)",
-        [('VULNERABLE',), ('NOT_VULNERABLE',), ('LIKELY_VULNERABLE',), ('UNKNOWN',)]
+        [("VULNERABLE",), ("NOT_VULNERABLE",), ("LIKELY_VULNERABLE",), ("UNKNOWN",)],
     )
     conn.executemany(
         "INSERT INTO port_states (label) VALUES (?)",
-        [('open',), ('closed',), ('filtered',),
-         ('open|filtered',), ('closed|filtered',), ('unfiltered',)]
+        [
+            ("open",),
+            ("closed",),
+            ("filtered",),
+            ("open|filtered",),
+            ("closed|filtered",),
+            ("unfiltered",),
+        ],
     )
 
     # Create views
@@ -168,9 +174,7 @@ def reset_environment(monkeypatch, tmp_path_factory):
     (or auto-creates) the developer's real ``~/.cerno/config.yaml``.
     """
     isolated_config = tmp_path_factory.mktemp("cerno_cfg") / "config.yaml"
-    monkeypatch.setattr(
-        "cerno_pkg.config.get_config_path", lambda: isolated_config
-    )
+    monkeypatch.setattr("cerno_pkg.config.get_config_path", lambda: isolated_config)
 
     # Clear database-related env vars (no longer used - config file only)
     monkeypatch.delenv("CERNO_RESULTS_ROOT", raising=False)
@@ -183,4 +187,5 @@ def reset_environment(monkeypatch, tmp_path_factory):
 
     # Reset cached config values
     from cerno_pkg.constants import reset_results_root_cache
+
     reset_results_root_cache()

@@ -155,9 +155,12 @@ def test_prepare_workflow_uses_custom(seeded, custom_wf):
     prep = mcp.tool_prepare_workflow(seeded["f1"], config=cfg, conn=seeded["conn"])
     assert prep is not None
     assert prep["steps"][0]["commands"][0]["filled"] == "nmap -p 445 10.0.0.1"
-    assert mcp.tool_prepare_workflow(
-        seeded["f1"], config=CernoConfig(), conn=seeded["conn"]
-    ) is None
+    assert (
+        mcp.tool_prepare_workflow(
+            seeded["f1"], config=CernoConfig(), conn=seeded["conn"]
+        )
+        is None
+    )
 
 
 def test_plan_batch_has_workflow_uses_custom(seeded, custom_wf):
@@ -233,7 +236,9 @@ def _script_arg(cmd: list[str]):
 def test_nmap_profile_from_config(seeded, tmp_path):
     cfg = CernoConfig(results_root=str(tmp_path), nmap_default_profile="smb")
     out = mcp.tool_generate_nmap_cmd(seeded["f1"], config=cfg, conn=seeded["conn"])
-    assert _script_arg(out["command"]) == "--script=smb-security-mode,smb2-security-mode"
+    assert (
+        _script_arg(out["command"]) == "--script=smb-security-mode,smb2-security-mode"
+    )
     assert "-sU" not in out["command"]
 
 
@@ -389,11 +394,15 @@ def test_nxc_enrichment_disabled_reported_unavailable(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def _verified_with_run(seeded, cfg, command="nmap -p 445 --script smb2-security-mode 10.0.0.1"):
+def _verified_with_run(
+    seeded, cfg, command="nmap -p 445 --script smb2-security-mode 10.0.0.1"
+):
     from cerno_pkg.models import ToolExecution
 
     conn, fid = seeded["conn"], seeded["f1"]
-    ToolExecution(finding_id=fid, tool_name="mcp", command_text=command, exit_code=0).save(conn)
+    ToolExecution(
+        finding_id=fid, tool_name="mcp", command_text=command, exit_code=0
+    ).save(conn)
     conn.commit()
     return mcp.tool_set_finding_verdict(fid, "confirmed", conn=conn, config=cfg)
 
@@ -401,7 +410,9 @@ def _verified_with_run(seeded, cfg, command="nmap -p 445 --script smb2-security-
 def test_contribution_export_dir_from_config(seeded, tmp_path):
     cfg = CernoConfig(contribution_export_dir=str(tmp_path / "contribs"))
     _verified_with_run(seeded, cfg)
-    res = mcp.tool_export_workflow_contribution(seeded["f1"], config=cfg, conn=seeded["conn"])
+    res = mcp.tool_export_workflow_contribution(
+        seeded["f1"], config=cfg, conn=seeded["conn"]
+    )
     assert Path(res["path"]).parent == tmp_path / "contribs"
 
 
@@ -411,7 +422,9 @@ def test_contribution_export_dir_defaults_under_results_root(seeded, tmp_path):
     reset_results_root_cache()
     cfg = CernoConfig(results_root=str(tmp_path / "rr"))
     _verified_with_run(seeded, cfg)
-    res = mcp.tool_export_workflow_contribution(seeded["f1"], config=cfg, conn=seeded["conn"])
+    res = mcp.tool_export_workflow_contribution(
+        seeded["f1"], config=cfg, conn=seeded["conn"]
+    )
     assert Path(res["path"]).parent == tmp_path / "rr" / "contributions"
 
 
@@ -420,7 +433,9 @@ def test_contribution_hint_uses_custom_workflows(seeded, custom_wf, tmp_path):
     plain = _verified_with_run(seeded, CernoConfig())
     assert plain["workflow_candidate"] == {"available": True, "reason": "new"}
     custom = mcp.tool_get_finding_verdict(
-        seeded["f1"], conn=seeded["conn"], config=CernoConfig(custom_workflows_path=str(custom_wf))
+        seeded["f1"],
+        conn=seeded["conn"],
+        config=CernoConfig(custom_workflows_path=str(custom_wf)),
     )
     assert custom["workflow_candidate"] == {"available": True, "reason": "enhanced"}
 

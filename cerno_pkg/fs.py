@@ -32,6 +32,8 @@ if TYPE_CHECKING:
 
 
 _console_global = get_console()
+
+
 def _display_name(finding, plugin=None) -> str:
     """Return a 'Plugin <id>: <name>' label for status messages."""
     if plugin:
@@ -71,6 +73,7 @@ def move_review_state(
             finding.transition_review_state(target, conn=conn)
     except Exception as e:
         from .logging_setup import log_error
+
         log_error(f"Failed to move review state: {e}")
         err(f"Could not {REVIEW_MOVE_LABELS[target].lower()}: {e}")
         return None
@@ -216,6 +219,7 @@ def default_page_size() -> int:
 
     # Check config first for manual override
     from .config import load_config
+
     config = load_config()
 
     if config.default_page_size:
@@ -229,6 +233,7 @@ def default_page_size() -> int:
         # Fallback to 12, log hint once
         if not _page_size_fallback_warned:
             from .logging_setup import log_debug
+
             log_debug(
                 "Terminal height detection failed, using default page size (12). "
                 "Set 'default_page_size' in config.yaml to override."
@@ -293,6 +298,7 @@ def display_workflow(workflow: "Workflow") -> None:
 
     # Steps
     from cerno_pkg.ansi import style_if_enabled
+
     for idx, step in enumerate(workflow.steps, 1):
         step_panel = Panel(
             f"[bold cyan]{step.title}[/bold cyan]\n\n"
@@ -313,6 +319,7 @@ def display_workflow(workflow: "Workflow") -> None:
 
     # Prominent continuation hint
     from rich.text import Text
+
     hint = Text()
     hint.append("[Press ", style="dim")
     hint.append("Enter", style="bold yellow")
@@ -369,11 +376,17 @@ def handle_finding_view(
     """
     # Lazy imports to avoid circular dependencies
     from .render import (
-        file_raw_paged_text, file_raw_payload_text,
-        grouped_paged_text, grouped_payload_text,
-        hosts_only_paged_text, hosts_only_payload_text,
-        build_plugin_output_details, display_finding_preview,
-        print_action_menu, menu_pager, display_nxc_per_host_detail,
+        file_raw_paged_text,
+        file_raw_payload_text,
+        grouped_paged_text,
+        grouped_payload_text,
+        hosts_only_paged_text,
+        hosts_only_payload_text,
+        build_plugin_output_details,
+        display_finding_preview,
+        print_action_menu,
+        menu_pager,
+        display_nxc_per_host_detail,
         render_finding_actions_footer,
     )
     from .tools import copy_to_clipboard, run_tool_workflow
@@ -390,6 +403,7 @@ def handle_finding_view(
     # Check Claude Assistant availability (cheap: shutil.which + config load)
     from .claude_assistant import check_claude_available
     from .config import load_config as _load_config
+
     _cfg = _load_config()
     claude_installed = check_claude_available()
     has_claude = claude_installed and _cfg.claude_assistant_enabled
@@ -455,7 +469,16 @@ def handle_finding_view(
             # hard-exit (e.g. a require_cmd on a missing binary) so a tooling
             # problem never drops the operator out of the review session.
             try:
-                run_tool_workflow(plugin, finding, scan_dir, sev_dir, hosts, ports_str or "", args, use_sudo)
+                run_tool_workflow(
+                    plugin,
+                    finding,
+                    scan_dir,
+                    sev_dir,
+                    hosts,
+                    ports_str or "",
+                    args,
+                    use_sudo,
+                )
             except SystemExit:
                 warn("Tool execution aborted; returning to the finding menu.")
             # Reset NXC manager to pick up any new data from tool execution
@@ -474,12 +497,15 @@ def handle_finding_view(
         # Handle Claude Assistant action
         if action_choice in ("a", "ask", "claude"):
             if not claude_installed:
-                warn("Claude CLI not found on PATH. Install claude to use this feature.")
+                warn(
+                    "Claude CLI not found on PATH. Install claude to use this feature."
+                )
                 continue
             if not has_claude:
                 # Installed but off: show the data-path disclosure and let the
                 # operator opt in (persisted). Decline returns to the menu.
                 from .claude_assistant import ensure_enabled
+
                 if not ensure_enabled(_cfg):
                     continue
                 has_claude = True
@@ -489,6 +515,7 @@ def handle_finding_view(
             # Deferred import to avoid circular dependency (cerno.py imports fs.py)
             try:
                 from cerno import browse_claude_chat  # type: ignore[import]
+
                 _workflow = (
                     workflow_mapper.get_workflow(str(plugin.plugin_id))
                     if workflow_mapper and plugin
@@ -530,11 +557,15 @@ def handle_finding_view(
                 header("CVE Information")
 
                 if plugin and plugin.cves:
-                    info(f"Found {len(plugin.cves)} CVE(s) for plugin {plugin.plugin_id}:")
+                    info(
+                        f"Found {len(plugin.cves)} CVE(s) for plugin {plugin.plugin_id}:"
+                    )
                     for cve in plugin.cves:
                         info(f"{cve}")
                 elif plugin:
-                    warn(f"No CVEs associated with this finding (plugin {plugin.plugin_id}).")
+                    warn(
+                        f"No CVEs associated with this finding (plugin {plugin.plugin_id})."
+                    )
                 else:
                     warn("Plugin information not available.")
             except Exception as exc:
@@ -585,11 +616,9 @@ def handle_finding_view(
         menu_pager(text)
 
         # Post-view actions: Copy, Change format, or Back
-        print_action_menu([
-            ("C", "Copy to clipboard"),
-            ("F", "Change format"),
-            ("B", "Back to menu")
-        ])
+        print_action_menu(
+            [("C", "Copy to clipboard"), ("F", "Change format"), ("B", "Back to menu")]
+        )
 
         try:
             post_choice = Prompt.ask("Action", default="b").strip().lower()
@@ -606,11 +635,9 @@ def handle_finding_view(
 
         elif post_choice in ("f", "format"):
             # Offer format change
-            print_action_menu([
-                ("R", "Raw"),
-                ("H", "Hosts only"),
-                ("G", "Grouped (current)")
-            ])
+            print_action_menu(
+                [("R", "Raw"), ("H", "Hosts only"), ("G", "Grouped (current)")]
+            )
             try:
                 format_choice = Prompt.ask("Choose format", default="g").lower()
             except KeyboardInterrupt:
@@ -684,7 +711,9 @@ def process_single_finding(
     display_name = f"Plugin {plugin.plugin_id}: {plugin.plugin_name}"
 
     if not hosts:
-        info("Finding has no affected hosts. This usually means the vulnerability doesn't affect any hosts.")
+        info(
+            "Finding has no affected hosts. This usually means the vulnerability doesn't affect any hosts."
+        )
         return
 
     # Display finding preview panel
@@ -715,7 +744,8 @@ def process_single_finding(
     # Tally state changes made during this view (finding is updated in place)
     if result == "mark_complete":
         done_total.append(display_name)
-    elif finding.review_state != state_before and finding.review_state == REVIEW_STATE_IN_PROGRESS:
+    elif (
+        finding.review_state != state_before
+        and finding.review_state == REVIEW_STATE_IN_PROGRESS
+    ):
         in_progress_total.append(display_name)
-
-

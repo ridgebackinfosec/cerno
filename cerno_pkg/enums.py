@@ -5,12 +5,14 @@ from enum import Enum
 
 class DisplayFormat(str, Enum):
     """Display format options for output."""
+
     SEPARATED = "separated"
     COMBINED = "combined"
 
 
 class ViewFormat(str, Enum):
     """View format for files."""
+
     RAW = "raw"
     GROUPED = "grouped"
     HOSTS_ONLY = "hosts"
@@ -18,6 +20,7 @@ class ViewFormat(str, Enum):
 
 class SortMode(str, Enum):
     """Sort mode for findings lists."""
+
     SEVERITY = "severity"
     PLUGIN_ID = "plugin_id"
     NAME = "name"

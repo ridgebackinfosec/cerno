@@ -23,7 +23,7 @@ class TestScanModel:
         scan = Scan(
             scan_name="test_scan",
             nessus_file_path="/tmp/test.nessus",
-            export_root="/tmp/exports"
+            export_root="/tmp/exports",
         )
 
         scan_id = scan.save(temp_db)
@@ -37,7 +37,7 @@ class TestScanModel:
         scan = Scan(
             scan_name="test_scan",
             nessus_file_path="/tmp/test.nessus",
-            export_root="/tmp/exports"
+            export_root="/tmp/exports",
         )
         scan.save(temp_db)
 
@@ -94,11 +94,11 @@ class TestScanModel:
 
         temp_db.execute(
             "UPDATE scans SET last_reviewed_at = ? WHERE scan_id = ?",
-            (old_time, scan1_id)
+            (old_time, scan1_id),
         )
         temp_db.execute(
             "UPDATE scans SET last_reviewed_at = ? WHERE scan_id = ?",
-            (recent_time, scan2_id)
+            (recent_time, scan2_id),
         )
         temp_db.commit()
 
@@ -144,29 +144,21 @@ class TestPluginModel:
     def test_plugin_save_creates_record(self, temp_db):
         """Test saving a new plugin."""
         plugin = Plugin(
-            plugin_id=12345,
-            plugin_name="Test Plugin",
-            severity_int=2,
-            cvss3_score=5.3
+            plugin_id=12345, plugin_name="Test Plugin", severity_int=2, cvss3_score=5.3
         )
 
         plugin.save(temp_db)
 
         # Verify saved
         cursor = temp_db.execute(
-            "SELECT plugin_name FROM plugins WHERE plugin_id = ?",
-            (12345,)
+            "SELECT plugin_name FROM plugins WHERE plugin_id = ?", (12345,)
         )
         result = cursor.fetchone()
         assert result["plugin_name"] == "Test Plugin"
 
     def test_plugin_get_by_id(self, temp_db):
         """Test retrieving plugin by ID."""
-        plugin = Plugin(
-            plugin_id=12345,
-            plugin_name="Test Plugin",
-            severity_int=2
-        )
+        plugin = Plugin(plugin_id=12345, plugin_name="Test Plugin", severity_int=2)
         plugin.save(temp_db)
 
         retrieved = Plugin.get_by_id(12345, temp_db)
@@ -181,14 +173,13 @@ class TestPluginModel:
             plugin_id=12345,
             plugin_name="Test Plugin",
             severity_int=2,
-            cves=["CVE-2024-0001", "CVE-2024-0002"]
+            cves=["CVE-2024-0001", "CVE-2024-0002"],
         )
         plugin.save(temp_db)
 
         # Check stored as JSON
         cursor = temp_db.execute(
-            "SELECT cves FROM plugins WHERE plugin_id = ?",
-            (12345,)
+            "SELECT cves FROM plugins WHERE plugin_id = ?", (12345,)
         )
         result = cursor.fetchone()
         cves = json.loads(result["cves"])
@@ -196,11 +187,7 @@ class TestPluginModel:
 
     def test_plugin_update_with_cves(self, temp_db):
         """Test updating plugin with CVE list."""
-        plugin = Plugin(
-            plugin_id=12345,
-            plugin_name="Test Plugin",
-            severity_int=2
-        )
+        plugin = Plugin(plugin_id=12345, plugin_name="Test Plugin", severity_int=2)
         plugin.save(temp_db)
 
         # Update with CVEs
@@ -226,10 +213,7 @@ class TestFindingModel:
         plugin.save(temp_db)
 
         # Create plugin file (host_count computed by view, not stored)
-        pf = Finding(
-            scan_id=scan_id,
-            plugin_id=12345
-        )
+        pf = Finding(scan_id=scan_id, plugin_id=12345)
 
         finding_id = pf.save(temp_db)
 
@@ -253,11 +237,7 @@ class TestFindingModel:
         plugin = Plugin(plugin_id=12345, plugin_name="Test", severity_int=2)
         plugin.save(temp_db)
 
-        pf = Finding(
-            scan_id=scan_id,
-            plugin_id=12345,
-            review_state="unreviewed"
-        )
+        pf = Finding(scan_id=scan_id, plugin_id=12345, review_state="unreviewed")
         finding_id = pf.save(temp_db)
         assert finding_id is not None
 
@@ -351,7 +331,9 @@ class TestFindingModel:
         # Should be sorted from highest to lowest severity
         assert severity_dirs == ["4_Critical", "3_High", "2_Medium", "0_Info"]
 
-    @pytest.mark.skip(reason="Cannot create duplicate scan_id+plugin_id due to UNIQUE constraint")
+    @pytest.mark.skip(
+        reason="Cannot create duplicate scan_id+plugin_id due to UNIQUE constraint"
+    )
     def test_get_severity_dirs_for_scan_deduplicates(self, temp_db):
         """Test get_severity_dirs_for_scan deduplicates severity directories."""
         # Setup scan
@@ -416,10 +398,7 @@ class TestFindingModel:
         plugin = Plugin(plugin_id=12345, plugin_name="Test", severity_int=2)
         plugin.save(temp_db)
 
-        pf = Finding(
-            scan_id=scan_id,
-            plugin_id=12345
-        )
+        pf = Finding(scan_id=scan_id, plugin_id=12345)
         finding_id = pf.save(temp_db)
         pf.finding_id = finding_id
 
@@ -427,32 +406,38 @@ class TestFindingModel:
         from cerno_pkg.models import Host, Port
 
         # Insert 192.168.1.1:80
-        host_id_1 = Host.get_or_create("192.168.1.1", "192.168.1.1", "ipv4", conn=temp_db)
+        host_id_1 = Host.get_or_create(
+            "192.168.1.1", "192.168.1.1", "ipv4", conn=temp_db
+        )
         port_id_80 = Port.get_or_create(80, conn=temp_db)
         temp_db.execute(
             "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, plugin_output) VALUES (?, ?, ?, ?)",
-            (finding_id, host_id_1, port_id_80, None)
+            (finding_id, host_id_1, port_id_80, None),
         )
 
         # Insert 192.168.1.1:443
         port_id_443 = Port.get_or_create(443, conn=temp_db)
         temp_db.execute(
             "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, plugin_output) VALUES (?, ?, ?, ?)",
-            (finding_id, host_id_1, port_id_443, None)
+            (finding_id, host_id_1, port_id_443, None),
         )
 
         # Insert 192.168.1.2:80
-        host_id_2 = Host.get_or_create("192.168.1.2", "192.168.1.2", "ipv4", conn=temp_db)
+        host_id_2 = Host.get_or_create(
+            "192.168.1.2", "192.168.1.2", "ipv4", conn=temp_db
+        )
         temp_db.execute(
             "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, plugin_output) VALUES (?, ?, ?, ?)",
-            (finding_id, host_id_2, port_id_80, None)
+            (finding_id, host_id_2, port_id_80, None),
         )
 
         # Insert example.com:443 (FQDN-targeted scan - use example.com as both IP and target for test)
-        host_id_3 = Host.get_or_create("93.184.216.34", "example.com", "fqdn", conn=temp_db)
+        host_id_3 = Host.get_or_create(
+            "93.184.216.34", "example.com", "fqdn", conn=temp_db
+        )
         temp_db.execute(
             "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, plugin_output) VALUES (?, ?, ?, ?)",
-            (finding_id, host_id_3, port_id_443, None)
+            (finding_id, host_id_3, port_id_443, None),
         )
         temp_db.commit()
 
@@ -496,18 +481,22 @@ class TestFindingModel:
         from cerno_pkg.models import Host, Port
 
         # Insert 2001:db8::1:80 (IPv6)
-        host_id_ipv6 = Host.get_or_create("2001:db8::1", "2001:db8::1", "ipv6", conn=temp_db)
+        host_id_ipv6 = Host.get_or_create(
+            "2001:db8::1", "2001:db8::1", "ipv6", conn=temp_db
+        )
         port_id_80 = Port.get_or_create(80, conn=temp_db)
         temp_db.execute(
             "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, plugin_output) VALUES (?, ?, ?, ?)",
-            (finding_id, host_id_ipv6, port_id_80, None)
+            (finding_id, host_id_ipv6, port_id_80, None),
         )
 
         # Insert 192.168.1.1:80 (IPv4)
-        host_id_ipv4 = Host.get_or_create("192.168.1.1", "192.168.1.1", "ipv4", conn=temp_db)
+        host_id_ipv4 = Host.get_or_create(
+            "192.168.1.1", "192.168.1.1", "ipv4", conn=temp_db
+        )
         temp_db.execute(
             "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, plugin_output) VALUES (?, ?, ?, ?)",
-            (finding_id, host_id_ipv4, port_id_80, None)
+            (finding_id, host_id_ipv4, port_id_80, None),
         )
         temp_db.commit()
 
@@ -563,25 +552,29 @@ class TestFindingModel:
         from cerno_pkg.models import Host, Port
 
         # Insert 192.168.1.1:80
-        host_id_1 = Host.get_or_create("192.168.1.1", "192.168.1.1", "ipv4", conn=temp_db)
+        host_id_1 = Host.get_or_create(
+            "192.168.1.1", "192.168.1.1", "ipv4", conn=temp_db
+        )
         port_id_80 = Port.get_or_create(80, conn=temp_db)
         temp_db.execute(
             "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, plugin_output) VALUES (?, ?, ?, ?)",
-            (finding_id, host_id_1, port_id_80, None)
+            (finding_id, host_id_1, port_id_80, None),
         )
 
         # Insert 192.168.1.1:443
         port_id_443 = Port.get_or_create(443, conn=temp_db)
         temp_db.execute(
             "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, plugin_output) VALUES (?, ?, ?, ?)",
-            (finding_id, host_id_1, port_id_443, None)
+            (finding_id, host_id_1, port_id_443, None),
         )
 
         # Insert example.com:80 (FQDN-targeted scan)
-        host_id_2 = Host.get_or_create("93.184.216.34", "example.com", "fqdn", conn=temp_db)
+        host_id_2 = Host.get_or_create(
+            "93.184.216.34", "example.com", "fqdn", conn=temp_db
+        )
         temp_db.execute(
             "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, plugin_output) VALUES (?, ?, ?, ?)",
-            (finding_id, host_id_2, port_id_80, None)
+            (finding_id, host_id_2, port_id_80, None),
         )
         temp_db.commit()
 
@@ -624,7 +617,7 @@ class TestFindingModel:
         port_id = Port.get_or_create(80, conn=temp_db)
         temp_db.execute(
             "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, plugin_output) VALUES (?, ?, ?, ?)",
-            (finding_id, host_id, port_id, None)
+            (finding_id, host_id, port_id, None),
         )
         temp_db.commit()
 
@@ -659,7 +652,7 @@ class TestFindingModel:
         host_id = Host.get_or_create("192.168.1.1", "192.168.1.1", "ipv4", conn=temp_db)
         temp_db.execute(
             "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, plugin_output) VALUES (?, ?, ?, ?)",
-            (finding_id, host_id, None, None)
+            (finding_id, host_id, None, None),
         )
         temp_db.commit()
 
@@ -699,7 +692,7 @@ class TestToolExecutionModel:
             tool_name="nmap",
             command_text="nmap -sV 192.168.1.1",
             exit_code=0,
-            duration_seconds=12.5
+            duration_seconds=12.5,
         )
 
         exec_id = execution.save(temp_db)
@@ -715,7 +708,7 @@ class TestToolExecutionModel:
 
         cursor = temp_db.execute(
             "INSERT INTO sessions (scan_id, session_start) VALUES (?, datetime('now'))",
-            (scan_id,)
+            (scan_id,),
         )
         session_id = cursor.lastrowid
         temp_db.commit()
@@ -726,14 +719,13 @@ class TestToolExecutionModel:
             tool_name="nmap",
             command_text="nmap -sV 192.168.1.1",
             exit_code=0,
-            duration_seconds=12.5
+            duration_seconds=12.5,
         )
         exec_id = execution.save(temp_db)
 
         # Verify link
         cursor = temp_db.execute(
-            "SELECT session_id FROM tool_executions WHERE execution_id = ?",
-            (exec_id,)
+            "SELECT session_id FROM tool_executions WHERE execution_id = ?", (exec_id,)
         )
         result = cursor.fetchone()
         assert result["session_id"] == session_id
@@ -749,15 +741,14 @@ class TestToolExecutionModel:
             host_count=256,
             sampled=False,
             ports="1-1000",
-            used_sudo=True
+            used_sudo=True,
         )
 
         exec_id = execution.save(temp_db)
 
         # Retrieve and verify
         cursor = temp_db.execute(
-            """SELECT * FROM tool_executions WHERE execution_id = ?""",
-            (exec_id,)
+            """SELECT * FROM tool_executions WHERE execution_id = ?""", (exec_id,)
         )
         result = cursor.fetchone()
 
@@ -778,7 +769,7 @@ class TestArtifactModel:
             tool_name="nmap",
             command_text="nmap -oA scan 192.168.1.1",
             exit_code=0,
-            duration_seconds=10.0
+            duration_seconds=10.0,
         )
         exec_id = execution.save(temp_db)
 
@@ -788,7 +779,7 @@ class TestArtifactModel:
             artifact_path="/tmp/scan.xml",
             artifact_type_id=1,  # nmap_xml
             file_size_bytes=1024,
-            file_hash="abc123"
+            file_hash="abc123",
         )
 
         artifact_id = artifact.save(temp_db)
@@ -802,14 +793,14 @@ class TestArtifactModel:
             tool_name="nmap",
             command_text="nmap -oA scan 192.168.1.1",
             exit_code=0,
-            duration_seconds=10.0
+            duration_seconds=10.0,
         )
         exec_id = execution.save(temp_db)
 
         artifact = Artifact(
             execution_id=exec_id,
             artifact_path="/tmp/scan.xml",
-            artifact_type_id=1  # nmap_xml
+            artifact_type_id=1,  # nmap_xml
         )
         artifact_id = artifact.save(temp_db)
 
@@ -821,7 +812,7 @@ class TestArtifactModel:
             JOIN tool_executions te ON a.execution_id = te.execution_id
             WHERE a.artifact_id = ?
             """,
-            (artifact_id,)
+            (artifact_id,),
         )
         result = cursor.fetchone()
         assert result["tool_name"] == "nmap"
@@ -833,7 +824,7 @@ class TestArtifactModel:
             tool_name="nmap",
             command_text="nmap 192.168.1.1",
             exit_code=0,
-            duration_seconds=10.0
+            duration_seconds=10.0,
         )
         exec_id = execution.save(temp_db)
 
@@ -841,14 +832,13 @@ class TestArtifactModel:
             execution_id=exec_id,
             artifact_path="/tmp/scan.xml",
             artifact_type_id=1,  # nmap_xml
-            metadata={"scan_type": "SYN", "hosts_up": 5}
+            metadata={"scan_type": "SYN", "hosts_up": 5},
         )
         artifact_id = artifact.save(temp_db)
 
         # Retrieve and verify
         cursor = temp_db.execute(
-            "SELECT metadata FROM artifacts WHERE artifact_id = ?",
-            (artifact_id,)
+            "SELECT metadata FROM artifacts WHERE artifact_id = ?", (artifact_id,)
         )
         result = cursor.fetchone()
         metadata = json.loads(result["metadata"]) if result["metadata"] else None
@@ -913,12 +903,13 @@ class TestModelRelationships:
             tool_name="nmap",
             command_text="nmap 192.168.1.1",
             exit_code=0,
-            duration_seconds=10.0
+            duration_seconds=10.0,
         )
         exec_id = execution.save(temp_db)
 
         # Get artifact_type_id for normalized schema
         from cerno_pkg.models import ArtifactType
+
         artifact_type = ArtifactType.get_by_name("nmap_xml", conn=temp_db)
         artifact_type_id = artifact_type.artifact_type_id if artifact_type else None
 
@@ -927,17 +918,25 @@ class TestModelRelationships:
             artifact_path="/tmp/scan.xml",
             artifact_type_id=artifact_type_id,
             file_hash="abc123",
-            file_size_bytes=1024
+            file_size_bytes=1024,
         )
         artifact.save(temp_db)
 
         # Delete execution
-        temp_db.execute("DELETE FROM tool_executions WHERE execution_id = ?", (exec_id,))
+        temp_db.execute(
+            "DELETE FROM tool_executions WHERE execution_id = ?", (exec_id,)
+        )
         temp_db.commit()
 
         # Artifact should still exist but execution_id should be NULL (ON DELETE SET NULL)
-        cursor = temp_db.execute("SELECT COUNT(*) as count FROM artifacts WHERE artifact_path = ?", ("/tmp/scan.xml",))
+        cursor = temp_db.execute(
+            "SELECT COUNT(*) as count FROM artifacts WHERE artifact_path = ?",
+            ("/tmp/scan.xml",),
+        )
         assert cursor.fetchone()["count"] == 1
 
-        cursor = temp_db.execute("SELECT execution_id FROM artifacts WHERE artifact_path = ?", ("/tmp/scan.xml",))
+        cursor = temp_db.execute(
+            "SELECT execution_id FROM artifacts WHERE artifact_path = ?",
+            ("/tmp/scan.xml",),
+        )
         assert cursor.fetchone()["execution_id"] is None

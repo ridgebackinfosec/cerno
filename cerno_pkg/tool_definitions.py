@@ -74,8 +74,16 @@ def register_all_tools() -> None:
             menu_order=2,
             options={
                 "protocols": [
-                    "mssql", "smb", "ftp", "ldap", "nfs",
-                    "rdp", "ssh", "vnc", "winrm", "wmi"
+                    "mssql",
+                    "smb",
+                    "ftp",
+                    "ldap",
+                    "nfs",
+                    "rdp",
+                    "ssh",
+                    "vnc",
+                    "winrm",
+                    "wmi",
                 ],
             },
         )

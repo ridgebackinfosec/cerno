@@ -22,11 +22,12 @@ def mock_db_for_fs(monkeypatch, temp_db):
 
     class UnclosableConnection:
         """Wrapper that prevents connection from being closed."""
+
         def __init__(self, conn):
             self._conn = conn
 
         def __getattr__(self, name):
-            if name == 'close':
+            if name == "close":
                 return lambda: None
             return getattr(self._conn, name)
 
@@ -41,6 +42,7 @@ def mock_db_for_fs(monkeypatch, temp_db):
 
     monkeypatch.setattr(cerno_pkg.database, "get_connection", mock_get_connection)
 
+
 @pytest.mark.skip(reason="is_review_complete removed - review state is now DB-only")
 class TestIsReviewComplete:
     """Tests for is_review_complete function - OBSOLETE in DB-only architecture."""
@@ -51,7 +53,9 @@ class TestIsReviewedFilename:
     """Tests for is_reviewed_filename function - OBSOLETE in DB-only architecture."""
 
 
-@pytest.mark.skip(reason="rename_review_complete replaced with mark_review_complete - DB-only, no file renaming")
+@pytest.mark.skip(
+    reason="rename_review_complete replaced with mark_review_complete - DB-only, no file renaming"
+)
 class TestRenameReviewComplete:
     """Tests for rename_review_complete function - OBSOLETE in DB-only architecture."""
 
@@ -68,13 +72,18 @@ class TestBuildResultsPaths:
         """Test building result paths."""
         # Mock get_results_root() to return temp directory
         import cerno_pkg.constants
-        monkeypatch.setattr(cerno_pkg.constants, "_results_root_cache", temp_dir / "results")
+
+        monkeypatch.setattr(
+            cerno_pkg.constants, "_results_root_cache", temp_dir / "results"
+        )
 
         scan_dir = temp_dir / "my_scan"
         sev_dir = scan_dir / "4_Critical"
         plugin_filename = "12345_Test_Plugin.txt"
 
-        output_dir, output_base = build_results_paths(scan_dir, sev_dir, plugin_filename)
+        output_dir, output_base = build_results_paths(
+            scan_dir, sev_dir, plugin_filename
+        )
 
         assert output_dir.exists()
         # Path structure: results/my_scan/Critical/12345_Test_Plugin
@@ -87,7 +96,10 @@ class TestBuildResultsPaths:
         """Test that output directory is created."""
         # Mock get_results_root() to return temp directory
         import cerno_pkg.constants
-        monkeypatch.setattr(cerno_pkg.constants, "_results_root_cache", temp_dir / "results")
+
+        monkeypatch.setattr(
+            cerno_pkg.constants, "_results_root_cache", temp_dir / "results"
+        )
 
         scan_dir = temp_dir / "scan"
         sev_dir = scan_dir / "3_High"
@@ -133,19 +145,25 @@ class TestDefaultPageSize:
 
     def test_default_page_size_normal_terminal(self):
         """Test page size with normal terminal."""
-        with patch('shutil.get_terminal_size', return_value=type('obj', (), {'lines': 40, 'columns': 80})()):
+        with patch(
+            "shutil.get_terminal_size",
+            return_value=type("obj", (), {"lines": 40, "columns": 80})(),
+        ):
             size = default_page_size()
             assert size == 25  # 40 - 15
 
     def test_default_page_size_small_terminal(self):
         """Test page size with small terminal."""
-        with patch('shutil.get_terminal_size', return_value=type('obj', (), {'lines': 15, 'columns': 80})()):
+        with patch(
+            "shutil.get_terminal_size",
+            return_value=type("obj", (), {"lines": 15, "columns": 80})(),
+        ):
             size = default_page_size()
             assert size == 8  # Minimum is 8
 
     def test_default_page_size_exception(self):
         """Test page size when terminal size fails."""
-        with patch('shutil.get_terminal_size', side_effect=Exception("No terminal")):
+        with patch("shutil.get_terminal_size", side_effect=Exception("No terminal")):
             size = default_page_size()
             assert size == 12  # Default fallback
 
@@ -158,7 +176,9 @@ class TestWriteWorkFiles:
         hosts = ["192.168.1.1", "192.168.1.2", "10.0.0.1"]
         ports = "80,443,8080"
 
-        tcp_ips, udp_ips, tcp_sockets = write_work_files(temp_dir, hosts, ports, udp=False)
+        tcp_ips, udp_ips, tcp_sockets = write_work_files(
+            temp_dir, hosts, ports, udp=False
+        )
 
         # Verify TCP IPs file
         assert tcp_ips.exists()
@@ -180,7 +200,9 @@ class TestWriteWorkFiles:
         hosts = ["192.168.1.1", "192.168.1.2"]
         ports = "53"
 
-        tcp_ips, udp_ips, _tcp_sockets = write_work_files(temp_dir, hosts, ports, udp=True)
+        tcp_ips, udp_ips, _tcp_sockets = write_work_files(
+            temp_dir, hosts, ports, udp=True
+        )
 
         # Verify both TCP and UDP files exist
         assert tcp_ips.exists()
@@ -193,7 +215,9 @@ class TestWriteWorkFiles:
         """Test writing work files without ports."""
         hosts = ["192.168.1.1"]
 
-        tcp_ips, _udp_ips, tcp_sockets = write_work_files(temp_dir, hosts, "", udp=False)
+        tcp_ips, _udp_ips, tcp_sockets = write_work_files(
+            temp_dir, hosts, "", udp=False
+        )
 
         # TCP IPs should still be written
         assert tcp_ips.exists()
@@ -208,7 +232,9 @@ class TestWriteWorkFiles:
         workdir = temp_dir / "nested" / "work"
         hosts = ["10.0.0.1"]
 
-        tcp_ips, _udp_ips, _tcp_sockets = write_work_files(workdir, hosts, "22", udp=False)
+        tcp_ips, _udp_ips, _tcp_sockets = write_work_files(
+            workdir, hosts, "22", udp=False
+        )
 
         assert workdir.exists()
         assert workdir.is_dir()
@@ -219,7 +245,9 @@ class TestWriteWorkFiles:
         hosts = ["192.168.1.100"]
         ports = "80,443,8443,3000"
 
-        tcp_ips, _udp_ips, tcp_sockets = write_work_files(temp_dir, hosts, ports, udp=False)
+        tcp_ips, _udp_ips, tcp_sockets = write_work_files(
+            temp_dir, hosts, ports, udp=False
+        )
 
         assert tcp_ips.exists()
         assert tcp_sockets.exists()

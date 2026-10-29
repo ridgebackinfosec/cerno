@@ -27,6 +27,7 @@ LOGURU_AVAILABLE: bool = False
 
 try:
     from loguru import logger as _log
+
     LOGURU_AVAILABLE = True
 except Exception:
     import logging as _logging
@@ -179,9 +180,7 @@ def ex_hook(exc_type: type, exc: BaseException, tb: Any) -> Any:
     """
     try:
         if LOGURU_AVAILABLE:
-            _log.opt(exception=(exc_type, exc, tb)).error(
-                "Unhandled exception"
-            )
+            _log.opt(exception=(exc_type, exc, tb)).error("Unhandled exception")
         else:
             import traceback as _tb
 

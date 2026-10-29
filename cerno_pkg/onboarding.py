@@ -54,7 +54,9 @@ def show_guided_tour() -> str:
     info("  4. Tracking your progress")
     info("")
 
-    choice = Prompt.ask("[Enter] Start tour | [S] Skip tour", default="").strip().lower()
+    choice = (
+        Prompt.ask("[Enter] Start tour | [S] Skip tour", default="").strip().lower()
+    )
     if choice == "s":
         ok("Tour skipped. To get started, import a Nessus scan:")
         info("  cerno import nessus /path/to/scan.nessus")
@@ -68,9 +70,15 @@ def show_guided_tour() -> str:
 
         if current_step == 4:
             # Last step - only forward/exit
-            choice = Prompt.ask("[Enter] Exit tour | [B] Back", default="").strip().lower()
+            choice = (
+                Prompt.ask("[Enter] Exit tour | [B] Back", default="").strip().lower()
+            )
         else:
-            choice = Prompt.ask("[N] Next | [B] Back | [Q] Skip tour", default="").strip().lower()
+            choice = (
+                Prompt.ask("[N] Next | [B] Back | [Q] Skip tour", default="")
+                .strip()
+                .lower()
+            )
 
         if choice in ("n", "next", ""):
             current_step += 1
@@ -176,8 +184,7 @@ def show_workflow_guidance(
     with get_connection() as conn:
         # Check if user has reviewed this scan before (use primary scan_id)
         cursor = conn.execute(
-            "SELECT session_id FROM sessions WHERE scan_id = ? LIMIT 1",
-            (scan_id,)
+            "SELECT session_id FROM sessions WHERE scan_id = ? LIMIT 1", (scan_id,)
         )
         existing_session = cursor.fetchone()
 
@@ -231,7 +238,10 @@ def show_workflow_guidance(
         (REVIEW_STATE_DONE, completed),
     ):
         content.append("│  ", style="dim")
-        content.append(f"{REVIEW_STATE_LABELS[state]}: ", style=f"bold {REVIEW_STATE_STYLES[state]}")
+        content.append(
+            f"{REVIEW_STATE_LABELS[state]}: ",
+            style=f"bold {REVIEW_STATE_STYLES[state]}",
+        )
         content.append(f"{count}  ")
     content.append("\n\n")
 
@@ -267,12 +277,14 @@ def show_workflow_guidance(
         title="[bold cyan]Getting Started with This Scan[/]",
         border_style=style_if_enabled("cyan"),
         padding=(1, 2),
-        expand=False
+        expand=False,
     )
     console.print(panel)
 
     # Context-aware tips
-    tips_panel = _show_context_aware_tips(scan_id, total, unreviewed, completed, scan_ids=scan_ids)
+    tips_panel = _show_context_aware_tips(
+        scan_id, total, unreviewed, completed, scan_ids=scan_ids
+    )
     if tips_panel:
         console.print(tips_panel)
 
@@ -331,7 +343,9 @@ def _show_context_aware_tips(
     if critical_count > 0:
         tip = Text()
         scan_label = "These scans have" if is_multi else "This scan has"
-        tip.append(f"{scan_label} {critical_count} Critical finding(s) - prioritize these first!")
+        tip.append(
+            f"{scan_label} {critical_count} Critical finding(s) - prioritize these first!"
+        )
         tips.append(tip)
 
     # Check for Metasploit modules
@@ -359,7 +373,9 @@ def _show_context_aware_tips(
         if progress_pct >= 50:
             tip = Text()
             tip.append("✅ ", style="green")
-            tip.append(f"Progress: {completed}/{total} findings Done ({progress_pct}%) - keep going!")
+            tip.append(
+                f"Progress: {completed}/{total} findings Done ({progress_pct}%) - keep going!"
+            )
             tips.append(tip)
 
     # Return panel if tips exist
@@ -370,7 +386,7 @@ def _show_context_aware_tips(
             title="[bold yellow]Tips[/]",
             border_style=style_if_enabled("yellow"),
             padding=(1, 2),
-            expand=False
+            expand=False,
         )
     return None
 
@@ -442,7 +458,7 @@ def show_additional_tips() -> None:
         title="[bold cyan]Additional Tips & Tricks[/]",
         border_style=style_if_enabled("cyan"),
         padding=(1, 2),
-        expand=False
+        expand=False,
     )
     console.print(panel)
 

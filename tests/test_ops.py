@@ -22,11 +22,7 @@ class TestExecutionMetadata:
 
     def test_execution_metadata_creation(self):
         """Test creating ExecutionMetadata."""
-        metadata = ExecutionMetadata(
-            exit_code=0,
-            duration_seconds=12.5,
-            used_sudo=True
-        )
+        metadata = ExecutionMetadata(exit_code=0, duration_seconds=12.5, used_sudo=True)
 
         assert metadata.exit_code == 0
         assert metadata.duration_seconds == 12.5
@@ -34,11 +30,7 @@ class TestExecutionMetadata:
 
     def test_execution_metadata_with_failure(self):
         """Test metadata for failed execution."""
-        metadata = ExecutionMetadata(
-            exit_code=1,
-            duration_seconds=5.2,
-            used_sudo=False
-        )
+        metadata = ExecutionMetadata(exit_code=1, duration_seconds=5.2, used_sudo=False)
 
         assert metadata.exit_code == 1
         assert metadata.duration_seconds == 5.2
@@ -103,16 +95,14 @@ class TestLogToolExecution:
     def test_log_execution_basic(self, temp_db):
         """Test logging basic tool execution."""
         metadata = ExecutionMetadata(
-            exit_code=0,
-            duration_seconds=10.5,
-            used_sudo=False
+            exit_code=0, duration_seconds=10.5, used_sudo=False
         )
 
         execution_id = log_tool_execution(
             tool_name="nmap",
             command_text="nmap -sV 192.168.1.1",
             execution_metadata=metadata,
-            conn=temp_db
+            conn=temp_db,
         )
 
         assert execution_id is not None
@@ -120,8 +110,7 @@ class TestLogToolExecution:
 
         # Verify in database
         cursor = temp_db.execute(
-            "SELECT * FROM tool_executions WHERE execution_id = ?",
-            (execution_id,)
+            "SELECT * FROM tool_executions WHERE execution_id = ?", (execution_id,)
         )
         row = cursor.fetchone()
 
@@ -133,11 +122,7 @@ class TestLogToolExecution:
 
     def test_log_execution_with_metadata(self, temp_db):
         """Test logging execution with full metadata."""
-        metadata = ExecutionMetadata(
-            exit_code=0,
-            duration_seconds=45.2,
-            used_sudo=True
-        )
+        metadata = ExecutionMetadata(exit_code=0, duration_seconds=45.2, used_sudo=True)
 
         execution_id = log_tool_execution(
             tool_name="nmap",
@@ -146,15 +131,14 @@ class TestLogToolExecution:
             host_count=256,
             sampled=False,
             ports="1-65535",
-            conn=temp_db
+            conn=temp_db,
         )
 
         assert execution_id is not None
 
         # Verify metadata
         cursor = temp_db.execute(
-            "SELECT * FROM tool_executions WHERE execution_id = ?",
-            (execution_id,)
+            "SELECT * FROM tool_executions WHERE execution_id = ?", (execution_id,)
         )
         row = cursor.fetchone()
 
@@ -166,9 +150,7 @@ class TestLogToolExecution:
     def test_log_execution_with_protocol(self, temp_db):
         """Test logging netexec execution with protocol."""
         metadata = ExecutionMetadata(
-            exit_code=0,
-            duration_seconds=15.3,
-            used_sudo=False
+            exit_code=0, duration_seconds=15.3, used_sudo=False
         )
 
         execution_id = log_tool_execution(
@@ -177,14 +159,14 @@ class TestLogToolExecution:
             execution_metadata=metadata,
             tool_protocol="smb",
             host_count=10,
-            conn=temp_db
+            conn=temp_db,
         )
 
         assert execution_id is not None
 
         cursor = temp_db.execute(
             "SELECT tool_protocol FROM tool_executions WHERE execution_id = ?",
-            (execution_id,)
+            (execution_id,),
         )
         row = cursor.fetchone()
         assert row["tool_protocol"] == "smb"
@@ -202,7 +184,7 @@ class TestLogToolExecution:
         # Create session for linking test
         temp_db.execute(
             "INSERT INTO sessions (scan_id, session_start) VALUES (?, datetime('now'))",
-            (scan_id,)
+            (scan_id,),
         )
         temp_db.commit()
 
@@ -212,9 +194,7 @@ class TestLogToolExecution:
             scan_dir.mkdir()
 
             metadata = ExecutionMetadata(
-                exit_code=0,
-                duration_seconds=5.0,
-                used_sudo=False
+                exit_code=0, duration_seconds=5.0, used_sudo=False
             )
 
             # Note: This won't actually link since scan_dir.name != scan_name in DB
@@ -224,13 +204,15 @@ class TestLogToolExecution:
                 command_text="nmap 192.168.1.1",
                 execution_metadata=metadata,
                 scan_dir=scan_dir,
-                conn=temp_db
+                conn=temp_db,
             )
 
             assert execution_id is not None
 
     @pytest.mark.integration
-    @pytest.mark.skip(reason="file_path column not present, cannot link executions by path")
+    @pytest.mark.skip(
+        reason="file_path column not present, cannot link executions by path"
+    )
     def test_log_execution_with_file_link(self, temp_db, temp_dir):
         """Test logging execution linked to a plugin file."""
         from cerno_pkg.models import Scan, Plugin, Finding
@@ -246,25 +228,18 @@ class TestLogToolExecution:
         file_path = temp_dir / "test_plugin.txt"
         file_path.write_text("192.168.1.1:80\n")
 
-        pf = Finding(
-            scan_id=scan_id,
-            plugin_id=12345
-        )
+        pf = Finding(scan_id=scan_id, plugin_id=12345)
         pf.save(temp_db)
 
         # Log execution
-        metadata = ExecutionMetadata(
-            exit_code=0,
-            duration_seconds=8.5,
-            used_sudo=False
-        )
+        metadata = ExecutionMetadata(exit_code=0, duration_seconds=8.5, used_sudo=False)
 
         execution_id = log_tool_execution(
             tool_name="nmap",
             command_text="nmap -sV 192.168.1.1",
             execution_metadata=metadata,
             file_path=file_path,
-            conn=temp_db
+            conn=temp_db,
         )
 
         assert execution_id is not None
@@ -272,7 +247,7 @@ class TestLogToolExecution:
         # Verify link
         cursor = temp_db.execute(
             "SELECT finding_id FROM tool_executions WHERE execution_id = ?",
-            (execution_id,)
+            (execution_id,),
         )
         row = cursor.fetchone()
         assert row["finding_id"] is not None
@@ -291,7 +266,7 @@ class TestLogArtifact:
             command_text="nmap -oA scan 192.168.1.1",
             executed_at=now_iso(),
             exit_code=0,
-            duration_seconds=10.0
+            duration_seconds=10.0,
         )
         exec_id = execution.save(temp_db)
         assert exec_id is not None
@@ -305,7 +280,7 @@ class TestLogArtifact:
             execution_id=exec_id,
             artifact_path=artifact_file,
             artifact_type="nmap_xml",
-            conn=temp_db
+            conn=temp_db,
         )
 
         assert artifact_id is not None
@@ -313,8 +288,7 @@ class TestLogArtifact:
 
         # Verify in database using v_artifacts_with_types view
         cursor = temp_db.execute(
-            "SELECT * FROM v_artifacts_with_types WHERE artifact_id = ?",
-            (artifact_id,)
+            "SELECT * FROM v_artifacts_with_types WHERE artifact_id = ?", (artifact_id,)
         )
         row = cursor.fetchone()
 
@@ -334,7 +308,7 @@ class TestLogArtifact:
             command_text="nmap 192.168.1.1",
             executed_at=now_iso(),
             exit_code=0,
-            duration_seconds=10.0
+            duration_seconds=10.0,
         )
         exec_id = execution.save(temp_db)
         assert exec_id is not None
@@ -349,15 +323,14 @@ class TestLogArtifact:
             artifact_path=artifact_file,
             artifact_type="nmap_xml",
             metadata=metadata_dict,
-            conn=temp_db
+            conn=temp_db,
         )
 
         assert artifact_id is not None
 
         # Verify metadata
         cursor = temp_db.execute(
-            "SELECT metadata FROM artifacts WHERE artifact_id = ?",
-            (artifact_id,)
+            "SELECT metadata FROM artifacts WHERE artifact_id = ?", (artifact_id,)
         )
         row = cursor.fetchone()
         stored_metadata = json.loads(row["metadata"]) if row["metadata"] else None
@@ -372,7 +345,7 @@ class TestLogArtifact:
             command_text="nmap 192.168.1.1",
             executed_at=now_iso(),
             exit_code=0,
-            duration_seconds=10.0
+            duration_seconds=10.0,
         )
         exec_id = execution.save(temp_db)
         assert exec_id is not None
@@ -384,14 +357,14 @@ class TestLogArtifact:
             execution_id=exec_id,
             artifact_path=nonexistent,
             artifact_type="nmap_xml",
-            conn=temp_db
+            conn=temp_db,
         )
 
         assert artifact_id is not None
 
         cursor = temp_db.execute(
             "SELECT file_size_bytes, file_hash FROM artifacts WHERE artifact_id = ?",
-            (artifact_id,)
+            (artifact_id,),
         )
         row = cursor.fetchone()
         assert row["file_size_bytes"] is None
@@ -410,7 +383,7 @@ class TestLogArtifactsForNmap:
             command_text="nmap -oA scan 192.168.1.1",
             executed_at=now_iso(),
             exit_code=0,
-            duration_seconds=10.0
+            duration_seconds=10.0,
         )
         exec_id = execution.save(temp_db)
         assert exec_id is not None
@@ -428,7 +401,7 @@ class TestLogArtifactsForNmap:
         # Verify all artifacts in database using v_artifacts_with_types view
         cursor = temp_db.execute(
             "SELECT artifact_type FROM v_artifacts_with_types WHERE execution_id = ? ORDER BY artifact_type",
-            (exec_id,)
+            (exec_id,),
         )
         types = [row["artifact_type"] for row in cursor.fetchall()]
         assert types == ["nmap_gnmap", "nmap_nmap", "nmap_xml"]
@@ -442,7 +415,7 @@ class TestLogArtifactsForNmap:
             command_text="nmap -oX scan.xml 192.168.1.1",
             executed_at=now_iso(),
             exit_code=0,
-            duration_seconds=10.0
+            duration_seconds=10.0,
         )
         exec_id = execution.save(temp_db)
         assert exec_id is not None
@@ -457,7 +430,7 @@ class TestLogArtifactsForNmap:
 
         cursor = temp_db.execute(
             "SELECT artifact_type FROM v_artifacts_with_types WHERE execution_id = ?",
-            (exec_id,)
+            (exec_id,),
         )
         row = cursor.fetchone()
         assert row["artifact_type"] == "nmap_xml"
@@ -471,7 +444,7 @@ class TestLogArtifactsForNmap:
             command_text="nmap 192.168.1.1",
             executed_at=now_iso(),
             exit_code=0,
-            duration_seconds=10.0
+            duration_seconds=10.0,
         )
         exec_id = execution.save(temp_db)
         assert exec_id is not None
@@ -491,7 +464,7 @@ class TestLogArtifactsForNmap:
             command_text="nmap -oA scan 192.168.1.1",
             executed_at=now_iso(),
             exit_code=0,
-            duration_seconds=10.0
+            duration_seconds=10.0,
         )
         exec_id = execution.save(temp_db)
         assert exec_id is not None
@@ -501,15 +474,17 @@ class TestLogArtifactsForNmap:
 
         metadata_dict = {"scan_type": "version_detection"}
 
-        artifact_ids = log_artifacts_for_nmap(exec_id, oabase, metadata=metadata_dict, conn=temp_db)
+        artifact_ids = log_artifacts_for_nmap(
+            exec_id, oabase, metadata=metadata_dict, conn=temp_db
+        )
 
         assert len(artifact_ids) == 1
 
         # Verify metadata was stored
         import json
+
         cursor = temp_db.execute(
-            "SELECT metadata FROM artifacts WHERE artifact_id = ?",
-            (artifact_ids[0],)
+            "SELECT metadata FROM artifacts WHERE artifact_id = ?", (artifact_ids[0],)
         )
         row = cursor.fetchone()
         stored_metadata = json.loads(row["metadata"]) if row["metadata"] else None
@@ -589,8 +564,8 @@ class TestCommandAvailability:
         mock_result.stdout = "nmap version 7.92\n"
         mock_result.stderr = ""
 
-        with patch('subprocess.run', return_value=mock_result) as mock_run:
-            with patch('shutil.which', return_value='/usr/bin/nmap'):
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            with patch("shutil.which", return_value="/usr/bin/nmap"):
                 version = get_tool_version("nmap")
 
         assert version == "7.92"
@@ -601,7 +576,7 @@ class TestCommandAvailability:
         from cerno_pkg.ops import get_tool_version
         from unittest.mock import patch
 
-        with patch('shutil.which', return_value=None):
+        with patch("shutil.which", return_value=None):
             version = get_tool_version("nonexistent_tool")
 
         assert version is None
@@ -612,8 +587,10 @@ class TestCommandAvailability:
         from unittest.mock import patch
         import subprocess
 
-        with patch('shutil.which', return_value='/usr/bin/slow_tool'):
-            with patch('subprocess.run', side_effect=subprocess.TimeoutExpired('cmd', 5)):
+        with patch("shutil.which", return_value="/usr/bin/slow_tool"):
+            with patch(
+                "subprocess.run", side_effect=subprocess.TimeoutExpired("cmd", 5)
+            ):
                 version = get_tool_version("slow_tool")
 
         assert version is None
@@ -637,11 +614,13 @@ class TestCommandAvailability:
             mock_result.stdout = output
             mock_result.stderr = ""
 
-            with patch('subprocess.run', return_value=mock_result):
-                with patch('shutil.which', return_value='/usr/bin/tool'):
+            with patch("subprocess.run", return_value=mock_result):
+                with patch("shutil.which", return_value="/usr/bin/tool"):
                     version = get_tool_version("tool")
 
-            assert version == expected_version, f"Failed to parse '{output}' as '{expected_version}'"
+            assert (
+                version == expected_version
+            ), f"Failed to parse '{output}' as '{expected_version}'"
 
     def test_get_tool_version_candidates(self):
         """Test version detection with multiple binary name candidates."""
@@ -655,10 +634,10 @@ class TestCommandAvailability:
 
         def mock_which(cmd):
             # nxc is available, netexec is not
-            return '/usr/bin/nxc' if cmd == 'nxc' else None
+            return "/usr/bin/nxc" if cmd == "nxc" else None
 
-        with patch('subprocess.run', return_value=mock_result) as mock_run:
-            with patch('shutil.which', side_effect=mock_which):
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            with patch("shutil.which", side_effect=mock_which):
                 version = get_tool_version("netexec", ["nxc", "netexec"])
 
         assert version == "1.2.1"
@@ -676,8 +655,8 @@ class TestCommandAvailability:
         mock_result.stdout = ""
         mock_result.stderr = "tool version 4.5.6\n"
 
-        with patch('subprocess.run', return_value=mock_result):
-            with patch('shutil.which', return_value='/usr/bin/tool'):
+        with patch("subprocess.run", return_value=mock_result):
+            with patch("shutil.which", return_value="/usr/bin/tool"):
                 version = get_tool_version("tool")
 
         assert version == "4.5.6"
@@ -692,8 +671,8 @@ class TestCommandAvailability:
         mock_result.stdout = ""
         mock_result.stderr = "Framework Version: 6.4.135-dev\n"
 
-        with patch('subprocess.run', return_value=mock_result):
-            with patch('shutil.which', return_value='/usr/bin/msfconsole'):
+        with patch("subprocess.run", return_value=mock_result):
+            with patch("shutil.which", return_value="/usr/bin/msfconsole"):
                 version = get_tool_version("msfconsole", ["msfconsole"])
 
         assert version == "6.4.135"
@@ -705,12 +684,14 @@ class TestGetInterfaceIp:
     @pytest.mark.unit
     def test_returns_none_for_nonexistent_interface(self):
         from cerno_pkg.ops import get_interface_ip
+
         result = get_interface_ip("does_not_exist_xyz")
         assert result is None
 
     @pytest.mark.unit
     def test_returns_string_for_loopback(self):
         from cerno_pkg.ops import get_interface_ip
+
         result = get_interface_ip("lo")
         # lo always exists on Linux; may return None on some CI envs — just check type
         assert result is None or isinstance(result, str)
@@ -720,9 +701,11 @@ class TestGetInterfaceIp:
     def test_returns_dotted_quad_format(self, monkeypatch):
         from cerno_pkg.ops import get_interface_ip
         import socket
+
         # Fake fcntl.ioctl to return a packed result with 10.10.14.5 at bytes 20-24
-        fake_result = b'\x00' * 20 + socket.inet_aton("10.10.14.5") + b'\x00' * 232
+        fake_result = b"\x00" * 20 + socket.inet_aton("10.10.14.5") + b"\x00" * 232
         import fcntl
+
         monkeypatch.setattr(fcntl, "ioctl", lambda fd, req, buf: fake_result)
         result = get_interface_ip("tun0")
         assert result == "10.10.14.5"
@@ -734,12 +717,16 @@ class TestListInterfaces:
     @pytest.mark.unit
     def test_returns_list_of_tuples(self, monkeypatch):
         from cerno_pkg.ops import list_interfaces
+
         monkeypatch.setattr("os.listdir", lambda p: ["eth0", "lo", "tun0"])
-        monkeypatch.setattr("cerno_pkg.ops.get_interface_ip", lambda iface: {
-            "eth0": "192.168.1.50",
-            "lo": "127.0.0.1",
-            "tun0": "10.10.14.5",
-        }.get(iface))
+        monkeypatch.setattr(
+            "cerno_pkg.ops.get_interface_ip",
+            lambda iface: {
+                "eth0": "192.168.1.50",
+                "lo": "127.0.0.1",
+                "tun0": "10.10.14.5",
+            }.get(iface),
+        )
         result = list_interfaces()
         names = [name for name, _ in result]
         assert "eth0" in names
@@ -748,11 +735,15 @@ class TestListInterfaces:
     @pytest.mark.unit
     def test_excludes_interfaces_without_ip(self, monkeypatch):
         from cerno_pkg.ops import list_interfaces
+
         monkeypatch.setattr("os.listdir", lambda p: ["eth0", "dummy0"])
-        monkeypatch.setattr("cerno_pkg.ops.get_interface_ip", lambda iface: {
-            "eth0": "192.168.1.50",
-            "dummy0": None,
-        }.get(iface))
+        monkeypatch.setattr(
+            "cerno_pkg.ops.get_interface_ip",
+            lambda iface: {
+                "eth0": "192.168.1.50",
+                "dummy0": None,
+            }.get(iface),
+        )
         result = list_interfaces()
         names = [name for name, _ in result]
         assert "eth0" in names
@@ -761,12 +752,16 @@ class TestListInterfaces:
     @pytest.mark.unit
     def test_loopback_appears_last(self, monkeypatch):
         from cerno_pkg.ops import list_interfaces
+
         monkeypatch.setattr("os.listdir", lambda p: ["lo", "tun0", "eth0"])
-        monkeypatch.setattr("cerno_pkg.ops.get_interface_ip", lambda iface: {
-            "lo": "127.0.0.1",
-            "tun0": "10.10.14.5",
-            "eth0": "192.168.1.50",
-        }.get(iface))
+        monkeypatch.setattr(
+            "cerno_pkg.ops.get_interface_ip",
+            lambda iface: {
+                "lo": "127.0.0.1",
+                "tun0": "10.10.14.5",
+                "eth0": "192.168.1.50",
+            }.get(iface),
+        )
         result = list_interfaces()
         assert result[-1][0] == "lo"
 
@@ -778,14 +773,19 @@ class TestStartIpsServer:
     def test_serves_ips_file_over_https(self, tmp_path):
         from cerno_pkg.ops import start_ips_server
         import urllib.request, ssl as _ssl
+
         ips_file = tmp_path / "tcp_ips.list"
         ips_file.write_text("10.10.10.1\n10.10.10.2\n")
-        server, thread, cleanup = start_ips_server(ips_file, port=18877, bind_ip="127.0.0.1")
+        server, thread, cleanup = start_ips_server(
+            ips_file, port=18877, bind_ip="127.0.0.1"
+        )
         try:
             ctx = _ssl.create_default_context()
             ctx.check_hostname = False
             ctx.verify_mode = _ssl.CERT_NONE
-            response = urllib.request.urlopen("https://127.0.0.1:18877/targets.txt", context=ctx)
+            response = urllib.request.urlopen(
+                "https://127.0.0.1:18877/targets.txt", context=ctx
+            )
             content = response.read().decode()
             assert "10.10.10.1" in content
             assert "10.10.10.2" in content
@@ -796,9 +796,12 @@ class TestStartIpsServer:
     def test_returns_404_for_other_paths(self, tmp_path):
         from cerno_pkg.ops import start_ips_server
         import urllib.request, urllib.error, ssl as _ssl
+
         ips_file = tmp_path / "tcp_ips.list"
         ips_file.write_text("10.0.0.1\n")
-        server, thread, cleanup = start_ips_server(ips_file, port=18878, bind_ip="127.0.0.1")
+        server, thread, cleanup = start_ips_server(
+            ips_file, port=18878, bind_ip="127.0.0.1"
+        )
         try:
             ctx = _ssl.create_default_context()
             ctx.check_hostname = False
@@ -813,24 +816,32 @@ class TestStartIpsServer:
     def test_server_stops_after_cleanup(self, tmp_path):
         from cerno_pkg.ops import start_ips_server
         import urllib.request, urllib.error, ssl as _ssl
+
         ips_file = tmp_path / "tcp_ips.list"
         ips_file.write_text("10.0.0.1\n")
-        server, thread, cleanup = start_ips_server(ips_file, port=18879, bind_ip="127.0.0.1")
+        server, thread, cleanup = start_ips_server(
+            ips_file, port=18879, bind_ip="127.0.0.1"
+        )
         cleanup()
         thread.join(timeout=2)
         ctx = _ssl.create_default_context()
         ctx.check_hostname = False
         ctx.verify_mode = _ssl.CERT_NONE
         with pytest.raises((urllib.error.URLError, ConnectionRefusedError, OSError)):
-            urllib.request.urlopen("https://127.0.0.1:18879/targets.txt", context=ctx, timeout=2)
+            urllib.request.urlopen(
+                "https://127.0.0.1:18879/targets.txt", context=ctx, timeout=2
+            )
 
     @pytest.mark.unit
     def test_cleanup_removes_cert_tempdir(self, tmp_path):
         from cerno_pkg.ops import start_ips_server
         import os
+
         ips_file = tmp_path / "tcp_ips.list"
         ips_file.write_text("10.0.0.1\n")
-        server, thread, cleanup = start_ips_server(ips_file, port=18880, bind_ip="127.0.0.1")
+        server, thread, cleanup = start_ips_server(
+            ips_file, port=18880, bind_ip="127.0.0.1"
+        )
         tmpdir = server._cert_tmpdir
         assert os.path.isdir(tmpdir)
         cleanup()
@@ -880,7 +891,9 @@ class TestBuildNmapCmd:
     def test_nse_option_included(self, tmp_path):
         ips = tmp_path / "ips.txt"
         out = tmp_path / "output"
-        cmd = build_nmap_cmd(False, "--script=smb-vuln-ms17-010", ips, "445", False, out)
+        cmd = build_nmap_cmd(
+            False, "--script=smb-vuln-ms17-010", ips, "445", False, out
+        )
         assert "--script=smb-vuln-ms17-010" in cmd
 
     @pytest.mark.unit
@@ -911,7 +924,10 @@ class TestBuildNmapCmd:
         "nse_option, expected",
         [
             ("smb-security-mode", "--script=smb-security-mode"),
-            ("smb-security-mode,smb2-security-mode", "--script=smb-security-mode,smb2-security-mode"),
+            (
+                "smb-security-mode,smb2-security-mode",
+                "--script=smb-security-mode,smb2-security-mode",
+            ),
             ("ssl-cert ssl-date", "--script=ssl-cert,ssl-date"),
             ("--script ssl-cert", "--script=ssl-cert"),
             ("--script=vuln", "--script=vuln"),
@@ -929,14 +945,20 @@ class TestBuildNmapCmd:
     @pytest.mark.unit
     @pytest.mark.parametrize("nse_option", [None, "", "   ", "--script="])
     def test_empty_nse_option_adds_no_flag(self, tmp_path, nse_option):
-        cmd = build_nmap_cmd(False, nse_option, tmp_path / "ips.txt", "", False, tmp_path / "out")
+        cmd = build_nmap_cmd(
+            False, nse_option, tmp_path / "ips.txt", "", False, tmp_path / "out"
+        )
         assert not any("script" in t for t in cmd)
 
     @pytest.mark.unit
-    @pytest.mark.parametrize("nse_option", ["--script-args=user=x", "smb-os-discovery -oN /tmp/x", "-sV"])
+    @pytest.mark.parametrize(
+        "nse_option", ["--script-args=user=x", "smb-os-discovery -oN /tmp/x", "-sV"]
+    )
     def test_nse_option_rejects_other_flags(self, tmp_path, nse_option):
         with pytest.raises(ValueError, match="nse_option"):
-            build_nmap_cmd(False, nse_option, tmp_path / "ips.txt", "", False, tmp_path / "out")
+            build_nmap_cmd(
+                False, nse_option, tmp_path / "ips.txt", "", False, tmp_path / "out"
+            )
 
 
 class TestRunCommandWithProgressProxy:
@@ -952,11 +974,17 @@ class TestRunCommandWithProgressProxy:
 
         def fake_popen(cmd, **kwargs):
             captured["cmd"] = cmd
+
             class FakeProc:
                 returncode = 0
                 stdout = iter([])
-                def wait(self): pass
-                def terminate(self): pass
+
+                def wait(self):
+                    pass
+
+                def terminate(self):
+                    pass
+
             return FakeProc()
 
         monkeypatch.setattr(subprocess, "Popen", fake_popen)
@@ -981,11 +1009,17 @@ class TestRunCommandWithProgressProxy:
 
         def fake_popen(c, **_kw):
             captured["cmd"] = c
+
             class FakeProc:
                 returncode = 0
                 stdout = iter([])
-                def wait(self): pass
-                def terminate(self): pass
+
+                def wait(self):
+                    pass
+
+                def terminate(self):
+                    pass
+
             return FakeProc()
 
         monkeypatch.setattr(subprocess, "Popen", fake_popen)
@@ -1003,7 +1037,9 @@ class TestRunCommandWithProgressProxy:
         from cerno_pkg.ops import ProxyConfig
 
         proxy = ProxyConfig(enabled=True, host="127.0.0.1", port=9000)
-        cmd = self._run_capturing(monkeypatch, tmp_path, "echo hello", proxy, shell=True)
+        cmd = self._run_capturing(
+            monkeypatch, tmp_path, "echo hello", proxy, shell=True
+        )
         conf = tmp_path / ".cerno" / "proxychains4.conf"
         assert cmd == f"proxychains4 -q -f {conf} echo hello"
 
@@ -1039,10 +1075,14 @@ class TestRunCommandWithProgressProxy:
 
         def fake_popen(cmd, **kwargs):
             captured["cmd"] = cmd
+
             class FakeProc:
                 returncode = 0
                 stdout = iter([])
-                def wait(self): pass
+
+                def wait(self):
+                    pass
+
             return FakeProc()
 
         monkeypatch.setattr(subprocess, "Popen", fake_popen)
@@ -1065,10 +1105,14 @@ class TestRunCommandWithProgressProxy:
 
         def fake_popen(cmd, **kwargs):
             captured["cmd"] = cmd
+
             class FakeProc:
                 returncode = 0
                 stdout = iter([])
-                def wait(self): pass
+
+                def wait(self):
+                    pass
+
             return FakeProc()
 
         monkeypatch.setattr(subprocess, "Popen", fake_popen)
@@ -1100,7 +1144,11 @@ class TestCopyToClipboard:
                 raise subprocess.CalledProcessError(1, args)
             return subprocess.CompletedProcess(args, 0)
 
-        monkeypatch.setattr(tools_module.pyperclip, "copy", lambda _text: (_ for _ in ()).throw(RuntimeError("no clipboard")))
+        monkeypatch.setattr(
+            tools_module.pyperclip,
+            "copy",
+            lambda _text: (_ for _ in ()).throw(RuntimeError("no clipboard")),
+        )
         monkeypatch.setattr(tools_module.shutil, "which", fake_which)
         monkeypatch.setattr(tools_module.subprocess, "run", fake_run)
         monkeypatch.setattr(tools_module.sys, "platform", "linux")
@@ -1118,19 +1166,24 @@ class TestPivotConfig:
     @pytest.mark.unit
     def test_pivot_interface_defaults_to_none(self):
         from cerno_pkg.config import CernoConfig
+
         config = CernoConfig()
         assert config.pivot_interface is None
 
     @pytest.mark.unit
     def test_pivot_http_port_defaults_to_8877(self):
         from cerno_pkg.config import CernoConfig
+
         config = CernoConfig()
         assert config.pivot_http_port == 8877
 
     @pytest.mark.unit
     def test_pivot_interface_roundtrips_through_save_load(self, tmp_path, monkeypatch):
         from cerno_pkg.config import CernoConfig, save_config, load_config
-        monkeypatch.setattr("cerno_pkg.config.get_config_path", lambda: tmp_path / "config.yaml")
+
+        monkeypatch.setattr(
+            "cerno_pkg.config.get_config_path", lambda: tmp_path / "config.yaml"
+        )
         config = CernoConfig(pivot_interface="tun0")
         save_config(config)
         loaded = load_config()
@@ -1139,7 +1192,10 @@ class TestPivotConfig:
     @pytest.mark.unit
     def test_pivot_http_port_roundtrips_through_save_load(self, tmp_path, monkeypatch):
         from cerno_pkg.config import CernoConfig, save_config, load_config
-        monkeypatch.setattr("cerno_pkg.config.get_config_path", lambda: tmp_path / "config.yaml")
+
+        monkeypatch.setattr(
+            "cerno_pkg.config.get_config_path", lambda: tmp_path / "config.yaml"
+        )
         config = CernoConfig(pivot_http_port=9999)
         save_config(config)
         loaded = load_config()
@@ -1155,23 +1211,36 @@ class TestProxychainsRenderRow:
         from cerno_pkg.render import render_tool_availability_table
         from cerno_pkg.config import CernoConfig
 
-        monkeypatch.setattr("cerno_pkg.render.load_config", lambda: CernoConfig(proxychains_enabled=False))
+        monkeypatch.setattr(
+            "cerno_pkg.render.load_config",
+            lambda: CernoConfig(proxychains_enabled=False),
+        )
         # Don't need proxychains4 on PATH — just verify row name is rendered
         render_tool_availability_table(include_unavailable=True)
         captured = capsys.readouterr()
         assert "proxychains4" in captured.out
 
     @pytest.mark.unit
-    def test_proxychains4_row_shows_active_when_enabled_and_found(self, monkeypatch, capsys):
+    def test_proxychains4_row_shows_active_when_enabled_and_found(
+        self, monkeypatch, capsys
+    ):
         """When proxy enabled and binary found, show 'active' details."""
         from cerno_pkg.render import render_tool_availability_table
         from cerno_pkg.config import CernoConfig
 
         import shutil as _shutil
 
-        config = CernoConfig(proxychains_enabled=True, proxychains_host="127.0.0.1", proxychains_port=9000)
+        config = CernoConfig(
+            proxychains_enabled=True,
+            proxychains_host="127.0.0.1",
+            proxychains_port=9000,
+        )
         monkeypatch.setattr("cerno_pkg.render.load_config", lambda: config)
-        monkeypatch.setattr(_shutil, "which", lambda name: "/usr/bin/proxychains4" if name == "proxychains4" else None)
+        monkeypatch.setattr(
+            _shutil,
+            "which",
+            lambda name: "/usr/bin/proxychains4" if name == "proxychains4" else None,
+        )
 
         render_tool_availability_table(include_unavailable=True)
         captured = capsys.readouterr()
@@ -1195,7 +1264,9 @@ class TestProxychainsRenderRow:
         assert "proxy mode will not work" in captured.out
 
     @pytest.mark.unit
-    def test_proxychains4_row_shows_version_when_available_and_disabled(self, monkeypatch, capsys):
+    def test_proxychains4_row_shows_version_when_available_and_disabled(
+        self, monkeypatch, capsys
+    ):
         """When proxy disabled and binary found, show version (no SOCKS5/active marker)."""
         from cerno_pkg.render import render_tool_availability_table
         from cerno_pkg.config import CernoConfig
@@ -1203,7 +1274,11 @@ class TestProxychainsRenderRow:
 
         config = CernoConfig(proxychains_enabled=False)
         monkeypatch.setattr("cerno_pkg.render.load_config", lambda: config)
-        monkeypatch.setattr(_shutil, "which", lambda name: "/usr/bin/proxychains4" if name == "proxychains4" else None)
+        monkeypatch.setattr(
+            _shutil,
+            "which",
+            lambda name: "/usr/bin/proxychains4" if name == "proxychains4" else None,
+        )
 
         render_tool_availability_table(include_unavailable=True)
         captured = capsys.readouterr()
@@ -1244,7 +1319,11 @@ class TestProxychains4Version:
         from unittest.mock import Mock, patch
         from cerno_pkg.ops import get_proxychains4_version
 
-        result = Mock(returncode=0, stdout="", stderr="[proxychains] preloading libproxychains.so.4\n")
+        result = Mock(
+            returncode=0,
+            stdout="",
+            stderr="[proxychains] preloading libproxychains.so.4\n",
+        )
         with patch("shutil.which", return_value="/usr/bin/proxychains4"):
             with patch("subprocess.run", return_value=result):
                 assert get_proxychains4_version() is None
@@ -1256,7 +1335,9 @@ class TestProxychains4Version:
         from cerno_pkg.ops import get_proxychains4_version
 
         with patch("shutil.which", return_value="/usr/bin/proxychains4"):
-            with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("cmd", 5)):
+            with patch(
+                "subprocess.run", side_effect=subprocess.TimeoutExpired("cmd", 5)
+            ):
                 assert get_proxychains4_version() is None
 
     @pytest.mark.unit
@@ -1284,8 +1365,15 @@ class TestProxychains4Version:
         from cerno_pkg.config import CernoConfig
         from cerno_pkg.render import render_tool_availability_table
 
-        monkeypatch.setattr("cerno_pkg.render.load_config", lambda: CernoConfig(proxychains_enabled=False))
-        monkeypatch.setattr(_shutil, "which", lambda name: "/usr/bin/proxychains4" if name == "proxychains4" else None)
+        monkeypatch.setattr(
+            "cerno_pkg.render.load_config",
+            lambda: CernoConfig(proxychains_enabled=False),
+        )
+        monkeypatch.setattr(
+            _shutil,
+            "which",
+            lambda name: "/usr/bin/proxychains4" if name == "proxychains4" else None,
+        )
         monkeypatch.setattr("cerno_pkg.ops.get_proxychains4_version", lambda: "4.17")
 
         render_tool_availability_table(include_unavailable=True)
@@ -1299,9 +1387,17 @@ class TestProxychains4Version:
         from cerno_pkg.config import CernoConfig
         from cerno_pkg.render import render_tool_availability_table
 
-        config = CernoConfig(proxychains_enabled=True, proxychains_host="127.0.0.1", proxychains_port=9000)
+        config = CernoConfig(
+            proxychains_enabled=True,
+            proxychains_host="127.0.0.1",
+            proxychains_port=9000,
+        )
         monkeypatch.setattr("cerno_pkg.render.load_config", lambda: config)
-        monkeypatch.setattr(_shutil, "which", lambda name: "/usr/bin/proxychains4" if name == "proxychains4" else None)
+        monkeypatch.setattr(
+            _shutil,
+            "which",
+            lambda name: "/usr/bin/proxychains4" if name == "proxychains4" else None,
+        )
         monkeypatch.setattr("cerno_pkg.ops.get_proxychains4_version", lambda: "4.17")
 
         render_tool_availability_table(include_unavailable=True)
@@ -1328,24 +1424,28 @@ class TestCommandResultRemote:
     @pytest.mark.unit
     def test_is_remote_defaults_to_false(self):
         from cerno_pkg.tool_context import CommandResult
+
         result = CommandResult(display_command="nmap ...")
         assert result.is_remote is False
 
     @pytest.mark.unit
     def test_cleanup_defaults_to_none(self):
         from cerno_pkg.tool_context import CommandResult
+
         result = CommandResult(display_command="nmap ...")
         assert result.cleanup is None
 
     @pytest.mark.unit
     def test_remote_output_path_defaults_to_none(self):
         from cerno_pkg.tool_context import CommandResult
+
         result = CommandResult(display_command="nmap ...")
         assert result.remote_output_path is None
 
     @pytest.mark.unit
     def test_can_construct_remote_result(self):
         from cerno_pkg.tool_context import CommandResult
+
         called = []
         cleanup = lambda: called.append(True)
         result = CommandResult(
@@ -1363,6 +1463,7 @@ class TestCommandResultRemote:
     def test_existing_non_remote_construction_still_works(self):
         """Ensure existing callers (command, display_command, artifact_note) are unaffected."""
         from cerno_pkg.tool_context import CommandResult
+
         result = CommandResult(
             command=["nmap", "-sV"],
             display_command=["nmap", "-sV"],
@@ -1378,6 +1479,7 @@ class TestBuildNmapRemoteCmd:
     @pytest.mark.unit
     def test_remote_oneliner_contains_curl_and_nmap(self):
         from cerno_pkg.ops import build_nmap_remote_oneliner
+
         result = build_nmap_remote_oneliner(
             server_ip="10.10.14.5",
             server_port=8877,
@@ -1393,6 +1495,7 @@ class TestBuildNmapRemoteCmd:
     @pytest.mark.unit
     def test_remote_oneliner_omits_port_flag_when_no_ports(self):
         from cerno_pkg.ops import build_nmap_remote_oneliner
+
         result = build_nmap_remote_oneliner(
             server_ip="10.10.14.5",
             server_port=8877,
@@ -1406,6 +1509,7 @@ class TestBuildNmapRemoteCmd:
     @pytest.mark.unit
     def test_remote_oneliner_includes_nse_option(self):
         from cerno_pkg.ops import build_nmap_remote_oneliner
+
         result = build_nmap_remote_oneliner(
             server_ip="10.10.14.5",
             server_port=8877,
@@ -1418,6 +1522,7 @@ class TestBuildNmapRemoteCmd:
     @pytest.mark.unit
     def test_remote_oneliner_udp_uses_sU_not_sS(self):
         from cerno_pkg.ops import build_nmap_remote_oneliner
+
         result = build_nmap_remote_oneliner(
             server_ip="10.10.14.5",
             server_port=8877,
@@ -1432,6 +1537,7 @@ class TestBuildNmapRemoteCmd:
     @pytest.mark.unit
     def test_remote_oneliner_no_pn_flag(self):
         from cerno_pkg.ops import build_nmap_remote_oneliner
+
         result = build_nmap_remote_oneliner(
             server_ip="10.10.14.5",
             server_port=8877,

@@ -64,8 +64,12 @@ def save_session(
         session_id if successful, None otherwise
     """
     session_id = _db_save_session(
-        scan_id, session_start, in_progress_count, done_count,
-        tool_executions, cve_extractions,
+        scan_id,
+        session_start,
+        in_progress_count,
+        done_count,
+        tool_executions,
+        cve_extractions,
         additional_scan_ids=additional_scan_ids,
     )
 
@@ -113,7 +117,7 @@ def load_session(scan_id: int) -> Optional[SessionState]:
                 ORDER BY vs.session_start DESC
                 LIMIT 1
                 """,
-                (scan_id,)
+                (scan_id,),
             )
 
             if not row:
@@ -123,7 +127,7 @@ def load_session(scan_id: int) -> Optional[SessionState]:
             additional_ids_rows = query_all(
                 conn,
                 "SELECT scan_id FROM session_scans WHERE session_id = ? AND scan_id != ?",
-                (row["session_id"], scan_id)
+                (row["session_id"], scan_id),
             )
             additional_scan_ids = [r["scan_id"] for r in additional_ids_rows]
 
@@ -189,14 +193,14 @@ def _db_save_session(
             placeholders = ",".join("?" * len(stamp_ids))
             conn.execute(
                 f"UPDATE scans SET last_reviewed_at = ? WHERE scan_id IN ({placeholders})",
-                (now_iso(), *stamp_ids)
+                (now_iso(), *stamp_ids),
             )
 
             # Check for active session
             row = query_one(
                 conn,
                 "SELECT session_id FROM sessions WHERE scan_id = ? AND session_end IS NULL ORDER BY session_start DESC LIMIT 1",
-                (scan_id,)
+                (scan_id,),
             )
 
             session_id: int | None
@@ -211,7 +215,7 @@ def _db_save_session(
                     INSERT INTO sessions (scan_id, session_start)
                     VALUES (?, ?)
                     """,
-                    (scan_id, session_start.isoformat())
+                    (scan_id, session_start.isoformat()),
                 )
                 session_id = cursor.lastrowid
 
@@ -245,7 +249,7 @@ def _db_save_session_scans(
             for sid in all_scan_ids:
                 conn.execute(
                     "INSERT OR IGNORE INTO session_scans (session_id, scan_id) VALUES (?, ?)",
-                    (session_id, sid)
+                    (session_id, sid),
                 )
     except Exception as e:
         log_error(f"Failed to save session_scans: {e}")
@@ -269,7 +273,7 @@ def _db_end_session(scan_id: int) -> None:
                 SET session_end = ?
                 WHERE scan_id = ? AND session_end IS NULL
                 """,
-                (now, scan_id)
+                (now, scan_id),
             )
 
     except Exception as e:
@@ -327,8 +331,7 @@ def show_scan_summary(
 
     effective_scan_id = scan_id or (scan_ids[0] if scan_ids else 0)
     total_files, reviewed_files = count_reviewed_in_scan(
-        scan_dir, scan_id=effective_scan_id,
-        scan_ids=scan_ids if is_multi else None
+        scan_dir, scan_id=effective_scan_id, scan_ids=scan_ids if is_multi else None
     )
 
     # Query all host/port data from database
@@ -360,7 +363,7 @@ def show_scan_summary(
                     JOIN hosts h ON fah.host_id = h.host_id
                     WHERE f.scan_id IN ({id_placeholders})
                     """,
-                    tuple(scan_ids)
+                    tuple(scan_ids),
                 )
                 empty_files = query_all(
                     conn,
@@ -370,7 +373,7 @@ def show_scan_summary(
                     LEFT JOIN finding_affected_hosts fah ON f.finding_id = fah.finding_id
                     WHERE f.scan_id IN ({id_placeholders}) AND fah.finding_id IS NULL
                     """,
-                    tuple(scan_ids)
+                    tuple(scan_ids),
                 )
             else:
                 rows = query_all(
@@ -382,7 +385,7 @@ def show_scan_summary(
                     JOIN hosts h ON fah.host_id = h.host_id
                     WHERE f.scan_id = ?
                     """,
-                    (effective_scan_id,)
+                    (effective_scan_id,),
                 )
                 empty_files = query_all(
                     conn,
@@ -392,7 +395,7 @@ def show_scan_summary(
                     LEFT JOIN finding_affected_hosts fah ON f.finding_id = fah.finding_id
                     WHERE f.scan_id = ? AND fah.finding_id IS NULL
                     """,
-                    (effective_scan_id,)
+                    (effective_scan_id,),
                 )
             empties = len(empty_files)
 
@@ -404,8 +407,8 @@ def show_scan_summary(
             host = row["ip_address"]
             port = row["port_number"]
             scan_target_type = row["scan_target_type"]
-            is_ipv4 = (scan_target_type == 'ipv4')
-            is_ipv6 = (scan_target_type == 'ipv6')
+            is_ipv4 = scan_target_type == "ipv4"
+            is_ipv6 = scan_target_type == "ipv6"
 
             unique_hosts.add(host)
 
@@ -437,7 +440,7 @@ def show_scan_summary(
     # Build inline file stats with conditional display
     file_stats_parts = [
         f"[cyan]Findings:[/cyan] {total_files} total",
-        f"[cyan]Done:[/cyan] [{review_color}]{reviewed_files} ({review_pct:.1f}%)[/{review_color}]"
+        f"[cyan]Done:[/cyan] [{review_color}]{reviewed_files} ({review_pct:.1f}%)[/{review_color}]",
     ]
     if empties > 0:
         file_stats_parts.append(f"[cyan]Empty:[/cyan] {empties}")
@@ -446,9 +449,17 @@ def show_scan_summary(
     _console_global.print()  # Blank line
 
     # Host & Port Analysis Table
-    analysis_table = Table(show_header=True, header_style=style_if_enabled("bold cyan"), box=box.SIMPLE, title="Host & Port Analysis", title_style=style_if_enabled("bold blue"))
+    analysis_table = Table(
+        show_header=True,
+        header_style=style_if_enabled("bold cyan"),
+        box=box.SIMPLE,
+        title="Host & Port Analysis",
+        title_style=style_if_enabled("bold blue"),
+    )
     analysis_table.add_column("Metric", style=style_if_enabled("cyan"))
-    analysis_table.add_column("Value", justify="right", style=style_if_enabled("yellow"))
+    analysis_table.add_column(
+        "Value", justify="right", style=style_if_enabled("yellow")
+    )
 
     analysis_table.add_row("Unique Hosts", str(len(unique_hosts)))
     analysis_table.add_row("  └─ IPv4", str(len(ipv4_set)))
@@ -467,10 +478,14 @@ def show_scan_summary(
             header_style=style_if_enabled("bold cyan"),
             box=box.SIMPLE,
             title=f"Top {min(top_ports_n, len(ports_counter))} Ports",
-            title_style=style_if_enabled("bold blue")
+            title_style=style_if_enabled("bold blue"),
         )
-        top_ports_table.add_column("Port", justify="right", style=style_if_enabled("cyan"))
-        top_ports_table.add_column("Occurrences", justify="right", style=style_if_enabled("yellow"))
+        top_ports_table.add_column(
+            "Port", justify="right", style=style_if_enabled("cyan")
+        )
+        top_ports_table.add_column(
+            "Occurrences", justify="right", style=style_if_enabled("yellow")
+        )
 
         # Get top N ports by occurrence count
         for port, count in ports_counter.most_common(top_ports_n):
