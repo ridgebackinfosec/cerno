@@ -99,6 +99,32 @@ class TestRichCouplingGuards:
         assert DEFAULT_STYLES, "rich.default_styles.DEFAULT_STYLES is empty"
         assert "prompt.choices" in DEFAULT_STYLES
 
+    def test_traceback_suppress_entries_are_modules_not_strings(self):
+        """Rich resolves a *string* suppress entry as a filesystem path, not a
+        module name, so ``suppress=["typer"]`` silently expands to ``./typer``
+        and suppresses nothing. Entries must be module objects.
+        """
+        import os
+
+        from rich.traceback import Traceback
+
+        from cerno import _TB_SUPPRESS  # type: ignore[reportPrivateUsage]
+
+        assert (
+            _TB_SUPPRESS
+        ), "nothing suppressed; CLI tracebacks will show framework frames"
+        for entry in _TB_SUPPRESS:
+            assert not isinstance(
+                entry, str
+            ), f"{entry!r} is a str; Rich would treat it as a path, not a module"
+
+        try:
+            raise ValueError("probe")
+        except ValueError:
+            resolved = Traceback(suppress=_TB_SUPPRESS).suppress
+        for path in resolved:
+            assert os.path.isdir(path), f"suppress path does not exist: {path}"
+
     def test_installed_as_rich_global_console(self, monkeypatch):
         """Bare ``Prompt``/``Confirm``/``Progress`` calls fall back to Rich's
         global console, which ``get_console()`` sets via the private

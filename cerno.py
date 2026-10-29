@@ -92,8 +92,12 @@ from cerno_pkg.constants import (
 
 _console_global = get_console()
 
-# Install pretty tracebacks, but suppress for Typer/Click exit exceptions
-rich_tb_install(show_locals=False, suppress=["typer", "click"])
+# Install pretty tracebacks, hiding Typer's internal frames (including the
+# Click it vendors as of 0.26) so CLI exit exceptions don't dump framework
+# noise. Rich treats a *string* suppress entry as a filesystem path, not a
+# module name, so these must be module objects to resolve at all.
+_TB_SUPPRESS = [typer]
+rich_tb_install(show_locals=False, suppress=_TB_SUPPRESS)
 
 # === Configuration context ===
 import contextvars

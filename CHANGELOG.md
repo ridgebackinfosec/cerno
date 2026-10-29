@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.11.2] - 2026-10-29
+
+### Changed
+- **`typer` floor raised to `>=0.27,<1`** (from `>=0.12,<1`). Typer 0.26 vendored Click and dropped it as an external dependency, and 0.27 changed how metavars are printed in `--help`; pinning above both makes the vendored layout a guarantee, which the traceback fix below depends on. Typer 0.27.3 additionally escapes terminal control characters in *its own* error messages (unknown command / unknown option). Cerno's **command and option surface is unchanged** — same commands, same flags, same argument parsing — and `--install-completion` / `--show-completion` still work (Typer requires `shellingham` unconditionally). One **cosmetic** difference is visible in `--help`: 0.27's metavar change renders required arguments brace-wrapped in the usage line, so `cerno import nessus [OPTIONS] {nessus}` and `cerno scan compare [OPTIONS] {scan1} {scan2}` replace the previous rendering. This comes from Typer's own `make_metavar` override (`typer/core.py`), affects the usage line only, and changes no invocation — `cerno scan compare A B` still parses two positionals exactly as before.
+
+### Fixed
+- **Rich tracebacks no longer dump Typer framework frames.** `cerno.py` passed `suppress=["typer", "click"]` to `rich.traceback.install()`, but Rich treats a *string* suppress entry as a filesystem path rather than a module name — so those resolved to `./typer` and `./click` relative to the working directory, directories that do not exist, and **no frames were ever suppressed**. The module object is now passed instead (`suppress=[typer]`), which resolves to the installed package and transitively covers the Click that Typer vendors, so a crash in a CLI command shows Cerno's frames rather than the framework's. A new guard test asserts that every suppress entry is a module object and resolves to a directory that exists, so the string form cannot silently return.
+
 ## [2.11.1] - 2026-10-29
 
 ### Changed
