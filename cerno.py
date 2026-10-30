@@ -80,7 +80,7 @@ from rich.table import Table
 from rich.traceback import install as rich_tb_install
 
 # Create a console for the interactive flow (configured with no_color setting)
-from cerno_pkg.ansi import get_console, get_terminal_width, safe_text
+from cerno_pkg.ansi import get_console, get_terminal_width, print_verbatim, safe_text
 from cerno_pkg.models import count_review_states
 from cerno_pkg.constants import (
     REVIEW_STATE_DONE,
@@ -998,7 +998,7 @@ def browse_file_list(
                     ok("Copied to clipboard.")
                 else:
                     warn(f"{detail} Printing below for manual copy:")
-                    _console_global.print(payload)
+                    print_verbatim(payload)
 
             elif post_choice in ("f", "format"):
                 print_action_menu(

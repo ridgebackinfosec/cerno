@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.12.2] - 2026-10-30
+
+### Added
+- **`ansi.print_verbatim()`** (exported from `cerno_pkg`) — emits text byte-for-byte with no Rich markup parsing and no width wrapping, for dumps the operator is meant to copy by hand. Its docstring records why it must stay a builtin `print`, so it is not later "upgraded" to a Rich console call.
+
+### Fixed
+- **The manual-copy fallback no longer crashes on bracketed scan text.** When no clipboard tool is available (`xclip` / `wl-copy` / `xsel` absent and no `DISPLAY` — the normal case on headless or SSH-only hosts), `[C]` Copy falls back to printing the payload for manual copying. That print went through Rich, which markup-parses any bare string, so a payload containing `[/]` raised an uncaught `MarkupError`. This is genuinely reachable: a `.nessus` host identifier is stored verbatim, so a bracketed FQDN such as `web [/] server.example` lands straight in the payload — reproduced end-to-end by driving `[V]` → `[C]` with the clipboard disabled. Both fallback sites (the finding host view in `fs.py` and the aggregate host view in `cerno.py`) now use `print_verbatim()`. **Escaping was deliberately not used here:** `safe_text()` would turn `[` into `\[`, and Rich `Text` would wrap to the console width — either would corrupt the text the operator is about to copy.
+- **`choose_from_list()` no longer interpolates list items into markup.** It has no callers today but is exported in `cerno_pkg.__all__`, so a future caller passing scan-derived items would have hit the same crash; items now render through `rich.text.Text`. Latent rather than live, and fixed because this bug class has already recurred twice.
+
+These were the two reachable sinks deliberately deferred from 2.12.1 plus one latent site; an independent audit of the `add_row` / `Panel` / `console.print` / `Text.append` sinks found no further reachable raw-string site.
+
 ## [2.12.1] - 2026-10-29
 
 ### Fixed

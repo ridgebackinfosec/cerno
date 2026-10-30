@@ -21,6 +21,7 @@ __all__ = [
     "style_if_enabled",
     "safe_text",
     "strip_unsafe_escapes",
+    "print_verbatim",
     # Banner module
     "display_banner",
     # Constants module
@@ -202,6 +203,7 @@ from .ansi import (
     style_if_enabled,
     safe_text,
     strip_unsafe_escapes,
+    print_verbatim,
 )
 from .banner import display_banner
 from .constants import (

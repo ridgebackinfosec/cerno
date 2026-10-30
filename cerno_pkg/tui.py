@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, List, Optional, Tuple, Dict, Callable, TYPE_CHECKING
 
 from rich.prompt import Prompt
+from rich.text import Text
 
 
 @dataclass
@@ -225,7 +226,9 @@ def choose_from_list(
     """
     header(title)
     for index, item in enumerate(items, 1):
-        _console_global.print(f"[{index}] {item}")
+        # Text: items may be scan-derived, and Rich markup-parses a bare str.
+        # One Text for the whole line also keeps the [N] prefix literal.
+        _console_global.print(Text(f"[{index}] {item}"))
 
     if allow_back:
         print_action_menu([("B", "Back")])

@@ -320,6 +320,27 @@ def safe_text(value: object) -> str:
     return escape(_scrub(str(value)))
 
 
+def print_verbatim(text: str) -> None:
+    """Print text byte-for-byte: no markup parsing, no width wrapping.
+
+    For dumps the operator is meant to copy by hand (the clipboard-failure
+    fallback). Neither of the other tools in this module is usable there:
+
+    * :func:`safe_text` escapes ``[`` as ``\\[``, so the operator would copy
+      *corrupted* text.
+    * ``console.print(Text(...))`` renders literally but Rich wraps to the
+      console width, injecting newlines into what is meant to be copyable.
+
+    So this deliberately uses the builtin ``print``. Do not "upgrade" it to a
+    Rich console call: Rich markup-parses any bare ``str``, and a scan-derived
+    payload containing ``[/]`` raises ``MarkupError``.
+
+    Args:
+        text: Exact text to emit
+    """
+    print(text)
+
+
 # ========== Message output ==========
 def header(msg: str) -> None:
     """Print a bold blue header message with newline prefix.

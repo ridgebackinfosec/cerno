@@ -16,7 +16,7 @@ from typing import Optional, List, Any, TYPE_CHECKING
 
 from rich.prompt import Prompt, Confirm
 
-from .ansi import err, header, ok, warn, get_console, info, safe_text
+from .ansi import err, header, ok, warn, get_console, info, print_verbatim, safe_text
 from .constants import (
     REVIEW_MOVE_LABELS,
     REVIEW_STATE_DONE,
@@ -637,7 +637,7 @@ def handle_finding_view(
                 ok("Copied to clipboard.")
             else:
                 warn(f"{detail} Printing below for manual copy:")
-                _console_global.print(payload)
+                print_verbatim(payload)
 
         elif post_choice in ("f", "format"):
             # Offer format change

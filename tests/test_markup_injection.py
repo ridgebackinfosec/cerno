@@ -378,3 +378,71 @@ class TestOverlapGroupTableHostileNames:
         )
 
         assert token in out
+
+
+@pytest.mark.unit
+class TestManualCopyFallback:
+    """The clipboard-failure fallback dumps text for the operator to copy.
+
+    It must not be markup-parsed (a scan-derived payload containing ``[/]``
+    raises ``MarkupError``) and must not be *altered* either -- escaping it
+    would corrupt what gets copied, and Rich's width wrapping would inject
+    newlines. Hence byte-exact assertions here rather than substring ones.
+    """
+
+    PAYLOAD = (
+        "10.0.0.1:445  SMB [/] Signing\n"
+        "10.0.0.2:443  TLS 1.0 [deprecated] Detection\n"
+        "10.0.0.3:80   Log4j [CVE-2021-44228] RCE"
+    )
+
+    def test_payload_survives_byte_for_byte(self, capsys):
+        ansi.print_verbatim(self.PAYLOAD)
+
+        assert capsys.readouterr().out == self.PAYLOAD + "\n"
+
+    def test_does_not_raise_on_unbalanced_tag(self, capsys):
+        ansi.print_verbatim("SMB [/] Signing")
+
+        assert capsys.readouterr().out == "SMB [/] Signing\n"
+
+    def test_long_line_is_not_wrapped(self, capsys):
+        """Rich would wrap at the console width, breaking a copy dump."""
+        long_line = "10.0.0.1:445  " + "A" * 400
+
+        ansi.print_verbatim(long_line)
+
+        out = capsys.readouterr().out
+        assert out == long_line + "\n"
+        assert out.count("\n") == 1, "payload was wrapped onto extra lines"
+
+    @pytest.mark.parametrize("name,token", HOSTILE_CASES)
+    def test_hostile_tokens_pass_through(self, capsys, name, token):
+        ansi.print_verbatim(name)
+
+        assert capsys.readouterr().out == name + "\n"
+
+
+@pytest.mark.unit
+class TestChooseFromListHostileItems:
+    """`choose_from_list` interpolates each item into a printed line.
+
+    It has no internal callers today but is exported in ``cerno_pkg.__all__``,
+    so it is public API and a future caller passing scan-derived items would
+    hit the same crash. Guard it now.
+    """
+
+    @pytest.mark.parametrize("name,token", HOSTILE_CASES)
+    def test_items_render_literally(self, monkeypatch, name, token):
+        from cerno_pkg import tui
+
+        # Back out immediately; we only care about the rendering pass.
+        monkeypatch.setattr(tui.Prompt, "ask", staticmethod(lambda *a, **k: "b"))
+
+        out = _capture(
+            monkeypatch,
+            tui,
+            lambda: tui.choose_from_list([name, "other"], "Pick one", allow_back=True),
+        )
+
+        assert token in out, f"{token!r} was swallowed by markup parsing"
