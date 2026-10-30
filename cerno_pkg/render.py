@@ -970,6 +970,7 @@ def render_finding_actions_footer(
     has_claude: bool = False,
     claude_installed: bool = False,
     use_proxy: bool = False,
+    no_tools: bool = False,
 ) -> None:
     """Render action footer for finding review with responsive layout.
 
@@ -986,6 +987,7 @@ def render_finding_actions_footer(
         has_claude: Whether Claude Assistant is enabled and available
         claude_installed: Whether claude CLI is on PATH (shows [A] for the opt-in prompt)
         use_proxy: Whether proxychains4 routing is active (shows the [PROXY] badge)
+        no_tools: Review-only mode (``--no-tools``); hides the [T] Run tool action
     """
     from .ansi import get_terminal_width
 
@@ -1010,7 +1012,7 @@ def render_finding_actions_footer(
     if has_nxc_data:
         left_items_row2.append(key_text("N", "NetExec Data"))
     left_row2 = join_actions_texts(left_items_row2) if left_items_row2 else Text()
-    right_row2 = join_actions_texts([key_text("T", "Run tool")])
+    right_row2 = Text() if no_tools else join_actions_texts([key_text("T", "Run tool")])
 
     # Row 3: Control actions (always present)
     left_row3 = join_actions_texts(
@@ -1039,9 +1041,13 @@ def render_finding_actions_footer(
         grid.add_column(ratio=1)
         grid.add_column(ratio=1)
         grid.add_row(left_row1, right_row1)
-        if left_row2.plain:  # Only add row if there are conditional items
+        # Row 2 may hold conditional items, [T], both, or neither (--no-tools
+        # with no workflow/nxc data) — skip it entirely when empty.
+        if left_row2.plain and right_row2.plain:
             grid.add_row(left_row2, right_row2)
-        else:
+        elif left_row2.plain:
+            grid.add_row(left_row2, Text())
+        elif right_row2.plain:
             grid.add_row(right_row2, Text())  # Run tool alone
         grid.add_row(left_row3, right_row3)
         if claude_row is not None:
@@ -1053,7 +1059,8 @@ def render_finding_actions_footer(
         _console_global.print(right_row1)
         if left_row2.plain:
             _console_global.print(left_row2)
-        _console_global.print(right_row2)
+        if right_row2.plain:
+            _console_global.print(right_row2)
         _console_global.print(left_row3)
         _console_global.print(right_row3)
         if claude_row is not None:

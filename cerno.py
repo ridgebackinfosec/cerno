@@ -1479,15 +1479,18 @@ def main(args: types.SimpleNamespace) -> None:
         )
 
     # Tool availability check (unless --no-tools enabled)
-    if not args.no_tools:
+    check_only = getattr(args, "check", False)
+    if not args.no_tools or check_only:
         from cerno_pkg.render import render_tool_availability_table
 
         render_tool_availability_table(include_unavailable=True)
         _console_global.print()  # Add spacing
 
-        # If --check flag used, exit after displaying checks
-        if getattr(args, "check", False):
-            raise Exit(0)
+    # --check reports availability and exits. Deliberately outside the no_tools
+    # gate: nesting it there made `--check --no-tools` fall through into the
+    # interactive review instead of exiting.
+    if check_only:
+        raise Exit(0)
 
     export_root = Path(args.export_root) if args.export_root else None
     if export_root and not export_root.exists():

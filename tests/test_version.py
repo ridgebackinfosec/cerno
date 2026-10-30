@@ -132,20 +132,26 @@ def test_banner_uses_version():
 @pytest.mark.integration
 def test_version_in_installed_package():
     """
-    Integration test: Verify version is accessible after package install.
+    Integration test: the resolved version must match the installed metadata.
 
-    This test only runs if the package is installed (not in editable mode).
+    Skips only when the package genuinely is not installed. The except clause is
+    deliberately narrow: it previously caught ``Exception``, which swallowed the
+    ``AssertionError`` too, so a real version mismatch was reported as a skip and
+    the test could never fail. That misfired in practice after a version bump.
     """
+    from importlib.metadata import PackageNotFoundError, version
+
     try:
-        from importlib.metadata import version
-
         installed_version = version("cerno")
+    except PackageNotFoundError:
+        pytest.skip("Package not installed; no metadata to compare against")
 
-        from cerno_pkg import __version__
+    from cerno_pkg import __version__
 
-        assert __version__ == installed_version
-    except Exception:
-        pytest.skip("Package not installed in standard mode")
+    assert __version__ == installed_version, (
+        f"cerno_pkg.__version__ is {__version__!r} but the installed metadata says "
+        f"{installed_version!r} — reinstall (pip install -e .) after a version bump"
+    )
 
 
 def test_get_version_from_metadata():

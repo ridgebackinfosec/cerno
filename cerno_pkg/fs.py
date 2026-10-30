@@ -432,6 +432,7 @@ def handle_finding_view(
             has_claude=has_claude,
             claude_installed=claude_installed,
             use_proxy=use_proxy,
+            no_tools=getattr(args, "no_tools", False),
         )
         try:
             action_choice = Prompt.ask("Choose action").strip().lower()
@@ -464,6 +465,11 @@ def handle_finding_view(
 
         # Handle Run tool action
         if action_choice in ("t", "tool"):
+            # Review-only mode: [T] is hidden from the footer, but refuse here
+            # too so typing it explicitly cannot start a tool run.
+            if getattr(args, "no_tools", False):
+                warn("Tool prompts are disabled for this session (--no-tools).")
+                continue
             if scan_dir is None or sev_dir is None or hosts is None or args is None:
                 warn("Tool execution not available in this context.")
                 continue

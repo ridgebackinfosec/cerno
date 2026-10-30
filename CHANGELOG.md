@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.13.0] - 2026-10-30
+
+### Changed
+- **`cerno review --no-tools` now actually disables tool prompts.** The flag advertised "Disable tool prompts (review-only)" but was only ever read to skip the tool-availability table and print a note — nothing in the finding view consulted it, so `[T]` Run tool stayed fully functional. `[T]` is now hidden from the finding-view footer and refused with an explanatory message if typed anyway, so review-only mode is real. That matters for a tool which can launch nmap, NetExec and Metasploit. The MCP `execute_command` path is deliberately out of scope here and still governed by `mcp_allow_execution`.
+
+### Fixed
+- **`cerno review --check --no-tools` now exits instead of dropping into the review.** The `--check` early exit was nested inside the `if not args.no_tools:` block, so combining the two flags silently fell through into the interactive TUI. `--check` is honored independently and always reports tool availability before exiting 0.
+- **`tests/test_version.py::test_version_in_installed_package` can now fail.** Its assertion sat inside `try/except Exception → pytest.skip()`, which swallowed the `AssertionError` too, so genuine version drift was reported as a skip and the test could never fail — it misfired exactly that way after a version bump during development. The except clause is narrowed to `PackageNotFoundError`, so a genuinely uninstalled package still skips while a real mismatch fails and names both versions.
+- **Corrected the documented behavior of `session.delete_session()`.** It stamps `session_end` and leaves the row in place; `CLAUDE.md` claimed "Auto-delete session after successful completion". The behavior is deliberate — the surviving row is what makes `onboarding.show_workflow_guidance()` treat a scan as already reviewed, keeping first-run guidance suppressed on re-entry — so the docs and docstring are corrected rather than the code. The name is kept because it is part of `cerno_pkg.__all__`.
+
 ## [2.12.2] - 2026-10-30
 
 ### Added

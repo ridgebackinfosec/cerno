@@ -148,7 +148,14 @@ def load_session(scan_id: int) -> Optional[SessionState]:
 
 def delete_session(scan_id: int) -> None:
     """
-    Mark database session as ended.
+    Mark the scan's active session as ended.
+
+    Despite the name, this does **not** delete the row: it stamps
+    ``session_end`` and leaves the record in place. That is deliberate — the
+    surviving row is what tells ``onboarding.show_workflow_guidance()`` the scan
+    has been reviewed before, so first-run guidance stays suppressed on
+    re-entry. The name is kept because it is part of the public API
+    (``cerno_pkg.__all__``).
 
     Args:
         scan_id: Scan ID

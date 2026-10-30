@@ -319,3 +319,54 @@ def test_nxc_host_panel_no_data():
     assert "No NetExec data available" in _panel_text(
         render_nxc_host_panel("10.0.0.9", None, False)
     )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("term_width", [200, 70], ids=["wide", "narrow"])
+@pytest.mark.parametrize(
+    "no_tools,offered", [(False, True), (True, False)], ids=["tools-on", "no-tools"]
+)
+def test_finding_footer_run_tool_respects_no_tools(
+    monkeypatch, term_width, no_tools, offered
+):
+    """`--no-tools` is a review-only mode, so [T] must not be advertised.
+
+    Checked at both layout widths: the footer builds a two-column grid at >=100
+    columns and a single column below that, and [T] lives in a row that is
+    assembled differently in each branch.
+    """
+    from cerno_pkg import ansi, render as render_module
+
+    console = _record_console(monkeypatch, render_module)
+    monkeypatch.setattr(ansi, "get_terminal_width", lambda: term_width)
+
+    render_module.render_finding_actions_footer(
+        review_state="unreviewed", no_tools=no_tools
+    )
+
+    out = console.export_text()
+    assert ("Run tool" in out) is offered
+    # The rest of the footer must survive either way.
+    assert "Finding Info" in out
+    assert "Back" in out
+
+
+@pytest.mark.unit
+def test_finding_footer_no_tools_keeps_conditional_row_items(monkeypatch):
+    """Hiding [T] must not also drop [W]/[N], which share that footer row."""
+    from cerno_pkg import ansi, render as render_module
+
+    console = _record_console(monkeypatch, render_module)
+    monkeypatch.setattr(ansi, "get_terminal_width", lambda: 200)
+
+    render_module.render_finding_actions_footer(
+        review_state="unreviewed",
+        has_workflow=True,
+        has_nxc_data=True,
+        no_tools=True,
+    )
+
+    out = console.export_text()
+    assert "Workflow" in out
+    assert "NetExec Data" in out
+    assert "Run tool" not in out

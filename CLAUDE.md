@@ -636,7 +636,7 @@ Regression tests live in `tests/test_markup_injection.py` — add a case there w
 
 **Resume prompt**: On startup, shows session details (in-progress/done counts, session start time).
 
-**Cleanup**: Auto-delete session after successful completion.
+**Cleanup**: `session.delete_session()` marks the session ended (stamps `session_end`) — despite the name it does **not** remove the row, and that is deliberate: the surviving row is what makes `onboarding.show_workflow_guidance()` treat the scan as already reviewed, so first-run guidance stays suppressed on re-entry.
 
 **Multi-scan sessions**: When reviewing multiple scans, all selected scan IDs are recorded in `session_scans` (junction table). On resume, the same set of scans is restored automatically.
 
