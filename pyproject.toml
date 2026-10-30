@@ -40,12 +40,12 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=9.1.1",
-    "pytest-cov>=7.0",
-    "pytest-mock>=3.15",
+    "pytest-cov>=7.1.0",
+    "pytest-mock>=3.17.0",
     "pytest-timeout>=2.4",
-    "black>=26.3",  # Floor matters: Black's stable style changes across majors
+    "black>=26.10.1",  # Floor matters: Black's stable style changes across majors
     "mypy>=2.4,<3",  # Bounded: 2.0 flipped several defaults; cap avoids silent 3.x drift
-    "pyright>=1.1.408",  # Type checking (complementary to mypy)
+    "pyright>=1.1.414",  # Type checking (complementary to mypy)
     "types-PyYAML>=6.0.12.20260906",  # Type stubs for pyyaml
 ]
 
