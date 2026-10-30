@@ -41,10 +41,16 @@ Cerno exposes the same underlying capabilities two ways:
 - **MCP server** — `cerno mcp` (`cerno_pkg/mcp_server/server.py`).
 
 **The MCP tools/resources/prompts are thin adapters over the *same* functions the
-TUI uses** — `cerno_pkg/models.py`, `analysis.py`, `cross_scan.py`, `tools.py`,
-and `claude_assistant.py`. That shared core is the contract between the two
-interfaces. A change to a shared function (signature, return shape, or its
-database-access behavior) can break the interface you weren't looking at.
+TUI uses** — `cerno_pkg/models.py`, `database.py`, `cross_scan.py`, `tools.py`,
+`nxc_db.py`, `workflow_mapper.py` and `claude_assistant.py`. That shared core is
+the contract between the two interfaces. A change to a shared function
+(signature, return shape, or its database-access behavior) can break the
+interface you weren't looking at.
+
+Note that `analysis.py`, `render.py`, `tui.py` and `fs.py` are **TUI-only** (they
+print), and `query.py`, `batch.py`, `ingest.py`, `workflow_prep.py`,
+`workflow_contrib.py` and `exec_chain.py` are currently **MCP-only**. See
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full layer map.
 
 **Rule:** run the **full** `pytest` suite before every PR — both the TUI tests
 *and* `tests/test_mcp_server.py` / `tests/test_mcp_contract.py` must pass. If you

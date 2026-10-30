@@ -1,0 +1,34 @@
+---
+title: Cerno engagement loop
+config:
+  flowchart:
+    wrappingWidth: 340
+    curve: basis
+---
+flowchart LR
+    nessus["<b>.nessus exports</b><br/>one or many"]
+    db[("<b>cerno.db</b><br/>findings · review state<br/>sessions · executions · verdicts")]
+    tui["<b>Interactive TUI</b><br/>triage by severity, host,<br/>exploitability · CVEs · host:port"]
+    tools["<b>nmap · NetExec</b><br/><b>Metasploit · custom</b><br/>run against the finding's<br/>exact hosts and ports"]
+    mcpc["<b>MCP client</b><br/>Claude CLI, etc."]
+    claude["<b>Claude Assistant</b>"]
+
+    nessus -->|"cerno import nessus"| db
+    db -->|"cerno review"| tui
+    tui -->|"one keypress"| tools
+    tools -->|"artifacts, then ingest:<br/>verified ports · NSE verdicts · nxc flags"| db
+    tui -.->|"[R] verdict"| db
+    db <-.->|"cerno mcp"| mcpc
+    tui <-.->|"[A]"| claude
+
+    classDef source fill:#9a6700,stroke:#7a5200,color:#ffffff
+    classDef store fill:#1f6feb,stroke:#164a9f,color:#ffffff
+    classDef human fill:#1a7f37,stroke:#126128,color:#ffffff
+    classDef external fill:#953800,stroke:#6e2900,color:#ffffff
+    classDef ai fill:#8250df,stroke:#6035ad,color:#ffffff
+
+    class nessus source
+    class db store
+    class tui human
+    class tools external
+    class mcpc,claude ai
