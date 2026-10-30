@@ -24,6 +24,7 @@ def _get_version_from_metadata() -> Optional[str]:
     """
     try:
         from importlib.metadata import version
+
         return version("cerno")
     except Exception:
         # Package not installed or importlib.metadata not available

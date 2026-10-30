@@ -262,7 +262,8 @@ cerno_pkg/
   ├── enums.py             # DisplayFormat, ViewFormat, SortMode
   ├── config.py            # CernoConfig dataclass, load/save, reset_config_key(), MCP_NOT_APPLICABLE_KEYS
   ├── constants.py         # Paths, review-state constants, NSE profiles, LIGHT_BG_COLOR_MAP
-  ├── ansi.py              # CernoConsole (color_scheme remapping), err/warn/info/ok helpers
+  ├── ansi.py              # CernoConsole (color_scheme remapping), err/warn/info/ok helpers,
+  │                        # safe_text() / strip_unsafe_escapes() for untrusted scan text
   ├── banner.py            # Promotional startup banner (`review -q` hides it)
   ├── logging_setup.py     # Loguru setup with rotation; log_info/log_debug/log_error
   ├── skills/cerno-assistant.md  # Claude Assistant system prompt
@@ -584,6 +585,28 @@ Only after user confirms the changelog content:
 
 **Pattern**: Compute pure data first, then render with Rich. Example: `analysis.py:build_compare_data()` returns data dict → `render_compare_table()` creates Rich table.
 
+### Rendering Untrusted Scan Text (Required)
+
+Plugin names, hostnames, scan names, workflow step titles, NetExec values and tool output are **attacker-influenced** — they come from third-party `.nessus` files, user-supplied workflow YAML and captured command output. A value containing `[/]` raises `MarkupError` and aborts rendering; one containing a style word (e.g. `[deprecated]`) is silently swallowed, which is worse — text disappears with no error at all.
+
+**The rule is about where the value lands, not what the source line looks like.** Rich markup-parses *any* bare `str` it is handed, so all of these are exposed even with no tag syntax in sight:
+
+```python
+table.add_row(plugin.plugin_name)        # a cell is parsed
+Panel(text), Panel(title=name)           # body and title are parsed
+console.print(value)                     # parsed
+f"[bold]{name}[/bold]"                   # parsed (the obvious one)
+```
+
+Do not audit this by grepping for markup-looking f-strings — that is exactly how the 2.12.0 sweep missed every table renderer and shipped a crash in the main findings list. Audit by asking *which values reach Rich*.
+
+- **Single style** → use `rich.text.Text(value, style=style_if_enabled("bold cyan"))`. `Text` never parses markup, so it is immune by construction. Preferred.
+- **Mixed styles in one string** → wrap each untrusted value in `ansi.safe_text()`, which strips control characters and escapes markup. Apply it **exactly once** (it is not idempotent).
+- **`err()`/`warn()`/`ok()`/`header()`/`info()`** already sanitize via `ansi.strip_unsafe_escapes()`, which drops OSC/cursor escapes but keeps SGR colour — so passing deliberate `C.*` codes still works.
+- Do **not** sanitize at import time: the database should hold exactly what Nessus reported; only terminal rendering is unsafe.
+
+Regression tests live in `tests/test_markup_injection.py` — add a case there when introducing a new untrusted-text render site.
+
 ### Severity Handling
 
 **Centralized helpers**:
@@ -613,7 +636,7 @@ Only after user confirms the changelog content:
 
 **Resume prompt**: On startup, shows session details (in-progress/done counts, session start time).
 
-**Cleanup**: Auto-delete session after successful completion.
+**Cleanup**: `session.delete_session()` marks the session ended (stamps `session_end`) — despite the name it does **not** remove the row, and that is deliberate: the surviving row is what makes `onboarding.show_workflow_guidance()` treat the scan as already reviewed, so first-run guidance stays suppressed on re-entry.
 
 **Multi-scan sessions**: When reviewing multiple scans, all selected scan IDs are recorded in `session_scans` (junction table). On resume, the same set of scans is restored automatically.
 

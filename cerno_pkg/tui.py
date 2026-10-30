@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, List, Optional, Tuple, Dict, Callable, TYPE_CHECKING
 
 from rich.prompt import Prompt
+from rich.text import Text
 
 
 @dataclass
@@ -24,9 +25,11 @@ class SeveritySelection:
 
     Separates numeric severity indices (1-5) from special filter flags (M, W).
     """
+
     severity_indices: List[int]  # 1-based indices for severities (1-5)
     msf_selected: bool  # True if 'M' was in selection
     workflow_selected: bool  # True if 'W' was in selection
+
 
 from .ansi import warn, info, ok, header, get_console, colorize_severity_label
 from .render import print_action_menu, show_actions_help, show_reviewed_help
@@ -51,7 +54,7 @@ ActionResult = Tuple[
     str,  # reviewed_filter
     Optional[Tuple[int, set, str]],  # group_filter: (index, plugin_ids, description)
     str,  # sort_mode
-    int   # page_idx
+    int,  # page_idx
 ]
 
 
@@ -223,7 +226,9 @@ def choose_from_list(
     """
     header(title)
     for index, item in enumerate(items, 1):
-        _console_global.print(f"[{index}] {item}")
+        # Text: items may be scan-derived, and Rich markup-parses a bare str.
+        # One Text for the whole line also keeps the [N] prefix literal.
+        _console_global.print(Text(f"[{index}] {item}"))
 
     if allow_back:
         print_action_menu([("B", "Back")])
@@ -284,7 +289,10 @@ def filter_finding_candidates(
         (pf, p)
         for (pf, p) in records
         if needle in p.plugin_name.lower()
-        and (group_filter is None or f"Plugin {p.plugin_id}: {p.plugin_name}" in group_filter[1])
+        and (
+            group_filter is None
+            or f"Plugin {p.plugin_id}: {p.plugin_name}" in group_filter[1]
+        )
         and (status_filter is None or pf.review_state == status_filter)
     ]
 
@@ -366,10 +374,12 @@ def handle_finding_list_actions(
 
     if ans == "f":
         info("Filter help: Enter any text to match finding names (case-insensitive)")
-        info("Examples: 'apache' matches 'Apache HTTP Server', 'ssl' matches 'SSL Certificate'")
+        info(
+            "Examples: 'apache' matches 'Apache HTTP Server', 'ssl' matches 'SSL Certificate'"
+        )
         file_filter = Prompt.ask(
             "Enter substring to filter by (e.g., 'apache', 'ssl', 'windows') or press Enter for none",
-            default=""
+            default="",
         ).strip()
         page_idx = 0
         return None, file_filter, reviewed_filter, group_filter, sort_mode, page_idx
@@ -395,7 +405,7 @@ def handle_finding_list_actions(
             "severity": "Severity ↓",
             "plugin_id": "Plugin ID ↑",
             "hosts": "Host count ↓",
-            "name": "Name A↑Z"
+            "name": "Name A↑Z",
         }.get(sort_mode, "Severity ↓")
         ok(f"Sorting by {sort_label}")
 
@@ -428,18 +438,24 @@ def handle_finding_list_actions(
                 sev_label = plugin.severity_label or f"Severity {plugin.severity_int}"
                 sev_col = colorize_severity_label(sev_label)
                 # Use Rich markup instead of ANSI codes for Rich console
-                _console_global.print(f"[{idx}] [{done_style}]{done_icon} {display_name}[/{done_style}]  — {sev_col}")
+                _console_global.print(
+                    f"[{idx}] [{done_style}]{done_icon} {display_name}[/{done_style}]  — {sev_col}"
+                )
             else:
                 # Use Rich markup instead of ANSI codes for Rich console
-                _console_global.print(f"[{idx}] [{done_style}]{done_icon} {display_name}[/{done_style}]")
+                _console_global.print(
+                    f"[{idx}] [{done_style}]{done_icon} {display_name}[/{done_style}]"
+                )
 
-        print_action_menu([
-            ("?", "Help"),
-            ("M", REVIEW_MOVE_LABELS[REVIEW_STATE_UNREVIEWED]),
-            ("F", "Filter"),
-            ("C", "Clear filter"),
-            ("B", "Back")
-        ])
+        print_action_menu(
+            [
+                ("?", "Help"),
+                ("M", REVIEW_MOVE_LABELS[REVIEW_STATE_UNREVIEWED]),
+                ("F", "Filter"),
+                ("C", "Clear filter"),
+                ("B", "Back"),
+            ]
+        )
 
         try:
             choice = Prompt.ask("Action or [B]ack").strip().lower()
@@ -478,7 +494,9 @@ def handle_finding_list_actions(
                 )
 
             try:
-                selection = Prompt.ask("Finding number(s) to move back to Unreviewed (e.g. 1 or 1,3,5) or [A]ll").strip()
+                selection = Prompt.ask(
+                    "Finding number(s) to move back to Unreviewed (e.g. 1 or 1,3,5) or [A]ll"
+                ).strip()
             except KeyboardInterrupt:
                 return (
                     None,
@@ -494,7 +512,11 @@ def handle_finding_list_actions(
             else:
                 try:
                     indices = [int(i.strip()) for i in selection.split(",")]
-                    files_to_move = [filtered_reviewed[i - 1] for i in indices if 1 <= i <= len(filtered_reviewed)]
+                    files_to_move = [
+                        filtered_reviewed[i - 1]
+                        for i in indices
+                        if 1 <= i <= len(filtered_reviewed)
+                    ]
                 except (ValueError, IndexError):
                     warn("Invalid selection.")
                     return (
@@ -508,6 +530,7 @@ def handle_finding_list_actions(
 
             # Move each finding back (lists will be regenerated on next loop)
             from .fs import move_review_state
+
             for finding, plugin in files_to_move:
                 move_review_state(finding, plugin, target=REVIEW_STATE_UNREVIEWED)
 
@@ -520,11 +543,15 @@ def handle_finding_list_actions(
                 page_idx,
             )
         if choice == "f":
-            info("Filter help: Enter any text to match finding names (case-insensitive)")
-            info("Examples: 'apache' matches 'Apache HTTP Server', 'ssl' matches 'SSL Certificate'")
+            info(
+                "Filter help: Enter any text to match finding names (case-insensitive)"
+            )
+            info(
+                "Examples: 'apache' matches 'Apache HTTP Server', 'ssl' matches 'SSL Certificate'"
+            )
             reviewed_filter = Prompt.ask(
                 "Enter substring to filter by (e.g., 'apache', 'ssl', 'windows') or press Enter for none",
-                default=""
+                default="",
             ).strip()
             return (
                 None,
@@ -571,6 +598,7 @@ def handle_finding_list_actions(
         # Extract plugin info from (Finding, Plugin) tuples for CVE extraction
         # Pass list of (plugin_id, plugin_name) tuples instead of file paths
         from .render import bulk_extract_cves_for_plugins
+
         plugin_info_list = [(p.plugin_id, p.plugin_name) for _pf, p in candidates]
         bulk_extract_cves_for_plugins(plugin_info_list)
         return None, file_filter, reviewed_filter, group_filter, sort_mode, page_idx
@@ -612,15 +640,20 @@ def handle_finding_list_actions(
 
         # Pass (Finding, Plugin) tuples for database queries with plugin info
         from .analysis import compare_filtered
+
         groups = compare_filtered(candidates)
         if groups:
             visible = min(VISIBLE_GROUPS, len(groups))
             opts = " | ".join(f"g{i+1}" for i in range(visible))
             ellipsis = " | etc." if len(groups) > VISIBLE_GROUPS else ""
-            choice = Prompt.ask(
-                f"\n[Enter] back | choose {opts}{ellipsis} to filter to a group",
-                default=""
-            ).strip().lower()
+            choice = (
+                Prompt.ask(
+                    f"\n[Enter] back | choose {opts}{ellipsis} to filter to a group",
+                    default="",
+                )
+                .strip()
+                .lower()
+            )
 
             if choice.startswith("g") and choice[1:].isdigit():
                 idx = int(choice[1:]) - 1
@@ -647,22 +680,29 @@ def handle_finding_list_actions(
 
         # Pass full (Finding, Plugin) tuples to preserve display names
         from .analysis import analyze_inclusions
+
         groups = analyze_inclusions(candidates)
         if groups:
             # Display context explanation
             header(f"\nFound {len(groups)} overlapping groups")
             info("")
-            info("What this means: One finding's affected systems are a superset of another.")
+            info(
+                "What this means: One finding's affected systems are a superset of another."
+            )
             info("The larger finding might be more comprehensive to review.")
             info("")
 
             visible = min(VISIBLE_GROUPS, len(groups))
             opts = " | ".join(f"g{i+1}" for i in range(visible))
             ellipsis = " | etc." if len(groups) > VISIBLE_GROUPS else ""
-            choice = Prompt.ask(
-                f"\n[Enter] back | choose {opts}{ellipsis} to filter to a group",
-                default=""
-            ).strip().lower()
+            choice = (
+                Prompt.ask(
+                    f"\n[Enter] back | choose {opts}{ellipsis} to filter to a group",
+                    default="",
+                )
+                .strip()
+                .lower()
+            )
 
             if choice.startswith("g") and choice[1:].isdigit():
                 idx = int(choice[1:]) - 1
@@ -734,7 +774,7 @@ def ask_claude_multiline() -> str:
     def _submit(event):
         event.current_buffer.validate_and_handle()
 
-    session = PromptSession(key_bindings=kb, multiline=True)
+    session: PromptSession[str] = PromptSession(key_bindings=kb, multiline=True)
     try:
         return session.prompt("Ask Claude: ").strip()
     except KeyboardInterrupt:

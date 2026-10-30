@@ -97,7 +97,7 @@ class TestWorkflowMapper:
         assert workflow_names == {
             "Test Workflow 1",
             "Test Workflow 2",
-            "Test Workflow 3"
+            "Test Workflow 3",
         }
 
     def test_count_matches_get_all_workflows_length(self, sample_workflow_yaml: Path):

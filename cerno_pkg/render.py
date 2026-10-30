@@ -20,7 +20,7 @@ from rich.text import Text
 from contextlib import contextmanager
 import time
 
-from .ansi import info, warn, header, get_console, style_if_enabled
+from .ansi import info, warn, header, get_console, safe_text, style_if_enabled
 from .config import load_config
 from .constants import (
     PLUGIN_DETAILS_BASE,
@@ -523,7 +523,8 @@ def render_scan_table(scans: list[Path]) -> None:
     table.add_column("#", justify="right", no_wrap=True, max_width=5)
     table.add_column("Scan", overflow="fold")
     for i, scan_dir in enumerate(scans, 1):
-        table.add_row(str(i), scan_dir.name)
+        # Text: the scan name comes from the .nessus file or filename.
+        table.add_row(str(i), Text(scan_dir.name))
     _console_global.print(table)
 
 
@@ -715,7 +716,9 @@ def render_finding_list_table(
         # Color-code the severity label using severity_cell
         sev_colored = severity_cell(sev_display)
 
-        row_data = [str(row_number), sev_colored, plugin_id_str, plugin_name]
+        # Text, not str: plugin_name is scan-derived and Rich markup-parses any
+        # bare string handed to a cell, so brackets in it must not be tags.
+        row_data = [str(row_number), sev_colored, plugin_id_str, Text(plugin_name)]
 
         # Always retrieve and show host count from database
         host_count, _ports_str = get_counts_for(plugin_file)
@@ -730,7 +733,7 @@ def render_finding_list_table(
                 ai_cell = Text("✦", style="bold magenta")
             else:
                 ai_cell = Text("")
-            row_data.append(ai_cell)  # type: ignore[arg-type]
+            row_data.append(ai_cell)
 
         row_data.append(_review_state_cell(getattr(plugin_file, "review_state", None)))
 
@@ -794,9 +797,15 @@ def render_compare_tables(
         groups_table.add_column("Count", justify="right", no_wrap=True, max_width=12)
         groups_table.add_column("Findings (sample)", overflow="fold")
         for i, names in enumerate(groups_sorted, 1):
-            sample = "\n".join(names[:8])
+            # Text + append: the names are scan-derived, while the overflow
+            # notice is intentional styling. Building it as Text keeps the two
+            # apart without escaping either.
+            sample = Text("\n".join(names[:8]))
             if len(names) > 8:
-                sample += f"\n\n[bold yellow]Showing 8 of {len(names)} findings - Press [D] to view all[/]"
+                sample.append(
+                    f"\n\nShowing 8 of {len(names)} findings - Press [D] to view all",
+                    style=style_if_enabled("bold yellow"),
+                )
             groups_table.add_row(str(i), str(len(names)), sample)
         _console_global.print(groups_table)
 
@@ -961,6 +970,7 @@ def render_finding_actions_footer(
     has_claude: bool = False,
     claude_installed: bool = False,
     use_proxy: bool = False,
+    no_tools: bool = False,
 ) -> None:
     """Render action footer for finding review with responsive layout.
 
@@ -977,6 +987,7 @@ def render_finding_actions_footer(
         has_claude: Whether Claude Assistant is enabled and available
         claude_installed: Whether claude CLI is on PATH (shows [A] for the opt-in prompt)
         use_proxy: Whether proxychains4 routing is active (shows the [PROXY] badge)
+        no_tools: Review-only mode (``--no-tools``); hides the [T] Run tool action
     """
     from .ansi import get_terminal_width
 
@@ -1001,7 +1012,7 @@ def render_finding_actions_footer(
     if has_nxc_data:
         left_items_row2.append(key_text("N", "NetExec Data"))
     left_row2 = join_actions_texts(left_items_row2) if left_items_row2 else Text()
-    right_row2 = join_actions_texts([key_text("T", "Run tool")])
+    right_row2 = Text() if no_tools else join_actions_texts([key_text("T", "Run tool")])
 
     # Row 3: Control actions (always present)
     left_row3 = join_actions_texts(
@@ -1030,9 +1041,13 @@ def render_finding_actions_footer(
         grid.add_column(ratio=1)
         grid.add_column(ratio=1)
         grid.add_row(left_row1, right_row1)
-        if left_row2.plain:  # Only add row if there are conditional items
+        # Row 2 may hold conditional items, [T], both, or neither (--no-tools
+        # with no workflow/nxc data) — skip it entirely when empty.
+        if left_row2.plain and right_row2.plain:
             grid.add_row(left_row2, right_row2)
-        else:
+        elif left_row2.plain:
+            grid.add_row(left_row2, Text())
+        elif right_row2.plain:
             grid.add_row(right_row2, Text())  # Run tool alone
         grid.add_row(left_row3, right_row3)
         if claude_row is not None:
@@ -1044,7 +1059,8 @@ def render_finding_actions_footer(
         _console_global.print(right_row1)
         if left_row2.plain:
             _console_global.print(left_row2)
-        _console_global.print(right_row2)
+        if right_row2.plain:
+            _console_global.print(right_row2)
         _console_global.print(left_row3)
         _console_global.print(right_row3)
         if claude_row is not None:
@@ -2044,7 +2060,9 @@ def display_finding_preview(
 
     panel = Panel(
         content,
-        title=f"[bold cyan]{plugin.plugin_name}[/]",
+        # Text, not markup: plugin_name is scan-derived, so brackets in it must
+        # never be parsed as style tags.
+        title=Text(str(plugin.plugin_name), style=style_if_enabled("bold cyan")),
         subtitle=subtitle,
         subtitle_align="center",
         title_align="center",
@@ -2242,7 +2260,7 @@ def render_nxc_host_panel(host_ip: str, host_data: Any, has_data: bool = True) -
     if not has_data or host_data is None:
         return Panel(
             Text("  No NetExec data available", style=style_if_enabled("dim italic")),
-            title=f"[bold cyan]{host_ip}[/]",
+            title=Text(host_ip, style=style_if_enabled("bold cyan")),
             title_align="left",
             border_style=style_if_enabled("dim cyan"),
             box=box.ROUNDED,
@@ -2286,9 +2304,11 @@ def render_nxc_host_panel(host_ip: str, host_data: Any, has_data: bool = True) -
             )
 
             cred_table.add_row(
-                cred.protocol.upper(),
+                # Text: effectively enum-like, but still NetExec-DB values, and
+                # wrapping costs nothing. identity_text is already a Text.
+                Text(cred.protocol.upper()),
                 identity_text,
-                cred.credential_type[:8],  # Truncate long types
+                Text(cred.credential_type[:8]),  # Truncate long types
                 admin_indicator,
             )
         renderables.append(cred_table)
@@ -2314,7 +2334,8 @@ def render_nxc_host_panel(host_ip: str, host_data: Any, has_data: bool = True) -
                 access_text = Text("W", style="yellow")
             else:
                 access_text = Text("-", style="dim")
-            share_table.add_row(share.name, access_text)
+            # Text: share names come from the NetExec workspace DB.
+            share_table.add_row(Text(share.name), access_text)
         renderables.append(share_table)
 
     flags = _nxc_host_flags(host_data)
@@ -2325,10 +2346,10 @@ def render_nxc_host_panel(host_ip: str, host_data: Any, has_data: bool = True) -
             flags_text.append(f"  • {flag}\n", style=style_if_enabled("red"))
         renderables.append(flags_text)
 
+    # Text, not markup: host_ip and hostname are scan-derived.
+    title = Text(host_ip, style=style_if_enabled("bold cyan"))
     if host_data.hostname:
-        title = f"[bold cyan]{host_ip}[/] [dim]({host_data.hostname})[/]"
-    else:
-        title = f"[bold cyan]{host_ip}[/]"
+        title.append(f" ({host_data.hostname})", style=style_if_enabled("dim"))
 
     return Panel(
         Group(*renderables),
@@ -2670,7 +2691,10 @@ def render_scan_comparison(result: "ScanComparisonResult") -> None:
     summary_text = "\n".join(summary_lines)
     summary_panel = Panel(
         summary_text,
-        title=f"[bold]Scan Comparison: {result.scan1_name} ({scan1_date}) → {result.scan2_name} ({scan2_date})[/bold]",
+        title=(
+            f"[bold]Scan Comparison: {safe_text(result.scan1_name)} ({scan1_date})"
+            f" → {safe_text(result.scan2_name)} ({scan2_date})[/bold]"
+        ),
         border_style=style_if_enabled("cyan"),
         padding=(1, 2),
     )
@@ -2756,8 +2780,8 @@ def render_host_history(history: "HostVulnerabilityHistory") -> None:
 
     # Header panel
     header_lines = [
-        f"[bold]IP Address:[/bold] {history.ip_address}",
-        f"[bold]Scan Target:[/bold] {history.scan_target}",
+        f"[bold]IP Address:[/bold] {safe_text(history.ip_address)}",
+        f"[bold]Scan Target:[/bold] {safe_text(history.scan_target)}",
         f"[bold]First Seen:[/bold] {format_date(history.first_seen)}",
         f"[bold]Last Seen:[/bold] {format_date(history.last_seen)}",
         f"[bold]Total Scans:[/bold] {history.scan_count}",
@@ -2807,7 +2831,7 @@ def render_host_history(history: "HostVulnerabilityHistory") -> None:
         prev_finding_count = scan.finding_count
 
         table.add_row(
-            scan.scan_name,
+            Text(scan.scan_name),  # Text: scan-derived
             format_date(scan.scan_date),
             str(scan.finding_count),
             str(scan.critical_count) if scan.critical_count else "-",

@@ -11,7 +11,6 @@ import ipaddress
 import re
 from typing import TYPE_CHECKING, Any, Optional
 
-
 if TYPE_CHECKING:
     from .workflow_mapper import WorkflowMapper
 
@@ -21,6 +20,7 @@ _HNAME_RE = re.compile(
     r"^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
     r"(?:\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$"
 )
+
 
 def split_host_port(token: str) -> tuple[Optional[str], Optional[str]]:
     """Split a host:port token into separate components.
@@ -80,10 +80,9 @@ def parse_hosts_ports(lines: list[str]) -> tuple[list[str], str]:
             if port:
                 ports.add(port)
     hosts = list(dict.fromkeys(hosts))
-    ports_str = (
-        ",".join(sorted(ports, key=lambda x: int(x))) if ports else ""
-    )
+    ports_str = ",".join(sorted(ports, key=lambda x: int(x))) if ports else ""
     return hosts, ports_str
+
 
 def is_hostname(s: str) -> bool:
     """Check if a string is a valid hostname.
@@ -149,10 +148,10 @@ def detect_host_type(host: str) -> str:
         'hostname'
     """
     if is_ipv4(host):
-        return 'ipv4'
+        return "ipv4"
     if is_ipv6(host):
-        return 'ipv6'
-    return 'hostname'
+        return "ipv6"
+    return "hostname"
 
 
 def is_valid_token(
@@ -224,10 +223,7 @@ def normalize_combos(
             items.append((host, tuple(sorted(host_ports, key=lambda x: int(x)))))
         return tuple(items)
     assumed = tuple(
-        sorted(
-            (host, tuple(sorted(ports_set, key=lambda x: int(x))))
-            for host in hosts
-        )
+        sorted((host, tuple(sorted(ports_set, key=lambda x: int(x)))) for host in hosts)
     )
     return assumed
 
@@ -302,7 +298,7 @@ def extract_plugin_id_from_filename(name_or_path) -> Optional[str]:
         True
     """
     # Handle both Path and str
-    if hasattr(name_or_path, 'name'):
+    if hasattr(name_or_path, "name"):
         name = name_or_path.name
     else:
         name = str(name_or_path)
@@ -312,7 +308,9 @@ def extract_plugin_id_from_filename(name_or_path) -> Optional[str]:
     return match.group(1) if match else None
 
 
-def group_findings_by_workflow(files: list[tuple[Any, Any]], workflow_mapper: "WorkflowMapper") -> dict[str, list[tuple[Any, Any]]]:
+def group_findings_by_workflow(
+    files: list[tuple[Any, Any]], workflow_mapper: "WorkflowMapper"
+) -> dict[str, list[tuple[Any, Any]]]:
     """
     Group findings by their workflow name.
 

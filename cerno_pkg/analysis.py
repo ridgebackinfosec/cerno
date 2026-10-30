@@ -22,6 +22,7 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 from rich.table import Table
+from rich.text import Text
 
 from .ansi import header, info, warn, style_if_enabled
 from .logging_setup import log_timing
@@ -32,11 +33,11 @@ from .parsing import (
 from .render import render_compare_tables
 from .ansi import get_console
 
-
 _console_global = get_console()
 
+
 def _fetch_host_rows_by_finding(
-    findings: list['Finding'],
+    findings: list["Finding"],
     conn: Optional[sqlite3.Connection] = None,
 ) -> dict[Optional[int], list[sqlite3.Row]]:
     """Fetch affected host rows for findings, merging multi-scan siblings.
@@ -83,18 +84,18 @@ def _fetch_host_rows_by_finding(
                      WHEN h.scan_target_type = 'ipv6' THEN 1
                      ELSE 2 END,
                 h.ip_address ASC
-            """.format(','.join('?' * len(rep_by_id))),
+            """.format(",".join("?" * len(rep_by_id))),
             tuple(rep_by_id),
         )
 
     for row in rows:
-        rows_by_rep[rep_by_id[row['finding_id']]].append(row)
+        rows_by_rep[rep_by_id[row["finding_id"]]].append(row)
     return rows_by_rep
 
 
 @log_timing
 def compare_filtered(
-    files: Union[list['Finding'], list[tuple['Finding', 'Plugin']]],
+    files: Union[list["Finding"], list[tuple["Finding", "Plugin"]]],
     conn: Optional[sqlite3.Connection] = None,
 ) -> list[list[str]]:
     """Compare host/port combinations across multiple findings (database-only).
@@ -120,9 +121,14 @@ def compare_filtered(
 
     # Detect what type of input we have (database-only)
     from .models import Finding, Plugin
+
     if files and isinstance(files[0], tuple) and len(files[0]) == 2:
-        # (Finding, Plugin) tuples - extract Findings with explicit cast for type narrowing
-        tuple_files = cast(list[tuple[Finding, Plugin]], files)
+        # (Finding, Plugin) tuples - extract Findings with explicit cast for type
+        # narrowing. mypy >=2 narrows the union from the isinstance check above and
+        # calls this redundant, but pyright does not, so the cast has to stay.
+        tuple_files = cast(  # type: ignore[redundant-cast]
+            list[tuple[Finding, Plugin]], files
+        )
         findings: list[Finding] = [pf for pf, _ in tuple_files]
         plugins_map = {pf.plugin_id: plugin for pf, plugin in tuple_files}
     else:
@@ -157,8 +163,8 @@ def compare_filtered(
             had_explicit = False
 
             for row in file_rows:
-                host = row['ip_address']
-                port = row['port_number']
+                host = row["ip_address"]
+                port = row["port_number"]
 
                 if host not in hosts:
                     hosts.append(host)
@@ -180,22 +186,16 @@ def compare_filtered(
 
     all_host_sets = [set(h) for _, h, _, _, _ in parsed]
     all_port_sets = [set(p) for _, _, p, _, _ in parsed]
-    host_intersection = (
-        set.intersection(*all_host_sets) if all_host_sets else set()
-    )
+    host_intersection = set.intersection(*all_host_sets) if all_host_sets else set()
     host_union = set.union(*all_host_sets) if all_host_sets else set()
-    port_intersection = (
-        set.intersection(*all_port_sets) if all_port_sets else set()
-    )
+    port_intersection = set.intersection(*all_port_sets) if all_port_sets else set()
     port_union = set.union(*all_port_sets) if all_port_sets else set()
 
     host_signatures = [tuple(sorted(h)) for _, h, _, _, _ in parsed]
     port_signatures = [
         tuple(sorted(p, key=lambda x: int(x))) for _, _, p, _, _ in parsed
     ]
-    combo_signatures = [
-        normalize_combos(h, p, c, e) for _, h, p, c, e in parsed
-    ]
+    combo_signatures = [normalize_combos(h, p, c, e) for _, h, p, c, e in parsed]
 
     same_hosts = (
         all(sig == host_signatures[0] for sig in host_signatures)
@@ -256,7 +256,7 @@ def compare_filtered(
 
 @log_timing
 def analyze_inclusions(
-    files: Union[list['Finding'], list[tuple['Finding', 'Plugin']]],
+    files: Union[list["Finding"], list[tuple["Finding", "Plugin"]]],
     conn: Optional[sqlite3.Connection] = None,
 ) -> list[list[str]]:
     """Analyze superset relationships across findings (database-only).
@@ -281,9 +281,14 @@ def analyze_inclusions(
 
     # Detect what type of input we have (database-only)
     from .models import Finding, Plugin
+
     if files and isinstance(files[0], tuple) and len(files[0]) == 2:
-        # (Finding, Plugin) tuples - extract Findings with explicit cast for type narrowing
-        tuple_files = cast(list[tuple[Finding, Plugin]], files)
+        # (Finding, Plugin) tuples - extract Findings with explicit cast for type
+        # narrowing. mypy >=2 narrows the union from the isinstance check above and
+        # calls this redundant, but pyright does not, so the cast has to stay.
+        tuple_files = cast(  # type: ignore[redundant-cast]
+            list[tuple[Finding, Plugin]], files
+        )
         findings: list[Finding] = [pf for pf, _ in tuple_files]
         plugins_map = {pf.plugin_id: plugin for pf, plugin in tuple_files}
     else:
@@ -317,8 +322,8 @@ def analyze_inclusions(
             had_explicit = False
 
             for row in file_rows:
-                host = row['ip_address']
-                port = row['port_number']
+                host = row["ip_address"]
+                port = row["port_number"]
 
                 if host not in hosts:
                     hosts.append(host)
@@ -345,7 +350,9 @@ def analyze_inclusions(
     display_names = [display_name for display_name, _, _, _, _ in parsed]
 
     # Build coverage map: for each plugin, which others does it fully include?
-    cover_map: dict[str, set[str]] = {display_name: set() for display_name in display_names}
+    cover_map: dict[str, set[str]] = {
+        display_name: set() for display_name in display_names
+    }
     for i, name_a in enumerate(display_names):
         items_a = item_sets[name_a]
         for j, name_b in enumerate(display_names):
@@ -372,9 +379,7 @@ def analyze_inclusions(
         maximals,
         key=lambda p: (-len(cover_map[p]), natural_key(p)),
     ):
-        covered = sorted(
-            list(cover_map[maximal_file]), key=lambda p: natural_key(p)
-        )
+        covered = sorted(list(cover_map[maximal_file]), key=lambda p: natural_key(p))
         groups.append((maximal_file, covered))
 
     if groups:
@@ -391,12 +396,12 @@ def analyze_inclusions(
         for i, (root, covered_list) in enumerate(groups, 1):
             sample_names = covered_list[:8]
             sample = "\n".join(sample_names) + (
-                f"\n... (+{len(covered_list)-8} more)"
-                if len(covered_list) > 8
-                else ""
+                f"\n... (+{len(covered_list)-8} more)" if len(covered_list) > 8 else ""
             )
+            # Text, not str: root/covered names are scan-derived plugin names
+            # and Rich markup-parses any bare string handed to a cell.
             groups_table.add_row(
-                str(i), root, str(len(covered_list)), sample or "—"
+                str(i), Text(root), str(len(covered_list)), Text(sample or "—")
             )
         _console_global.print(groups_table)
     else:
@@ -447,4 +452,5 @@ def count_reviewed_in_scan(
         Tuple of (total_findings, done_findings)
     """
     from .models import Finding
+
     return Finding.count_by_scan(scan_id, scan_ids=scan_ids)

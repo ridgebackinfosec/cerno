@@ -7,6 +7,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.13.0] - 2026-10-30
+
+### Changed
+- **`cerno review --no-tools` now actually disables tool prompts.** The flag advertised "Disable tool prompts (review-only)" but was only ever read to skip the tool-availability table and print a note — nothing in the finding view consulted it, so `[T]` Run tool stayed fully functional. `[T]` is now hidden from the finding-view footer and refused with an explanatory message if typed anyway, so review-only mode is real. That matters for a tool which can launch nmap, NetExec and Metasploit. The MCP `execute_command` path is deliberately out of scope here and still governed by `mcp_allow_execution`.
+
+### Fixed
+- **`cerno review --check --no-tools` now exits instead of dropping into the review.** The `--check` early exit was nested inside the `if not args.no_tools:` block, so combining the two flags silently fell through into the interactive TUI. `--check` is honored independently and always reports tool availability before exiting 0.
+- **`tests/test_version.py::test_version_in_installed_package` can now fail.** Its assertion sat inside `try/except Exception → pytest.skip()`, which swallowed the `AssertionError` too, so genuine version drift was reported as a skip and the test could never fail — it misfired exactly that way after a version bump during development. The except clause is narrowed to `PackageNotFoundError`, so a genuinely uninstalled package still skips while a real mismatch fails and names both versions.
+- **Corrected the documented behavior of `session.delete_session()`.** It stamps `session_end` and leaves the row in place; `CLAUDE.md` claimed "Auto-delete session after successful completion". The behavior is deliberate — the surviving row is what makes `onboarding.show_workflow_guidance()` treat a scan as already reviewed, keeping first-run guidance suppressed on re-entry — so the docs and docstring are corrected rather than the code. The name is kept because it is part of `cerno_pkg.__all__`.
+
+## [2.12.2] - 2026-10-30
+
+### Added
+- **`ansi.print_verbatim()`** (exported from `cerno_pkg`) — emits text byte-for-byte with no Rich markup parsing and no width wrapping, for dumps the operator is meant to copy by hand. Its docstring records why it must stay a builtin `print`, so it is not later "upgraded" to a Rich console call.
+
+### Fixed
+- **The manual-copy fallback no longer crashes on bracketed scan text.** When no clipboard tool is available (`xclip` / `wl-copy` / `xsel` absent and no `DISPLAY` — the normal case on headless or SSH-only hosts), `[C]` Copy falls back to printing the payload for manual copying. That print went through Rich, which markup-parses any bare string, so a payload containing `[/]` raised an uncaught `MarkupError`. This is genuinely reachable: a `.nessus` host identifier is stored verbatim, so a bracketed FQDN such as `web [/] server.example` lands straight in the payload — reproduced end-to-end by driving `[V]` → `[C]` with the clipboard disabled. Both fallback sites (the finding host view in `fs.py` and the aggregate host view in `cerno.py`) now use `print_verbatim()`. **Escaping was deliberately not used here:** `safe_text()` would turn `[` into `\[`, and Rich `Text` would wrap to the console width — either would corrupt the text the operator is about to copy.
+- **`choose_from_list()` no longer interpolates list items into markup.** It has no callers today but is exported in `cerno_pkg.__all__`, so a future caller passing scan-derived items would have hit the same crash; items now render through `rich.text.Text`. Latent rather than live, and fixed because this bug class has already recurred twice.
+
+These were the two reachable sinks deliberately deferred from 2.12.1 plus one latent site; an independent audit of the `add_row` / `Panel` / `console.print` / `Text.append` sinks found no further reachable raw-string site.
+
+## [2.12.1] - 2026-10-29
+
+### Fixed
+- **The findings list no longer crashes on a plugin name containing brackets, and bracketed text is no longer silently dropped.** The 2.12.0 sanitization sweep was **incomplete**: it searched for f-strings *containing* markup tags, so it fixed the panel titles but missed every **table**, where a bare `str` cell is markup-parsed just the same while looking nothing like markup in the source. A plugin named `SMB [/] Signing` raised an uncaught `rich.errors.MarkupError` in `render_finding_list_table` and aborted the main review screen — the most-used view in `cerno review` — and `TLS 1.0 [deprecated] Detection` rendered as `TLS 1.0  Detection` because `[deprecated]` parses as a Rich style name. Scan-, NetExec- and user-derived values now reach Rich as `rich.text.Text`, which never parses markup, across six renderers: `render_finding_list_table`, `render_scan_table` (scan menu), `render_compare_tables` (`[H]` groups), `analysis.analyze_inclusions` (`[O]` groups), `render_nxc_host_panel` (share names plus credential protocol/type) and `render_host_history` (`cerno scan history`). Benign bracketed names such as `Apache Log4j [CVE-2021-44228] RCE` render exactly as before. `tests/test_markup_injection.py` gained 23 cases driving every one of those renderers with `[/]`, `[deprecated]`, `[link=…]` and a benign control, asserting both that nothing raises **and** that the bracketed text survives to the screen — the previous tests covered no table renderer at all, which is why 2.12.0 shipped broken. Verified end-to-end by importing a crafted `.nessus` and driving `cerno review`.
+
+## [2.12.0] - 2026-10-29
+
+### Added
+- **`ansi.safe_text()` and `ansi.strip_unsafe_escapes()`**, both exported from `cerno_pkg`, for neutralizing untrusted text. Use `safe_text()` on any scan-derived value interpolated into a Rich markup string; where a single style applies, prefer `rich.text.Text(value, style=...)`, which never parses markup and so is immune by construction rather than by being remembered. `safe_text()` is deliberately **not** idempotent — apply it exactly once. New `tests/test_markup_injection.py` (21 tests) covers both helpers plus the real render paths.
+
+### Fixed
+- **Scan-derived text can no longer crash the TUI, lose characters, or hijack the terminal.** Plugin names, hostnames, scan names and workflow step titles come from third-party `.nessus` files and were interpolated straight into Rich markup strings. Confirmed end-to-end by importing crafted scans: a plugin named `SMB [/] Signing` raised an unhandled `MarkupError` that aborted rendering; `TLS Version 1.0 [deprecated] Detection` displayed as `TLS Version 1.0  Detection` because `[deprecated]` parses as a Rich style tag and was silently swallowed; and `SMB [link=file:///etc/passwd]click[/link]` injected a clickable OSC-8 hyperlink into the operator's terminal. Panel titles carrying one style now use `rich.text.Text` (`render.py:display_finding_preview()`, `render_nxc_host_panel()`), and the mixed-style sites escape via `safe_text()` (`render.py:render_scan_comparison()`, `render_host_history()`, `fs.py` workflow step panels, `cerno.py` Claude scope line and import rule). Benign bracketed names such as `Apache Log4j [CVE-2021-44228] RCE` render exactly as before.
+- **Terminal escape sequences in status messages no longer reach the terminal.** `err()` / `warn()` / `ok()` / `header()` / `info()` write raw ANSI through `print()`, so an attacker-influenced value could emit an OSC window-title sequence or cursor-movement escape — reproducible with `cerno config get $'\x1b]0;title\x07'`. All five now filter through `strip_unsafe_escapes()`, which removes OSC, cursor-movement and other escape sequences while deliberately preserving SGR colour so captured nmap/NetExec output and `tools.py`'s bold label still render correctly. `.nessus` files cannot carry an ESC byte at all (it is invalid XML), so the remaining surface is tool output, NetExec workspace values and file names.
+
+## [2.11.3] - 2026-10-29
+
+### Changed
+- **Type checking moved to mypy 2.x** (`mypy>=2.4,<3`, from an unbounded `>=1.0`). mypy 2.0 turned `--local-partial-types` and `--strict-bytes` on by default and redefined `--allow-redefinition`; since CI runs mypy with `continue-on-error: true`, the old unbounded floor meant a silent jump to 2.x could have changed the reported baseline without ever failing a build. The floor is now bounded on both sides, and **the codebase is clean under it — 0 errors across 39 files, down from 14.** The fixes were type-level, not behavioral:
+  - `onboarding.py` narrows `scan_ids` inline and derives `is_multi` from the result instead of computing it separately (verified equivalent for `None` / empty / single / multi inputs).
+  - `ops.py` declares `http.server` and `threading` under `TYPE_CHECKING` so `start_ips_server()`'s return annotation resolves. Both were already imported lazily inside the function, and `from __future__ import annotations` meant the annotation was never evaluated at run time.
+  - `cerno.py` initializes `all_scan_ids` before the scan-selection loop rather than relying on a previous iteration having bound it — defensive only, as the existing `scan_id != 0` guard already prevented an unbound read — and renames a `names` local that held both a `str` and a `list[str]` within one function scope.
+  - Three no-longer-needed `# type: ignore` comments removed (`ops.py`, `fs.py`, `render.py`). The two `cast()` calls in `analysis.py` are deliberately kept, with a narrow `redundant-cast` ignore, because pyright — unlike mypy 2.x — does not narrow the union from the preceding `isinstance` check; removing them traded 2 mypy warnings for 4 pyright errors.
+  - The dead `[[tool.mypy.overrides]]` section for `tests.*` removed: it duplicated the global `disallow_untyped_defs` setting and `warn_unused_configs` reported it as unused.
+
+### Added
+- **`tests/test_onboarding.py`** (6 tests) covering the first-run workflow guidance and context-aware tips for `scan_ids` being `None`, single, or multi — including that a multi-scan selection aggregates Critical counts across every selected scan and pluralizes its wording. These paths previously had no test coverage.
+
+## [2.11.2] - 2026-10-29
+
+### Changed
+- **`typer` floor raised to `>=0.27,<1`** (from `>=0.12,<1`). Typer 0.26 vendored Click and dropped it as an external dependency, and 0.27 changed how metavars are printed in `--help`; pinning above both makes the vendored layout a guarantee, which the traceback fix below depends on. Typer 0.27.3 additionally escapes terminal control characters in *its own* error messages (unknown command / unknown option). Cerno's **command and option surface is unchanged** — same commands, same flags, same argument parsing — and `--install-completion` / `--show-completion` still work (Typer requires `shellingham` unconditionally). One **cosmetic** difference is visible in `--help`: 0.27's metavar change renders required arguments brace-wrapped in the usage line, so `cerno import nessus [OPTIONS] {nessus}` and `cerno scan compare [OPTIONS] {scan1} {scan2}` replace the previous rendering. This comes from Typer's own `make_metavar` override (`typer/core.py`), affects the usage line only, and changes no invocation — `cerno scan compare A B` still parses two positionals exactly as before.
+
+### Fixed
+- **Rich tracebacks no longer dump Typer framework frames.** `cerno.py` passed `suppress=["typer", "click"]` to `rich.traceback.install()`, but Rich treats a *string* suppress entry as a filesystem path rather than a module name — so those resolved to `./typer` and `./click` relative to the working directory, directories that do not exist, and **no frames were ever suppressed**. The module object is now passed instead (`suppress=[typer]`), which resolves to the installed package and transitively covers the Click that Typer vendors, so a crash in a CLI command shows Cerno's frames rather than the framework's. A new guard test asserts that every suppress entry is a module object and resolves to a directory that exists, so the string form cannot silently return.
+
+## [2.11.1] - 2026-10-29
+
+### Changed
+- **`rich` dependency moved to `>=14.3,<16`** (from `>=13.7,<15`), so installs now resolve Rich 15.x. Rich 15.0.0's only breaking change is dropping Python 3.8, which Cerno never supported (it requires 3.11+). **No rendering behavior changes:** all 181 tests that assert on rendered output — including exact ANSI byte sequences and `Text` span internals — pass unchanged. This is a maintenance change rather than a feature one: none of Rich 15.0.0's fixes touch code paths Cerno uses (`Text.from_ansi`, `isatty` and Markdown rendering are unused, and neither `console.print(..., end=...)` call site is an *empty* print), and `TTY_COMPATIBLE=1` already worked under 14.3. The value is that the old `<15` cap had pinned Cerno a major version behind since April 2026 and would have blocked any future 15.x bug or security fix.
+- **Three regression guards added for Cerno's deepest Rich couplings** (`tests/test_color_scheme.py::TestRichCouplingGuards`). `ansi.py` overrides `Console.get_style()`, imports the semi-private `rich.default_styles.DEFAULT_STYLES`, and assigns Rich's private global `rich._console` so bare `Prompt`/`Confirm`/`Progress` calls inherit the color scheme. Each of these fails *silently* on a Rich upgrade — the palette reverts to Rich's defaults with no exception raised and no existing test failing — so all three are now asserted directly instead of being inferred from rendered output.
+
+## [2.11.0] - 2026-10-29
+
+### Changed
+- **Dev-dependency floors raised to the versions actually in use:** `pytest-cov>=7.0` (from `>=4.0`), `pytest-mock>=3.15` (from `>=3.10`), `pytest-timeout>=2.4` (from `>=2.1`), `black>=26.3` (from `>=23.0`), `pyright>=1.1.408` (from `>=1.1.389`) and `types-PyYAML>=6.0.12.20260906` (from `>=6.0`). The old floors were three to four years stale; the `black>=23.0` floor in particular let a contributor format with a Black whose stable style predates the current one and produce spurious reformatting diffs. Runtime dependencies are unchanged by this entry. Development-only — no effect on installed CLI behavior.
+- **Dependabot batches the dev/test toolchain into a single monthly PR** (`pytest*`, `black`, `mypy`, `pyright`, `types-*`) instead of opening one per package. Runtime dependencies remain individual PRs so each can be reviewed and smoke-tested on its own.
+
+### Removed
+- **Three unused runtime dependencies dropped: `beautifulsoup4`, `requests` and `colorama`.** None of them was imported anywhere in Cerno — `.nessus` and nmap XML are parsed with the stdlib `xml.etree`, the remote-scan server is built on stdlib `http.server` + `ssl` (`ops.py:start_ips_server()`), and ANSI colors are generated in `ansi.py` without `colorama`. Removing them also drops the transitive `soupsieve`, `urllib3`, `certifi`, `charset-normalizer` and `idna`, so an install pulls roughly nine fewer packages and no longer ships a CA bundle that Cerno never consults. No functional change; a clean install was verified to import every module and run the CLI. **Action required:** reinstall to prune the now-unused packages (`pipx reinstall cerno`, or `pip install -e ".[dev]"` for development).
+
 ## [2.10.0] - 2026-10-28
 
 ### Changed

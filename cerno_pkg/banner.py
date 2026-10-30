@@ -24,16 +24,18 @@ def display_banner() -> None:
     banner_text.append(" - by ")
     banner_text.append("Ridgeback InfoSec, LLC", style=style_if_enabled("bold magenta"))
     banner_text.append("\n\n")
-    banner_text.append("Check out our Offensive Tooling training!\n", style=style_if_enabled("bold"))
+    banner_text.append(
+        "Check out our Offensive Tooling training!\n", style=style_if_enabled("bold")
+    )
     banner_text.append("   -> ")
-    banner_text.append("https://ridgebackinfosec.com/training", style=style_if_enabled("bold blue underline"))
+    banner_text.append(
+        "https://ridgebackinfosec.com/training",
+        style=style_if_enabled("bold blue underline"),
+    )
 
     # Display as a panel
     panel = Panel(
-        banner_text,
-        border_style=style_if_enabled("blue"),
-        padding=(1, 2),
-        expand=False
+        banner_text, border_style=style_if_enabled("blue"), padding=(1, 2), expand=False
     )
 
     console.print(panel)

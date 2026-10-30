@@ -13,10 +13,14 @@ from cerno_pkg.workflow_mapper import Workflow, WorkflowStep
 class TestBuildAggregateContext:
     """Tests for build_aggregate_context()."""
 
-    def _make_plugin(self, plugin_id: int = 12345, name: str = "Test Plugin", severity: int = 2) -> Plugin:
+    def _make_plugin(
+        self, plugin_id: int = 12345, name: str = "Test Plugin", severity: int = 2
+    ) -> Plugin:
         return Plugin(plugin_id=plugin_id, plugin_name=name, severity_int=severity)
 
-    def _make_finding(self, finding_id: int = 1, scan_id: int = 1, plugin_id: int = 12345) -> Finding:
+    def _make_finding(
+        self, finding_id: int = 1, scan_id: int = 1, plugin_id: int = 12345
+    ) -> Finding:
         f = Finding(scan_id=scan_id, plugin_id=plugin_id)
         f.finding_id = finding_id
         return f
@@ -26,7 +30,9 @@ class TestBuildAggregateContext:
         finding = self._make_finding()
         plugin = self._make_plugin()
 
-        with patch.object(Finding, "get_hosts_and_ports", return_value=(["192.168.1.1"], "80")):
+        with patch.object(
+            Finding, "get_hosts_and_ports", return_value=(["192.168.1.1"], "80")
+        ):
             result = build_aggregate_context(
                 scan_names=["test_scan"],
                 scope_description="All findings",
@@ -54,7 +60,11 @@ class TestBuildAggregateContext:
         finding = self._make_finding()
         plugin = self._make_plugin(name="MS17-010 EternalBlue", severity=4)
 
-        with patch.object(Finding, "get_hosts_and_ports", return_value=(["10.0.0.1", "10.0.0.2"], "445")):
+        with patch.object(
+            Finding,
+            "get_hosts_and_ports",
+            return_value=(["10.0.0.1", "10.0.0.2"], "445"),
+        ):
             result = build_aggregate_context(
                 scan_names=["corp_scan"],
                 scope_description="Critical findings",
@@ -70,10 +80,19 @@ class TestBuildAggregateContext:
 class TestBuildFindingContextWorkflow:
     """Tests for workflow section in build_finding_context()."""
 
-    def _make_plugin(self, plugin_id: int = 11011, plugin_name: str = "MS17-010", severity_int: int = 4) -> Plugin:
-        return Plugin(plugin_id=plugin_id, plugin_name=plugin_name, severity_int=severity_int)
+    def _make_plugin(
+        self,
+        plugin_id: int = 11011,
+        plugin_name: str = "MS17-010",
+        severity_int: int = 4,
+    ) -> Plugin:
+        return Plugin(
+            plugin_id=plugin_id, plugin_name=plugin_name, severity_int=severity_int
+        )
 
-    def _make_finding(self, finding_id: int = 1, scan_id: int = 1, plugin_id: int = 11011) -> Finding:
+    def _make_finding(
+        self, finding_id: int = 1, scan_id: int = 1, plugin_id: int = 11011
+    ) -> Finding:
         f = Finding(scan_id=scan_id, plugin_id=plugin_id)
         f.finding_id = finding_id
         return f
@@ -91,7 +110,11 @@ class TestBuildFindingContextWorkflow:
                 ),
                 WorkflowStep(
                     title="Attempt exploitation",
-                    commands=["use exploit/windows/smb/ms17_010_eternalblue", "set RHOSTS {hosts}", "run"],
+                    commands=[
+                        "use exploit/windows/smb/ms17_010_eternalblue",
+                        "set RHOSTS {hosts}",
+                        "run",
+                    ],
                     notes="",
                 ),
             ],
@@ -170,9 +193,10 @@ class TestClaudeConsent:
         from cerno_pkg import claude_assistant as ca
 
         cfg = self._cfg(False)
-        with patch("rich.prompt.Confirm.ask", return_value=True), patch(
-            "cerno_pkg.config.save_config", return_value=True
-        ) as save:
+        with (
+            patch("rich.prompt.Confirm.ask", return_value=True),
+            patch("cerno_pkg.config.save_config", return_value=True) as save,
+        ):
             assert ca.ensure_enabled(cfg) is True
             assert cfg.claude_assistant_enabled is True
             save.assert_called_once()
@@ -181,9 +205,10 @@ class TestClaudeConsent:
         from cerno_pkg import claude_assistant as ca
 
         cfg = self._cfg(False)
-        with patch("rich.prompt.Confirm.ask", return_value=False), patch(
-            "cerno_pkg.config.save_config"
-        ) as save:
+        with (
+            patch("rich.prompt.Confirm.ask", return_value=False),
+            patch("cerno_pkg.config.save_config") as save,
+        ):
             assert ca.ensure_enabled(cfg) is False
             assert cfg.claude_assistant_enabled is False
             save.assert_not_called()

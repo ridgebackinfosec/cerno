@@ -33,7 +33,12 @@ from typing import TYPE_CHECKING, Any, Optional
 from .logging_setup import log_debug, log_error
 
 if TYPE_CHECKING:
-    from .models import ClaudeAggregateConversationTurn, ClaudeConversationTurn, Finding, Plugin
+    from .models import (
+        ClaudeAggregateConversationTurn,
+        ClaudeConversationTurn,
+        Finding,
+        Plugin,
+    )
     from .workflow_mapper import Workflow
 
 
@@ -239,12 +244,17 @@ def build_finding_context(
             if output:
                 text = output.strip()
                 if len(text) > MAX_CHARS:
-                    text = text[:MAX_CHARS] + f"\n... [truncated, {len(output) - MAX_CHARS} chars omitted]"
+                    text = (
+                        text[:MAX_CHARS]
+                        + f"\n... [truncated, {len(output) - MAX_CHARS} chars omitted]"
+                    )
                 lines.append(text)
             else:
                 lines.append("(no plugin output recorded)")
         if len(plugin_outputs) > MAX_HOSTS:
-            lines.append(f"... and {len(plugin_outputs) - MAX_HOSTS} more host(s) omitted")
+            lines.append(
+                f"... and {len(plugin_outputs) - MAX_HOSTS} more host(s) omitted"
+            )
 
     if workflow is not None:
         lines.append("")
@@ -381,7 +391,9 @@ def run_exchange(
     turns = ClaudeConversationTurn.get_by_finding(conn, finding_id)
     skill = load_skill_prompt()
     plugin_outputs = finding.get_plugin_outputs_by_host(conn)
-    context = build_finding_context(plugin, finding, hosts, plugin_outputs, workflow=workflow)
+    context = build_finding_context(
+        plugin, finding, hosts, plugin_outputs, workflow=workflow
+    )
     prompt = format_prompt(skill, context, turns, question)
 
     response, exit_code = ask_claude(prompt)
@@ -482,7 +494,9 @@ def build_aggregate_context(
     if total > cap:
         lowest_shown = sorted_findings[cap - 1][1].severity_int
         lowest_label = severity_labels.get(lowest_shown, str(lowest_shown))
-        lines.append(f"[Excluded: {total - cap} findings below {lowest_label} severity not shown]")
+        lines.append(
+            f"[Excluded: {total - cap} findings below {lowest_label} severity not shown]"
+        )
 
     lines.append("=== End Context ===")
     return "\n".join(lines)
@@ -517,7 +531,9 @@ def run_aggregate_exchange(
 
     turns = ClaudeAggregateConversationTurn.get_by_context(conn, context_key)
     skill = load_skill_prompt()
-    context = build_aggregate_context(scan_names, scope_description, findings_with_plugins)
+    context = build_aggregate_context(
+        scan_names, scope_description, findings_with_plugins
+    )
     prompt = format_prompt(skill, context, turns, question)
 
     response, exit_code = ask_claude(prompt)

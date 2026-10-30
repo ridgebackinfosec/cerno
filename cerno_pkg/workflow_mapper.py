@@ -145,7 +145,9 @@ class WorkflowMapper:
             # YAML syntax error - specific handling
             log_error(f"YAML syntax error in {self.yaml_path}: {e}")
             warn(f"Failed to parse workflow YAML: {self.yaml_path.name}")
-            warn(f"Syntax error: {str(e).splitlines()[0] if str(e) else 'Invalid YAML format'}")
+            warn(
+                f"Syntax error: {str(e).splitlines()[0] if str(e) else 'Invalid YAML format'}"
+            )
             warn("Please check YAML syntax and try again.")
         except FileNotFoundError:
             # File not found - this is OK, just means no workflows
@@ -278,13 +280,17 @@ class WorkflowMapper:
             # YAML syntax error - specific handling
             log_error(f"YAML syntax error in {yaml_path}: {e}")
             warn(f"Failed to parse additional workflow YAML: {yaml_path.name}")
-            warn(f"Syntax error: {str(e).splitlines()[0] if str(e) else 'Invalid YAML format'}")
+            warn(
+                f"Syntax error: {str(e).splitlines()[0] if str(e) else 'Invalid YAML format'}"
+            )
         except FileNotFoundError:
             # File not found
             log_error(f"Additional workflow file not found: {yaml_path}")
         except Exception as e:
             # Unexpected error
-            log_error(f"Unexpected error loading additional workflows from {yaml_path}: {e}")
+            log_error(
+                f"Unexpected error loading additional workflows from {yaml_path}: {e}"
+            )
             warn(f"Failed to load additional workflows from {yaml_path.name}")
 
         return workflows_loaded
@@ -305,11 +311,13 @@ class WorkflowMapper:
             workflow_key = workflow.workflow_name
 
             if workflow_key not in seen_workflows:
-                workflows_list.append({
-                    "plugin_id": workflow.plugin_id,
-                    "workflow_name": workflow.workflow_name,
-                    "description": workflow.description,
-                })
+                workflows_list.append(
+                    {
+                        "plugin_id": workflow.plugin_id,
+                        "workflow_name": workflow.workflow_name,
+                        "description": workflow.description,
+                    }
+                )
                 seen_workflows.add(workflow_key)
 
         # Sort by workflow name

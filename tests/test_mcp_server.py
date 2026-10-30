@@ -285,7 +285,9 @@ def test_set_review_state_invalid_raises(seeded, state):
 def test_list_workflow_gaps_returns_unmapped_worst_first(seeded):
     # Plugins 100 (Critical+MSF) and 200 (Low) are synthetic -- neither is in the
     # bundled workflow map, so both are gaps, worst-first.
-    rows = mcp.tool_list_workflow_gaps(scan_ids=[seeded["scan_id"]], conn=seeded["conn"])
+    rows = mcp.tool_list_workflow_gaps(
+        scan_ids=[seeded["scan_id"]], conn=seeded["conn"]
+    )
     plugin_ids = [r["plugin_id"] for r in rows]
     assert plugin_ids == [100, 200]
     assert rows[0]["has_metasploit"] is True
@@ -449,9 +451,7 @@ def test_execute_command_refuses_to_overwrite_existing_output(seeded, tmp_path):
 
 
 # Command that writes a netexec-style --log file to sys.argv[2] (= the --log path).
-_WRITE_LOG = (
-    "import pathlib,sys;pathlib.Path(sys.argv[2]).write_text('creds-here')"
-)
+_WRITE_LOG = "import pathlib,sys;pathlib.Path(sys.argv[2]).write_text('creds-here')"
 
 
 @pytest.mark.integration
@@ -1282,7 +1282,10 @@ class TestWorkflowContribution:
     def test_no_hint_without_verified_verdict(self, contrib):
         c, fid, cfg = contrib["conn"], contrib["f1"], contrib["cfg"]
         unavailable = {"available": False, "reason": None}
-        assert mcp.tool_get_finding_verdict(fid, conn=c, config=cfg)["workflow_candidate"] == unavailable
+        assert (
+            mcp.tool_get_finding_verdict(fid, conn=c, config=cfg)["workflow_candidate"]
+            == unavailable
+        )
         res = mcp.tool_set_finding_verdict(fid, "unable", conn=c, config=cfg)
         assert res["workflow_candidate"] == unavailable
 
@@ -1321,7 +1324,11 @@ class TestWorkflowContribution:
         path = Path(res["path"])
         assert path.parent == contrib["dir"] and path.name.startswith("100-")
         text = path.read_text()
-        assert "10.0.0." not in text and "/home/op" not in text and "engagement" not in text
+        assert (
+            "10.0.0." not in text
+            and "/home/op" not in text
+            and "engagement" not in text
+        )
         m = WorkflowMapper(yaml_path=contrib["dir"] / "none.yaml")
         assert m.load_additional_workflows(path) == 1
         assert res["reason"] == "new" and "develop" in res["submission_instructions"]
@@ -1376,7 +1383,11 @@ class TestWorkflowContribution:
                             "workflow_name": "local",
                             "description": "d",
                             "steps": [
-                                {"title": "t", "commands": ["nmap -sV 10.0.0.2"], "notes": ""}
+                                {
+                                    "title": "t",
+                                    "commands": ["nmap -sV 10.0.0.2"],
+                                    "notes": "",
+                                }
                             ],
                             "references": [],
                         }
@@ -1385,7 +1396,8 @@ class TestWorkflowContribution:
             )
         )
         cfg = CernoConfig(
-            contribution_export_dir=str(contrib["dir"]), custom_workflows_path=str(custom)
+            contribution_export_dir=str(contrib["dir"]),
+            custom_workflows_path=str(custom),
         )
         c, fid = contrib["conn"], contrib["f1"]
         res = mcp.tool_set_finding_verdict(fid, "confirmed", conn=c, config=cfg)
@@ -1426,7 +1438,9 @@ class TestWorkflowContribution:
 
     def test_secret_value_refused_and_never_echoed(self, contrib, monkeypatch):
         monkeypatch.setattr(
-            mcp, "_nxc_leak_material", lambda cfg: (["svc_scan"], ["ACME"], ["Winter2026!"])
+            mcp,
+            "_nxc_leak_material",
+            lambda cfg: (["svc_scan"], ["ACME"], ["Winter2026!"]),
         )
         c, fid, cfg = contrib["conn"], contrib["f1"], contrib["cfg"]
         mcp.tool_set_finding_verdict(fid, "confirmed", conn=c, config=cfg)
@@ -1459,7 +1473,10 @@ class TestNxcLeakMaterial:
 
         refs = [
             nxc_db.NxcCredentialRef(
-                ref="smb:1", protocol="smb", username="svc", domain="ACME",
+                ref="smb:1",
+                protocol="smb",
+                username="svc",
+                domain="ACME",
                 secret_kind="password",
             ),
             nxc_db.NxcCredentialRef(

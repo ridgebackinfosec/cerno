@@ -100,6 +100,7 @@ def _ensure_registered() -> None:
     global _registry_initialized
     if not _registry_initialized:
         from . import tool_definitions
+
         tool_definitions.register_all_tools()
         _registry_initialized = True
 

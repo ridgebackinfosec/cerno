@@ -22,11 +22,12 @@ def ensure_db_enabled(monkeypatch, temp_db):
     # Create a wrapper that prevents the connection from being closed
     class UnclosableConnection:
         """Wrapper that delegates to real connection but prevents close()."""
+
         def __init__(self, conn):
             self._conn = conn
 
         def __getattr__(self, name):
-            if name == 'close':
+            if name == "close":
                 # Don't actually close the connection
                 return lambda: None
             return getattr(self._conn, name)
@@ -54,7 +55,7 @@ class TestSessionState:
             in_progress_count=2,
             done_count=1,
             tool_executions=5,
-            cve_extractions=2
+            cve_extractions=2,
         )
 
         assert state.scan_name == "test_scan"
@@ -71,7 +72,7 @@ class TestSessionState:
             in_progress_count=0,
             done_count=0,
             tool_executions=0,
-            cve_extractions=0
+            cve_extractions=0,
         )
 
         assert state.in_progress_count == 0
@@ -94,17 +95,19 @@ class TestSaveSession:
 
         # Create plugin files with reviewed_at timestamps after session start
         # so they'll be counted by v_session_stats view
-        review_time = (session_start + __import__('datetime').timedelta(minutes=5)).isoformat()
+        review_time = (
+            session_start + __import__("datetime").timedelta(minutes=5)
+        ).isoformat()
 
         # Create 2 in-progress files
         for i in range(2):
-            plugin = Plugin(plugin_id=1000+i, plugin_name=f"Test{i}", severity_int=3)
+            plugin = Plugin(plugin_id=1000 + i, plugin_name=f"Test{i}", severity_int=3)
             plugin.save(temp_db)
             pf = Finding(
                 scan_id=scan_id,
-                plugin_id=1000+i,
+                plugin_id=1000 + i,
                 review_state="in_progress",
-                reviewed_at=review_time
+                reviewed_at=review_time,
             )
             pf.save(temp_db)
 
@@ -115,7 +118,7 @@ class TestSaveSession:
             scan_id=scan_id,
             plugin_id=1002,
             review_state="done",
-            reviewed_at=review_time
+            reviewed_at=review_time,
         )
         pf.save(temp_db)
 
@@ -126,7 +129,7 @@ class TestSaveSession:
             scan_id=scan_id,
             plugin_id=1003,
             review_state="unreviewed",
-            reviewed_at=review_time
+            reviewed_at=review_time,
         )
         pf.save(temp_db)
 
@@ -137,7 +140,7 @@ class TestSaveSession:
             in_progress_count=2,
             done_count=1,
             tool_executions=5,
-            cve_extractions=2
+            cve_extractions=2,
         )
 
         assert session_id is not None
@@ -150,7 +153,7 @@ class TestSaveSession:
             FROM v_session_stats vs
             WHERE vs.scan_id = ? AND vs.session_id = ?
             """,
-            (scan_id, session_id)
+            (scan_id, session_id),
         )
         row = cursor.fetchone()
 
@@ -170,7 +173,9 @@ class TestSaveSession:
         assert scan_id is not None
 
         # Verify last_reviewed_at is initially None
-        cursor = temp_db.execute("SELECT last_reviewed_at FROM scans WHERE scan_id = ?", (scan_id,))
+        cursor = temp_db.execute(
+            "SELECT last_reviewed_at FROM scans WHERE scan_id = ?", (scan_id,)
+        )
         assert cursor.fetchone()["last_reviewed_at"] is None
 
         # Save session
@@ -178,7 +183,9 @@ class TestSaveSession:
         save_session(scan_id=scan_id, session_start=session_start, in_progress_count=1)
 
         # Verify last_reviewed_at is now set
-        cursor = temp_db.execute("SELECT last_reviewed_at FROM scans WHERE scan_id = ?", (scan_id,))
+        cursor = temp_db.execute(
+            "SELECT last_reviewed_at FROM scans WHERE scan_id = ?", (scan_id,)
+        )
         last_reviewed = cursor.fetchone()["last_reviewed_at"]
         assert last_reviewed is not None
 
@@ -215,7 +222,9 @@ class TestSaveSession:
         assert scan_id is not None
 
         session_start = datetime(2024, 1, 15, 10, 0, 0)
-        review_time = (session_start + __import__('datetime').timedelta(minutes=5)).isoformat()
+        review_time = (
+            session_start + __import__("datetime").timedelta(minutes=5)
+        ).isoformat()
 
         # First save - create session
         session_id_1 = save_session(
@@ -224,31 +233,33 @@ class TestSaveSession:
             in_progress_count=1,
             done_count=0,
             tool_executions=1,
-            cve_extractions=0
+            cve_extractions=0,
         )
 
         # Add plugin files for second save scenario
         # Create 3 in-progress files
         for i in range(3):
-            plugin = Plugin(plugin_id=2000+i, plugin_name=f"Test{i}", severity_int=3)
+            plugin = Plugin(plugin_id=2000 + i, plugin_name=f"Test{i}", severity_int=3)
             plugin.save(temp_db)
             pf = Finding(
                 scan_id=scan_id,
-                plugin_id=2000+i,
+                plugin_id=2000 + i,
                 review_state="in_progress",
-                reviewed_at=review_time
+                reviewed_at=review_time,
             )
             pf.save(temp_db)
 
         # Create 2 done files
         for i in range(2):
-            plugin = Plugin(plugin_id=2010+i, plugin_name=f"Complete{i}", severity_int=3)
+            plugin = Plugin(
+                plugin_id=2010 + i, plugin_name=f"Complete{i}", severity_int=3
+            )
             plugin.save(temp_db)
             pf = Finding(
                 scan_id=scan_id,
-                plugin_id=2010+i,
+                plugin_id=2010 + i,
                 review_state="done",
-                reviewed_at=review_time
+                reviewed_at=review_time,
             )
             pf.save(temp_db)
 
@@ -259,7 +270,7 @@ class TestSaveSession:
             in_progress_count=3,
             done_count=2,
             tool_executions=5,
-            cve_extractions=2
+            cve_extractions=2,
         )
 
         # Should return same session_id
@@ -272,7 +283,7 @@ class TestSaveSession:
             FROM v_session_stats vs
             WHERE vs.scan_id = ? AND vs.session_end IS NULL
             """,
-            (scan_id,)
+            (scan_id,),
         )
         row = cursor.fetchone()
 
@@ -299,7 +310,7 @@ class TestSaveSession:
             in_progress_count=0,
             done_count=0,
             tool_executions=0,
-            cve_extractions=0
+            cve_extractions=0,
         )
 
         assert session_id is not None
@@ -307,7 +318,7 @@ class TestSaveSession:
         # Verify database
         cursor = temp_db.execute(
             "SELECT files_in_progress, files_done FROM v_session_stats WHERE session_id = ?",
-            (session_id,)
+            (session_id,),
         )
         row = cursor.fetchone()
 
@@ -325,8 +336,7 @@ class TestSaveSession:
 
         # Verify last_reviewed_at is initially None
         cursor = temp_db.execute(
-            "SELECT last_reviewed_at FROM scans WHERE scan_id = ?",
-            (scan_id,)
+            "SELECT last_reviewed_at FROM scans WHERE scan_id = ?", (scan_id,)
         )
         row = cursor.fetchone()
         assert row["last_reviewed_at"] is None
@@ -345,8 +355,7 @@ class TestSaveSession:
 
         # Verify last_reviewed_at is now set
         cursor = temp_db.execute(
-            "SELECT last_reviewed_at FROM scans WHERE scan_id = ?",
-            (scan_id,)
+            "SELECT last_reviewed_at FROM scans WHERE scan_id = ?", (scan_id,)
         )
         row = cursor.fetchone()
         assert row["last_reviewed_at"] is not None
@@ -375,7 +384,7 @@ class TestSaveSession:
         # Verify session exists with NULL session_end
         cursor = temp_db.execute(
             "SELECT session_id, session_end FROM sessions WHERE session_id = ?",
-            (session_id,)
+            (session_id,),
         )
         row = cursor.fetchone()
         assert row["session_id"] == session_id
@@ -386,8 +395,7 @@ class TestSaveSession:
 
         # Verify session_end is now set
         cursor = temp_db.execute(
-            "SELECT session_end FROM sessions WHERE session_id = ?",
-            (session_id,)
+            "SELECT session_end FROM sessions WHERE session_id = ?", (session_id,)
         )
         row = cursor.fetchone()
         assert row["session_end"] is not None
@@ -407,20 +415,22 @@ class TestLoadSession:
 
         # Create session first to get session_start
         session_start = datetime(2024, 1, 15, 10, 30, 0)
-        review_time = (session_start + __import__('datetime').timedelta(minutes=5)).isoformat()
+        review_time = (
+            session_start + __import__("datetime").timedelta(minutes=5)
+        ).isoformat()
 
         # Create plugins and files to match expected counts
         # Need unique plugin_id for each Finding due to UNIQUE(scan_id, plugin_id)
 
         # Create 2 in-progress files
         for i in range(2):
-            plugin = Plugin(plugin_id=1001+i, plugin_name=f"Test{i}", severity_int=3)
+            plugin = Plugin(plugin_id=1001 + i, plugin_name=f"Test{i}", severity_int=3)
             plugin.save(temp_db)
             pf = Finding(
                 scan_id=scan_id,
-                plugin_id=1001+i,
+                plugin_id=1001 + i,
                 review_state="in_progress",
-                reviewed_at=review_time
+                reviewed_at=review_time,
             )
             pf.save(temp_db)
 
@@ -431,7 +441,7 @@ class TestLoadSession:
             scan_id=scan_id,
             plugin_id=1003,
             review_state="done",
-            reviewed_at=review_time
+            reviewed_at=review_time,
         )
         pf.save(temp_db)
 
@@ -442,7 +452,7 @@ class TestLoadSession:
             scan_id=scan_id,
             plugin_id=1004,
             review_state="unreviewed",
-            reviewed_at=review_time
+            reviewed_at=review_time,
         )
         pf.save(temp_db)
 
@@ -453,7 +463,7 @@ class TestLoadSession:
             in_progress_count=2,
             done_count=1,
             tool_executions=5,
-            cve_extractions=2
+            cve_extractions=2,
         )
 
         # Load session - counts should come from actual findings review_state
@@ -508,7 +518,9 @@ class TestLoadSession:
 
         # Create session first to get session_start
         session_start = datetime(2024, 1, 15, 10, 0, 0)
-        review_time = (session_start + __import__('datetime').timedelta(minutes=5)).isoformat()
+        review_time = (
+            session_start + __import__("datetime").timedelta(minutes=5)
+        ).isoformat()
 
         # Create plugins and plugin files with different review states
         # Need unique plugin_id for each Finding due to UNIQUE(scan_id, plugin_id)
@@ -519,7 +531,7 @@ class TestLoadSession:
             scan_id=scan_id,
             plugin_id=1001,
             review_state="in_progress",
-            reviewed_at=review_time
+            reviewed_at=review_time,
         )
         pf1.save(temp_db)
 
@@ -529,7 +541,7 @@ class TestLoadSession:
             scan_id=scan_id,
             plugin_id=1002,
             review_state="done",
-            reviewed_at=review_time
+            reviewed_at=review_time,
         )
         pf2.save(temp_db)
 
@@ -539,7 +551,7 @@ class TestLoadSession:
             scan_id=scan_id,
             plugin_id=1003,
             review_state="unreviewed",
-            reviewed_at=review_time
+            reviewed_at=review_time,
         )
         pf3.save(temp_db)
 
@@ -571,8 +583,7 @@ class TestDeleteSession:
 
         # Verify session is active
         cursor = temp_db.execute(
-            "SELECT session_end FROM sessions WHERE scan_id = ?",
-            (scan_id,)
+            "SELECT session_end FROM sessions WHERE scan_id = ?", (scan_id,)
         )
         row = cursor.fetchone()
         assert row["session_end"] is None
@@ -583,7 +594,7 @@ class TestDeleteSession:
         # Verify session is ended (use v_session_stats view for duration_seconds)
         cursor = temp_db.execute(
             "SELECT session_end, duration_seconds FROM v_session_stats WHERE scan_id = ?",
-            (scan_id,)
+            (scan_id,),
         )
         row = cursor.fetchone()
         assert row["session_end"] is not None
@@ -622,8 +633,7 @@ class TestDeleteSession:
 
         # Verify only one session exists
         cursor = temp_db.execute(
-            "SELECT COUNT(*) as count FROM sessions WHERE scan_id = ?",
-            (scan_id,)
+            "SELECT COUNT(*) as count FROM sessions WHERE scan_id = ?", (scan_id,)
         )
         assert cursor.fetchone()["count"] == 1
 
@@ -642,18 +652,20 @@ class TestSessionLifecycle:
 
         # Create plugins - need unique plugin_id for each Finding due to UNIQUE(scan_id, plugin_id)
         for i in range(1, 7):
-            plugin = Plugin(plugin_id=1000+i, plugin_name=f"Test{i}", severity_int=3)
+            plugin = Plugin(plugin_id=1000 + i, plugin_name=f"Test{i}", severity_int=3)
             plugin.save(temp_db)
 
         session_start = datetime(2024, 1, 15, 10, 0, 0)
-        review_time = (session_start + __import__('datetime').timedelta(minutes=5)).isoformat()
+        review_time = (
+            session_start + __import__("datetime").timedelta(minutes=5)
+        ).isoformat()
 
         # 1. Create initial session with 1 reviewed file
         pf1 = Finding(
             scan_id=scan_id,
             plugin_id=1001,
             review_state="in_progress",
-            reviewed_at=review_time
+            reviewed_at=review_time,
         )
         pf1.save(temp_db)
 
@@ -663,7 +675,7 @@ class TestSessionLifecycle:
             in_progress_count=1,
             done_count=0,
             tool_executions=1,
-            cve_extractions=0
+            cve_extractions=0,
         )
 
         # 2. Load session
@@ -677,7 +689,7 @@ class TestSessionLifecycle:
             scan_id=scan_id,
             plugin_id=1002,
             review_state="in_progress",
-            reviewed_at=review_time
+            reviewed_at=review_time,
         )
         pf2.save(temp_db)
 
@@ -685,7 +697,7 @@ class TestSessionLifecycle:
             scan_id=scan_id,
             plugin_id=1003,
             review_state="in_progress",
-            reviewed_at=review_time
+            reviewed_at=review_time,
         )
         pf3.save(temp_db)
 
@@ -693,7 +705,7 @@ class TestSessionLifecycle:
             scan_id=scan_id,
             plugin_id=1004,
             review_state="done",
-            reviewed_at=review_time
+            reviewed_at=review_time,
         )
         pf4.save(temp_db)
 
@@ -701,7 +713,7 @@ class TestSessionLifecycle:
             scan_id=scan_id,
             plugin_id=1005,
             review_state="done",
-            reviewed_at=review_time
+            reviewed_at=review_time,
         )
         pf5.save(temp_db)
 
@@ -709,7 +721,7 @@ class TestSessionLifecycle:
             scan_id=scan_id,
             plugin_id=1006,
             review_state="unreviewed",
-            reviewed_at=review_time
+            reviewed_at=review_time,
         )
         pf6.save(temp_db)
 
@@ -720,7 +732,7 @@ class TestSessionLifecycle:
             in_progress_count=3,
             done_count=2,
             tool_executions=8,
-            cve_extractions=3
+            cve_extractions=3,
         )
 
         # 4. Load updated session - counts from findings
@@ -736,7 +748,7 @@ class TestSessionLifecycle:
             SELECT files_in_progress, files_done, tools_executed, cves_extracted
             FROM v_session_stats WHERE scan_id = ?
             """,
-            (scan_id,)
+            (scan_id,),
         )
         row = cursor.fetchone()
         assert row["files_in_progress"] == 3
@@ -752,8 +764,7 @@ class TestSessionLifecycle:
 
         # Verify database session is marked ended
         cursor = temp_db.execute(
-            "SELECT session_end FROM sessions WHERE scan_id = ?",
-            (scan_id,)
+            "SELECT session_end FROM sessions WHERE scan_id = ?", (scan_id,)
         )
         row = cursor.fetchone()
         assert row["session_end"] is not None
@@ -789,8 +800,7 @@ class TestSessionLifecycle:
 
         # Verify both sessions in database
         cursor = temp_db.execute(
-            "SELECT COUNT(*) as count FROM sessions WHERE scan_id = ?",
-            (scan_id,)
+            "SELECT COUNT(*) as count FROM sessions WHERE scan_id = ?", (scan_id,)
         )
         row = cursor.fetchone()
         assert row["count"] == 2
@@ -798,10 +808,11 @@ class TestSessionLifecycle:
         # Verify both sessions have end times
         cursor = temp_db.execute(
             "SELECT COUNT(*) as ended_count FROM sessions WHERE scan_id = ? AND session_end IS NOT NULL",
-            (scan_id,)
+            (scan_id,),
         )
         row = cursor.fetchone()
         assert row["ended_count"] == 2
+
 
 @pytest.mark.unit
 def test_show_session_statistics_prints_severity_breakdown(monkeypatch, tmp_path):

@@ -1,4 +1,5 @@
 """Tests for render.py rendering behaviour."""
+
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 import pytest
@@ -25,12 +26,13 @@ def test_render_claude_panel_prints_with_soft_wrap(monkeypatch):
     render_module.render_claude_panel([mock_turn], is_resumed=False)
 
     soft_wrap_calls = [
-        c for c in mock_console.print.call_args_list
+        c
+        for c in mock_console.print.call_args_list
         if c.kwargs.get("soft_wrap") is True
     ]
-    assert len(soft_wrap_calls) > 0, (
-        "Expected _console_global.print() with soft_wrap=True for the Panel"
-    )
+    assert (
+        len(soft_wrap_calls) > 0
+    ), "Expected _console_global.print() with soft_wrap=True for the Panel"
 
 
 @pytest.mark.unit
@@ -64,10 +66,13 @@ def test_render_claude_panel_labels_use_plain_styles():
             label_styles.append(str(item._spans[0].style))
 
     assert "cyan" in label_styles, f"Expected 'cyan' user label. Got: {label_styles}"
-    assert "magenta" in label_styles, f"Expected 'magenta' Claude label. Got: {label_styles}"
-    assert not any(s in label_styles for s in ("dim cyan", "dim magenta", "bold cyan", "bold magenta")), (
-        f"Found bold/dim label styles — should be plain. Got: {label_styles}"
-    )
+    assert (
+        "magenta" in label_styles
+    ), f"Expected 'magenta' Claude label. Got: {label_styles}"
+    assert not any(
+        s in label_styles
+        for s in ("dim cyan", "dim magenta", "bold cyan", "bold magenta")
+    ), f"Found bold/dim label styles — should be plain. Got: {label_styles}"
 
 
 def _record_console(monkeypatch, module):
@@ -80,7 +85,9 @@ def _record_console(monkeypatch, module):
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("active,label", [(False, "In Progress only"), (True, "All statuses")])
+@pytest.mark.parametrize(
+    "active,label", [(False, "In Progress only"), (True, "All statuses")]
+)
 def test_actions_footer_shows_status_toggle(monkeypatch, active, label):
     """Findings-list footer offers [I] with a label that reflects the toggle state."""
     from cerno_pkg import ansi, render as render_module
@@ -118,7 +125,12 @@ def test_actions_help_mentions_status_toggle(monkeypatch):
 @pytest.mark.unit
 @pytest.mark.parametrize(
     "mode,label",
-    [("severity", "Severity"), ("plugin_id", "Plugin ID"), ("name", "Name"), ("hosts", "Hosts")],
+    [
+        ("severity", "Severity"),
+        ("plugin_id", "Plugin ID"),
+        ("name", "Name"),
+        ("hosts", "Hosts"),
+    ],
 )
 def test_actions_help_shows_current_sort_mode(monkeypatch, mode, label):
     """[S] help names the active sort mode, matching the footer."""
@@ -172,7 +184,9 @@ def _render_preview(monkeypatch, plugin_url):
     import cerno_pkg.render as render_module
 
     console = _record_console(monkeypatch, render_module)
-    monkeypatch.setattr(render_module, "render_nxc_enrichment_summary", lambda hosts: None)
+    monkeypatch.setattr(
+        render_module, "render_nxc_enrichment_summary", lambda hosts: None
+    )
     render_module.display_finding_preview(
         _preview_plugin(plugin_url), _preview_finding(), None, Path("x.txt")
     )
@@ -181,7 +195,9 @@ def _render_preview(monkeypatch, plugin_url):
 
 @pytest.mark.unit
 def test_finding_preview_shows_plugin_url(monkeypatch):
-    console = _render_preview(monkeypatch, "https://www.tenable.com/plugins/nessus/41028")
+    console = _render_preview(
+        monkeypatch, "https://www.tenable.com/plugins/nessus/41028"
+    )
     out = console.export_text(clear=False)
     assert "Plugin Details: https://tenable.com/plugins/nessus/41028" in out
     assert "www." not in out
@@ -190,7 +206,10 @@ def test_finding_preview_shows_plugin_url(monkeypatch):
 @pytest.mark.unit
 def test_finding_preview_plugin_url_fallback(monkeypatch):
     console = _render_preview(monkeypatch, None)
-    assert "Plugin Details: https://tenable.com/plugins/nessus/41028" in console.export_text()
+    assert (
+        "Plugin Details: https://tenable.com/plugins/nessus/41028"
+        in console.export_text()
+    )
 
 
 @pytest.mark.unit
@@ -199,15 +218,28 @@ def test_finding_preview_link_target_is_full_url(monkeypatch):
     from rich.text import Text
 
     printed = []
-    monkeypatch.setattr(render_module, "_console_global", MagicMock(print=lambda *a, **k: printed.extend(a)))
-    monkeypatch.setattr(render_module, "render_nxc_enrichment_summary", lambda hosts: None)
+    monkeypatch.setattr(
+        render_module,
+        "_console_global",
+        MagicMock(print=lambda *a, **k: printed.extend(a)),
+    )
+    monkeypatch.setattr(
+        render_module, "render_nxc_enrichment_summary", lambda hosts: None
+    )
     render_module.display_finding_preview(
-        _preview_plugin("https://www.tenable.com/plugins/nessus/41028"), _preview_finding(), None, Path("x.txt")
+        _preview_plugin("https://www.tenable.com/plugins/nessus/41028"),
+        _preview_finding(),
+        None,
+        Path("x.txt"),
     )
     panel = printed[-1]
     assert isinstance(panel.renderable, Text)
-    links = {str(span.style) for span in panel.renderable.spans if "link" in str(span.style)}
-    assert any("link https://www.tenable.com/plugins/nessus/41028" in s for s in links), links
+    links = {
+        str(span.style) for span in panel.renderable.spans if "link" in str(span.style)
+    }
+    assert any(
+        "link https://www.tenable.com/plugins/nessus/41028" in s for s in links
+    ), links
 
 
 def _panel_text(panel) -> str:
@@ -244,18 +276,30 @@ def test_nxc_host_panel_presence_only_host_shows_seen_via_and_flags():
 
 @pytest.mark.unit
 def test_nxc_host_panel_marks_dumped_creds_and_failed_checks():
-    from cerno_pkg.nxc_db import NxcConfCheck, NxcCredential, NxcHostData, NxcSecurityFlags
+    from cerno_pkg.nxc_db import (
+        NxcConfCheck,
+        NxcCredential,
+        NxcHostData,
+        NxcSecurityFlags,
+    )
     from cerno_pkg.render import render_nxc_host_panel
 
     data = NxcHostData(
         host_address="10.0.0.5",
         protocols_seen=["smb", "ssh"],
         credentials=[
-            NxcCredential(protocol="smb", username="localadmin", domain=".", pillaged=True),
-            NxcCredential(protocol="ssh", username="root", credential_type="key", has_admin=True),
+            NxcCredential(
+                protocol="smb", username="localadmin", domain=".", pillaged=True
+            ),
+            NxcCredential(
+                protocol="ssh", username="root", credential_type="key", has_admin=True
+            ),
         ],
         security_flags=NxcSecurityFlags(signing_required=False),
-        protocol_details={"smb": {}, "ssh": {"ports": [22, 2222], "banner": "SSH-2.0-OpenSSH_9.6"}},
+        protocol_details={
+            "smb": {},
+            "ssh": {"ports": [22, 2222], "banner": "SSH-2.0-OpenSSH_9.6"},
+        },
         failed_checks=[NxcConfCheck(name="LDAP signing", reasons="Not enforced")],
     )
 
@@ -272,4 +316,57 @@ def test_nxc_host_panel_marks_dumped_creds_and_failed_checks():
 def test_nxc_host_panel_no_data():
     from cerno_pkg.render import render_nxc_host_panel
 
-    assert "No NetExec data available" in _panel_text(render_nxc_host_panel("10.0.0.9", None, False))
+    assert "No NetExec data available" in _panel_text(
+        render_nxc_host_panel("10.0.0.9", None, False)
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("term_width", [200, 70], ids=["wide", "narrow"])
+@pytest.mark.parametrize(
+    "no_tools,offered", [(False, True), (True, False)], ids=["tools-on", "no-tools"]
+)
+def test_finding_footer_run_tool_respects_no_tools(
+    monkeypatch, term_width, no_tools, offered
+):
+    """`--no-tools` is a review-only mode, so [T] must not be advertised.
+
+    Checked at both layout widths: the footer builds a two-column grid at >=100
+    columns and a single column below that, and [T] lives in a row that is
+    assembled differently in each branch.
+    """
+    from cerno_pkg import ansi, render as render_module
+
+    console = _record_console(monkeypatch, render_module)
+    monkeypatch.setattr(ansi, "get_terminal_width", lambda: term_width)
+
+    render_module.render_finding_actions_footer(
+        review_state="unreviewed", no_tools=no_tools
+    )
+
+    out = console.export_text()
+    assert ("Run tool" in out) is offered
+    # The rest of the footer must survive either way.
+    assert "Finding Info" in out
+    assert "Back" in out
+
+
+@pytest.mark.unit
+def test_finding_footer_no_tools_keeps_conditional_row_items(monkeypatch):
+    """Hiding [T] must not also drop [W]/[N], which share that footer row."""
+    from cerno_pkg import ansi, render as render_module
+
+    console = _record_console(monkeypatch, render_module)
+    monkeypatch.setattr(ansi, "get_terminal_width", lambda: 200)
+
+    render_module.render_finding_actions_footer(
+        review_state="unreviewed",
+        has_workflow=True,
+        has_nxc_data=True,
+        no_tools=True,
+    )
+
+    out = console.export_text()
+    assert "Workflow" in out
+    assert "NetExec Data" in out
+    assert "Run tool" not in out

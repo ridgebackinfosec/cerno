@@ -80,7 +80,7 @@ from rich.table import Table
 from rich.traceback import install as rich_tb_install
 
 # Create a console for the interactive flow (configured with no_color setting)
-from cerno_pkg.ansi import get_console, get_terminal_width
+from cerno_pkg.ansi import get_console, get_terminal_width, print_verbatim, safe_text
 from cerno_pkg.models import count_review_states
 from cerno_pkg.constants import (
     REVIEW_STATE_DONE,
@@ -92,8 +92,12 @@ from cerno_pkg.constants import (
 
 _console_global = get_console()
 
-# Install pretty tracebacks, but suppress for Typer/Click exit exceptions
-rich_tb_install(show_locals=False, suppress=["typer", "click"])
+# Install pretty tracebacks, hiding Typer's internal frames (including the
+# Click it vendors as of 0.26) so CLI exit exceptions don't dump framework
+# noise. Rich treats a *string* suppress entry as a filesystem path, not a
+# module name, so these must be module objects to resolve at all.
+_TB_SUPPRESS = [typer]
+rich_tb_install(show_locals=False, suppress=_TB_SUPPRESS)
 
 # === Configuration context ===
 import contextvars
@@ -247,7 +251,7 @@ def browse_claude_chat_aggregate(
         from cerno_pkg.claude_assistant import ASSISTANT_NOTICE
 
         _console_global.print(ASSISTANT_NOTICE)
-        _console_global.print(f"[dim]Scope: {scope_description}[/dim]")
+        _console_global.print(f"[dim]Scope: {safe_text(scope_description)}[/dim]")
 
         while True:
             render_claude_panel(turns, is_resumed=is_resumed)
@@ -994,7 +998,7 @@ def browse_file_list(
                     ok("Copied to clipboard.")
                 else:
                     warn(f"{detail} Printing below for manual copy:")
-                    _console_global.print(payload)
+                    print_verbatim(payload)
 
             elif post_choice in ("f", "format"):
                 print_action_menu(
@@ -1475,15 +1479,18 @@ def main(args: types.SimpleNamespace) -> None:
         )
 
     # Tool availability check (unless --no-tools enabled)
-    if not args.no_tools:
+    check_only = getattr(args, "check", False)
+    if not args.no_tools or check_only:
         from cerno_pkg.render import render_tool_availability_table
 
         render_tool_availability_table(include_unavailable=True)
         _console_global.print()  # Add spacing
 
-        # If --check flag used, exit after displaying checks
-        if getattr(args, "check", False):
-            raise Exit(0)
+    # --check reports availability and exits. Deliberately outside the no_tools
+    # gate: nesting it there made `--check --no-tools` fall through into the
+    # interactive review instead of exiting.
+    if check_only:
+        raise Exit(0)
 
     export_root = Path(args.export_root) if args.export_root else None
     if export_root and not export_root.exists():
@@ -1509,6 +1516,10 @@ def main(args: types.SimpleNamespace) -> None:
             return ids or None
 
         selected_scans: list[Scan] = []
+        # Carried across iterations of the scan-selection loop below: the
+        # previous scan's session is saved at the top of the next pass, after
+        # this has been populated from that selection.
+        all_scan_ids: list[int] = []
 
         # Outer loop for scan selection
         # Wrapped in try/finally to ensure session is saved on ALL exit paths
@@ -1757,11 +1768,11 @@ def main(args: types.SimpleNamespace) -> None:
 
                 # Build multi-scan display label for breadcrumb/header
                 if len(selected_scans) > 1:
-                    names = [s.scan_name for s in selected_scans]
-                    if len(names) == 2:
-                        _scan_label = f"{names[0]} + {names[1]}"
+                    _label_names = [s.scan_name for s in selected_scans]
+                    if len(_label_names) == 2:
+                        _scan_label = f"{_label_names[0]} + {_label_names[1]}"
                     else:
-                        _scan_label = f"{len(names)} scans"
+                        _scan_label = f"{len(_label_names)} scans"
                 else:
                     _scan_label = scan_dir.name
 
@@ -2773,7 +2784,7 @@ def _import_nessus_directory(directory: Path) -> None:
     imported = 0
     skipped = 0
     for i, f in enumerate(files, 1):
-        _console_global.rule(f"[cyan][{i}/{n}] {f.name}[/cyan]")
+        _console_global.rule(f"[cyan][{i}/{n}] {safe_text(f.name)}[/cyan]")
         success = _import_single_nessus(f)
         if success:
             imported += 1

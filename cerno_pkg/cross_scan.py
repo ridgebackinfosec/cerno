@@ -22,6 +22,7 @@ class ScanComparisonResult:
     Contains new/resolved/persistent findings and hosts between two scans,
     along with summary statistics broken down by severity.
     """
+
     scan1_id: int
     scan1_name: str
     scan1_date: str
@@ -63,6 +64,7 @@ class ScanComparisonResult:
 @dataclass
 class ScanSnapshot:
     """Snapshot of a host's vulnerability status in a specific scan."""
+
     scan_id: int
     scan_name: str
     scan_date: str
@@ -83,6 +85,7 @@ class HostVulnerabilityHistory:
     Contains the host's identification and a timeline of scan snapshots
     showing how vulnerabilities have changed over time.
     """
+
     host_id: int
     ip_address: str
     scan_target: str
@@ -102,7 +105,7 @@ def compare_scans(
     scan_id_1: int,
     scan_id_2: int,
     min_severity: int = 0,
-    conn: Optional[sqlite3.Connection] = None
+    conn: Optional[sqlite3.Connection] = None,
 ) -> Optional[ScanComparisonResult]:
     """Compare findings and hosts between two scans.
 
@@ -127,12 +130,12 @@ def compare_scans(
         scan1 = query_one(
             conn,
             "SELECT scan_id, scan_name, created_at FROM scans WHERE scan_id = ?",
-            (scan_id_1,)
+            (scan_id_1,),
         )
         scan2 = query_one(
             conn,
             "SELECT scan_id, scan_name, created_at FROM scans WHERE scan_id = ?",
-            (scan_id_2,)
+            (scan_id_2,),
         )
 
         if not scan1 or not scan2:
@@ -148,7 +151,7 @@ def compare_scans(
             WHERE scan_id = ? AND severity_int >= ?
             ORDER BY severity_int DESC, plugin_name
             """,
-            (scan_id_1, min_severity)
+            (scan_id_1, min_severity),
         )
 
         scan2_plugins = query_all(
@@ -160,7 +163,7 @@ def compare_scans(
             WHERE scan_id = ? AND severity_int >= ?
             ORDER BY severity_int DESC, plugin_name
             """,
-            (scan_id_2, min_severity)
+            (scan_id_2, min_severity),
         )
 
         # Build plugin ID sets for comparison
@@ -208,7 +211,7 @@ def compare_scans(
             WHERE f.scan_id = ?
             ORDER BY h.ip_address
             """,
-            (scan_id_1,)
+            (scan_id_1,),
         )
 
         scan2_hosts = query_all(
@@ -221,7 +224,7 @@ def compare_scans(
             WHERE f.scan_id = ?
             ORDER BY h.ip_address
             """,
-            (scan_id_2,)
+            (scan_id_2,),
         )
 
         # Build host ID sets for comparison
@@ -235,8 +238,12 @@ def compare_scans(
 
         # Build host lists
         new_hosts = [dict(row) for row in scan2_hosts if row["host_id"] in new_host_ids]
-        removed_hosts = [dict(row) for row in scan1_hosts if row["host_id"] in removed_host_ids]
-        persistent_hosts = [dict(row) for row in scan2_hosts if row["host_id"] in persistent_host_ids]
+        removed_hosts = [
+            dict(row) for row in scan1_hosts if row["host_id"] in removed_host_ids
+        ]
+        persistent_hosts = [
+            dict(row) for row in scan2_hosts if row["host_id"] in persistent_host_ids
+        ]
 
         return ScanComparisonResult(
             scan1_id=scan_id_1,
@@ -262,8 +269,7 @@ def compare_scans(
 
 @log_timing
 def get_host_vulnerability_history(
-    ip_address: str,
-    conn: Optional[sqlite3.Connection] = None
+    ip_address: str, conn: Optional[sqlite3.Connection] = None
 ) -> Optional[HostVulnerabilityHistory]:
     """Get vulnerability history for a specific host across all scans.
 
@@ -293,7 +299,7 @@ def get_host_vulnerability_history(
             ORDER BY last_seen DESC
             LIMIT 1
             """,
-            (ip_address,)
+            (ip_address,),
         )
 
         if not host:
@@ -309,7 +315,7 @@ def get_host_vulnerability_history(
             WHERE ip_address = ?
             ORDER BY scan_date ASC
             """,
-            (ip_address,)
+            (ip_address,),
         )
 
         # Build scan snapshots with plugin IDs
@@ -326,23 +332,25 @@ def get_host_vulnerability_history(
                 WHERE f.scan_id = ? AND h.ip_address = ?
                 ORDER BY f.plugin_id
                 """,
-                (row["scan_id"], ip_address)
+                (row["scan_id"], ip_address),
             )
             plugin_ids = [r["plugin_id"] for r in plugin_rows]
 
-            scans.append(ScanSnapshot(
-                scan_id=row["scan_id"],
-                scan_name=row["scan_name"],
-                scan_date=row["scan_date"],
-                finding_count=row["finding_count"],
-                max_severity=row["max_severity"] or 0,
-                critical_count=row["critical_count"] or 0,
-                high_count=row["high_count"] or 0,
-                medium_count=row["medium_count"] or 0,
-                low_count=row["low_count"] or 0,
-                info_count=row["info_count"] or 0,
-                plugin_ids=plugin_ids,
-            ))
+            scans.append(
+                ScanSnapshot(
+                    scan_id=row["scan_id"],
+                    scan_name=row["scan_name"],
+                    scan_date=row["scan_date"],
+                    finding_count=row["finding_count"],
+                    max_severity=row["max_severity"] or 0,
+                    critical_count=row["critical_count"] or 0,
+                    high_count=row["high_count"] or 0,
+                    medium_count=row["medium_count"] or 0,
+                    low_count=row["low_count"] or 0,
+                    info_count=row["info_count"] or 0,
+                    plugin_ids=plugin_ids,
+                )
+            )
 
         return HostVulnerabilityHistory(
             host_id=host["host_id"],
@@ -359,8 +367,7 @@ def get_host_vulnerability_history(
 
 
 def get_scan_by_name(
-    scan_name: str,
-    conn: Optional[sqlite3.Connection] = None
+    scan_name: str, conn: Optional[sqlite3.Connection] = None
 ) -> Optional[sqlite3.Row]:
     """Get scan metadata by name.
 
@@ -379,7 +386,7 @@ def get_scan_by_name(
         return query_one(
             conn,
             "SELECT scan_id, scan_name, created_at FROM scans WHERE scan_name = ?",
-            (scan_name,)
+            (scan_name,),
         )
     finally:
         if close_conn:
