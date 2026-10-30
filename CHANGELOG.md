@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.13.1] - 2026-10-30
+
+### Added
+- **Architecture and schema diagrams.** Five Mermaid diagrams, each committed as source in `docs/diagrams/` and rendered to a light/dark PNG pair in `docs/images/diagrams/` so they look native in both GitHub themes: the engagement loop (README "How It Works"), the layered module map (new `docs/ARCHITECTURE.md`), and three entity-relationship diagrams placed in their matching `docs/DATABASE.md` sections (core, verification, lookup tables). `scripts/render_diagrams.sh` regenerates them all; it uses the system Chromium so Puppeteer's bundled browser download is never needed.
+- **`docs/ARCHITECTURE.md`** — the layer map plus a walkthrough of what each layer owns, the TUI ↔ MCP shared-core contract, and the design rules (database as source of truth, no derived data, untrusted scan text) that a contributor should know before changing things.
+
+### Fixed
+- **Corrected the documented membership of the TUI ↔ MCP shared core.** `CONTRIBUTING.md` and `CLAUDE.md` both listed `analysis.py` as a shared function the MCP adapters call; it is imported only by `__init__.py`, `session.py` and `tui.py`, and `server.py` references it solely in a docstring noting that it *avoids* its console-printing helpers. The shared-core list is corrected, and `analysis.py` (TUI-only) and `query.py` / `batch.py` / `ingest.py` / `workflow_prep.py` / `workflow_contrib.py` / `exec_chain.py` (MCP-only) are now called out explicitly, since assuming the latter are shared is the likely wrong turn when adding a feature both interfaces need.
+
 ## [2.13.0] - 2026-10-30
 
 ### Changed

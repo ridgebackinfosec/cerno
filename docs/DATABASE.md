@@ -157,6 +157,15 @@ The database consists of **25 tables** and **11 views**:
 
 ## Foundation Tables
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="images/diagrams/05-er-reference-dark.png">
+    <img alt="Entity relationship diagram of Cerno's lookup tables beside the tables that consume them: severity_levels to plugins, artifact_types to artifacts, verdict_types to finding_verdicts, nse_verdicts to nse_script_results, port_states to verified_ports, plus the two Claude Assistant conversation tables" src="images/diagrams/05-er-reference-light.png" width="100%">
+  </picture>
+</p>
+
+<sub>Lookup tables beside their consumers. <code>audit_log</code> is reserved and stands alone, so it is omitted here. Source: <a href="diagrams/05-er-reference.mmd">docs/diagrams/05-er-reference.mmd</a> — regenerate with <code>./scripts/render_diagrams.sh</code>.</sub>
+
 ### severity_levels
 
 Normalized severity reference data - enforces valid severity values.
@@ -235,6 +244,15 @@ primary key and a unique `label`; `verdict_types` also has a `description`.
 ---
 
 ## Core Tables
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="images/diagrams/03-er-core-dark.png">
+    <img alt="Entity relationship diagram of Cerno's core tables: scans cascade to findings and sessions, plugins are shared across scans, findings cascade to finding_affected_hosts which references the normalized hosts and ports tables, and session_scans joins sessions to scans for multi-scan review" src="images/diagrams/03-er-core-light.png" width="100%">
+  </picture>
+</p>
+
+<sub>Core tables. <code>hosts</code> and <code>ports</code> are the cross-scan normalization point. Source: <a href="diagrams/03-er-core.mmd">docs/diagrams/03-er-core.mmd</a> — regenerate with <code>./scripts/render_diagrams.sh</code>.</sub>
 
 ### scans
 
@@ -520,6 +538,15 @@ Added in schema v4. Facts are tied to the tool run that produced them
 (`execution_id`), and re-ingesting a run reconciles its rows in place, so
 ingestion is idempotent. Ingest is triggered by the MCP `ingest_results` tool, or
 automatically after MCP runs when mutations are enabled.
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="images/diagrams/04-er-verification-dark.png">
+    <img alt="Entity relationship diagram of Cerno's verification tables: tool_executions cascade to verified_ports, nse_script_results and nxc_flag_observations, findings cascade to the append-only finding_verdicts history, and verdict_evidence links a verdict back to the execution, artifact or NSE result that backs it" src="images/diagrams/04-er-verification-light.png" width="100%">
+  </picture>
+</p>
+
+<sub>Verification tables. Delete behaviour is labelled on each relationship. Source: <a href="diagrams/04-er-verification.mmd">docs/diagrams/04-er-verification.mmd</a> — regenerate with <code>./scripts/render_diagrams.sh</code>.</sub>
 
 ### verified_ports
 

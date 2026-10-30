@@ -1,0 +1,74 @@
+---
+title: Cerno core schema
+---
+erDiagram
+    scans {
+        INTEGER scan_id PK
+        TEXT scan_name UK
+        TEXT nessus_file_hash
+        TIMESTAMP created_at
+    }
+    plugins {
+        INTEGER plugin_id PK
+        TEXT plugin_name
+        INTEGER severity_int FK
+        BOOLEAN has_metasploit
+        REAL cvss3_score
+        JSON cves
+    }
+    findings {
+        INTEGER finding_id PK
+        INTEGER scan_id FK
+        INTEGER plugin_id FK
+        TEXT review_state "unreviewed|in_progress|done"
+        TEXT review_notes
+    }
+    finding_affected_hosts {
+        INTEGER fah_id PK
+        INTEGER finding_id FK
+        INTEGER host_id FK
+        INTEGER port_number FK
+        TEXT plugin_output
+    }
+    hosts {
+        INTEGER host_id PK
+        TEXT ip_address UK
+        TEXT netbios_name
+        TEXT fqdn
+        TIMESTAMP first_seen "cross-scan history"
+        TIMESTAMP last_seen
+    }
+    ports {
+        INTEGER port_number PK
+        TEXT service_name
+    }
+    host_services {
+        INTEGER host_service_id PK
+        INTEGER scan_id FK
+        INTEGER host_id FK
+        INTEGER port_number FK
+        TEXT protocol
+        TEXT svc_name
+    }
+    sessions {
+        INTEGER session_id PK
+        INTEGER scan_id FK
+        TIMESTAMP session_start
+        TIMESTAMP session_end "NULL while open"
+    }
+    session_scans {
+        INTEGER session_id PK
+        INTEGER scan_id PK
+    }
+
+    scans   ||--o{ findings               : "CASCADE"
+    plugins ||--o{ findings               : "shared across scans"
+    findings ||--o{ finding_affected_hosts : "CASCADE"
+    hosts   ||--o{ finding_affected_hosts : "normalized"
+    ports   ||--o{ finding_affected_hosts : "normalized"
+    scans   ||--o{ host_services          : "CASCADE"
+    hosts   ||--o{ host_services          : ""
+    ports   ||--o{ host_services          : ""
+    scans   ||--o{ sessions               : "CASCADE"
+    sessions ||--o{ session_scans         : "CASCADE (multi-scan)"
+    scans   ||--o{ session_scans          : "CASCADE"

@@ -1,0 +1,72 @@
+---
+title: Cerno reference tables and assistant history
+config:
+  er:
+    layoutDirection: LR
+---
+erDiagram
+    severity_levels {
+        INTEGER severity_int PK "0-4, 5 seeded rows"
+        TEXT severity_label "Info..Critical"
+        TEXT color_hint
+    }
+    plugins {
+        INTEGER plugin_id PK
+        INTEGER severity_int FK
+    }
+    artifact_types {
+        INTEGER artifact_type_id PK "5 seeded rows"
+        TEXT type_name UK
+        TEXT file_extension
+        TEXT parser_module
+    }
+    artifacts {
+        INTEGER artifact_id PK
+        INTEGER artifact_type_id FK
+    }
+    verdict_types {
+        INTEGER verdict_type_id PK "3 seeded rows"
+        TEXT label "confirmed|false_positive|unable"
+    }
+    finding_verdicts {
+        INTEGER verdict_id PK
+        INTEGER verdict_type_id FK
+    }
+    nse_verdicts {
+        INTEGER nse_verdict_id PK "4 seeded rows"
+        TEXT label
+    }
+    nse_script_results {
+        INTEGER nse_result_id PK
+        INTEGER nse_verdict_id FK
+    }
+    port_states {
+        INTEGER port_state_id PK "6 seeded rows"
+        TEXT label "open|closed|filtered|..."
+    }
+    verified_ports {
+        INTEGER verified_port_id PK
+        INTEGER port_state_id FK
+    }
+    findings {
+        INTEGER finding_id PK
+    }
+    claude_conversations {
+        INTEGER id PK
+        INTEGER finding_id FK "inline REFERENCES"
+        TEXT role "user|assistant"
+        TEXT content
+    }
+    claude_aggregate_conversations {
+        INTEGER id PK
+        TEXT context_key "NO FK - free-form scope key"
+        TEXT role "user|assistant"
+        TEXT content
+    }
+
+    severity_levels ||--o{ plugins            : "lookup"
+    artifact_types  ||--o{ artifacts          : "lookup"
+    verdict_types   ||--o{ finding_verdicts   : "lookup"
+    nse_verdicts    ||--o{ nse_script_results : "lookup"
+    port_states     ||--o{ verified_ports     : "lookup"
+    findings        ||--o{ claude_conversations : "CASCADE"

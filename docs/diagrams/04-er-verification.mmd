@@ -1,0 +1,97 @@
+---
+title: Cerno verification schema (execution to data loop)
+---
+erDiagram
+    findings {
+        INTEGER finding_id PK
+        TEXT review_state
+    }
+    sessions {
+        INTEGER session_id PK
+    }
+    tool_executions {
+        INTEGER execution_id PK
+        INTEGER session_id FK "SET NULL"
+        INTEGER finding_id FK "SET NULL"
+        TEXT tool_name
+        TEXT command_text "secrets masked"
+        INTEGER exit_code
+        REAL duration_seconds
+        BOOLEAN used_sudo
+    }
+    artifacts {
+        INTEGER artifact_id PK
+        INTEGER execution_id FK
+        TEXT artifact_path
+        INTEGER artifact_type_id FK
+        TEXT file_hash
+        JSON metadata
+    }
+    verified_ports {
+        INTEGER verified_port_id PK
+        INTEGER execution_id FK
+        INTEGER host_id FK
+        INTEGER port_number FK
+        INTEGER port_state_id FK
+        TEXT service_name
+    }
+    nse_script_results {
+        INTEGER nse_result_id PK
+        INTEGER execution_id FK
+        INTEGER host_id FK
+        INTEGER port_number FK "NULL = host script"
+        TEXT script_id
+        INTEGER nse_verdict_id FK
+        TEXT output
+    }
+    nxc_flag_observations {
+        INTEGER nxc_flag_id PK
+        INTEGER execution_id FK
+        INTEGER host_id FK
+        TEXT flag_name
+        TEXT flag_value "point-in-time snapshot"
+    }
+    finding_verdicts {
+        INTEGER verdict_id PK
+        INTEGER finding_id FK
+        INTEGER verdict_type_id FK
+        TEXT note
+        TIMESTAMP created_at "append-only history"
+    }
+    verdict_evidence {
+        INTEGER evidence_id PK
+        INTEGER verdict_id FK
+        INTEGER execution_id FK "SET NULL"
+        INTEGER artifact_id FK "SET NULL"
+        INTEGER nse_result_id FK "SET NULL"
+        TEXT note
+    }
+    hosts {
+        INTEGER host_id PK "see core schema"
+    }
+    ports {
+        INTEGER port_number PK "see core schema"
+    }
+    workflow_executions {
+        INTEGER workflow_execution_id PK
+        INTEGER finding_id FK
+        TEXT workflow_name "RESERVED - no writer"
+    }
+
+    findings        ||--o{ tool_executions       : "SET NULL"
+    sessions        ||--o{ tool_executions       : "SET NULL"
+    tool_executions ||--o{ artifacts             : "SET NULL"
+    tool_executions ||--o{ verified_ports        : "CASCADE (idempotent)"
+    tool_executions ||--o{ nse_script_results    : "CASCADE (idempotent)"
+    tool_executions ||--o{ nxc_flag_observations : "CASCADE (idempotent)"
+    findings        ||--o{ finding_verdicts      : "CASCADE"
+    finding_verdicts ||--o{ verdict_evidence     : "CASCADE"
+    tool_executions  ||--o{ verdict_evidence     : "SET NULL"
+    artifacts        ||--o{ verdict_evidence     : "SET NULL"
+    nse_script_results ||--o{ verdict_evidence   : "SET NULL"
+    findings        ||--o{ workflow_executions   : "CASCADE"
+    hosts           ||--o{ verified_ports        : "normalized"
+    ports           ||--o{ verified_ports        : "normalized"
+    hosts           ||--o{ nse_script_results    : "normalized"
+    ports           ||--o{ nse_script_results    : "normalized"
+    hosts           ||--o{ nxc_flag_observations : "normalized"

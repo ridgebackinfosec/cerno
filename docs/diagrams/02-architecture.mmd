@@ -1,0 +1,79 @@
+---
+title: Cerno module architecture
+config:
+  flowchart:
+    wrappingWidth: 400
+---
+flowchart TB
+    subgraph entry["① Entry points"]
+        cli["<b>cerno.py</b> — Typer CLI<br/>review · import · scan · config<br/>workflow · creds · demo · reset"]
+        mcpentry["<b>cerno mcp</b><br/>mcp_server/__init__.py : main()<br/><i>stdio JSON-RPC</i>"]
+    end
+
+    subgraph tuilayer["② TUI layer — interactive only"]
+        tui["<b>tui.py</b><br/>action handling, filters,<br/>severity selection"]
+        fsmod["<b>fs.py</b><br/>finding view, move_review_state(),<br/>record_verdict()"]
+        rendermod["<b>render.py · ansi.py</b><br/>Rich tables & panels,<br/>safe_text() for untrusted scan text"]
+        tuisupport["<b>analysis.py · session.py</b><br/>onboarding.py · banner.py"]
+    end
+
+    subgraph mcplayer["② MCP layer — every module here is MCP-only; the TUI imports none of them"]
+        server["<b>server.py</b><br/>46 tools · 9 resources · 4 prompts<br/><i>adapters never print to stdout</i>"]
+        jobs["<b>jobs.py</b><br/>async job registry<br/>start / status / cancel"]
+        query["<b>query.py</b> — FindingQuery<br/><b>batch.py</b> — plan / execute_batch"]
+        ingestmod["<b>ingest.py · nmap_parse.py</b><br/>run output → verified data"]
+        wflow["<b>workflow_prep.py · workflow_contrib.py</b><br/><b>exec_chain.py</b> — allow/deny policy"]
+    end
+
+    subgraph core["③ Shared core — the TUI ↔ MCP contract, frozen by tests/test_mcp_contract.py"]
+        models["<b>models.py</b><br/>Scan · Plugin · Finding<br/>FindingVerdict · Artifact"]
+        dbmod["<b>database.py</b><br/>schema v4 · SCHEMA_SQL_*<br/>db_transaction()"]
+        toolsmod["<b>tools.py</b><br/>+ tool_registry · tool_definitions<br/>· tool_context"]
+        opsmod["<b>ops.py</b><br/>execution, sudo,<br/>proxychains4, remote scan"]
+        importmod["<b>nessus_import.py</b><br/>cross_scan.py · parsing.py"]
+        credsmod["<b>nxc_db.py · creds.py</b><br/>NetExec access, audited reveal"]
+        wmap["<b>workflow_mapper.py</b><br/>claude_assistant.py"]
+        cfg["<b>config.py · constants.py</b><br/>logging_setup.py · enums.py"]
+    end
+
+    subgraph ext["④ Storage &amp; external"]
+        sqlite[("<b>cerno.db</b><br/>25 tables · 11 views<br/><i>source of truth</i>")]
+        artdir["<b>artifacts/</b><br/>tool output, logs"]
+        nxcws[("<b>NetExec workspace</b><br/><i>read-only</i>")]
+        bins["<b>nmap · nxc · msfconsole</b><br/><b>claude</b> CLI"]
+    end
+
+    cli ==> tui
+    cli -.->|"cerno mcp"| mcpentry
+    mcpentry ==> server
+    server --> jobs
+    server --> query
+    server --> ingestmod
+    server --> wflow
+    fsmod ==> models
+    rendermod ==> cfg
+    query ==> models
+    ingestmod ==> dbmod
+    wflow ==> wmap
+    dbmod ==> sqlite
+    opsmod ==> bins
+    opsmod ==> artdir
+    credsmod ==> nxcws
+
+    classDef entryC fill:#9a6700,stroke:#7a5200,color:#ffffff
+    classDef tuiC fill:#1a7f37,stroke:#126128,color:#ffffff
+    classDef mcpC fill:#8250df,stroke:#6035ad,color:#ffffff
+    classDef coreC fill:#1f6feb,stroke:#164a9f,color:#ffffff
+    classDef extC fill:#953800,stroke:#6e2900,color:#ffffff
+
+    class cli,mcpentry entryC
+    class tui,fsmod,rendermod,tuisupport tuiC
+    class server,jobs,query,ingestmod,wflow mcpC
+    class models,dbmod,toolsmod,opsmod,importmod,credsmod,wmap,cfg coreC
+    class sqlite,artdir,nxcws,bins extC
+
+    style entry fill:none,stroke:#8b949e,stroke-width:1px
+    style tuilayer fill:none,stroke:#1a7f37,stroke-width:2px
+    style mcplayer fill:none,stroke:#8250df,stroke-width:2px
+    style core fill:none,stroke:#1f6feb,stroke-width:2px
+    style ext fill:none,stroke:#953800,stroke-width:1px

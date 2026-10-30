@@ -28,6 +28,7 @@ A **TUI tool** for reviewing Nessus scan findings and orchestrating security too
 
 - [Quick Start](#quick-start)
 - [How It Works](#how-it-works)
+- [Architecture](docs/ARCHITECTURE.md)
 - [Installation](#installation)
 - [Configuration](#configuration)
 - [Features](#features)
@@ -80,6 +81,13 @@ See [docs/demo](docs/demo) for details.
 ## How It Works
 
 Cerno turns a raw Nessus export into a tracked, actionable verification workflow:
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/diagrams/01-workflow-dark.png">
+    <img alt="Cerno engagement loop: .nessus exports are imported into cerno.db, reviewed in an interactive TUI, used to launch nmap, NetExec, Metasploit or custom commands against the finding's exact hosts and ports, and the resulting artifacts are ingested back into the database as verified ports, NSE verdicts and nxc flags" src="docs/images/diagrams/01-workflow-light.png" width="100%">
+  </picture>
+</p>
 
 1. **Import** — parse one or more `.nessus` files into a local SQLite database (`~/.cerno/cerno.db`).
 2. **Review** — browse findings in an interactive TUI: filter by severity, host, and exploitability; inspect plugin detail, CVEs, and affected `host:port`s.
@@ -592,6 +600,7 @@ cerno reset   # Prompts for typed confirmation before deleting
 
 ## Documentation
 
+- [Architecture](docs/ARCHITECTURE.md)
 - [MCP server](docs/MCP.md)
 - [Custom workflows](docs/CUSTOM_WORKFLOWS.md)
 - [Database schema & queries](docs/DATABASE.md)

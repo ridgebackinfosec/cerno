@@ -363,6 +363,8 @@ no dispatch changes. See `docs/TOOL_SYSTEM_GUIDE.md`.
 
 **Schema changes**: Update `database.py:SCHEMA_SQL_TABLES` and `SCHEMA_SQL_VIEWS`, then mirror the change in `schema.sql` (`tests/test_database.py` fails if its tables/views/indexes differ) and `docs/DATABASE.md`. Test with fresh database before release.
 
+**Architecture & schema diagrams**: Mermaid sources live in `docs/diagrams/*.mmd` and render to light/dark PNG pairs in `docs/images/diagrams/` via `./scripts/render_diagrams.sh` (needs Node + Chromium). When a schema or module boundary changes, update the matching `.mmd` and re-render — the Markdown embeds the PNGs through a `<picture>` element, so stale diagrams are not caught by any test.
+
 ### Version Management
 
 Version is defined in `pyproject.toml:project.version` (single source of truth).
@@ -689,9 +691,12 @@ Set to `null` or omit for automatic detection from terminal height. Falls back t
 ### TUI ↔ MCP contract
 
 The MCP server (`cerno_pkg/mcp_server/server.py`) is thin adapters over the same
-functions the TUI uses (`models.py`, `analysis.py`, `cross_scan.py`, `tools.py`,
-`claude_assistant.py`), so changing a shared function can break the other
-interface. `tests/test_mcp_contract.py` guards this: it freezes the MCP
+functions the TUI uses (`models.py`, `database.py`, `cross_scan.py`, `tools.py`,
+`nxc_db.py`, `workflow_mapper.py`, `claude_assistant.py`), so changing a shared
+function can break the other interface. Note `analysis.py` is **TUI-only**
+(`__init__.py`, `session.py`, `tui.py`), and `query.py` / `batch.py` /
+`ingest.py` / `workflow_prep.py` / `workflow_contrib.py` / `exec_chain.py` are
+**MCP-only**; `docs/ARCHITECTURE.md` has the full layer map. `tests/test_mcp_contract.py` guards this: it freezes the MCP
 tool/resource/prompt inventory and drives every category through the real MCP
 path against a seeded DB. When you intentionally change the MCP surface, update
 that test's `EXPECTED_*` sets in the same change. See `CONTRIBUTING.md`.
