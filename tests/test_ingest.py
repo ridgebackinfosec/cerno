@@ -439,3 +439,112 @@ class TestIngestNuclei:
         temp_db.execute("DELETE FROM tool_executions WHERE execution_id = ?", (eid,))
         temp_db.commit()
         assert _observations(temp_db, eid) == []
+
+
+@pytest.mark.integration
+class TestTuiRunArtifactsIngest:
+    """The TUI's run loop must register what ingest_execution needs.
+
+    Artifact registration used to be gated on `selected_tool.name == "nmap"`,
+    so a `[T]` nuclei run logged an execution with no artifact and
+    ingest_results reported "no nuclei_json artifact registered". These tests
+    pin that the two halves agree on the output path.
+    """
+
+    def _seed_execution(self, conn: sqlite3.Connection, tool_name: str) -> int:
+        conn.execute("INSERT INTO scans (scan_name, export_root) VALUES ('s', '/tmp')")
+        scan_id = conn.execute("SELECT scan_id FROM scans").fetchone()["scan_id"]
+        conn.execute(
+            "INSERT INTO plugins (plugin_id, plugin_name, severity_int) "
+            "VALUES ('nessus:100', 'HTTP', 2)"
+        )
+        conn.execute(
+            "INSERT INTO findings (scan_id, plugin_id) VALUES (?, 'nessus:100')",
+            (scan_id,),
+        )
+        finding_id = conn.execute("SELECT finding_id FROM findings").fetchone()[
+            "finding_id"
+        ]
+        conn.execute(
+            "INSERT INTO tool_executions (tool_name, command_text, finding_id) "
+            "VALUES (?, 'x', ?)",
+            (tool_name, finding_id),
+        )
+        conn.commit()
+        return conn.execute(
+            "SELECT MAX(execution_id) e FROM tool_executions"
+        ).fetchone()["e"]
+
+    def test_nuclei_run_registers_its_json(
+        self, temp_db: sqlite3.Connection, tmp_path
+    ) -> None:
+        from cerno_pkg.ops import log_artifacts_for_run
+        from cerno_pkg.tools import nuclei_scan_output
+
+        eid = self._seed_execution(temp_db, "nuclei")
+        oabase = tmp_path / "run"
+        # The command builder and the artifact logger must agree on this path.
+        Path(nuclei_scan_output(oabase)).write_text(
+            (NUCLEI_FIXTURES / "web_scan.jsonl").read_text(), encoding="utf-8"
+        )
+
+        ids = log_artifacts_for_run("nuclei", eid, oabase, conn=temp_db)
+        assert len(ids) == 1
+        row = temp_db.execute(
+            "SELECT t.type_name FROM artifacts a "
+            "JOIN artifact_types t ON a.artifact_type_id = t.artifact_type_id "
+            "WHERE a.execution_id = ?",
+            (eid,),
+        ).fetchone()
+        assert row["type_name"] == "nuclei_json"
+
+    def test_registered_run_then_ingests(
+        self, temp_db: sqlite3.Connection, tmp_path
+    ) -> None:
+        """The whole point: register the way the TUI does, then ingest."""
+        from cerno_pkg.ops import log_artifacts_for_run
+        from cerno_pkg.tools import nuclei_scan_output
+
+        eid = self._seed_execution(temp_db, "nuclei")
+        oabase = tmp_path / "run"
+        Path(nuclei_scan_output(oabase)).write_text(
+            (NUCLEI_FIXTURES / "web_scan.jsonl").read_text(), encoding="utf-8"
+        )
+        log_artifacts_for_run("nuclei", eid, oabase, conn=temp_db)
+
+        summary = ingest.ingest_execution(eid, conn=temp_db)
+        assert summary.skipped_reason is None
+        assert summary.nuclei_matches == 28
+
+    def test_missing_output_is_not_an_error(
+        self, temp_db: sqlite3.Connection, tmp_path
+    ) -> None:
+        """A nuclei run that matched nothing writes no file."""
+        from cerno_pkg.ops import log_artifacts_for_run
+
+        eid = self._seed_execution(temp_db, "nuclei")
+        assert (
+            log_artifacts_for_run("nuclei", eid, tmp_path / "run", conn=temp_db) == []
+        )
+
+    def test_tool_with_no_artifacts_is_a_noop(
+        self, temp_db: sqlite3.Connection, tmp_path
+    ) -> None:
+        from cerno_pkg.ops import log_artifacts_for_run
+
+        eid = self._seed_execution(temp_db, "metasploit")
+        for tool in ("metasploit", "Custom command", ""):
+            assert (
+                log_artifacts_for_run(tool, eid, tmp_path / "run", conn=temp_db) == []
+            )
+
+    def test_nmap_still_registers_its_triple(
+        self, temp_db: sqlite3.Connection, tmp_path
+    ) -> None:
+        from cerno_pkg.ops import log_artifacts_for_run
+
+        eid = self._seed_execution(temp_db, "nmap")
+        oabase = tmp_path / "run"
+        for ext in (".xml", ".nmap", ".gnmap"):
+            Path(str(oabase) + ext).write_text("x", encoding="utf-8")
+        assert len(log_artifacts_for_run("nmap", eid, oabase, conn=temp_db)) == 3

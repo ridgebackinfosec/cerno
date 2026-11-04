@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import functools
+import inspect
 import json
 import re
 import sqlite3
@@ -3120,6 +3121,46 @@ _IDEMPOTENT_ANN = ToolAnnotations(idempotent_hint=True)
 _DESTRUCTIVE_ANN = ToolAnnotations(destructive_hint=True, open_world_hint=True)
 
 
+def _translate_value_errors(
+    fn: Callable[..., Any], error_cls: type[Exception]
+) -> Callable[..., Any]:
+    """Re-raise an adapter's deliberate ``ValueError`` as an SDK error type.
+
+    **Must preserve coroutine-ness.** The SDK decides sync-vs-async from the
+    object it is handed (``mcp.shared._callable_inspection.is_async_callable``,
+    which is ``inspect.iscoroutinefunction`` and does *not* unwrap), and
+    ``functools.wraps`` copies ``__name__``/``__wrapped__`` without making a
+    plain function a coroutine function. A single sync wrapper would therefore
+    register every ``async def`` tool as sync: the SDK runs it on a worker
+    thread, the wrapper calls the coroutine function and returns the coroutine
+    object unawaited, and the body never executes. Because the async tools are
+    annotated ``-> dict`` there is no output model to reject that, so
+    ``pydantic_core.to_json(..., fallback=str)`` stringifies it and the client
+    receives a *successful* ``"<coroutine object ...>"`` string. Hence the two
+    branches below.
+    """
+
+    if inspect.iscoroutinefunction(fn):
+
+        @functools.wraps(fn)
+        async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+            try:
+                return await fn(*args, **kwargs)
+            except ValueError as exc:
+                raise error_cls(str(exc)) from exc
+
+        return async_wrapper
+
+    @functools.wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return fn(*args, **kwargs)
+        except ValueError as exc:
+            raise error_cls(str(exc)) from exc
+
+    return wrapper
+
+
 def _visible_errors(fn: Callable[..., Any]) -> Callable[..., Any]:
     """Re-raise an adapter's deliberate ``ValueError`` as the SDK's ``ToolError``.
 
@@ -3130,28 +3171,17 @@ def _visible_errors(fn: Callable[..., Any]) -> Callable[..., Any]:
     (mcp 1.x FastMCP surfaced all exception messages; this restores that.) Only
     ``ValueError`` is translated, so genuine crashes still mask their internals.
     """
-
-    @functools.wraps(fn)
-    def wrapper(*args: Any, **kwargs: Any) -> Any:
-        try:
-            return fn(*args, **kwargs)
-        except ValueError as exc:
-            raise ToolError(str(exc)) from exc
-
-    return wrapper
+    return _translate_value_errors(fn, ToolError)
 
 
 def _visible_resource_errors(fn: Callable[..., Any]) -> Callable[..., Any]:
-    """Resource-path twin of :func:`_visible_errors` (raises ``ResourceError``)."""
+    """Resource-path twin of :func:`_visible_errors` (raises ``ResourceError``).
 
-    @functools.wraps(fn)
-    def wrapper(*args: Any, **kwargs: Any) -> Any:
-        try:
-            return fn(*args, **kwargs)
-        except ValueError as exc:
-            raise ResourceError(str(exc)) from exc
-
-    return wrapper
+    Every resource is sync today, but this goes through the same async-aware
+    helper: the defect was the asymmetry between wrapper and wrapped, not the
+    particular call list.
+    """
+    return _translate_value_errors(fn, ResourceError)
 
 
 def build_server(config: Optional[CernoConfig] = None) -> Any:

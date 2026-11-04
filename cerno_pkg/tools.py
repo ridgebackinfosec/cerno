@@ -1451,7 +1451,7 @@ def run_tool_workflow(
     from .ops import (
         run_command_with_progress,
         log_tool_execution,
-        log_artifacts_for_nmap,
+        log_artifacts_for_run,
     )
     from .tool_registry import get_tool
     from .tool_context import ToolContext
@@ -1861,9 +1861,12 @@ def run_tool_workflow(
                     finding_id=finding.finding_id,
                 )
 
-                # Track artifacts (nmap outputs, etc.)
-                if execution_id and selected_tool.name == "nmap":
-                    log_artifacts_for_nmap(execution_id, oabase)
+                # Register this run's output files so ingest_execution can
+                # read them back. Dispatch lives in log_artifacts_for_run, so
+                # a new tool needs no branch here; a tool that writes nothing
+                # registerable returns an empty list.
+                if execution_id:
+                    log_artifacts_for_run(selected_tool.name, execution_id, oabase)
 
             except KeyboardInterrupt:
                 warn("\nRun interrupted — returning to tool menu.")

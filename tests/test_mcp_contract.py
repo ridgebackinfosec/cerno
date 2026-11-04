@@ -537,3 +537,117 @@ def test_prompts_do_not_touch_default_db(tmp_path, monkeypatch, temp_db):
     assert "P" in mcp.prompt_triage_finding(fid, conn=temp_db)
     assert "P" in mcp.prompt_exploit_plan(fid, conn=temp_db)
     assert "s" in mcp.prompt_triage_scope(scan_id, conn=temp_db)
+
+
+# ---------------------------------------------------------------------------
+# Async dispatch. The SDK decides sync-vs-async from the object it is handed,
+# so a sync wrapper around an `async def` tool makes it run on a worker thread
+# and return an un-awaited coroutine. The body never executes, and because
+# these tools are annotated `-> dict` there is no output model to reject it —
+# `pydantic_core.to_json(..., fallback=str)` stringifies the coroutine and the
+# client sees a *successful* "<coroutine object ...>" string.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_every_tool_is_registered_with_the_right_async_flag():
+    """Catches the whole class of bug, not just the three tools that hit it.
+
+    `functools.wraps` copies `__name__`/`__wrapped__` but does not make a
+    function a coroutine function, and the SDK's `is_async_callable` does not
+    unwrap — so a sync wrapper silently downgrades an async tool.
+    """
+    import inspect
+
+    srv = build_server(
+        CernoConfig(
+            mcp_allow_execution=True,
+            mcp_allow_mutations=True,
+            mcp_allow_batch=True,
+            mcp_allow_cred_reveal=True,
+        )
+    )
+    mismatched = {
+        name: (tool.is_async, inspect.iscoroutinefunction(inspect.unwrap(tool.fn)))
+        for name, tool in srv._tool_manager._tools.items()
+        if tool.is_async != inspect.iscoroutinefunction(inspect.unwrap(tool.fn))
+    }
+    assert not mismatched, (
+        "tools registered with the wrong async flag — the SDK will run these on "
+        f"a worker thread and return an un-awaited coroutine: {mismatched}"
+    )
+
+
+@pytest.mark.unit
+def test_visible_errors_preserves_coroutine_functions():
+    async def tool() -> dict:
+        return {"ok": True}
+
+    wrapped = mcp._visible_errors(tool)
+    import inspect
+
+    assert inspect.iscoroutinefunction(wrapped)
+    assert _run(wrapped()) == {"ok": True}
+
+
+@pytest.mark.unit
+def test_visible_errors_translates_valueerror_from_an_async_tool():
+    """The wrapper's own job, which it could not do for an async tool.
+
+    A ValueError raised inside the coroutine body never reached the sync
+    `except`, because the body did not run inside the `try`.
+    """
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    async def tool() -> dict:
+        raise ValueError("No finding with id 42")
+
+    wrapped = mcp._visible_errors(tool)
+    with pytest.raises(ToolError, match="No finding with id 42"):
+        _run(wrapped())
+
+
+@pytest.mark.unit
+def test_visible_errors_leaves_sync_tools_alone():
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    def ok() -> dict:
+        return {"ok": True}
+
+    def bad() -> dict:
+        raise ValueError("boom")
+
+    import inspect
+
+    assert not inspect.iscoroutinefunction(mcp._visible_errors(ok))
+    assert mcp._visible_errors(ok)() == {"ok": True}
+    with pytest.raises(ToolError, match="boom"):
+        mcp._visible_errors(bad)()
+
+
+@pytest.mark.integration
+def test_async_tool_round_trips_through_a_real_client():
+    """End-to-end through the SDK, with no subprocess or platform dependence.
+
+    This is the shape the live server failed at: the client received the
+    stringified coroutine as a successful text result.
+    """
+    from mcp.server.mcpserver import MCPServer
+
+    srv = MCPServer("async-probe")
+
+    async def probe() -> dict:
+        return {"ran": True}
+
+    # Register the *wrapped* function, exactly as build_server's shadowed
+    # registrar does (`deco(_visible_errors(fn))`). Wrapping after registration
+    # would leave is_async already computed from the original and miss the bug.
+    srv.tool()(mcp._visible_errors(probe))
+
+    (result,) = _client_call_tools(srv, {"probe": {}}).values()
+    detail = result.content[0].text if result.content else ""
+    assert not result.is_error, detail
+    assert (
+        "coroutine object" not in detail
+    ), f"the tool returned an un-awaited coroutine instead of running: {detail}"
+    assert "ran" in detail

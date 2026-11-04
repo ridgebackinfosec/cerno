@@ -259,9 +259,7 @@ cerno config set mcp_exec_denylist "rm,dd,sh"    # binaries execute_command may 
      `xargs`, `tar`, `git`, `ssh`, `nc`/`ncat`/`socat`, `tcpdump`, and
      `smbclient`/`rpcclient`, whose `!` command runs a local shell), and
      active-attack or noisy tools (`responder`, `ntlmrelayx.py`, `hping3`, `ffuf`,
-     `gobuster`, `feroxbuster`, `nuclei` — whose `code` protocol templates run
-     arbitrary code, which is why Cerno can ingest its output but will not run
-     it for you by default). Even the defaults aren't inert: `curl`
+     `gobuster`, `feroxbuster`). Even the defaults aren't inert: `curl`
      can write files (`-o`) and read or upload local ones (`file://`, `-T`), and
      `wget --use-askpass` runs a program. Because `sudo` isn't denied by default,
      any allowed binary can run as root; add `sudo` to the denylist to prevent that.
@@ -326,11 +324,15 @@ Turn a finding into a recorded, evidence-backed verdict:
    artifact. Prefer `-jle`: it streams, so a cancelled run still leaves an
    ingestible file, while `-je` buffers and writes once at exit.
 
-   **nuclei is not in the default exec allowlist** (see below), so running it
-   through the MCP server is an explicit opt-in:
-   `cerno config set mcp_exec_allowlist "nmap,nxc,netexec,msfconsole,nuclei"`.
-   Without that, the ingester is reachable only for runs started outside the
-   MCP exec path. The TUI's `[T]` → nuclei tool needs no allowlist change.
+   nuclei **is** in the default exec allowlist, so `execute_command` can run it
+   and `ingest_results` can read the output back. Note what that allows: the
+   allowlist matches the binary basename, so the caller picks the arguments —
+   nuclei runs `code:`-protocol templates when passed `-code` (the bundled
+   template set ships ~960 of them, signed), reads local files via `-l` and
+   writes them via `-o`/`-je`/`-me`. That is the same risk class as the
+   allowlisted `curl`/`wget`. Remove it with
+   `cerno config set mcp_exec_allowlist "nmap,nxc,netexec,msfconsole"` if you
+   would rather run nuclei only from the TUI.
 3. **Review the evidence.** `cerno://finding/{id}/results` and
    `get_finding_detail` show what was verified; `get_finding_verdict` also
    returns a non-binding `suggested_verdict` from NSE evidence (never applied
