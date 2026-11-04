@@ -77,13 +77,13 @@ class TestCompareScan:
             "test_scan",
             [
                 {
-                    "plugin_id": 100,
+                    "plugin_id": "nessus:100",
                     "plugin_name": "Plugin A",
                     "severity_int": 3,
                     "hosts": ["192.168.1.1"],
                 },
                 {
-                    "plugin_id": 101,
+                    "plugin_id": "nessus:101",
                     "plugin_name": "Plugin B",
                     "severity_int": 2,
                     "hosts": ["192.168.1.2"],
@@ -106,13 +106,13 @@ class TestCompareScan:
             "scan1",
             [
                 {
-                    "plugin_id": 100,
+                    "plugin_id": "nessus:100",
                     "plugin_name": "Plugin A",
                     "severity_int": 3,
                     "hosts": ["192.168.1.1"],
                 },
                 {
-                    "plugin_id": 101,
+                    "plugin_id": "nessus:101",
                     "plugin_name": "Plugin B",
                     "severity_int": 2,
                     "hosts": ["192.168.1.1"],
@@ -126,19 +126,19 @@ class TestCompareScan:
             "scan2",
             [
                 {
-                    "plugin_id": 100,
+                    "plugin_id": "nessus:100",
                     "plugin_name": "Plugin A",
                     "severity_int": 3,
                     "hosts": ["192.168.1.1"],
                 },
                 {
-                    "plugin_id": 101,
+                    "plugin_id": "nessus:101",
                     "plugin_name": "Plugin B",
                     "severity_int": 2,
                     "hosts": ["192.168.1.1"],
                 },
                 {
-                    "plugin_id": 102,
+                    "plugin_id": "nessus:102",
                     "plugin_name": "Plugin C",
                     "severity_int": 4,
                     "hosts": ["192.168.1.1"],
@@ -155,7 +155,7 @@ class TestCompareScan:
 
         # Check the new finding
         new_plugin_ids = [f["plugin_id"] for f in result.new_findings]
-        assert "102" in new_plugin_ids
+        assert "nessus:102" in new_plugin_ids
 
     def test_compare_finds_resolved_findings(self, temp_db):
         """Resolved findings (in scan1 only) detected correctly."""
@@ -165,19 +165,19 @@ class TestCompareScan:
             "scan1",
             [
                 {
-                    "plugin_id": 100,
+                    "plugin_id": "nessus:100",
                     "plugin_name": "Plugin A",
                     "severity_int": 3,
                     "hosts": ["192.168.1.1"],
                 },
                 {
-                    "plugin_id": 101,
+                    "plugin_id": "nessus:101",
                     "plugin_name": "Plugin B",
                     "severity_int": 2,
                     "hosts": ["192.168.1.1"],
                 },
                 {
-                    "plugin_id": 102,
+                    "plugin_id": "nessus:102",
                     "plugin_name": "Plugin C",
                     "severity_int": 4,
                     "hosts": ["192.168.1.1"],
@@ -191,13 +191,13 @@ class TestCompareScan:
             "scan2",
             [
                 {
-                    "plugin_id": 100,
+                    "plugin_id": "nessus:100",
                     "plugin_name": "Plugin A",
                     "severity_int": 3,
                     "hosts": ["192.168.1.1"],
                 },
                 {
-                    "plugin_id": 101,
+                    "plugin_id": "nessus:101",
                     "plugin_name": "Plugin B",
                     "severity_int": 2,
                     "hosts": ["192.168.1.1"],
@@ -214,7 +214,7 @@ class TestCompareScan:
 
         # Check the resolved finding
         resolved_plugin_ids = [f["plugin_id"] for f in result.resolved_findings]
-        assert "102" in resolved_plugin_ids
+        assert "nessus:102" in resolved_plugin_ids
 
     def test_compare_severity_filter(self, temp_db):
         """Minimum severity filter works correctly."""
@@ -224,19 +224,19 @@ class TestCompareScan:
             "scan1",
             [
                 {
-                    "plugin_id": 100,
+                    "plugin_id": "nessus:100",
                     "plugin_name": "Low Plugin",
                     "severity_int": 1,
                     "hosts": ["192.168.1.1"],
                 },
                 {
-                    "plugin_id": 101,
+                    "plugin_id": "nessus:101",
                     "plugin_name": "Medium Plugin",
                     "severity_int": 2,
                     "hosts": ["192.168.1.1"],
                 },
                 {
-                    "plugin_id": 102,
+                    "plugin_id": "nessus:102",
                     "plugin_name": "High Plugin",
                     "severity_int": 3,
                     "hosts": ["192.168.1.1"],
@@ -250,19 +250,19 @@ class TestCompareScan:
             "scan2",
             [
                 {
-                    "plugin_id": 100,
+                    "plugin_id": "nessus:100",
                     "plugin_name": "Low Plugin",
                     "severity_int": 1,
                     "hosts": ["192.168.1.1"],
                 },
                 {
-                    "plugin_id": 101,
+                    "plugin_id": "nessus:101",
                     "plugin_name": "Medium Plugin",
                     "severity_int": 2,
                     "hosts": ["192.168.1.1"],
                 },
                 {
-                    "plugin_id": 102,
+                    "plugin_id": "nessus:102",
                     "plugin_name": "High Plugin",
                     "severity_int": 3,
                     "hosts": ["192.168.1.1"],
@@ -276,7 +276,7 @@ class TestCompareScan:
         assert result is not None
         assert result.total_persistent == 1  # Only the High plugin
         persistent_plugin_ids = [f["plugin_id"] for f in result.persistent_findings]
-        assert "102" in persistent_plugin_ids
+        assert "nessus:102" in persistent_plugin_ids
         assert 100 not in persistent_plugin_ids
         assert 101 not in persistent_plugin_ids
 
@@ -288,7 +288,7 @@ class TestCompareScan:
             "scan1",
             [
                 {
-                    "plugin_id": 100,
+                    "plugin_id": "nessus:100",
                     "plugin_name": "Plugin A",
                     "severity_int": 3,
                     "hosts": ["192.168.1.1", "192.168.1.2"],
@@ -302,7 +302,7 @@ class TestCompareScan:
             "scan2",
             [
                 {
-                    "plugin_id": 100,
+                    "plugin_id": "nessus:100",
                     "plugin_name": "Plugin A",
                     "severity_int": 3,
                     "hosts": ["192.168.1.1", "192.168.1.3"],
@@ -332,7 +332,7 @@ class TestCompareScan:
             "test_scan",
             [
                 {
-                    "plugin_id": 100,
+                    "plugin_id": "nessus:100",
                     "plugin_name": "Plugin A",
                     "severity_int": 3,
                     "hosts": ["192.168.1.1"],
@@ -357,13 +357,13 @@ class TestHostVulnerabilityHistory:
             "scan1",
             [
                 {
-                    "plugin_id": 100,
+                    "plugin_id": "nessus:100",
                     "plugin_name": "Critical",
                     "severity_int": 4,
                     "hosts": ["192.168.1.1"],
                 },
                 {
-                    "plugin_id": 101,
+                    "plugin_id": "nessus:101",
                     "plugin_name": "High",
                     "severity_int": 3,
                     "hosts": ["192.168.1.1"],
@@ -389,19 +389,19 @@ class TestHostVulnerabilityHistory:
             "scan1",
             [
                 {
-                    "plugin_id": 100,
+                    "plugin_id": "nessus:100",
                     "plugin_name": "Critical",
                     "severity_int": 4,
                     "hosts": ["192.168.1.1"],
                 },
                 {
-                    "plugin_id": 101,
+                    "plugin_id": "nessus:101",
                     "plugin_name": "High",
                     "severity_int": 3,
                     "hosts": ["192.168.1.1"],
                 },
                 {
-                    "plugin_id": 102,
+                    "plugin_id": "nessus:102",
                     "plugin_name": "Medium",
                     "severity_int": 2,
                     "hosts": ["192.168.1.1"],
@@ -415,13 +415,13 @@ class TestHostVulnerabilityHistory:
             "scan2",
             [
                 {
-                    "plugin_id": 100,
+                    "plugin_id": "nessus:100",
                     "plugin_name": "Critical",
                     "severity_int": 4,
                     "hosts": ["192.168.1.1"],
                 },
                 {
-                    "plugin_id": 101,
+                    "plugin_id": "nessus:101",
                     "plugin_name": "High",
                     "severity_int": 3,
                     "hosts": ["192.168.1.1"],
@@ -444,7 +444,7 @@ class TestHostVulnerabilityHistory:
             "scan1",
             [
                 {
-                    "plugin_id": 100,
+                    "plugin_id": "nessus:100",
                     "plugin_name": "Plugin",
                     "severity_int": 3,
                     "hosts": ["192.168.1.1"],
@@ -462,13 +462,13 @@ class TestHostVulnerabilityHistory:
             "scan1",
             [
                 {
-                    "plugin_id": 100,
+                    "plugin_id": "nessus:100",
                     "plugin_name": "Plugin A",
                     "severity_int": 4,
                     "hosts": ["192.168.1.1"],
                 },
                 {
-                    "plugin_id": 101,
+                    "plugin_id": "nessus:101",
                     "plugin_name": "Plugin B",
                     "severity_int": 3,
                     "hosts": ["192.168.1.1"],
@@ -480,8 +480,8 @@ class TestHostVulnerabilityHistory:
 
         assert history is not None
         assert len(history.scans[0].plugin_ids) == 2
-        assert "100" in history.scans[0].plugin_ids
-        assert "101" in history.scans[0].plugin_ids
+        assert "nessus:100" in history.scans[0].plugin_ids
+        assert "nessus:101" in history.scans[0].plugin_ids
 
 
 class TestGetScanByName:
@@ -516,12 +516,12 @@ class TestDataclasses:
             scan2_id=2,
             scan2_name="scan2",
             scan2_date="2024-02-01",
-            new_findings=[{"plugin_id": 100}, {"plugin_id": 101}],
-            resolved_findings=[{"plugin_id": 102}],
+            new_findings=[{"plugin_id": "nessus:100"}, {"plugin_id": "nessus:101"}],
+            resolved_findings=[{"plugin_id": "nessus:102"}],
             persistent_findings=[
-                {"plugin_id": 103},
-                {"plugin_id": 104},
-                {"plugin_id": 105},
+                {"plugin_id": "nessus:103"},
+                {"plugin_id": "nessus:104"},
+                {"plugin_id": "nessus:105"},
             ],
         )
 
@@ -580,15 +580,15 @@ class TestMixedSourceComparisonRefused:
 
         nessus_scan = Scan(scan_name="nessus-scan", export_root="/tmp").save(temp_db)
         nuclei_scan = Scan(scan_name="nuclei-scan", export_root="/tmp").save(temp_db)
-        Plugin(plugin_id="57608", plugin_name="SMB Signing", severity_int=3).save(
-            temp_db
-        )
+        Plugin(
+            plugin_id="nessus:57608", plugin_name="SMB Signing", severity_int=3
+        ).save(temp_db)
         Plugin(
             plugin_id="nuclei:tech-detect",
             plugin_name="Technology Detection",
             severity_int=3,
         ).save(temp_db)
-        Finding(scan_id=nessus_scan, plugin_id="57608").save(temp_db)
+        Finding(scan_id=nessus_scan, plugin_id="nessus:57608").save(temp_db)
         Finding(scan_id=nuclei_scan, plugin_id="nuclei:tech-detect").save(temp_db)
         return nessus_scan, nuclei_scan
 
@@ -622,3 +622,133 @@ class TestMixedSourceComparisonRefused:
         assert result is not None
         assert [f["plugin_id"] for f in result.new_findings] == ["nuclei:y"]
         assert [f["plugin_id"] for f in result.resolved_findings] == ["nuclei:x"]
+
+
+@pytest.mark.unit
+class TestScanSnapshotSource:
+    """A snapshot knows its scanner, derived from its namespaced plugin ids."""
+
+    def _snap(self, plugin_ids):
+        return ScanSnapshot(
+            scan_id=1,
+            scan_name="s",
+            scan_date="2026-01-01",
+            finding_count=len(plugin_ids),
+            max_severity=2,
+            critical_count=0,
+            high_count=0,
+            medium_count=0,
+            low_count=0,
+            info_count=0,
+            plugin_ids=list(plugin_ids),
+        )
+
+    def test_single_source(self):
+        assert self._snap(["nessus:1", "nessus:2"]).source == "nessus"
+        assert self._snap(["nuclei:tech-detect"]).source == "nuclei"
+
+    def test_empty_snapshot_is_unknown_not_a_guess(self):
+        assert self._snap([]).source == "unknown"
+
+    def test_mixed_sources_reported_as_mixed(self):
+        assert self._snap(["nessus:1", "nuclei:x"]).source == "mixed"
+
+
+@pytest.mark.integration
+class TestHostHistoryTrendAcrossSources:
+    """`scan history` must not claim remediation across two scanners.
+
+    A 30-finding Nessus scan followed by a 3-finding nuclei scan is not 27
+    findings fixed -- the two tools count different things. Before this, the
+    Trend column and the overall summary both reported the difference as if it
+    were progress.
+    """
+
+    def _history(self, conn):
+        _create_test_scan(
+            conn,
+            "nessus-scan",
+            [
+                {
+                    "plugin_id": f"nessus:{100 + i}",
+                    "plugin_name": f"N{i}",
+                    "severity_int": 3,
+                    "hosts": ["10.0.0.1"],
+                }
+                for i in range(5)
+            ],
+        )
+        _create_test_scan(
+            conn,
+            "nuclei-scan",
+            [
+                {
+                    "plugin_id": "nuclei:tech-detect",
+                    "plugin_name": "Tech Detect",
+                    "severity_int": 0,
+                    "hosts": ["10.0.0.1"],
+                }
+            ],
+        )
+        return get_host_vulnerability_history("10.0.0.1", conn)
+
+    def test_snapshots_report_their_own_source(self, temp_db):
+        history = self._history(temp_db)
+        assert {s.source for s in history.scans} == {"nessus", "nuclei"}
+
+    def test_no_overall_trend_claim_across_sources(self, temp_db, capsys):
+        from cerno_pkg.render import render_host_history
+
+        history = self._history(temp_db)
+        render_host_history(history)
+        out = capsys.readouterr().out
+        # The misleading claim: 5 findings then 1 reads as "-4 findings".
+        assert "-4 findings" not in out
+        assert "since first scan" not in out
+        assert "different sources" in out
+
+    def test_source_column_is_rendered(self, temp_db, capsys):
+        from cerno_pkg.render import render_host_history
+
+        render_host_history(self._history(temp_db))
+        out = capsys.readouterr().out
+        assert "Source" in out and "nessus" in out and "nuclei" in out
+
+    def test_single_source_history_still_reports_a_trend(self, temp_db, capsys):
+        from cerno_pkg.render import render_host_history
+
+        _create_test_scan(
+            temp_db,
+            "first",
+            [
+                {
+                    "plugin_id": "nessus:100",
+                    "plugin_name": "N",
+                    "severity_int": 3,
+                    "hosts": ["10.9.9.9"],
+                },
+                {
+                    "plugin_id": "nessus:101",
+                    "plugin_name": "N2",
+                    "severity_int": 3,
+                    "hosts": ["10.9.9.9"],
+                },
+            ],
+        )
+        _create_test_scan(
+            temp_db,
+            "second",
+            [
+                {
+                    "plugin_id": "nessus:100",
+                    "plugin_name": "N",
+                    "severity_int": 3,
+                    "hosts": ["10.9.9.9"],
+                }
+            ],
+        )
+        render_host_history(get_host_vulnerability_history("10.9.9.9", temp_db))
+        out = capsys.readouterr().out
+        assert "since first scan" in out
+        # info() does not parse Rich markup, so these must not leak tags.
+        assert "[green]" not in out and "[red]" not in out

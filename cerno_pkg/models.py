@@ -207,7 +207,19 @@ class Scan:
                     SUM(CASE WHEN p.severity_int = 2 THEN 1 ELSE 0 END) as medium_count,
                     SUM(CASE WHEN p.severity_int = 1 THEN 1 ELSE 0 END) as low_count,
                     SUM(CASE WHEN p.severity_int = 0 THEN 1 ELSE 0 END) as info_count,
-                    SUM(CASE WHEN f.review_state = 'done' THEN 1 ELSE 0 END) as done_count
+                    SUM(CASE WHEN f.review_state = 'done' THEN 1 ELSE 0 END) as done_count,
+                    -- Which scanner produced this scan's findings. GROUP_CONCAT
+                    -- over DISTINCT source names so a (currently unreachable)
+                    -- mixed-source scan reports both rather than one at random,
+                    -- and an empty scan reports NULL rather than a wrong guess.
+                    (SELECT GROUP_CONCAT(src) FROM (
+                        SELECT DISTINCT fs.source_name AS src
+                        FROM findings f3
+                        JOIN plugins p3 ON f3.plugin_id = p3.plugin_id
+                        JOIN finding_sources fs ON p3.source_id = fs.source_id
+                        WHERE f3.scan_id = s.scan_id
+                        ORDER BY fs.source_name
+                     )) as source
                 FROM scans s
                 LEFT JOIN findings f ON s.scan_id = f.scan_id
                 LEFT JOIN plugins p ON f.plugin_id = p.plugin_id

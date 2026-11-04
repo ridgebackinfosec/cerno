@@ -90,7 +90,27 @@ def register_all_tools() -> None:
     )
 
     # ========================================================================
-    # TOOL 3: metasploit
+    # TOOL 3: nuclei
+    # ========================================================================
+    register_tool(
+        Tool(
+            id="nuclei",
+            name="nuclei",
+            description="Template-based vulnerability scanner",
+            workflow_builder=tools.build_nuclei_workflow,
+            command_builder=tools.build_nuclei_scan_cmd,
+            requires=["nuclei"],
+            menu_order=3,
+            options={
+                # Its JSON output ingests back as verdict evidence
+                # (ingest._ingest_nuclei), like nmap's XML.
+                "supports_ingest": True,
+            },
+        )
+    )
+
+    # ========================================================================
+    # TOOL 4: metasploit
     # ========================================================================
     register_tool(
         Tool(
@@ -100,7 +120,7 @@ def register_all_tools() -> None:
             workflow_builder=lambda *args, **kwargs: None,  # Metasploit has special handling
             command_builder=None,  # Metasploit doesn't build commands
             requires=["msfconsole"],  # Requires Metasploit Framework console
-            menu_order=3,
+            menu_order=4,
             options={
                 "is_search_tool": True,
                 "requires_plugin_url": True,
@@ -109,7 +129,7 @@ def register_all_tools() -> None:
     )
 
     # ========================================================================
-    # TOOL 4: custom
+    # TOOL 5: custom
     # ========================================================================
     register_tool(
         Tool(
@@ -119,7 +139,7 @@ def register_all_tools() -> None:
             workflow_builder=tools.build_custom_workflow,
             command_builder=None,  # Custom commands are built in workflow
             requires=[],  # No requirements (user provides command)
-            menu_order=4,
+            menu_order=5,
             options={
                 "supports_placeholders": True,
                 "placeholders": [

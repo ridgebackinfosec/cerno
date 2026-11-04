@@ -1,4 +1,4 @@
-"""Workflow mapping system for plugin-specific verification workflows."""
+"""Workflow mapping system for finding-specific verification workflows."""
 
 from __future__ import annotations
 
@@ -10,7 +10,9 @@ from typing import TYPE_CHECKING, Optional
 import yaml
 
 from .ansi import warn
+from .constants import SOURCE_UNKNOWN
 from .logging_setup import log_debug, log_error
+from .parsing import plugin_source
 
 if TYPE_CHECKING:
     from .config import CernoConfig
@@ -35,21 +37,78 @@ class WorkflowStep:
 @dataclass
 class Workflow:
     """
-    Represents a complete verification workflow for plugin(s).
+    Represents a complete verification workflow for one or more findings.
 
     Attributes:
-        plugin_id: Original plugin_id string from YAML (may be comma-separated)
+        finding_id: Original finding_id string from YAML (may be comma-separated)
         workflow_name: Human-readable workflow name
         description: Brief description
         steps: List of workflow steps
         references: List of reference URLs
     """
 
-    plugin_id: str
+    finding_id: str
     workflow_name: str
     description: str
     steps: list[WorkflowStep]
     references: list[str]
+
+
+def _parse_workflow_entry(entry: dict, origin: str) -> Optional[Workflow]:
+    """Build a :class:`Workflow` from one YAML entry, or None if unusable.
+
+    Enforces both halves of the finding-id contract, warning and skipping
+    rather than raising, so one bad entry cannot stop a file from loading:
+
+    * the key must be ``finding_id``; a legacy ``plugin_id`` key is named in
+      the warning so the break is self-diagnosing, but it does **not** load;
+    * every id in the (optionally comma-separated) value must carry a source
+      prefix, because that is what ``plugins.plugin_id`` holds. A bare number
+      like ``57608`` can never match a finding, so the entry is rejected whole
+      rather than registered under a key nothing will look up.
+
+    Args:
+        entry: One mapping from the YAML ``workflows`` list.
+        origin: File name, for the warning text.
+    """
+    finding_id = str(entry.get("finding_id", "") or "").strip()
+    name = str(entry.get("workflow_name", "") or "") or "(unnamed)"
+
+    if not finding_id:
+        if entry.get("plugin_id"):
+            warn(
+                f"{origin}: workflow {name!r} uses the removed 'plugin_id' key. "
+                f"Rename it to 'finding_id' and prefix each id with its source "
+                f"(e.g. 'nessus:57608'). Skipping."
+            )
+        return None
+
+    refs = [ref.strip() for ref in finding_id.split(",") if ref.strip()]
+    unprefixed = [ref for ref in refs if plugin_source(ref) == SOURCE_UNKNOWN]
+    if unprefixed:
+        warn(
+            f"{origin}: workflow {name!r} has finding id(s) with no source "
+            f"prefix: {', '.join(unprefixed)}. Use 'nessus:57608' or "
+            f"'nuclei:<template-id>'. Skipping."
+        )
+        return None
+
+    steps = [
+        WorkflowStep(
+            title=step_data.get("title", ""),
+            commands=step_data.get("commands", []),
+            notes=step_data.get("notes", ""),
+        )
+        for step_data in entry.get("steps", [])
+    ]
+
+    return Workflow(
+        finding_id=finding_id,
+        workflow_name=entry.get("workflow_name", ""),
+        description=entry.get("description", ""),
+        steps=steps,
+        references=entry.get("references", []),
+    )
 
 
 class WorkflowMapper:
@@ -114,32 +173,16 @@ class WorkflowMapper:
             self.workflows.clear()
 
             for workflow_data in data["workflows"]:
-                plugin_id = str(workflow_data.get("plugin_id", ""))
-                if not plugin_id:
+                workflow = _parse_workflow_entry(workflow_data, self.yaml_path.name)
+                if workflow is None:
                     continue
 
-                steps = []
-                for step_data in workflow_data.get("steps", []):
-                    step = WorkflowStep(
-                        title=step_data.get("title", ""),
-                        commands=step_data.get("commands", []),
-                        notes=step_data.get("notes", ""),
-                    )
-                    steps.append(step)
-
-                workflow = Workflow(
-                    plugin_id=plugin_id,
-                    workflow_name=workflow_data.get("workflow_name", ""),
-                    description=workflow_data.get("description", ""),
-                    steps=steps,
-                    references=workflow_data.get("references", []),
-                )
-
-                # Split by comma and register workflow for each ID
-                plugin_ids = [id.strip() for id in plugin_id.split(",")]
-                for pid in plugin_ids:
-                    if pid:  # Skip empty strings
-                        self.workflows[pid] = workflow
+                # Register the workflow under each id it covers, so one entry
+                # can serve equivalent findings from different scanners.
+                for fid in workflow.finding_id.split(","):
+                    fid = fid.strip()
+                    if fid:
+                        self.workflows[fid] = workflow
 
         except yaml.YAMLError as e:
             # YAML syntax error - specific handling
@@ -177,38 +220,38 @@ class WorkflowMapper:
             # Failed to check mtime - log but don't crash
             log_error(f"Failed to check modification time for {self.yaml_path}: {e}")
 
-    def get_workflow(self, plugin_id: str) -> Optional[Workflow]:
+    def get_workflow(self, finding_id: str) -> Optional[Workflow]:
         """
-        Get workflow for a plugin ID.
+        Get workflow for a finding ID.
 
         Args:
-            plugin_id: Nessus plugin ID
+            finding_id: Source-namespaced finding id ('nessus:57608')
 
         Returns:
             Workflow object if found, None otherwise
         """
         self._check_and_reload()
-        return self.workflows.get(plugin_id)
+        return self.workflows.get(finding_id)
 
-    def has_workflow(self, plugin_id: str) -> bool:
+    def has_workflow(self, finding_id: str) -> bool:
         """
-        Check if workflow exists for plugin ID.
+        Check if workflow exists for finding ID.
 
         Args:
-            plugin_id: Nessus plugin ID
+            finding_id: Source-namespaced finding id ('nessus:57608')
 
         Returns:
             True if workflow exists, False otherwise
         """
         self._check_and_reload()
-        return plugin_id in self.workflows
+        return finding_id in self.workflows
 
-    def get_all_plugin_ids(self) -> list[str]:
+    def get_all_finding_ids(self) -> list[str]:
         """
-        Get list of all plugin IDs with workflows.
+        Get list of all finding IDs with workflows.
 
         Returns:
-            List of plugin ID strings
+            List of namespaced finding id strings
         """
         return list(self.workflows.keys())
 
@@ -225,7 +268,7 @@ class WorkflowMapper:
         """
         Load workflows from an additional YAML file and merge with existing.
 
-        If a plugin_id already exists, the new workflow overrides it.
+        If a finding_id already exists, the new workflow overrides it.
 
         Args:
             yaml_path: Path to additional workflow YAML file
@@ -246,32 +289,15 @@ class WorkflowMapper:
                 return 0
 
             for workflow_data in data["workflows"]:
-                plugin_id = str(workflow_data.get("plugin_id", ""))
-                if not plugin_id:
+                workflow = _parse_workflow_entry(workflow_data, yaml_path.name)
+                if workflow is None:
                     continue
 
-                steps = []
-                for step_data in workflow_data.get("steps", []):
-                    step = WorkflowStep(
-                        title=step_data.get("title", ""),
-                        commands=step_data.get("commands", []),
-                        notes=step_data.get("notes", ""),
-                    )
-                    steps.append(step)
-
-                workflow = Workflow(
-                    plugin_id=plugin_id,
-                    workflow_name=workflow_data.get("workflow_name", ""),
-                    description=workflow_data.get("description", ""),
-                    steps=steps,
-                    references=workflow_data.get("references", []),
-                )
-
-                # Split by comma and register workflow for each ID (overrides existing)
-                plugin_ids = [id.strip() for id in plugin_id.split(",")]
-                for pid in plugin_ids:
-                    if pid:
-                        self.workflows[pid] = workflow
+                # Register under each id it covers (overrides existing).
+                for fid in workflow.finding_id.split(","):
+                    fid = fid.strip()
+                    if fid:
+                        self.workflows[fid] = workflow
 
                 # Count this workflow definition as loaded
                 workflows_loaded += 1
@@ -300,20 +326,20 @@ class WorkflowMapper:
         Get all workflows as a list of dictionaries.
 
         Returns:
-            List of workflow dictionaries with keys: plugin_id, workflow_name, description
+            List of workflow dictionaries with keys: finding_id, workflow_name, description
         """
         workflows_list = []
         seen_workflows = set()
 
         for workflow in self.workflows.values():
             # Use workflow_name as unique key to avoid duplicate workflows
-            # (same workflow may be registered under multiple plugin IDs)
+            # (same workflow may be registered under multiple finding IDs)
             workflow_key = workflow.workflow_name
 
             if workflow_key not in seen_workflows:
                 workflows_list.append(
                     {
-                        "plugin_id": workflow.plugin_id,
+                        "finding_id": workflow.finding_id,
                         "workflow_name": workflow.workflow_name,
                         "description": workflow.description,
                     }
@@ -331,7 +357,7 @@ def build_workflow_mapper(config: Optional[CernoConfig] = None) -> WorkflowMappe
 
     Mirrors the CLI's supplement mode (``cerno review`` with the config key set):
     bundled ``workflow_mappings.yaml`` first, then the custom file merged on top
-    (custom overrides on plugin_id conflict). A missing or empty custom file
+    (custom overrides on finding_id conflict). A missing or empty custom file
     leaves the bundled set. Built fresh per call so edits to either YAML are seen.
 
     Mapper warnings are routed to stderr: this runs inside the MCP server, where

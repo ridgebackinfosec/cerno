@@ -1,6 +1,6 @@
 # Cerno Workflow Mappings
 #
-# Maps Nessus plugin IDs to verification workflow steps.
+# Maps namespaced finding IDs to verification workflow steps.
 # These workflows are display-only and provide structured guidance
 # for verifying specific vulnerabilities.
 #
@@ -26,7 +26,7 @@
 version: "1.0"
 
 workflows:
-  - plugin_id: "40984"
+  - finding_id: "nessus:40984"
     workflow_name: "Investigate Browsable Web Directories"
     description: "Check for any filenames and content with confidential data."
     steps:
@@ -42,7 +42,7 @@ workflows:
       - "https://www.tenable.com/plugins/nessus/40984"
       - "https://www.blackhillsinfosec.com/rooting-for-secrets-with-trufflehog/"
 
-  - plugin_id: "10759"
+  - finding_id: "nessus:10759"
     workflow_name: "Web Server HTTP Header Internal IP Disclosure"
     description: "Occurs when a web server includes internal IP addresses in HTTP response headers, unintentionally exposing internal network details that can aid attackers in mapping or targeting internal infrastructure."
     steps:
@@ -60,7 +60,7 @@ workflows:
       - "https://www.tenable.com/plugins/nessus/10759"
 
   # SMB Signing Not Required (Plugin 57608)
-  - plugin_id: "57608"
+  - finding_id: "nessus:57608"
     workflow_name: "SMB Signing Not Required"
     description: "Remote SMB server does not enforce message signing"
     steps:
@@ -86,7 +86,7 @@ workflows:
       - "https://www.tenable.com/plugins/nessus/57608"
       - "https://attack.mitre.org/techniques/T1557/001/"
 
-  - plugin_id: "10114"
+  - finding_id: "nessus:10114"
     workflow_name: "ICMP Timestamp Request Remote Date Disclosure"
     description: "Occurs when a system responds to ICMP timestamp requests with its local time, allowing remote attackers to infer the device’s timezone, system clock, and potentially aiding in reconnaissance or timing attacks."
     steps:
@@ -121,7 +121,7 @@ workflows:
       - "https://github.com/DefensiveOrigins/icmp-timestamp"
       - "https://datatracker.ietf.org/doc/html/rfc792"
 
-  - plugin_id: "41028"
+  - finding_id: "nessus:41028"
     workflow_name: "SNMP Default Community Strings"
     description: "Default SNMP community string usage could allow for configuration read through SNMP queries and possibly a full SNMP MIB tree walk."
     steps:
@@ -145,7 +145,7 @@ workflows:
       - "https://github.com/trailofbits/onesixtyone"
       - "https://github.com/net-snmp/net-snmp"
 
-  - plugin_id: "20007,26928,31705,42873,65821,78479,81606,83738,83875,89058,104743,157288"
+  - finding_id: "nessus:20007,nessus:26928,nessus:31705,nessus:42873,nessus:65821,nessus:78479,nessus:81606,nessus:83738,nessus:83875,nessus:89058,nessus:104743,nessus:157288"
     workflow_name: "Weak SSL/TLS Configurations"
     description: "Weak or deprecated SSL/TLS configurations — including outdated protocol versions, weak/anonymous/export cipher suites, and exploitable vulnerabilities — should be remediated."
     steps:
@@ -169,7 +169,7 @@ workflows:
       - "https://www.tenable.com/plugins/nessus/157288"
       - "https://www.blackhillsinfosec.com/testing-tls-and-certificates/"
 
-  - plugin_id: "42263"
+  - finding_id: "nessus:42263"
     workflow_name: "Unencrypted Telnet Server"
     description: "The primary risk posed by unencrypted network protocols is that an attacker can eavesdrop on communication and extract any information in it, such as confidential data and credentials."
     steps:
@@ -189,7 +189,7 @@ workflows:
     references:
       - "https://www.tenable.com/plugins/nessus/42263"
 
-  - plugin_id: "187315"
+  - finding_id: "nessus:187315"
     workflow_name: "Terrapin Weakness"
     description: "SSH vulnerability that could permit MITM style attacks"
     steps:
@@ -210,7 +210,7 @@ workflows:
       - "https://nvd.nist.gov/vuln/detail/CVE-2023-48795"
       - "https://terrapin-attack.com/"
 
-  - plugin_id: "90317,70658,153953,71049"
+  - finding_id: "nessus:90317,nessus:70658,nessus:153953,nessus:71049"
     workflow_name: "SSH Service Verification"
     description: "SSH service is accepting weak ciphers, key exchange algorithms, or MAC algorithms, and/or accepts password authentication. These misconfigurations can expose the service to brute force, MITM, or cryptographic downgrade attacks."
     steps:
@@ -244,7 +244,7 @@ workflows:
       - "https://github.com/jtesta/ssh-audit"
       - "https://attack.mitre.org/techniques/T1110/001/"
 
-  - plugin_id: "35297,91263"
+  - finding_id: "nessus:35297,nessus:91263"
     workflow_name: "SSL Service Requests Client Certificate"
     description: "Confirm the server sends a TLS CertificateRequest and determine whether a client certificate is optional or required."
     steps:
@@ -262,7 +262,7 @@ workflows:
       - "https://www.tenable.com/plugins/nessus/35297"
       - "https://www.tenable.com/plugins/nessus/91263"
 
-  - plugin_id: "56984"
+  - finding_id: "nessus:56984"
     workflow_name: "SSL / TLS Versions Supported"
     description: "Enumerate which SSL/TLS protocol versions the service accepts and flag any legacy versions (SSLv2/SSLv3/TLS 1.0/TLS 1.1)."
     steps:
@@ -274,7 +274,7 @@ workflows:
     references:
       - "https://www.tenable.com/plugins/nessus/56984"
 
-  - plugin_id: "95631"
+  - finding_id: "nessus:95631"
     workflow_name: "SSL Certificate Signed Using Weak Hashing Algorithm (Known CA)"
     description: "Determine whether the weak (SHA-1/MD5) signature is on a certificate clients actually validate (leaf or intermediate) or only on a self-signed trust anchor."
     steps:
@@ -286,21 +286,22 @@ workflows:
     references:
       - "https://www.tenable.com/plugins/nessus/95631"
 
-  - plugin_id: "142960,84502"
+  - finding_id: "nessus:142960,nessus:84502,nuclei:http-missing-security-headers"
     workflow_name: "HSTS Missing From HTTPS Server (RFC 6797)"
     description: "Confirm whether HTTPS responses carry a Strict-Transport-Security header with an adequate max-age."
     steps:
       - title: "Check the HTTPS response for a Strict-Transport-Security header"
         commands:
           - "curl -sk --max-time 15 -D - https://<TARGET>:<PORT>/ | grep -i '^strict-transport-security'"
-        notes: "No output = no HSTS header = confirmed. Also flag a header with max-age below 31536000 (1 year) or max-age=0. A header present with max-age >= 31536000 = false positive. Use a GET (as above) rather than -I, since some servers only add HSTS to GET responses. Check every HTTPS port Nessus listed - CDN alternate ports (2053/2083/2087/2096/8443) can behave differently from 443. An error or 404 response without HSTS still counts: browsers honour HSTS on any response sent over HTTPS."
+        notes: "No output = no HSTS header = confirmed. Also flag a header with max-age below 31536000 (1 year) or max-age=0. A header present with max-age >= 31536000 = false positive. Use a GET (as above) rather than -I, since some servers only add HSTS to GET responses. Check every HTTPS port Nessus listed - CDN alternate ports (2053/2083/2087/2096/8443) can behave differently from 443. An error or 404 response without HSTS still counts: browsers honour HSTS on any response sent over HTTPS. Reached from a nuclei finding: http-missing-security-headers fires on several headers at once, so read its matcher names first - this workflow only settles the strict-transport-security one, and a matcher naming a different header is a separate finding."
 
     references:
       - "https://www.tenable.com/plugins/nessus/142960"
       - "https://www.tenable.com/plugins/nessus/84502"
+      - "https://github.com/projectdiscovery/nuclei-templates/blob/main/http/misconfiguration/http-missing-security-headers.yaml"
       - "https://datatracker.ietf.org/doc/html/rfc6797"
 
-  - plugin_id: "298485"
+  - finding_id: "nessus:298485"
     workflow_name: "Oracle E-Business Suite Detection"
     description: "Confirm Oracle EBS is really exposed, ruling out catch-all / soft-404 sites that answer every path the same way."
     steps:
@@ -319,7 +320,7 @@ workflows:
     references:
       - "https://www.tenable.com/plugins/nessus/298485"
 
-  - plugin_id: "304671"
+  - finding_id: "nessus:304671"
     workflow_name: "nginx 1.3.0 < 1.28.2 / 1.29.x < 1.29.5 SSL Upstream Injection"
     description: "Version-based check: confirm the nginx version disclosed by the service falls in the affected range for CVE-2026-1642."
     steps:

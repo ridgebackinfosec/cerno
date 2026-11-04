@@ -232,7 +232,8 @@ cerno_pkg/
   │                        # shared by MCP query_findings, list_workflow_gaps and batch
   ├── nmap_parse.py        # Pure nmap XML parser (open ports + NSE vuln verdicts; no DB)
   ├── ingest.py            # ingest_execution(): run output -> verified_ports / nse_script_results /
-  │                        # nxc_flag_observations; idempotent per execution_id (rows reconciled in place)
+  │                        # nuclei_match_observations / nxc_flag_observations;
+  │                        # idempotent per execution_id (rows reconciled in place)
   ├── nxc_db.py            # Read-only NetExec workspace access (creds as refs, shares, flags); get_nxc_manager()
   ├── creds.py             # Audited credential reveal shared by `cerno creds` and MCP reveal_credential
   ├── exec_chain.py        # Wrapper unwrapping (sudo/env/timeout/proxychains4…), allow/deny glob matching,
@@ -258,7 +259,7 @@ cerno_pkg/
   ├── onboarding.py        # First-run guided tour, post-scan-selection tips
   ├── tool_context.py      # ToolContext / CommandResult (workflow builder I/O); ReviewContext (exported, unused)
   ├── tool_registry.py     # Tool dataclass + TOOL_REGISTRY helpers
-  ├── tool_definitions.py  # register_all_tools(): nmap, netexec, metasploit, custom command
+  ├── tool_definitions.py  # register_all_tools(): nmap, netexec, nuclei, metasploit, custom command
   ├── tools.py             # Command builders (build_*_cmd), workflow builders (build_*_workflow),
   │                        # run_tool_workflow() dispatch, NSE profiles, remote scan mode
   ├── ops.py               # Command execution, sudo/proxychains4 handling, logging runs, remote-scan HTTPS server
@@ -309,8 +310,8 @@ cerno_pkg/
 
 `tool_registry.py` defines the `Tool` dataclass (`id`, `name`, `description`,
 `workflow_builder`, `command_builder`, `requires`, `menu_order`, `options`);
-`tool_definitions.py:register_all_tools()` registers nmap, netexec, metasploit and
-the custom command. `tools.py:run_tool_workflow()` builds one `ToolContext` and calls
+`tool_definitions.py:register_all_tools()` registers nmap, netexec, nuclei,
+metasploit and the custom command. `tools.py:run_tool_workflow()` builds one `ToolContext` and calls
 `tool.workflow_builder(ctx)`, which returns a `CommandResult`, so adding a tool needs
 no dispatch changes. See `docs/TOOL_SYSTEM_GUIDE.md`.
 
@@ -327,9 +328,9 @@ no dispatch changes. See `docs/TOOL_SYSTEM_GUIDE.md`.
 **Core Tables**:
 - `scans`: Top-level scan metadata (scan_name, export_root, .nessus hash)
 - `plugins`: Finding-type metadata, global across scans (plugin_id **TEXT**, source_id, severity_int, CVSS, CVEs, Metasploit modules)
-  - `plugin_id` is namespaced per source: bare for Nessus (`'57608'`), prefixed for everything else (`'nuclei:apache-detect'`). Helpers live in `parsing.py`: `plugin_source()`, `plugin_source_id()`, `plugin_ref()`, `plugin_details_url()`
+  - `plugin_id` is namespaced for **every** source, Nessus included: `'nessus:57608'`, `'nuclei:apache-detect'`. No source is the default, so a bare token is not a valid plugin id anywhere. Helpers live in `parsing.py`: `plugin_source()` (returns `SOURCE_UNKNOWN`, never a guess, for an unprefixed id), `plugin_source_id()` (**raises** on one — the write-side guard), `plugin_ref()` (strips the prefix; this is what a details URL takes), `plugin_details_url()`
   - `source_id` duplicates what the prefix implies; that is deliberate, so `FindingQuery.source` is an indexed SQL predicate rather than a `LIKE 'nuclei:%'` scan. `Plugin.save()` keeps them consistent
-  - TEXT means `ORDER BY plugin_id` is lexicographic — use `database.plugin_id_order_sql()`
+  - TEXT means `ORDER BY plugin_id` is lexicographic — use `database.plugin_id_order_sql()`, which sorts by prefix then by the **ref cast to an integer**. Casting the whole column is not equivalent: every namespaced id casts to 0, silently degrading to a text sort that puts `nessus:10114` before `nessus:9`
   - Note: `severity_label` accessed via `severity_levels` table JOIN
 - `findings`: Findings per scan (scan_id + plugin_id, review_state)
   - Note: `host_count`, `port_count` computed via `v_finding_stats` view
@@ -356,6 +357,7 @@ no dispatch changes. See `docs/TOOL_SYSTEM_GUIDE.md`.
 - `verdict_types` / `nse_verdicts` / `port_states`: lookup tables (seeded in init)
 - `verified_ports`: live-verified open ports from a tool run (FK `execution_id`→tool_executions CASCADE; idempotent per execution)
 - `nse_script_results`: NSE script results + vuln verdicts (FK `execution_id` CASCADE; `port_number` NULL = host script)
+- `nuclei_match_observations`: nuclei matches from an ingested nuclei run (FK `execution_id`→tool_executions CASCADE). **Evidence, not findings** — `cerno import nuclei` is what creates `findings` rows. No UNIQUE constraint: identity is `(execution_id, host_id, port_number, template_ref, matcher_name, extracted)` and the last three are often NULL, so re-ingest reconciles in Python. Both `matcher_name` and `extracted` are in the key because `http-missing-security-headers` differs only by the former and `tls-version` only by the latter
 - `nxc_flag_observations`: point-in-time nxc security-flag snapshot (FK `execution_id` CASCADE); creds/shares stay live-read via `nxc_db.py` (not duplicated)
 - `finding_verdicts`: append-only verification verdict history (FK `finding_id`→findings CASCADE); current = latest `created_at`, ties broken by highest `verdict_id`
 - `verdict_evidence`: evidence backing a verdict (FK `verdict_id` CASCADE; `execution_id`/`artifact_id`/`nse_result_id` SET NULL)
@@ -371,6 +373,7 @@ no dispatch changes. See `docs/TOOL_SYSTEM_GUIDE.md`.
 - `v_http_services`: HTTP/HTTPS services per scan (identifies web services by svc_name heuristics)
 - `v_finding_current_verdict`: latest verification verdict per finding (joined to `verdict_types`)
 - `v_nse_results_with_verdict`: `nse_script_results` with resolved verdict label
+- `v_nuclei_observations`: `nuclei_match_observations` with resolved severity label and host IP
 - `v_finding_verified_stats`: per-finding verified_port/nse_result/vulnerable counts (via `tool_executions.finding_id`)
 
 **Schema changes**: Update `database.py:SCHEMA_SQL_TABLES` and `SCHEMA_SQL_VIEWS`, then mirror the change in `schema.sql` (`tests/test_database.py` fails if its tables/views/indexes differ) and `docs/DATABASE.md`. Test with fresh database before release.
@@ -751,7 +754,7 @@ sqlite3 ~/.cerno/cerno.db ".schema"
 
 # Check foundation tables populated
 sqlite3 ~/.cerno/cerno.db "SELECT COUNT(*) FROM severity_levels;"  # Expected: 5
-sqlite3 ~/.cerno/cerno.db "SELECT COUNT(*) FROM artifact_types;"   # Expected: 5
+sqlite3 ~/.cerno/cerno.db "SELECT COUNT(*) FROM artifact_types;"   # Expected: 6
 sqlite3 ~/.cerno/cerno.db "SELECT COUNT(*) FROM verdict_types;"    # Expected: 3
 sqlite3 ~/.cerno/cerno.db "SELECT COUNT(*) FROM nse_verdicts;"     # Expected: 4
 sqlite3 ~/.cerno/cerno.db "SELECT COUNT(*) FROM port_states;"      # Expected: 6

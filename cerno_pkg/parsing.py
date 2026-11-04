@@ -16,7 +16,7 @@ from .constants import (
     PLUGIN_ID_PREFIXES,
     PLUGIN_URL_TEMPLATES,
     SOURCE_IDS,
-    SOURCE_NESSUS,
+    SOURCE_UNKNOWN,
 )
 
 if TYPE_CHECKING:
@@ -290,33 +290,56 @@ def build_item_set(
 def plugin_source(plugin_id: Any) -> str:
     """Return the name of the source a ``plugins.plugin_id`` came from.
 
-    From schema v5 on, ``plugin_id`` is TEXT and namespaced per source: Nessus
-    ids stay bare (``'57608'``), every other source carries a ``<source>:``
-    prefix (``'nuclei:apache-detect'``).
+    ``plugin_id`` is TEXT and namespaced per source for *every* source, Nessus
+    included (``'nessus:57608'``, ``'nuclei:apache-detect'``). There is no
+    default source: an id with no recognised prefix is reported as
+    :data:`~cerno_pkg.constants.SOURCE_UNKNOWN` rather than assumed to be
+    Nessus, so a bad or future id surfaces instead of being mislabelled.
 
     Examples:
-        >>> plugin_source("57608")
+        >>> plugin_source("nessus:57608")
         'nessus'
         >>> plugin_source("nuclei:apache-detect")
         'nuclei'
+        >>> plugin_source("57608")
+        'unknown'
     """
     text = str(plugin_id)
     for source, prefix in PLUGIN_ID_PREFIXES.items():
         if text.startswith(prefix):
             return source
-    return SOURCE_NESSUS
+    return SOURCE_UNKNOWN
 
 
 def plugin_source_id(plugin_id: Any) -> int:
-    """Return the ``finding_sources.source_id`` for a ``plugin_id``."""
-    return SOURCE_IDS.get(plugin_source(plugin_id), SOURCE_IDS[SOURCE_NESSUS])
+    """Return the ``finding_sources.source_id`` for a ``plugin_id``.
+
+    Raises:
+        ValueError: If the id carries no recognised source prefix. This is the
+            write-side guard: every id reaching the database must name its
+            source, so an unprefixed one fails here with a clear message rather
+            than tripping a foreign-key error further down.
+    """
+    source = plugin_source(plugin_id)
+    try:
+        return SOURCE_IDS[source]
+    except KeyError:
+        raise ValueError(
+            f"plugin_id {plugin_id!r} has no source prefix. Expected one of "
+            f"{', '.join(sorted(PLUGIN_ID_PREFIXES.values()))} "
+            f"(e.g. 'nessus:57608')."
+        ) from None
 
 
 def plugin_ref(plugin_id: Any) -> str:
-    """Return the source-native identifier, with any namespace prefix removed.
+    """Return the source-native identifier, with its namespace prefix removed.
+
+    This is the value the source itself uses — what Tenable publishes as a
+    plugin number, or what nuclei calls a template id — so it is what goes
+    into a details URL or a report.
 
     Examples:
-        >>> plugin_ref("57608")
+        >>> plugin_ref("nessus:57608")
         '57608'
         >>> plugin_ref("nuclei:apache-detect")
         'apache-detect'

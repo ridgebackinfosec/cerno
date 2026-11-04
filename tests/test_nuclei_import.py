@@ -45,6 +45,112 @@ class TestNucleiImport:
             lambda database_path=None: UnclosableConnection(temp_db),
         )
 
+    # ---------- host_services (nuclei-only scans) ----------
+
+    def test_import_records_services_from_the_matched_url_scheme(
+        self, temp_db, temp_dir
+    ):
+        """nuclei reports a URL, so the scheme is the service."""
+        import_nuclei_file(FIXTURES / "web_scan.json", temp_dir, scan_name="web")
+        rows = temp_db.execute(
+            "SELECT svc_name, COUNT(*) FROM host_services GROUP BY svc_name"
+        ).fetchall()
+        services = {r[0]: r[1] for r in rows}
+        assert services, "a nuclei import must record host_services"
+        assert "http" in services or "https" in services
+        assert all(
+            p == "tcp"
+            for (p,) in temp_db.execute("SELECT DISTINCT protocol FROM host_services")
+        )
+
+    def test_nuclei_only_scan_reports_web_services(self, temp_db, temp_dir):
+        """The whole point: a web-app engagement may import nothing but nuclei.
+
+        Before this, v_http_services / get_web_targets / list_services /
+        FindingQuery.service / the scan hosts resource were all empty for such
+        a scan.
+        """
+        from cerno_pkg.models import get_http_urls_for_scan
+
+        result = import_nuclei_file(
+            FIXTURES / "web_scan.json", temp_dir, scan_name="web"
+        )
+        scan_id = temp_db.execute(
+            "SELECT scan_id FROM scans WHERE scan_name = ?", (result.scan_name,)
+        ).fetchone()[0]
+
+        assert (
+            temp_db.execute(
+                "SELECT COUNT(*) FROM v_http_services WHERE scan_id = ?", (scan_id,)
+            ).fetchone()[0]
+            > 0
+        )
+        assert get_http_urls_for_scan(scan_id, temp_db)
+
+    def test_service_query_predicate_matches_nuclei_findings(self, temp_db, temp_dir):
+        from cerno_pkg.query import FindingQuery, run_finding_query
+
+        result = import_nuclei_file(
+            FIXTURES / "web_scan.json", temp_dir, scan_name="web"
+        )
+        scan_id = temp_db.execute(
+            "SELECT scan_id FROM scans WHERE scan_name = ?", (result.scan_name,)
+        ).fetchone()[0]
+        matched = run_finding_query(
+            FindingQuery(scan_ids=[scan_id], service="http"), temp_db
+        )
+        assert matched, "FindingQuery.service must reach nuclei findings"
+
+    def test_reimport_resets_services_rather_than_duplicating(self, temp_db, temp_dir):
+        """host_services has no FK to findings, so it does not cascade."""
+        import_nuclei_file(FIXTURES / "web_scan.json", temp_dir, scan_name="web")
+        first = temp_db.execute("SELECT COUNT(*) FROM host_services").fetchone()[0]
+        import_nuclei_file(FIXTURES / "web_scan.json", temp_dir, scan_name="web")
+        second = temp_db.execute("SELECT COUNT(*) FROM host_services").fetchone()[0]
+        assert first == second > 0
+
+    def test_ssl_match_is_not_claimed_as_a_web_service(self, temp_db, temp_dir):
+        """An ssl match has no URL scheme, so its `type` is the service.
+
+        Mapping ssl to https would be convenient but wrong: an ssl template
+        firing on 3389 is RDP, not a web service, and would land in
+        get_web_targets. The view's port arm still classifies 443 as https
+        without svc_name having to claim it.
+        """
+        from cerno_pkg.nuclei_parse import parse_nuclei_file
+
+        parsed = parse_nuclei_file(FIXTURES / "web_scan.json")
+        ssl_matches = [
+            m for t in parsed.templates for m in t.matches if m.result_type == "ssl"
+        ]
+        assert ssl_matches, "fixture must carry ssl-type records"
+        assert {m.service_name for m in ssl_matches} == {"ssl"}
+
+    def test_url_scheme_outranks_a_bare_record_type(self, temp_db, temp_dir):
+        """One row per host:port, so the winner must be chosen deliberately.
+
+        example.com:443 is reported by both an https template (scheme) and ssl
+        templates (type only). `https` is the more informative answer, and
+        which one lands must not depend on insertion order.
+        """
+        import_nuclei_file(FIXTURES / "web_scan.json", temp_dir, scan_name="web")
+        row = temp_db.execute(
+            "SELECT svc_name FROM host_services WHERE port_number = 443"
+        ).fetchone()
+        assert row is not None and row[0] == "https"
+
+    def test_service_preference_is_order_independent(self):
+        """The fixture alone cannot prove this: 'https' < 'ssl' alphabetically,
+        so insertion order would have produced the right answer by accident.
+        """
+        from cerno_pkg.nuclei_import import _prefer_service
+
+        assert _prefer_service(None, "ssl") == "ssl"
+        assert _prefer_service("ssl", "https") == "https"
+        assert _prefer_service("https", "ssl") == "https"
+        # Two schemes: first one wins, nothing to prefer between them.
+        assert _prefer_service("http", "https") == "http"
+
     # ---------- shape ----------
 
     def test_collapses_28_records_into_20_findings(self, temp_db, temp_dir):
@@ -369,3 +475,61 @@ class TestNucleiFindingsAreReviewable:
         assert plugin is not None
         assert plugin.details_url is not None
         assert "tenable.com" not in plugin.details_url
+
+
+@pytest.mark.integration
+class TestNucleiImportSuggestions:
+    """A nuclei-first operator needs an onward step too.
+
+    `show_nessus_tool_suggestions` is only reachable from a Nessus import, so
+    before this a nuclei-only engagement got no follow-up suggestions at all.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _db(self, monkeypatch, temp_db):
+        import cerno_pkg.database
+
+        class Unclosable:
+            def __init__(self, conn):
+                self._conn = conn
+
+            def __getattr__(self, name):
+                return (lambda: None) if name == "close" else getattr(self._conn, name)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        monkeypatch.setattr(
+            cerno_pkg.database,
+            "get_connection",
+            lambda database_path=None: Unclosable(temp_db),
+        )
+
+    def test_suggestions_reference_the_discovered_urls(
+        self, temp_db, temp_dir, tmp_path, monkeypatch, capsys
+    ):
+        import cerno
+        import cerno_pkg.constants
+
+        monkeypatch.setattr(cerno_pkg.constants, "SCANS_ROOT", tmp_path / "scans")
+        import_nuclei_file(FIXTURES / "web_scan.json", temp_dir, scan_name="web")
+
+        cerno.show_nuclei_tool_suggestions("web")
+        out = capsys.readouterr().out
+        assert "Suggested Next Steps" in out
+        assert "nmap -sV -iL" in out
+        assert "cerno import nuclei" in out
+        # The re-run command must write JSON, the only shape the importer reads.
+        assert "-je " in out
+
+    def test_silent_when_no_web_services(self, temp_db, tmp_path, monkeypatch, capsys):
+        """No URLs is not an error, and must not print an empty section."""
+        import cerno
+        import cerno_pkg.constants
+
+        monkeypatch.setattr(cerno_pkg.constants, "SCANS_ROOT", tmp_path / "scans")
+        cerno.show_nuclei_tool_suggestions("no-such-scan")
+        assert "Suggested Next Steps" not in capsys.readouterr().out

@@ -503,7 +503,7 @@ scopes, and management commands.
 
 **In the findings list view:**
 - `Enter` - Open the first finding on the page; type a row number to open that finding
-- `[S]` - Cycle sort modes (severity, plugin ID, name, host count)
+- `[S]` - Cycle sort modes (severity, finding ID, name, host count)
 - `[F]` - Filter findings by text (plugin name, description, etc.)
 - `[I]` - Toggle In Progress only / all statuses
 - `[C]` - Clear active text and status filters
@@ -546,7 +546,7 @@ cerno review --custom-workflows my_workflows.yaml
 ```yaml
 version: "1.0"
 workflows:
-  - plugin_id: "57608"
+  - finding_id: "nessus:57608"
     workflow_name: "SMB Signing Not Required"
     steps:
       - title: "Verify SMB signing"

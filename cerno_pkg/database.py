@@ -410,6 +410,35 @@ CREATE INDEX IF NOT EXISTS idx_nse_results_execution ON nse_script_results(execu
 CREATE INDEX IF NOT EXISTS idx_nse_results_host ON nse_script_results(host_id);
 CREATE INDEX IF NOT EXISTS idx_nse_results_verdict ON nse_script_results(nse_verdict_id);
 
+-- nuclei matches observed during a Cerno-run nuclei execution.
+--
+-- Evidence, not findings: these rows back a verdict on an existing finding and
+-- are tied to the execution that produced them, exactly as nmap's NSE results
+-- are. Templates that should become findings in their own right go through
+-- `cerno import nuclei` instead.
+CREATE TABLE IF NOT EXISTS nuclei_match_observations (
+    observation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    execution_id   INTEGER NOT NULL,
+    host_id        INTEGER NOT NULL,
+    port_number    INTEGER,
+    template_ref   TEXT NOT NULL,
+    template_name  TEXT,
+    severity_int   INTEGER NOT NULL,
+    matched_at     TEXT,
+    matcher_name   TEXT,
+    template_url   TEXT,
+    extracted      TEXT,
+    created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (execution_id) REFERENCES tool_executions(execution_id) ON DELETE CASCADE,
+    FOREIGN KEY (host_id) REFERENCES hosts(host_id),
+    FOREIGN KEY (port_number) REFERENCES ports(port_number),
+    FOREIGN KEY (severity_int) REFERENCES severity_levels(severity_int)
+);
+
+CREATE INDEX IF NOT EXISTS idx_nuclei_obs_execution ON nuclei_match_observations(execution_id);
+CREATE INDEX IF NOT EXISTS idx_nuclei_obs_host ON nuclei_match_observations(host_id);
+CREATE INDEX IF NOT EXISTS idx_nuclei_obs_template ON nuclei_match_observations(template_ref);
+
 -- Point-in-time snapshot of nxc security flags (provenance = execution_id).
 -- Credentials and shares are NOT duplicated here; they stay live-read via nxc_db.
 CREATE TABLE IF NOT EXISTS nxc_flag_observations (
@@ -673,6 +702,26 @@ SELECT
 FROM nse_script_results nsr
 LEFT JOIN nse_verdicts nv ON nsr.nse_verdict_id = nv.nse_verdict_id;
 
+CREATE VIEW IF NOT EXISTS v_nuclei_observations AS
+SELECT
+    nmo.observation_id,
+    nmo.execution_id,
+    nmo.host_id,
+    h.ip_address,
+    nmo.port_number,
+    nmo.template_ref,
+    nmo.template_name,
+    nmo.severity_int,
+    sl.severity_label,
+    nmo.matched_at,
+    nmo.matcher_name,
+    nmo.template_url,
+    nmo.extracted,
+    nmo.created_at
+FROM nuclei_match_observations nmo
+JOIN hosts h ON nmo.host_id = h.host_id
+LEFT JOIN severity_levels sl ON nmo.severity_int = sl.severity_int;
+
 -- Live-verified fact counts per finding (via the execution's finding_id)
 CREATE VIEW IF NOT EXISTS v_finding_verified_stats AS
 SELECT
@@ -815,6 +864,7 @@ LOOKUP_SEEDS: tuple[tuple[str, list[tuple]], ...] = (
             ("nmap_gnmap", ".gnmap", "Nmap greppable output"),
             ("nmap_nmap", ".nmap", "Nmap normal output"),
             ("netexec_txt", ".txt", "NetExec text output"),
+            ("nuclei_json", ".json", "nuclei JSON export (-je)"),
             ("log", ".log", "Tool execution log"),
         ],
     ),
@@ -855,16 +905,29 @@ LOOKUP_SEEDS: tuple[tuple[str, list[tuple]], ...] = (
 def plugin_id_order_sql(column: str) -> str:
     """``ORDER BY`` fragment that sorts a namespaced ``plugin_id`` sensibly.
 
-    ``plugins.plugin_id`` became TEXT in schema v5, so sorting it directly is
-    lexicographic -- ``'9'`` would land after ``'10114'``. Casting first keeps
-    bare numeric Nessus ids in numeric order; namespaced ids (``nuclei:...``)
-    cast to 0, so they group together ahead of them and are ordered by the
-    textual tiebreaker.
+    ``plugins.plugin_id`` is TEXT and every id is namespaced
+    (``'nessus:57608'``, ``'nuclei:apache-detect'``), so sorting it directly is
+    lexicographic and ``'nessus:9'`` would land after ``'nessus:10114'``.
+
+    Sort by the prefix first, so a source's findings stay together, then by the
+    *reference* cast to an integer, which restores numeric order for sources
+    that number their findings. A non-numeric reference casts to 0 and falls
+    back to the textual tiebreaker, which is the right order for nuclei's
+    template names.
+
+    Casting the whole column (the pre-namespacing form) is **not** equivalent:
+    every namespaced id casts to 0, collapsing the numeric term entirely and
+    silently degrading to a lexicographic sort.
 
     Args:
         column: Qualified column name. An internal constant, never user input.
     """
-    return f"CAST({column} AS INTEGER) ASC, {column} ASC"
+    ref = f"substr({column}, instr({column}, ':') + 1)"
+    return (
+        f"substr({column}, 1, instr({column}, ':')) ASC, "
+        f"CAST({ref} AS INTEGER) ASC, "
+        f"{column} ASC"
+    )
 
 
 def seed_lookup_tables(conn: sqlite3.Connection) -> None:

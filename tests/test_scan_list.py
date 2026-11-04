@@ -33,8 +33,8 @@ def seeded_db(tmp_path, monkeypatch):
     conn = sqlite3.connect(str(dbfile))
     _init_schema(conn)
     scan_id = Scan(scan_name="engagement", export_root=str(tmp_path)).save(conn)
-    Plugin(plugin_id=100, plugin_name="SMB Signing", severity_int=4).save(conn)
-    Finding(scan_id=scan_id, plugin_id=100).save(conn)
+    Plugin(plugin_id="nessus:100", plugin_name="SMB Signing", severity_int=4).save(conn)
+    Finding(scan_id=scan_id, plugin_id="nessus:100").save(conn)
     conn.commit()
     conn.close()
     monkeypatch.setattr(database, "DATABASE_PATH", dbfile)
@@ -55,15 +55,15 @@ def test_scan_list_json_is_parseable(seeded_db, capsys):
 
 
 @pytest.mark.integration
-def test_scan_list_compact_has_seven_columns(seeded_db, capsys):
+def test_scan_list_compact_has_eight_columns(seeded_db, capsys):
     from cerno import list_scans
 
     list_scans(wide=False, json_output=False)
     out = capsys.readouterr().out
     assert "engagement" in out
     assert "Done %" in out
-    # Compact table has 7 columns (header border has 6 column separators).
-    assert _column_separators(out) == 6
+    # Compact table has 8 columns (header border has 7 column separators).
+    assert _column_separators(out) == 7
 
 
 @pytest.mark.integration
@@ -73,5 +73,32 @@ def test_scan_list_wide_has_more_columns_than_compact(seeded_db, capsys):
     list_scans(wide=True, json_output=False)
     wide_out = capsys.readouterr().out
     assert "engagement" in wide_out
-    # Wide table has 10 columns (9 separators) — the full per-severity breakdown.
-    assert _column_separators(wide_out) == 9
+    # Wide table has 11 columns (10 separators) — the full per-severity breakdown.
+    assert _column_separators(wide_out) == 10
+
+
+@pytest.mark.integration
+def test_scan_list_shows_the_scanner_for_each_scan(seeded_db, capsys):
+    """Two scans from different tools are not comparable, so say which is which.
+
+    Without this the only hint is the MixedSourceComparisonError raised after
+    the operator has already picked two scans to compare.
+    """
+    from cerno import list_scans
+
+    list_scans(wide=False, json_output=False)
+    out = capsys.readouterr().out
+    assert "Source" in out
+    assert "nessus" in out
+
+
+@pytest.mark.integration
+def test_scan_list_json_includes_source(seeded_db, capsys):
+    import json
+
+    from cerno import list_scans
+
+    list_scans(wide=False, json_output=True)
+    rows = json.loads(capsys.readouterr().out)
+    assert rows and all("source" in r for r in rows)
+    assert rows[0]["source"] == "nessus"

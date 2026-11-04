@@ -79,6 +79,7 @@ Cerno uses a **fully normalized database schema** following relational best prac
    - `v_http_services` - HTTP/HTTPS services per scan
    - `v_finding_current_verdict` - Latest verification verdict per finding
    - `v_nse_results_with_verdict` - NSE results with their verdict label
+   - `v_nuclei_observations` - nuclei matches with their severity label and host IP
    - `v_finding_verified_stats` - Verified port / NSE result counts per finding
 
 4. **Foreign Key Constraints Throughout**
@@ -112,7 +113,7 @@ The database consists of **26 tables** and **11 views**:
 ### Core Tables
 
 7. **scans** - Top-level scan tracking
-8. **plugins** - Finding-type metadata per source (namespaced plugin ID, severity, CVEs)
+8. **plugins** - Finding-type metadata per source (source-namespaced finding ID, severity, CVEs)
 9. **findings** - Vulnerability findings per scan (review state, notes)
 10. **hosts** - Normalized host data (cross-scan tracking)
 11. **ports** - Port metadata
@@ -131,14 +132,15 @@ The database consists of **26 tables** and **11 views**:
 
 19. **verified_ports** - Open ports confirmed by an ingested nmap run
 20. **nse_script_results** - NSE script output and vuln verdicts from an ingested nmap run
-21. **nxc_flag_observations** - NetExec host-flag snapshot from an ingested nxc run
-22. **finding_verdicts** - Append-only verification verdicts per finding
-23. **verdict_evidence** - Evidence linked to a verdict
+21. **nuclei_match_observations** - nuclei matches from an ingested nuclei run
+22. **nxc_flag_observations** - NetExec host-flag snapshot from an ingested nxc run
+23. **finding_verdicts** - Append-only verification verdicts per finding
+24. **verdict_evidence** - Evidence linked to a verdict
 
 ### Claude Assistant
 
-24. **claude_conversations** - Per-finding chat history
-25. **claude_aggregate_conversations** - Scope-level chat history
+25. **claude_conversations** - Per-finding chat history
+26. **claude_aggregate_conversations** - Scope-level chat history
 
 ### SQL Views (Computed Statistics)
 
@@ -152,6 +154,7 @@ The database consists of **26 tables** and **11 views**:
 - **v_http_services** - HTTP/HTTPS services per scan
 - **v_finding_current_verdict** - Latest verdict per finding
 - **v_nse_results_with_verdict** - NSE results with verdict labels
+- **v_nuclei_observations** - nuclei match observations with severity labels and host IPs
 - **v_finding_verified_stats** - Verified-fact counts per finding
 
 ---
@@ -161,7 +164,7 @@ The database consists of **26 tables** and **11 views**:
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="images/diagrams/05-er-reference-dark.png">
-    <img alt="Entity relationship diagram of Cerno's lookup tables beside the tables that consume them: severity_levels to plugins, artifact_types to artifacts, verdict_types to finding_verdicts, nse_verdicts to nse_script_results, port_states to verified_ports, plus the two Claude Assistant conversation tables" src="images/diagrams/05-er-reference-light.png" width="100%">
+    <img alt="Entity relationship diagram of Cerno's lookup tables beside the tables that consume them: severity_levels to plugins and nuclei_match_observations, artifact_types to artifacts, verdict_types to finding_verdicts, nse_verdicts to nse_script_results, port_states to verified_ports, plus the two Claude Assistant conversation tables" src="images/diagrams/05-er-reference-light.png" width="100%">
   </picture>
 </p>
 
@@ -303,7 +306,7 @@ source. Global: there is no `scan_id` column, so all scans share these rows.
 
 | Column | Type | Description |
 |---|---|---|
-| `plugin_id` | TEXT | Primary key - namespaced per source: a bare Nessus plugin ID (`'57608'`) or a prefixed nuclei template ID (`'nuclei:apache-detect'`) |
+| `plugin_id` | TEXT | Primary key - namespaced per source, with no default source: `'nessus:57608'`, `'nuclei:apache-detect'`. A bare number is not a valid id |
 | `source_id` | INTEGER | Foreign key to `finding_sources` (default 1 = nessus) |
 | `plugin_name` | TEXT | Plugin name (nuclei: `info.name`) |
 | `severity_int` | INTEGER | 0=Info, 1=Low, 2=Medium, 3=High, 4=Critical |
@@ -484,15 +487,23 @@ restores the same set.
 
 ### host_services
 
-Services discovered per scan, from the Nessus ReportItem `svc_name`/`protocol`
-attributes at import. Feeds `v_http_services` and MCP `list_services`/`get_web_targets`.
+Services discovered per scan. Feeds `v_http_services` and MCP
+`list_services`/`get_web_targets`.
 
-**Nessus only.** The nuclei importer writes no rows here: nuclei reports a URL,
-not a service name, and `v_http_services` keys off Nessus `svc_name` tokens
-(`www`, `http?`, `https?`). So for a nuclei-only scan, `v_http_services`,
-`get_web_targets`, `list_services` and `FindingQuery.service` all return nothing.
-That is the intended direction of the loop: `v_http_services` produces the URL
-list that a nuclei run *consumes*.
+**Both importers populate it.** Nessus takes `svc_name`/`protocol` straight
+from the ReportItem attributes. nuclei reports a URL rather than a service
+name, so the importer derives the service from the scheme in `matched-at`
+(`http://x/robots.txt` → `http`), which `v_http_services` already accepts as a
+literal token. A record with no scheme — an `ssl` template's `matched-at` is a
+bare `host:port` — falls back to the record's `type`, deliberately *not* mapped
+to http/https, since an ssl template firing on 3389 is not a web service; the
+view's port-based arm still classifies 443 correctly.
+
+This matters because a nuclei-only scan is a first-class case: a web-app
+engagement may import nothing else, and without these rows `v_http_services`,
+`get_web_targets`, `list_services`, `FindingQuery.service` and the
+`cerno://scan/{id}/hosts` resource would all be empty for it. Protocol is
+recorded as `tcp`, which is what nuclei's http/ssl/network templates use.
 
 | Column | Type | Description |
 |---|---|---|
@@ -592,7 +603,7 @@ automatically after MCP runs when mutations are enabled.
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="images/diagrams/04-er-verification-dark.png">
-    <img alt="Entity relationship diagram of Cerno's verification tables: tool_executions cascade to verified_ports, nse_script_results and nxc_flag_observations, findings cascade to the append-only finding_verdicts history, and verdict_evidence links a verdict back to the execution, artifact or NSE result that backs it" src="images/diagrams/04-er-verification-light.png" width="100%">
+    <img alt="Entity relationship diagram of Cerno's verification tables: tool_executions cascade to verified_ports, nse_script_results, nuclei_match_observations and nxc_flag_observations, findings cascade to the append-only finding_verdicts history, and verdict_evidence links a verdict back to the execution, artifact or NSE result that backs it" src="images/diagrams/04-er-verification-light.png" width="100%">
   </picture>
 </p>
 
@@ -631,6 +642,38 @@ NSE script output and vuln verdicts from an ingested nmap run.
 | `created_at` | TIMESTAMP | Ingest time |
 
 **Constraints**: `UNIQUE(execution_id, host_id, port_number, script_id)`
+
+### nuclei_match_observations
+
+nuclei matches from an ingested nuclei run. **Evidence, not findings**: these
+rows back a verdict on an existing finding and are tied to the execution that
+produced them, the same shape as `nse_script_results`. Templates that deserve
+to be findings in their own right go through `cerno import nuclei`, which
+creates `findings` rows.
+
+| Column | Type | Description |
+|---|---|---|
+| `observation_id` | INTEGER | Primary key |
+| `execution_id` | INTEGER | Foreign key to tool_executions (CASCADE DELETE) |
+| `host_id` | INTEGER | Foreign key to hosts |
+| `port_number` | INTEGER | Foreign key to ports (NULL where nuclei reported none, e.g. dns templates) |
+| `template_ref` | TEXT | Bare nuclei template id (not namespaced; this is not a `plugins` key) |
+| `template_name` | TEXT | `info.name` |
+| `severity_int` | INTEGER | Foreign key to severity_levels |
+| `matched_at` | TEXT | nuclei's `matched-at` (URL or host:port) |
+| `matcher_name` | TEXT | Matcher that fired (often NULL) |
+| `template_url` | TEXT | Template source URL |
+| `extracted` | TEXT | JSON array of `extracted-results` (often NULL) |
+| `created_at` | TIMESTAMP | Ingest time |
+
+**No UNIQUE constraint.** Identity is `(execution_id, host_id, port_number,
+template_ref, matcher_name, extracted)` and the last three are frequently NULL,
+which SQLite treats as distinct in a UNIQUE index — so re-ingest reconciles in
+Python via `ingest._reconcile_execution_rows` instead, preserving primary keys.
+Both `matcher_name` *and* `extracted` are needed: `http-missing-security-headers`
+reports several matches on one host:port differing only by matcher name, while
+`tls-version` carries no matcher name and differs only by extracted results.
+Keying on either alone silently loses evidence.
 
 ### nxc_flag_observations
 

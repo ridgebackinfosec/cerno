@@ -95,6 +95,7 @@ _TOOL_BY_BINARY: dict[str, str] = {
     "nmap": "nmap",
     "nxc": "nxc",
     "netexec": "nxc",
+    "nuclei": "nuclei",
 }
 
 

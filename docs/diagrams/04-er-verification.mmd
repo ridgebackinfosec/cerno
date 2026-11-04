@@ -44,6 +44,16 @@ erDiagram
         INTEGER nse_verdict_id FK
         TEXT output
     }
+    nuclei_match_observations {
+        INTEGER observation_id PK
+        INTEGER execution_id FK
+        INTEGER host_id FK
+        INTEGER port_number FK "NULL = no port (dns)"
+        TEXT template_ref
+        INTEGER severity_int FK
+        TEXT matcher_name "part of identity"
+        TEXT extracted "part of identity"
+    }
     nxc_flag_observations {
         INTEGER nxc_flag_id PK
         INTEGER execution_id FK
@@ -83,6 +93,7 @@ erDiagram
     tool_executions ||--o{ artifacts             : "SET NULL"
     tool_executions ||--o{ verified_ports        : "CASCADE (idempotent)"
     tool_executions ||--o{ nse_script_results    : "CASCADE (idempotent)"
+    tool_executions ||--o{ nuclei_match_observations : "CASCADE (idempotent)"
     tool_executions ||--o{ nxc_flag_observations : "CASCADE (idempotent)"
     findings        ||--o{ finding_verdicts      : "CASCADE"
     finding_verdicts ||--o{ verdict_evidence     : "CASCADE"
@@ -94,4 +105,6 @@ erDiagram
     ports           ||--o{ verified_ports        : "normalized"
     hosts           ||--o{ nse_script_results    : "normalized"
     ports           ||--o{ nse_script_results    : "normalized"
+    hosts           ||--o{ nuclei_match_observations : "normalized"
+    ports           ||--o{ nuclei_match_observations : "normalized"
     hosts           ||--o{ nxc_flag_observations : "normalized"

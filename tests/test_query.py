@@ -35,10 +35,10 @@ def seeded(temp_db):
     scan_b = Scan(scan_name="baseline", export_root="/tmp").save(c)
 
     Plugin(
-        plugin_id=57608, plugin_name="SMB Signing Not Required", severity_int=3
+        plugin_id="nessus:57608", plugin_name="SMB Signing Not Required", severity_int=3
     ).save(c)
     Plugin(
-        plugin_id=100,
+        plugin_id="nessus:100",
         plugin_name="Unencrypted Telnet Server",
         severity_int=4,
         has_metasploit=True,
@@ -46,13 +46,17 @@ def seeded(temp_db):
         metasploit_names=["telnet_login"],
     ).save(c)
     Plugin(
-        plugin_id=200, plugin_name="SSL Self-Signed Certificate", severity_int=1
+        plugin_id="nessus:200",
+        plugin_name="SSL Self-Signed Certificate",
+        severity_int=1,
     ).save(c)
 
-    f1 = Finding(scan_id=scan_a, plugin_id=57608).save(c)
-    f2 = Finding(scan_id=scan_a, plugin_id=100).save(c)
-    f3 = Finding(scan_id=scan_b, plugin_id=57608).save(c)
-    f4 = Finding(scan_id=scan_a, plugin_id=200, review_state="in_progress").save(c)
+    f1 = Finding(scan_id=scan_a, plugin_id="nessus:57608").save(c)
+    f2 = Finding(scan_id=scan_a, plugin_id="nessus:100").save(c)
+    f3 = Finding(scan_id=scan_b, plugin_id="nessus:57608").save(c)
+    f4 = Finding(
+        scan_id=scan_a, plugin_id="nessus:200", review_state="in_progress"
+    ).save(c)
 
     h1 = Host.get_or_create("10.0.0.1", "10.0.0.1", "ipv4", conn=c)
     h2 = Host.get_or_create("10.0.0.2", "10.0.0.2", "ipv4", conn=c)
@@ -94,7 +98,7 @@ def _plugin_ids(results):
 
 def test_scan_ids_scopes_to_one_scan(seeded):
     res = run_finding_query(FindingQuery(scan_ids=[seeded["scan_a"]]), seeded["conn"])
-    assert _plugin_ids(res) == ["100", "200", "57608"]
+    assert _plugin_ids(res) == ["nessus:100", "nessus:200", "nessus:57608"]
 
 
 def test_no_scan_ids_spans_all_scans(seeded):
@@ -105,39 +109,39 @@ def test_no_scan_ids_spans_all_scans(seeded):
 
 def test_severity_int_exact(seeded):
     res = run_finding_query(FindingQuery(severity_int=4), seeded["conn"])
-    assert _plugin_ids(res) == ["100"]
+    assert _plugin_ids(res) == ["nessus:100"]
 
 
 def test_severity_min_inclusive(seeded):
     res = run_finding_query(
         FindingQuery(scan_ids=[seeded["scan_a"]], severity_min=3), seeded["conn"]
     )
-    assert _plugin_ids(res) == ["100", "57608"]
+    assert _plugin_ids(res) == ["nessus:100", "nessus:57608"]
 
 
 def test_review_state(seeded):
     res = run_finding_query(FindingQuery(review_state="in_progress"), seeded["conn"])
-    assert _plugin_ids(res) == ["200"]
+    assert _plugin_ids(res) == ["nessus:200"]
 
 
 def test_has_metasploit(seeded):
     res = run_finding_query(FindingQuery(has_metasploit=True), seeded["conn"])
-    assert _plugin_ids(res) == ["100"]
+    assert _plugin_ids(res) == ["nessus:100"]
 
 
 def test_plugin_name_substring_case_insensitive(seeded):
     res = run_finding_query(FindingQuery(plugin_name="telnet"), seeded["conn"])
-    assert _plugin_ids(res) == ["100"]
+    assert _plugin_ids(res) == ["nessus:100"]
 
 
 def test_cve_exact_element_match(seeded):
     res = run_finding_query(FindingQuery(cve="CVE-2021-1"), seeded["conn"])
-    assert _plugin_ids(res) == ["100"]
+    assert _plugin_ids(res) == ["nessus:100"]
 
 
 def test_cve_match_is_case_insensitive(seeded):
     res = run_finding_query(FindingQuery(cve="cve-2021-1"), seeded["conn"])
-    assert _plugin_ids(res) == ["100"]
+    assert _plugin_ids(res) == ["nessus:100"]
 
 
 def test_cve_no_substring_false_positive(seeded):
@@ -150,22 +154,22 @@ def test_port_predicate(seeded):
     res = run_finding_query(
         FindingQuery(scan_ids=[seeded["scan_a"]], port=23), seeded["conn"]
     )
-    assert _plugin_ids(res) == ["100"]
+    assert _plugin_ids(res) == ["nessus:100"]
 
 
 def test_service_predicate(seeded):
     res = run_finding_query(FindingQuery(service="cifs"), seeded["conn"])
-    assert _plugin_ids(res) == ["57608"]
+    assert _plugin_ids(res) == ["nessus:57608"]
 
 
 def test_host_predicate(seeded):
     res = run_finding_query(FindingQuery(host="10.0.0.2"), seeded["conn"])
-    assert _plugin_ids(res) == ["100"]
+    assert _plugin_ids(res) == ["nessus:100"]
 
 
 def test_verdict_confirmed(seeded):
     res = run_finding_query(FindingQuery(verdict="confirmed"), seeded["conn"])
-    assert _plugin_ids(res) == ["100"]
+    assert _plugin_ids(res) == ["nessus:100"]
 
 
 def test_verdict_none_excludes_findings_with_a_verdict(seeded):
@@ -173,38 +177,38 @@ def test_verdict_none_excludes_findings_with_a_verdict(seeded):
         FindingQuery(scan_ids=[seeded["scan_a"]], verdict="none"), seeded["conn"]
     )
     # F2 has a verdict; the rest do not.
-    assert _plugin_ids(res) == ["200", "57608"]
+    assert _plugin_ids(res) == ["nessus:200", "nessus:57608"]
 
 
 def test_has_workflow_true(seeded, tmp_path):
-    mapper = _mapper_with(tmp_path, ["57608"])
+    mapper = _mapper_with(tmp_path, ["nessus:57608"])
     res = run_finding_query(
         FindingQuery(scan_ids=[seeded["scan_a"]], has_workflow=True),
         seeded["conn"],
         workflow_mapper=mapper,
     )
-    assert _plugin_ids(res) == ["57608"]
+    assert _plugin_ids(res) == ["nessus:57608"]
 
 
 def test_has_workflow_false(seeded, tmp_path):
-    mapper = _mapper_with(tmp_path, ["57608"])
+    mapper = _mapper_with(tmp_path, ["nessus:57608"])
     res = run_finding_query(
         FindingQuery(scan_ids=[seeded["scan_a"]], has_workflow=False),
         seeded["conn"],
         workflow_mapper=mapper,
     )
-    assert _plugin_ids(res) == ["100", "200"]
+    assert _plugin_ids(res) == ["nessus:100", "nessus:200"]
 
 
 def test_has_workflow_handles_grouped_plugin_keys(seeded, tmp_path):
     # A comma-separated workflow key must mark each listed plugin as having a workflow.
-    mapper = _mapper_with(tmp_path, ["90317,57608,70658"])
+    mapper = _mapper_with(tmp_path, ["nessus:90317,nessus:57608,nessus:70658"])
     res = run_finding_query(
         FindingQuery(scan_ids=[seeded["scan_a"]], has_workflow=True),
         seeded["conn"],
         workflow_mapper=mapper,
     )
-    assert _plugin_ids(res) == ["57608"]
+    assert _plugin_ids(res) == ["nessus:57608"]
 
 
 def test_combined_predicates_are_anded(seeded):
@@ -216,7 +220,7 @@ def test_combined_predicates_are_anded(seeded):
         port=23,
     )
     res = run_finding_query(q, seeded["conn"])
-    assert _plugin_ids(res) == ["100"]
+    assert _plugin_ids(res) == ["nessus:100"]
 
 
 def test_merged_dedups_by_plugin_across_scans(seeded):
@@ -225,7 +229,7 @@ def test_merged_dedups_by_plugin_across_scans(seeded):
         seeded["conn"],
     )
     # 57608 appears in both scans -> one representative row when merged.
-    assert _plugin_ids(res) == ["100", "200", "57608"]
+    assert _plugin_ids(res) == ["nessus:100", "nessus:200", "nessus:57608"]
 
 
 def test_empty_scan_ids_matches_nothing(seeded):
@@ -253,7 +257,7 @@ def _mapper_with(tmp_path, plugin_id_keys):
         "version": "1.0",
         "workflows": [
             {
-                "plugin_id": key,
+                "finding_id": key,
                 "workflow_name": f"wf-{key}",
                 "description": "d",
                 "steps": [],
@@ -278,11 +282,13 @@ def mixed_source_db(temp_db):
     from cerno_pkg.models import Finding, Plugin, Scan
 
     scan = Scan(scan_name="mixed", export_root="/tmp").save(temp_db)
-    Plugin(plugin_id="57608", plugin_name="SMB Signing", severity_int=3).save(temp_db)
+    Plugin(plugin_id="nessus:57608", plugin_name="SMB Signing", severity_int=3).save(
+        temp_db
+    )
     Plugin(
         plugin_id="nuclei:tech-detect", plugin_name="Tech Detect", severity_int=3
     ).save(temp_db)
-    Finding(scan_id=scan, plugin_id="57608").save(temp_db)
+    Finding(scan_id=scan, plugin_id="nessus:57608").save(temp_db)
     Finding(scan_id=scan, plugin_id="nuclei:tech-detect").save(temp_db)
     return temp_db
 
@@ -290,7 +296,7 @@ def mixed_source_db(temp_db):
 @pytest.mark.integration
 def test_source_predicate_selects_nessus_only(mixed_source_db):
     res = run_finding_query(FindingQuery(source="nessus"), mixed_source_db)
-    assert _plugin_ids(res) == ["57608"]
+    assert _plugin_ids(res) == ["nessus:57608"]
 
 
 @pytest.mark.integration
@@ -308,7 +314,7 @@ def test_source_predicate_is_case_insensitive(mixed_source_db):
 @pytest.mark.integration
 def test_unset_source_spans_every_source(mixed_source_db):
     res = run_finding_query(FindingQuery(), mixed_source_db)
-    assert set(_plugin_ids(res)) == {"57608", "nuclei:tech-detect"}
+    assert set(_plugin_ids(res)) == {"nessus:57608", "nuclei:tech-detect"}
 
 
 @pytest.mark.integration
@@ -331,8 +337,8 @@ def test_numeric_nessus_ids_still_sort_numerically(temp_db):
     from cerno_pkg.models import Finding, Plugin, Scan
 
     scan = Scan(scan_name="ordering", export_root="/tmp").save(temp_db)
-    for pid in ("9", "10114", "100"):
+    for pid in ("nessus:9", "nessus:10114", "nessus:100"):
         Plugin(plugin_id=pid, plugin_name=f"P{pid}", severity_int=1).save(temp_db)
         Finding(scan_id=scan, plugin_id=pid).save(temp_db)
     res = run_finding_query(FindingQuery(), temp_db)
-    assert [p.plugin_id for _f, p in res] == ["9", "100", "10114"]
+    assert [p.plugin_id for _f, p in res] == ["nessus:9", "nessus:100", "nessus:10114"]

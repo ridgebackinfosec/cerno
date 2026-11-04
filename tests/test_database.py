@@ -9,6 +9,7 @@ from cerno_pkg.database import (
     db_transaction,
     initialize_database,
     compute_file_hash,
+    plugin_id_order_sql,
     query_one,
     query_all,
 )
@@ -177,14 +178,14 @@ class TestForeignKeyConstraints:
         # Insert plugin (severity_label fetched from view, not stored)
         temp_db.execute(
             "INSERT INTO plugins (plugin_id, plugin_name, severity_int) VALUES (?, ?, ?)",
-            (12345, "Test Plugin", 2),
+            ("nessus:12345", "Test Plugin", 2),
         )
 
         # Insert plugin file
         temp_db.execute(
             """INSERT INTO findings (scan_id, plugin_id)
                VALUES (?, ?)""",
-            (scan_id, 12345),
+            (scan_id, "nessus:12345"),
         )
 
         temp_db.commit()
@@ -204,7 +205,7 @@ class TestForeignKeyConstraints:
             temp_db.execute(
                 """INSERT INTO findings (scan_id, plugin_id)
                    VALUES (?, ?)""",
-                (9999, 12345),  # scan_id 9999 doesn't exist
+                (9999, "nessus:12345"),  # scan_id 9999 doesn't exist
             )
             temp_db.commit()
 
@@ -391,3 +392,56 @@ def test_schema_sql_reference_matches_database_py():
 
     reference = (Path(__file__).parent.parent / "schema.sql").read_text()
     assert objects(reference) == objects(SCHEMA_SQL_TABLES + SCHEMA_SQL_VIEWS)
+
+
+@pytest.mark.unit
+class TestPluginIdOrdering:
+    """plugin_id is TEXT, so ordering it needs the numeric part cast."""
+
+    IDS = [
+        "nessus:9",
+        "nessus:10114",
+        "nessus:57608",
+        "nuclei:apache-detect",
+        "nuclei:CVE-2021-44228",
+    ]
+
+    def _ordered(self, conn):
+        conn.execute("CREATE TABLE t (pid TEXT)")
+        conn.executemany("INSERT INTO t VALUES (?)", [(i,) for i in self.IDS])
+        sql = f"SELECT pid FROM t ORDER BY {plugin_id_order_sql('pid')}"
+        return [r[0] for r in conn.execute(sql)]
+
+    def test_numeric_refs_sort_numerically_not_lexicographically(self):
+        """'nessus:9' must precede 'nessus:10114'.
+
+        Guards the regression that namespacing every id introduces: casting the
+        whole column yields 0 for every prefixed id, collapsing the numeric
+        term and silently degrading to a lexicographic sort that puts 10114
+        first.
+        """
+        conn = sqlite3.connect(":memory:")
+        try:
+            ordered = self._ordered(conn)
+        finally:
+            conn.close()
+        assert ordered.index("nessus:9") < ordered.index("nessus:10114")
+        assert ordered.index("nessus:10114") < ordered.index("nessus:57608")
+
+    def test_sources_stay_grouped(self):
+        conn = sqlite3.connect(":memory:")
+        try:
+            ordered = self._ordered(conn)
+        finally:
+            conn.close()
+        sources = [pid.split(":")[0] for pid in ordered]
+        assert sources == sorted(sources), "a source's ids must be contiguous"
+
+    def test_non_numeric_refs_fall_back_to_text_order(self):
+        conn = sqlite3.connect(":memory:")
+        try:
+            ordered = self._ordered(conn)
+        finally:
+            conn.close()
+        nuclei = [p for p in ordered if p.startswith("nuclei:")]
+        assert nuclei == sorted(nuclei)

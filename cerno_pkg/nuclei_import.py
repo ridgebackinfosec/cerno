@@ -53,6 +53,26 @@ from .nuclei_parse import (
 )
 from .parsing import detect_host_type
 
+#: Services derived from a real URL scheme, which outrank a bare record type.
+_SCHEME_SERVICES = frozenset({"http", "https"})
+
+
+def _prefer_service(current: Optional[str], candidate: str) -> str:
+    """Pick the more informative of two services seen on one host:port.
+
+    A host:port can be reported by several templates -- an http template gives
+    a URL scheme, an ssl template gives only its ``type``. ``host_services`` is
+    UNIQUE per host:port, so a winner must be chosen: an explicit
+    ``http``/``https`` scheme beats a bare record type, because it says what
+    the service actually is. Without this the winner would come down to the
+    order rows happen to be inserted in.
+    """
+    if current is None:
+        return candidate
+    if candidate in _SCHEME_SERVICES and current not in _SCHEME_SERVICES:
+        return candidate
+    return current
+
 
 def _namespaced_plugin_id(template_id: str) -> str:
     """Return the global ``plugins.plugin_id`` for a nuclei template id."""
@@ -197,7 +217,16 @@ def _write_to_database(
                 # finding_affected_hosts); hosts/ports/plugins are global and
                 # accretive, exactly as in the Nessus importer.
                 conn.execute("DELETE FROM findings WHERE scan_id = ?", (scan_id,))
+                # host_services has no FK to findings, so it does not cascade;
+                # clear it explicitly or a re-import leaves stale services
+                # behind. Same reset the Nessus importer performs.
+                conn.execute("DELETE FROM host_services WHERE scan_id = ?", (scan_id,))
 
+            # host_services is UNIQUE(scan_id, host_id, port_number, protocol),
+            # so one service wins per host:port. Keyed accordingly and resolved
+            # by _prefer_service rather than left to insertion order. Collected
+            # while walking the matches and inserted once at the end.
+            service_records: Dict[tuple[int, int, str], str] = {}
             rows_written = 0
             for template in templates:
                 plugin_id = _namespaced_plugin_id(template.template_id)
@@ -231,6 +260,19 @@ def _write_to_database(
                     )
                     if port is not None:
                         Port.get_or_create(port, conn=conn)
+                        # Record the service behind this host:port. Without
+                        # this a nuclei-only scan reports no web services at
+                        # all, so get_web_targets, list_services,
+                        # FindingQuery.service and the scan/{id}/hosts resource
+                        # all come back empty -- and a web-app engagement may
+                        # import nothing but nuclei.
+                        for match in matches:
+                            svc_name = match.service_name
+                            if svc_name:
+                                key = (host_id, port, "tcp")
+                                service_records[key] = _prefer_service(
+                                    service_records.get(key), svc_name
+                                )
                     conn.execute(
                         """
                         INSERT OR REPLACE INTO finding_affected_hosts (
@@ -240,6 +282,20 @@ def _write_to_database(
                         (finding_id, host_id, port, format_plugin_output(matches)),
                     )
                     rows_written += 1
+
+            if service_records:
+                conn.executemany(
+                    """INSERT OR IGNORE INTO host_services
+                       (scan_id, host_id, port_number, protocol, svc_name)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    [
+                        (scan_id, host_id, port, protocol, svc_name)
+                        for (host_id, port, protocol), svc_name in sorted(
+                            service_records.items()
+                        )
+                    ],
+                )
+                log_info(f"Inserting {len(service_records)} service mappings...")
 
             log_info(
                 f"Database updated: {len(templates)} nuclei templates, "

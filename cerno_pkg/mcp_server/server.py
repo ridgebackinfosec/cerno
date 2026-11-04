@@ -1137,7 +1137,11 @@ def tool_export_workflow_contribution(
     text = to_yaml_fragment(candidate)
     out_dir = _contribution_dir(cfg)
     out_dir.mkdir(parents=True, exist_ok=True)
-    stem = f"{finding.plugin_id}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    # The namespace separator is a path/drive separator on Windows and awkward
+    # everywhere else, so the id is flattened for the filename only; the
+    # fragment itself still carries the real namespaced id.
+    safe_id = str(finding.plugin_id).replace(":", "-")
+    stem = f"{safe_id}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
     path: Optional[Path] = None
     for n in range(100):
         attempt = out_dir / (f"{stem}.yaml" if n == 0 else f"{stem}-{n}.yaml")
@@ -2111,6 +2115,22 @@ def _parse_log_flag(command: Sequence[Any]) -> Optional[str]:
     return _flag_value(command, "--log")
 
 
+def _parse_nuclei_json_flag(command: Sequence[Any]) -> Optional[str]:
+    """Return the nuclei JSON export path from an argv list, or None.
+
+    Both shapes are accepted because both are importable and operators use
+    both: ``-jle``/``-jsonl-export`` streams JSONL (survives a cancelled run)
+    and ``-je``/``-json-export`` writes one array at exit. Registering the file
+    as a ``nuclei_json`` artifact is what lets ``ingest_results`` read the
+    matches back.
+    """
+    for flag in ("-jle", "-jsonl-export", "-je", "-json-export"):
+        value = _flag_value(command, flag)
+        if value:
+            return value
+    return None
+
+
 #: Matches a credential placeholder token ``@cred:<ref>@`` emitted by generation.
 _CRED_PLACEHOLDER_RE = re.compile(r"@cred:([^@]+)@")
 
@@ -2351,6 +2371,11 @@ def _run_and_record(
                 if (p := Path(str(oabase) + ext)).exists()
             ):
                 log_artifacts_for_nmap(execution_id, oabase, conn=c)
+        # nuclei's JSON export → 'nuclei_json', the artifact _ingest_nuclei reads.
+        nuclei_json = _parse_nuclei_json_flag(command)
+        if nuclei_json and execution_id is not None and Path(nuclei_json).exists():
+            if _scrub_file_secrets(Path(nuclei_json), secrets):
+                log_artifact(execution_id, Path(nuclei_json), "nuclei_json", conn=c)
         # Generic single-file outputs (e.g. netexec --log) → 'log' artifact type.
         # nxc writes the resolved -H/-p into this file, so scrub before registering.
         log_file = _parse_log_flag(command)
@@ -3047,7 +3072,8 @@ def build_server_instructions(cfg: CernoConfig) -> str:
     """
     mutate = cfg.mcp_allow_mutations
     lines = [
-        "Cerno exposes a Nessus review database and verification tooling. Follow "
+        "Cerno exposes a vulnerability review database (findings imported "
+        "from Nessus and nuclei) and verification tooling. Follow "
         "this procedure when verifying findings:",
         "",
         "1. Call get_capabilities first to see which actions are enabled.",

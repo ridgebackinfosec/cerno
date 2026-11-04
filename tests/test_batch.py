@@ -43,11 +43,11 @@ def seeded(tmp_path, monkeypatch):
     conn.commit()
 
     scan = Scan(scan_name="e", export_root=str(tmp_path)).save(conn)
-    for pid, name in [(101, "A"), (102, "B"), (103, "C")]:
+    for pid, name in [("nessus:101", "A"), ("nessus:102", "B"), ("nessus:103", "C")]:
         Plugin(plugin_id=pid, plugin_name=name, severity_int=4).save(conn)
-    f1 = Finding(scan_id=scan, plugin_id=101).save(conn)
-    f2 = Finding(scan_id=scan, plugin_id=102, review_state="done").save(conn)
-    f3 = Finding(scan_id=scan, plugin_id=103).save(conn)
+    f1 = Finding(scan_id=scan, plugin_id="nessus:101").save(conn)
+    f2 = Finding(scan_id=scan, plugin_id="nessus:102", review_state="done").save(conn)
+    f3 = Finding(scan_id=scan, plugin_id="nessus:103").save(conn)
     h = Host.get_or_create("10.0.0.9", "10.0.0.9", "ipv4", conn=conn)
     for p in (445,):
         Port.get_or_create(p, conn=conn)

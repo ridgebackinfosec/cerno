@@ -74,5 +74,6 @@ erDiagram
     artifact_types  ||--o{ artifacts          : "lookup"
     verdict_types   ||--o{ finding_verdicts   : "lookup"
     nse_verdicts    ||--o{ nse_script_results : "lookup"
+    severity_levels ||--o{ nuclei_match_observations : "lookup"
     port_states     ||--o{ verified_ports     : "lookup"
     findings        ||--o{ claude_conversations : "CASCADE"

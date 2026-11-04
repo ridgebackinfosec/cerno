@@ -44,7 +44,7 @@ def show_guided_tour() -> str:
     print()  # Blank line for spacing
     header("Welcome to Cerno! 🎯")
     info("")
-    info("Cerno helps you review Nessus vulnerability scans and run")
+    info("Cerno helps you review findings from Nessus and nuclei, and run")
     info("security tools (nmap, NetExec, Metasploit) against findings.")
     info("")
     info("This quick tour covers:")
@@ -58,7 +58,7 @@ def show_guided_tour() -> str:
         Prompt.ask("[Enter] Start tour | [S] Skip tour", default="").strip().lower()
     )
     if choice == "s":
-        ok("Tour skipped. To get started, import a Nessus scan:")
+        ok("Tour skipped. To get started, import a scan:")
         info("  cerno import nessus /path/to/scan.nessus")
         info("  cerno import nuclei /path/to/nuclei.json")
         info("")
@@ -86,7 +86,7 @@ def show_guided_tour() -> str:
         elif choice in ("b", "back"):
             current_step = max(1, current_step - 1)
         elif choice in ("q", "skip", "quit"):
-            ok("Tour skipped. To get started, import a Nessus scan:")
+            ok("Tour skipped. To get started, import a scan:")
             info("  cerno import nessus /path/to/scan.nessus")
             info("  cerno import nuclei /path/to/nuclei.json")
             info("")
@@ -239,7 +239,7 @@ def show_workflow_guidance(
 
     # Statistics with colored labels
     content.append("Findings: ", style="bold cyan")
-    content.append(f"{total} plugins  ")
+    content.append(f"{total} findings  ")
     for state, count in (
         (REVIEW_STATE_UNREVIEWED, unreviewed),
         (REVIEW_STATE_IN_PROGRESS, in_progress),
@@ -267,7 +267,7 @@ def show_workflow_guidance(
     content.append("\n")
     content.append("  5️⃣  Use ")
     content.append("[H]", style="cyan")
-    content.append(" to find duplicate findings across plugins\n")
+    content.append(" to find duplicate findings across the list\n")
     content.append("  6️⃣  Check ")
     content.append("[D]", style="cyan")
     content.append(" for the Done list ([M] there moves back to Unreviewed)\n\n")
@@ -415,7 +415,7 @@ def show_additional_tips() -> None:
     content.append("Filtering & Navigation:\n", style="bold cyan")
     content.append("  • Use ")
     content.append("[F]", style="cyan")
-    content.append(" to filter findings by plugin name\n")
+    content.append(" to filter findings by name\n")
     content.append("  • Press ")
     content.append("[C]", style="cyan")
     content.append(" to clear active filters\n")

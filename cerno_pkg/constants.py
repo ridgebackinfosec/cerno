@@ -173,21 +173,37 @@ bounds the size of the ``-je``/``-me`` artifacts the operator keeps.
 SOURCE_NESSUS: str = "nessus"
 SOURCE_NUCLEI: str = "nuclei"
 
+SOURCE_UNKNOWN: str = "unknown"
+"""Source of an id carrying no recognised namespace prefix.
+
+Deliberately *not* a valid source: it has no ``finding_sources`` row and no
+``SOURCE_IDS`` entry, so :func:`parsing.plugin_source_id` raises on it and
+nothing can be written to the database under it. Read paths treat it as "no
+known source" and render a finding without a details link rather than
+fabricating one.
+"""
+
 SOURCE_IDS: dict[str, int] = {SOURCE_NESSUS: 1, SOURCE_NUCLEI: 2}
 """``finding_sources.source_id`` per source name.
 
 Mirrors the ``finding_sources`` rows in ``database.LOOKUP_SEEDS``.
 """
 
-PLUGIN_ID_PREFIXES: dict[str, str] = {SOURCE_NUCLEI: "nuclei:"}
+PLUGIN_ID_PREFIXES: dict[str, str] = {
+    SOURCE_NESSUS: "nessus:",
+    SOURCE_NUCLEI: "nuclei:",
+}
 """Namespace prefix applied to ``plugins.plugin_id`` per source.
 
-Nessus plugin ids deliberately stay bare (``'57608'``): prefixing them too
-would be more uniform but would invalidate every ``plugin_id`` key in
-``workflow_mappings.yaml``, every "Nessus Plugin ID" display and the docs.
-Every *other* source is namespaced, so a nuclei template called ``57608``
-cannot collide with a Nessus plugin of that number in the global ``plugins``
-table.
+*Every* source is namespaced, Nessus included (``'nessus:57608'``). No source
+is the default, so a bare token is not a valid plugin id anywhere: it has no
+source, and :func:`parsing.plugin_source` reports :data:`SOURCE_UNKNOWN` for
+it rather than guessing.
+
+The uniformity is what makes a new source cheap — it needs a prefix here and a
+``finding_sources`` row, and nothing else has to learn about it. It also keeps
+the global ``plugins`` table collision-free: a nuclei template literally named
+``57608`` cannot occupy the same key as Nessus plugin 57608.
 """
 
 PLUGIN_ID_LABELS: dict[str, str] = {

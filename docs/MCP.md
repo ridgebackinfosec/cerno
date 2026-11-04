@@ -114,8 +114,9 @@ Notes:
   `scan_name` defaults to the file stem, since nuclei output carries no scan name.
   One finding is created per template; a template that matched the same host:port
   several times keeps every match's evidence in that host's plugin output.
-  `get_workflow` takes `plugin_id` as a **string**, because a nuclei template id
-  is not a number (`"nuclei:apache-detect"`).
+  `get_workflow` takes the finding id as a **string**, because every id is
+  source-namespaced (`"nessus:57608"`, `"nuclei:apache-detect"`). A bare number
+  matches nothing.
 - `compare_scans` refuses two scans from different sources: their plugin ids share
   no namespace, so every finding would be reported as both new and resolved.
 - `generate_nmap_cmd` takes `nse_option` as NSE script names or categories,
@@ -258,7 +259,9 @@ cerno config set mcp_exec_denylist "rm,dd,sh"    # binaries execute_command may 
      `xargs`, `tar`, `git`, `ssh`, `nc`/`ncat`/`socat`, `tcpdump`, and
      `smbclient`/`rpcclient`, whose `!` command runs a local shell), and
      active-attack or noisy tools (`responder`, `ntlmrelayx.py`, `hping3`, `ffuf`,
-     `gobuster`, `feroxbuster`, `nuclei`). Even the defaults aren't inert: `curl`
+     `gobuster`, `feroxbuster`, `nuclei` — whose `code` protocol templates run
+     arbitrary code, which is why Cerno can ingest its output but will not run
+     it for you by default). Even the defaults aren't inert: `curl`
      can write files (`-o`) and read or upload local ones (`file://`, `-T`), and
      `wget --use-askpass` runs a program. Because `sudo` isn't denied by default,
      any allowed binary can run as root; add `sudo` to the denylist to prevent that.
@@ -310,10 +313,24 @@ Turn a finding into a recorded, evidence-backed verdict:
    `start_execution`). Generate the command first with `generate_nmap_cmd`,
    `generate_netexec_cmd` or `prepare_workflow`.
 2. **Ingest the output.** `ingest_results(execution_id)` parses nmap XML into
-   verified open ports and NSE vuln verdicts, and NetExec runs into a
-   security-flag snapshot. It is idempotent, and empty or partial runs return a
-   `skipped_reason` instead of an error. When mutations are on, executions are
-   ingested automatically (best-effort).
+   verified open ports and NSE vuln verdicts, NetExec runs into a
+   security-flag snapshot, and nuclei's JSON export into
+   `nuclei_match_observations`. It is idempotent, and empty or partial runs
+   return a `skipped_reason` instead of an error. When mutations are on,
+   executions are ingested automatically (best-effort).
+
+   nuclei matches are ingested as **evidence for the finding the run was
+   attributed to**, not as new findings — `import_nuclei` is what creates
+   `findings` rows. The ingester reads whichever of `-jle`/`-jsonl-export` or
+   `-je`/`-json-export` the command used, registered as a `nuclei_json`
+   artifact. Prefer `-jle`: it streams, so a cancelled run still leaves an
+   ingestible file, while `-je` buffers and writes once at exit.
+
+   **nuclei is not in the default exec allowlist** (see below), so running it
+   through the MCP server is an explicit opt-in:
+   `cerno config set mcp_exec_allowlist "nmap,nxc,netexec,msfconsole,nuclei"`.
+   Without that, the ingester is reachable only for runs started outside the
+   MCP exec path. The TUI's `[T]` → nuclei tool needs no allowlist change.
 3. **Review the evidence.** `cerno://finding/{id}/results` and
    `get_finding_detail` show what was verified; `get_finding_verdict` also
    returns a non-binding `suggested_verdict` from NSE evidence (never applied
@@ -392,10 +409,12 @@ you can contribute upstream.
    commands for the same tool that you didn't run; never auto-replaced),
    `excluded` runs and `leak_warnings`. Only successful runs (exit code 0) count.
 4. **Export.** `export_workflow_contribution(finding_id, workflow=None)` writes
-   `<contribution_export_dir>/<plugin_id>-<timestamp>.yaml`. Pass an edited
+   `<contribution_export_dir>/<finding-id>-<timestamp>.yaml` (the `:` in the id
+   is flattened to `-`, since it is a reserved character in Windows filenames).
+   Pass an edited
    `workflow` (`workflow_name`, `description`, `steps[{title, commands, notes}]`,
    `references`) to polish titles and notes. Its commands are sanitized again, and
-   the plugin_id always comes from the finding. The file never overwrites an
+   the finding id always comes from the finding. The file never overwrites an
    existing one, loads as-is via `--custom-workflows`, and its header carries the
    steps for opening a PR against `develop`.
 

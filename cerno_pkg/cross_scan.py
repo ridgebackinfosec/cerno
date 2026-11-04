@@ -11,8 +11,9 @@ import sqlite3
 from dataclasses import dataclass, field
 from typing import Optional
 
-from .database import get_connection, query_all, query_one
+from .database import get_connection, plugin_id_order_sql, query_all, query_one
 from .logging_setup import log_timing
+from .constants import SOURCE_UNKNOWN
 from .parsing import plugin_source
 
 
@@ -88,6 +89,24 @@ class ScanSnapshot:
     low_count: int
     info_count: int
     plugin_ids: list[str] = field(default_factory=list)
+
+    @property
+    def source(self) -> str:
+        """Scanner this snapshot's findings came from.
+
+        Derived from the namespaced ``plugin_ids`` the snapshot already
+        carries, so no schema or view change is needed. Returns
+        :data:`~cerno_pkg.constants.SOURCE_UNKNOWN` for an empty snapshot and
+        ``"mixed"`` for the (currently unreachable) case of one scan holding
+        more than one source -- never a guess, because the caller uses this to
+        decide whether two snapshots are comparable at all.
+        """
+        sources = {plugin_source(pid) for pid in self.plugin_ids}
+        if not sources:
+            return SOURCE_UNKNOWN
+        if len(sources) > 1:
+            return "mixed"
+        return sources.pop()
 
 
 @dataclass
@@ -349,13 +368,13 @@ def get_host_vulnerability_history(
             # Get plugin IDs for this host in this scan
             plugin_rows = query_all(
                 conn,
-                """
+                f"""
                 SELECT DISTINCT f.plugin_id
                 FROM findings f
                 JOIN finding_affected_hosts fah ON f.finding_id = fah.finding_id
                 JOIN hosts h ON fah.host_id = h.host_id
                 WHERE f.scan_id = ? AND h.ip_address = ?
-                ORDER BY CAST(f.plugin_id AS INTEGER) ASC, f.plugin_id ASC
+                ORDER BY {plugin_id_order_sql("f.plugin_id")}
                 """,
                 (row["scan_id"], ip_address),
             )

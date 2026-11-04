@@ -165,7 +165,7 @@ def _preview_plugin(plugin_url):
     from cerno_pkg.models import Plugin
 
     return Plugin(
-        plugin_id=41028,
+        plugin_id="nessus:41028",
         plugin_name="SNMP Agent Default Community Name (public)",
         severity_int=3,
         severity_label="High",

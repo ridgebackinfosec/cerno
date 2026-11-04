@@ -81,7 +81,7 @@ class TestGetByScanIdsMerged:
 
         # Shared plugin (appears in both scans)
         shared_plugin = Plugin(
-            plugin_id=11111,
+            plugin_id="nessus:11111",
             plugin_name="Shared Plugin",
             severity_int=3,
             severity_label="High",
@@ -90,7 +90,7 @@ class TestGetByScanIdsMerged:
 
         # Unique plugin for scan_a only
         plugin_a = Plugin(
-            plugin_id=22222,
+            plugin_id="nessus:22222",
             plugin_name="Plugin A Only",
             severity_int=2,
             severity_label="Medium",
@@ -99,7 +99,7 @@ class TestGetByScanIdsMerged:
 
         # Unique plugin for scan_b only
         plugin_b = Plugin(
-            plugin_id=33333,
+            plugin_id="nessus:33333",
             plugin_name="Plugin B Only",
             severity_int=1,
             severity_label="Low",
@@ -107,13 +107,13 @@ class TestGetByScanIdsMerged:
         plugin_b.save(conn)
 
         # Findings
-        finding_shared_a = Finding(scan_id=scan_a_id, plugin_id=11111)
+        finding_shared_a = Finding(scan_id=scan_a_id, plugin_id="nessus:11111")
         finding_shared_a.save(conn)
-        finding_shared_b = Finding(scan_id=scan_b_id, plugin_id=11111)
+        finding_shared_b = Finding(scan_id=scan_b_id, plugin_id="nessus:11111")
         finding_shared_b.save(conn)
-        finding_a_only = Finding(scan_id=scan_a_id, plugin_id=22222)
+        finding_a_only = Finding(scan_id=scan_a_id, plugin_id="nessus:22222")
         finding_a_only.save(conn)
-        finding_b_only = Finding(scan_id=scan_b_id, plugin_id=33333)
+        finding_b_only = Finding(scan_id=scan_b_id, plugin_id="nessus:33333")
         finding_b_only.save(conn)
 
         conn.commit()
@@ -132,7 +132,7 @@ class TestGetByScanIdsMerged:
         # Should have 3 unique plugins
         assert len(display_list) == 3
         plugin_ids = [p.plugin_id for _, p in display_list]
-        assert set(plugin_ids) == {"11111", "22222", "33333"}
+        assert set(plugin_ids) == {"nessus:11111", "nessus:22222", "nessus:33333"}
 
     def test_all_instances_maps_plugin_to_findings(self, temp_db):
         scan_a_id, scan_b_id = self._setup_two_scans(temp_db)
@@ -140,11 +140,11 @@ class TestGetByScanIdsMerged:
             [scan_a_id, scan_b_id], conn=temp_db
         )
         # Shared plugin should have 2 instances (one per scan)
-        assert len(all_instances["11111"]) == 2
+        assert len(all_instances["nessus:11111"]) == 2
         # Plugin a only has 1 instance
-        assert len(all_instances["22222"]) == 1
+        assert len(all_instances["nessus:22222"]) == 1
         # Plugin b only has 1 instance
-        assert len(all_instances["33333"]) == 1
+        assert len(all_instances["nessus:33333"]) == 1
 
     def test_representative_has_lowest_scan_id(self, temp_db):
         scan_a_id, scan_b_id = self._setup_two_scans(temp_db)
@@ -153,7 +153,7 @@ class TestGetByScanIdsMerged:
         )
         # For shared plugin, representative should be from scan_a (lower scan_id)
         for finding, plugin in display_list:
-            if plugin.plugin_id == "11111":
+            if plugin.plugin_id == "nessus:11111":
                 assert finding.scan_id == scan_a_id
                 break
 
@@ -163,9 +163,11 @@ class TestGetByScanIdsMerged:
             scan_ids=[scan_a_id, scan_b_id], conn=temp_db
         )
         reps = {f.plugin_id: f for f, _p in display_list}
-        assert reps["11111"].extra_finding_ids == [all_instances["11111"][1].finding_id]
-        assert reps["22222"].extra_finding_ids == []
-        assert reps["33333"].extra_finding_ids == []
+        assert reps["nessus:11111"].extra_finding_ids == [
+            all_instances["nessus:11111"][1].finding_id
+        ]
+        assert reps["nessus:22222"].extra_finding_ids == []
+        assert reps["nessus:33333"].extra_finding_ids == []
 
     def test_single_scan_id_works(self, temp_db):
         scan_a_id, scan_b_id = self._setup_two_scans(temp_db)
@@ -180,7 +182,7 @@ class TestGetByScanIdsMerged:
         )
         # Only High severity plugin (11111)
         assert len(display_list) == 1
-        assert display_list[0][1].plugin_id == "11111"
+        assert display_list[0][1].plugin_id == "nessus:11111"
 
 
 # ========== TestScanLabels ==========
@@ -232,16 +234,16 @@ class TestReviewStateBroadcast:
         scan_b_id = scan_b.save(temp_db)
 
         plugin = Plugin(
-            plugin_id=44444,
+            plugin_id="nessus:44444",
             plugin_name="Test Plugin",
             severity_int=3,
             severity_label="High",
         )
         plugin.save(temp_db)
 
-        finding_a = Finding(scan_id=scan_a_id, plugin_id=44444)
+        finding_a = Finding(scan_id=scan_a_id, plugin_id="nessus:44444")
         finding_a.save(temp_db)
-        finding_b = Finding(scan_id=scan_b_id, plugin_id=44444)
+        finding_b = Finding(scan_id=scan_b_id, plugin_id="nessus:44444")
         finding_b.save(temp_db)
 
         temp_db.commit()
@@ -250,10 +252,10 @@ class TestReviewStateBroadcast:
         _, all_instances = Finding.get_by_scan_ids_merged(
             [scan_a_id, scan_b_id], conn=temp_db
         )
-        assert len(all_instances["44444"]) == 2
+        assert len(all_instances["nessus:44444"]) == 2
 
         # Update both findings to completed (simulating broadcast)
-        for f in all_instances["44444"]:
+        for f in all_instances["nessus:44444"]:
             f.update_review_state("done", conn=temp_db)
 
         temp_db.commit()
@@ -292,11 +294,11 @@ class TestHostPluginIdsMultiScan:
         """Two scans: 10.0.0.5 has plugin 100 in A, 200 in B, 300 in both; 10.0.0.9 only in B."""
         scan_a_id = Scan(scan_name="scan_a", export_root="/tmp").save(conn)
         scan_b_id = Scan(scan_name="scan_b", export_root="/tmp").save(conn)
-        self._link(conn, scan_a_id, 100, "10.0.0.5")
-        self._link(conn, scan_b_id, 200, "10.0.0.5")
-        self._link(conn, scan_a_id, 300, "10.0.0.5")
-        self._link(conn, scan_b_id, 300, "10.0.0.5")
-        self._link(conn, scan_b_id, 400, "10.0.0.9")
+        self._link(conn, scan_a_id, "nessus:100", "10.0.0.5")
+        self._link(conn, scan_b_id, "nessus:200", "10.0.0.5")
+        self._link(conn, scan_a_id, "nessus:300", "10.0.0.5")
+        self._link(conn, scan_b_id, "nessus:300", "10.0.0.5")
+        self._link(conn, scan_b_id, "nessus:400", "10.0.0.9")
         conn.commit()
         return scan_a_id, scan_b_id
 
@@ -305,21 +307,21 @@ class TestHostPluginIdsMultiScan:
         result = Host.get_plugin_ids_for_scan(
             ip_address="10.0.0.5", scan_id=a, scan_ids=[a, b], conn=temp_db
         )
-        assert result == ["100", "200", "300"]
+        assert result == ["nessus:100", "nessus:200", "nessus:300"]
 
     def test_host_only_in_secondary_scan(self, temp_db):
         a, b = self._setup(temp_db)
         result = Host.get_plugin_ids_for_scan(
             ip_address="10.0.0.9", scan_id=a, scan_ids=[a, b], conn=temp_db
         )
-        assert result == ["400"]
+        assert result == ["nessus:400"]
 
     def test_single_scan_unchanged(self, temp_db):
         a, _b = self._setup(temp_db)
         result = Host.get_plugin_ids_for_scan(
             ip_address="10.0.0.5", scan_id=a, conn=temp_db
         )
-        assert result == ["100", "300"]
+        assert result == ["nessus:100", "nessus:300"]
 
     def test_partial_match_across_scans(self, temp_db):
         a, b = self._setup(temp_db)
@@ -330,4 +332,4 @@ class TestHostPluginIdsMultiScan:
             partial_match=True,
             conn=temp_db,
         )
-        assert result == ["100", "200", "300", "400"]
+        assert result == ["nessus:100", "nessus:200", "nessus:300", "nessus:400"]

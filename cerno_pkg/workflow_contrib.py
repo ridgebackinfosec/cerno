@@ -203,7 +203,11 @@ class Candidate:
 
     finding_id: int
     plugin_id: str
-    yaml_plugin_id: str  # the entry's plugin_id (keeps a multi-ID entry intact)
+    # The entry's YAML ``finding_id`` value, kept verbatim so a multi-id
+    # entry stays intact. Named for the DB column it comes from, matching
+    # Finding's convention (finding_id = row id, plugin_id = namespaced id);
+    # the YAML key it is written under is "finding_id".
+    yaml_plugin_id: str
     reason: str  # "new" | "enhanced"
     workflow_name: str
     description: str
@@ -218,7 +222,7 @@ class Candidate:
     def to_entry(self) -> dict:
         """The ``workflows[]`` entry, in workflow_mappings.yaml key order."""
         return {
-            "plugin_id": self.yaml_plugin_id,
+            "finding_id": self.yaml_plugin_id,
             "workflow_name": self.workflow_name,
             "description": self.description,
             "steps": [
@@ -520,7 +524,7 @@ def scan_candidate(candidate: Candidate, ctx: LeakContext) -> list[str]:
             )
         )
 
-    check("plugin_id", candidate.yaml_plugin_id)
+    check("finding_id", candidate.yaml_plugin_id)
     check("workflow_name", candidate.workflow_name, usernames=False)
     check("description", candidate.description, usernames=False)
     for i, step in enumerate(candidate.steps):
@@ -734,7 +738,7 @@ def assess_candidate(
             source_ids.append(execution.execution_id)
 
     plugin = Plugin.get_by_id(finding.plugin_id, conn)
-    plugin_name = plugin.plugin_name if plugin else f"Plugin {finding.plugin_id}"
+    plugin_name = plugin.plugin_name if plugin else f"Finding {finding.plugin_id}"
     existing = mapper.get_workflow(str(finding.plugin_id))
 
     if existing is None:
@@ -823,7 +827,7 @@ def assess_candidate(
         Candidate(
             finding_id=finding.finding_id,
             plugin_id=finding.plugin_id,
-            yaml_plugin_id=existing.plugin_id,
+            yaml_plugin_id=existing.finding_id,
             reason="enhanced",
             workflow_name=existing.workflow_name,
             description=existing.description,
@@ -873,7 +877,7 @@ def candidate_from_override(
     """Build a candidate from an operator/Claude-edited workflow dict.
 
     Validates the shape (``workflow_name``, ``description``, ``steps`` [{title,
-    commands, notes}], ``references``); the plugin_id is never taken from the
+    commands, notes}], ``references``); the finding_id is never taken from the
     override. Commands not copied verbatim from the existing workflow are
     genericized again, so pasting a real command is sanitized. Free text (names,
     titles, notes) is NOT rewritten — it must pass the leak scan as written.
@@ -915,7 +919,7 @@ def candidate_from_override(
     if base is not None:
         yaml_plugin_id, reason = base.yaml_plugin_id, base.reason
     elif existing is not None:
-        yaml_plugin_id, reason = existing.plugin_id, "enhanced"
+        yaml_plugin_id, reason = existing.finding_id, "enhanced"
     else:
         yaml_plugin_id, reason = str(finding.plugin_id), "new"
 
@@ -949,7 +953,7 @@ def to_yaml_fragment(candidate: Candidate) -> str:
     via ``WorkflowMapper.load_additional_workflows`` / ``--custom-workflows``.
     """
     header = [
-        f"# Cerno workflow contribution: plugin {candidate.yaml_plugin_id} ({candidate.reason})",
+        f"# Cerno workflow contribution: finding {candidate.yaml_plugin_id} ({candidate.reason})",
         "# Drafted by Cerno from a verified finding's execution trail. Hosts, ports and",
         "# credentials are replaced with <TARGET>/<PORT>/<USERNAME>/<PASSWORD>/<DOMAIN>.",
         "# REVIEW BEFORE SUBMITTING. To contribute:",

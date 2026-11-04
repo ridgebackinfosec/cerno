@@ -30,12 +30,12 @@ def _seed_two_scans(conn: sqlite3.Connection) -> list[int]:
         )
     conn.execute(
         "INSERT INTO plugins (plugin_id, plugin_name, severity_int) "
-        "VALUES (100, 'SMB Signing Disabled', 4)"
+        "VALUES ('nessus:100', 'SMB Signing Disabled', 4)"
     )
     for sid in scan_ids:
         conn.execute(
             "INSERT INTO findings (scan_id, plugin_id, review_state) "
-            "VALUES (?, 100, 'unreviewed')",
+            "VALUES (?, 'nessus:100', 'unreviewed')",
             (sid,),
         )
     conn.commit()

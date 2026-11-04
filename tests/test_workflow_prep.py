@@ -28,9 +28,9 @@ def finding(temp_db):
     c = temp_db
     scan = Scan(scan_name="engagement", export_root="/tmp").save(c)
     Plugin(
-        plugin_id=57608, plugin_name="SMB Signing Not Required", severity_int=3
+        plugin_id="nessus:57608", plugin_name="SMB Signing Not Required", severity_int=3
     ).save(c)
-    fid = Finding(scan_id=scan, plugin_id=57608).save(c)
+    fid = Finding(scan_id=scan, plugin_id="nessus:57608").save(c)
     h = Host.get_or_create("10.0.0.1", "10.0.0.1", "ipv4", conn=c)
     Port.get_or_create(445, conn=c)
     c.execute(
@@ -48,9 +48,11 @@ def finding_multi(temp_db):
     c = temp_db
     scan = Scan(scan_name="engagement", export_root="/tmp").save(c)
     Plugin(
-        plugin_id=42263, plugin_name="Unencrypted Telnet Server", severity_int=2
+        plugin_id="nessus:42263",
+        plugin_name="Unencrypted Telnet Server",
+        severity_int=2,
     ).save(c)
-    fid = Finding(scan_id=scan, plugin_id=42263).save(c)
+    fid = Finding(scan_id=scan, plugin_id="nessus:42263").save(c)
     Port.get_or_create(23, conn=c)
     for ip in ("10.0.0.1", "10.0.0.2"):
         h = Host.get_or_create(ip, ip, "ipv4", conn=c)
@@ -83,7 +85,7 @@ def test_multi_host_joins_multi_target_and_expands_single_target(
         tmp_path,
         [
             {
-                "plugin_id": "42263",
+                "finding_id": "nessus:42263",
                 "workflow_name": "Telnet",
                 "description": "d",
                 "steps": _MIXED_STEPS,
@@ -134,7 +136,7 @@ def _prep(finding, tmp_path, **kwargs):
         tmp_path,
         [
             {
-                "plugin_id": "57608",
+                "finding_id": "nessus:57608",
                 "workflow_name": "SMB",
                 "description": "d",
                 "steps": _STEPS,
@@ -227,7 +229,7 @@ def test_grouped_plugin_key_resolves(finding, tmp_path):
         tmp_path,
         [
             {
-                "plugin_id": "90317,57608,70658",
+                "finding_id": "nessus:90317,nessus:57608,nessus:70658",
                 "workflow_name": "G",
                 "description": "d",
                 "steps": _STEPS,

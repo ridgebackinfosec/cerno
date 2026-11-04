@@ -45,12 +45,12 @@ from .constants import (
     VERDICT_LABELS,
     VERDICT_STYLES,
 )
-from .fs import default_page_size, pretty_severity_label
+from .fs import default_page_size, finding_label, pretty_severity_label
 from .logging_setup import log_timing, log_debug
 
 if TYPE_CHECKING:
     from .models import Finding, Plugin
-    from .cross_scan import ScanComparisonResult, HostVulnerabilityHistory
+    from .cross_scan import ScanComparisonResult, HostVulnerabilityHistory, ScanSnapshot
 
 _console_global = get_console()
 
@@ -363,7 +363,7 @@ def render_empty_state(context: str, filter_text: str = "") -> None:
         warn("\nNo findings in this scan.")
         info("")
         info("This could mean:")
-        info("  • The .nessus file contained no vulnerability findings")
+        info("  • The imported file contained no findings")
         info("  • Import process encountered issues")
         info("")
 
@@ -1461,7 +1461,7 @@ def show_reviewed_help() -> None:
     table.add_row(
         "Move", f"Press [M] to {REVIEW_MOVE_LABELS[REVIEW_STATE_UNREVIEWED].lower()}"
     )
-    table.add_row("Filter", "Press [F] to filter by plugin name")
+    table.add_row("Filter", "Press [F] to filter by finding name")
     table.add_row("", "")
     table.add_row(
         "Note",
@@ -1733,7 +1733,7 @@ def file_raw_paged_text(finding: "Finding", plugin: "Plugin") -> str:
     Returns:
         Formatted string with file info and content
     """
-    display_name = f"Plugin {plugin.plugin_id}: {plugin.plugin_name}"
+    display_name = finding_label(None, plugin)
 
     # Get content from database
     content = file_raw_payload_text(finding)
@@ -1815,7 +1815,7 @@ def grouped_paged_text(finding: "Finding", plugin: "Plugin") -> str:
         Formatted string with header and grouped content
     """
     body = grouped_payload_text(finding)
-    display_name = f"Plugin {plugin.plugin_id}: {plugin.plugin_name}"
+    display_name = finding_label(None, plugin)
     return f"Grouped view: {display_name}\n{body}"
 
 
@@ -1846,7 +1846,7 @@ def hosts_only_paged_text(finding: "Finding", plugin: "Plugin") -> str:
         Formatted string with header and host list
     """
     body = hosts_only_payload_text(finding)
-    display_name = f"Plugin {plugin.plugin_id}: {plugin.plugin_name}"
+    display_name = finding_label(None, plugin)
     return f"Hosts-only view: {display_name}\n{body}"
 
 
@@ -2518,7 +2518,7 @@ def bulk_extract_cves_for_plugins(plugins: List[tuple[str, str]]) -> None:
     # Report failures if any
     if failed_count > 0:
         warn(
-            f"CVE extraction failed for {failed_count} plugin(s). Check logs for details."
+            f"CVE extraction failed for {failed_count} finding(s). Check logs for details."
         )
 
     # Display results
@@ -2882,6 +2882,7 @@ def render_host_history(history: "HostVulnerabilityHistory") -> None:
         box=box.ROUNDED,
     )
     table.add_column("Scan Name", style=style_if_enabled("yellow"))
+    table.add_column("Source", style=style_if_enabled("magenta"))
     table.add_column("Date", style=style_if_enabled("dim"))
     table.add_column("Total", justify="right")
     table.add_column("Critical", justify="right", style=style_if_enabled("red bold"))
@@ -2891,22 +2892,33 @@ def render_host_history(history: "HostVulnerabilityHistory") -> None:
     table.add_column("Info", justify="right", style=style_if_enabled("dim"))
     table.add_column("Trend", justify="center")
 
-    prev_finding_count = None
+    # A trend across two different scanners is meaningless: a 30-finding Nessus
+    # scan followed by a 3-finding nuclei scan is not 27 findings remediated.
+    # Only compare consecutive scans from the same source, and say so instead
+    # of printing a number the operator would read as progress.
+    sources = {scan.source for scan in history.scans}
+    single_source = len(sources) == 1
+
+    prev: Optional[ScanSnapshot] = None
     for scan in history.scans:
         # Calculate trend indicator
         trend = ""
-        if prev_finding_count is not None:
-            diff = scan.finding_count - prev_finding_count
-            if diff > 0:
-                trend = f"[red]+{diff}[/red]"
-            elif diff < 0:
-                trend = f"[green]{diff}[/green]"
+        if prev is not None:
+            if prev.source != scan.source:
+                trend = "[dim]n/a[/dim]"
             else:
-                trend = "[dim]=[/dim]"
-        prev_finding_count = scan.finding_count
+                diff = scan.finding_count - prev.finding_count
+                if diff > 0:
+                    trend = f"[red]+{diff}[/red]"
+                elif diff < 0:
+                    trend = f"[green]{diff}[/green]"
+                else:
+                    trend = "[dim]=[/dim]"
+        prev = scan
 
         table.add_row(
             Text(scan.scan_name),  # Text: scan-derived
+            Text(scan.source),
             format_date(scan.scan_date),
             str(scan.finding_count),
             str(scan.critical_count) if scan.critical_count else "-",
@@ -2921,15 +2933,28 @@ def render_host_history(history: "HostVulnerabilityHistory") -> None:
 
     # Summary
     _console_global.print()
-    if history.scan_count >= 2:
+    if history.scan_count >= 2 and not single_source:
+        info(
+            "Overall trend: not shown - this host's scans come from different "
+            f"sources ({', '.join(sorted(sources))}), which count different "
+            "things. Compare scans from one source."
+        )
+    elif history.scan_count >= 2:
         first = history.scans[0]
         last = history.scans[-1]
         total_change = last.finding_count - first.finding_count
+        # _console_global.print, not info(): info() does not parse Rich markup,
+        # so these lines used to print their own "[red]...[/red]" tags verbatim.
+        # The content here is numbers and fixed text, never scan-derived.
         if total_change > 0:
-            info(f"Overall trend: [red]+{total_change} findings[/red] since first scan")
+            _console_global.print(
+                f"Overall trend: [red]+{total_change} findings[/red] since first scan"
+            )
         elif total_change < 0:
-            info(
+            _console_global.print(
                 f"Overall trend: [green]{total_change} findings[/green] since first scan"
             )
         else:
-            info("Overall trend: [yellow]No change[/yellow] in finding count")
+            _console_global.print(
+                "Overall trend: [yellow]No change[/yellow] in finding count"
+            )

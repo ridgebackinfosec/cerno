@@ -12,6 +12,7 @@ import pytest
 import yaml
 
 from cerno_pkg import workflow_contrib as wc
+from cerno_pkg.parsing import plugin_ref
 from cerno_pkg.models import Finding, Host, Plugin, Port, Scan, ToolExecution
 from cerno_pkg.workflow_mapper import WorkflowMapper
 
@@ -236,7 +237,7 @@ class TestBaseline:
 
 def _seed(
     conn,
-    plugin_id=96982,
+    plugin_id="nessus:96982",
     hosts=("10.20.0.11", "10.20.0.15"),
     ports=(445,),
     plugin_name="SMB Protocol Version 1 Enabled",
@@ -247,7 +248,9 @@ def _seed(
         plugin_name=plugin_name,
         severity_int=2,
         cves=["CVE-2017-0144"],
-        plugin_url=f"https://www.tenable.com/plugins/nessus/{plugin_id}",
+        # Built from the source-native ref, as nessus_import does: the
+        # Tenable URL takes the bare number, not the namespaced id.
+        plugin_url=f"https://www.tenable.com/plugins/nessus/{plugin_ref(plugin_id)}",
     ).save(conn)
     fid = Finding(scan_id=scan_id, plugin_id=plugin_id).save(conn)
     for ip in hosts:
@@ -282,7 +285,7 @@ def _mapper(tmp_path, workflows):
 
 EMPTY = []
 SMB_WORKFLOW = {
-    "plugin_id": "96982,57608",
+    "finding_id": "nessus:96982,nessus:57608",
     "workflow_name": "SMB checks",
     "description": "existing",
     "steps": [
@@ -312,7 +315,7 @@ class TestBuildCandidate:
         finding = Finding.get_by_id(fid, temp_db)
         cand = wc.build_candidate(finding, temp_db, _mapper(tmp_path, EMPTY))
         assert cand is not None and cand.reason == "new"
-        assert cand.yaml_plugin_id == "96982"
+        assert cand.yaml_plugin_id == "nessus:96982"
         assert cand.description == "Verify: SMB Protocol Version 1 Enabled"
         titles = [s.title for s in cand.steps]
         assert titles == ["Run NSE scripts: smb-protocols", "Check with NetExec (smb)"]
@@ -367,7 +370,9 @@ class TestBuildCandidate:
         finding = Finding.get_by_id(fid, temp_db)
         cand = wc.build_candidate(finding, temp_db, _mapper(tmp_path, [SMB_WORKFLOW]))
         assert cand is not None and cand.reason == "enhanced"
-        assert cand.yaml_plugin_id == "96982,57608"  # multi-ID entry kept intact
+        assert (
+            cand.yaml_plugin_id == "nessus:96982,nessus:57608"
+        )  # multi-ID entry kept intact
         assert cand.workflow_name == "SMB checks"
         assert cand.steps[0].commands == SMB_WORKFLOW["steps"][0]["commands"]
         assert cand.steps[-1].title == "Additional verification (contributed)"
@@ -405,7 +410,7 @@ class TestOverrideAndYaml:
         assert m.load_additional_workflows(path) == 1
         # get_workflow() would re-check the (missing) primary file and clear; read
         # the merged entry directly.
-        wf = m.workflows.get("96982")
+        wf = m.workflows.get("nessus:96982")
         assert wf is not None
         assert wf.steps[0].commands == [
             "nmap -p <PORT> --script smb-protocols <TARGET>"
@@ -426,7 +431,7 @@ class TestOverrideAndYaml:
             "references": ["https://www.tenable.com/plugins/nessus/96982"],
         }
         edited = wc.candidate_from_override(finding, override, cand, temp_db, mapper)
-        assert edited.yaml_plugin_id == "96982"
+        assert edited.yaml_plugin_id == "nessus:96982"
         assert edited.steps[0].commands == [
             "nmap -p <PORT> --script smb-protocols <TARGET>"
         ]
@@ -463,7 +468,10 @@ class TestOverrideAndYaml:
         """Regression: plugin 10092 'FTP Anonymous Login' with an nxc cred
         username (and anon password) 'anonymous' must not block the export."""
         fid = _seed(
-            temp_db, plugin_id=10092, ports=(21,), plugin_name="FTP Anonymous Login"
+            temp_db,
+            plugin_id="nessus:10092",
+            ports=(21,),
+            plugin_name="FTP Anonymous Login",
         )
         _exec(temp_db, fid, "nmap -p 21 --script ftp-anon 10.20.0.11")
         finding = Finding.get_by_id(fid, temp_db)
@@ -538,11 +546,11 @@ class TestOverrideAndYaml:
         assert all("31d6cfe0" not in h for h in hits)
 
     def test_copied_existing_paths_not_path_checked(self, temp_db, tmp_path):
-        fid = _seed(temp_db, plugin_id=40984)
+        fid = _seed(temp_db, plugin_id="nessus:40984")
         _exec(temp_db, fid, "nmap -p 445 --script http-enum 10.20.0.11")
         finding = Finding.get_by_id(fid, temp_db)
         wf = {
-            "plugin_id": "40984",
+            "finding_id": "nessus:40984",
             "workflow_name": "Browse",
             "description": "d",
             "steps": [
@@ -576,9 +584,9 @@ def test_get_host_identifiers_and_by_finding(temp_db):
 def test_prepare_workflow_fills_domain(temp_db, tmp_path):
     from cerno_pkg.workflow_prep import prepare_workflow
 
-    fid = _seed(temp_db, plugin_id=555)
+    fid = _seed(temp_db, plugin_id="nessus:555")
     wf = {
-        "plugin_id": "555",
+        "finding_id": "nessus:555",
         "workflow_name": "w",
         "description": "d",
         "steps": [

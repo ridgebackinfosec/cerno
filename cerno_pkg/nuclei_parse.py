@@ -142,6 +142,26 @@ class ParsedNucleiMatch:
         """Identity of the affected host:port, for merging colliding matches."""
         return (self.effective_ip, self.host, self.port)
 
+    @property
+    def service_name(self) -> Optional[str]:
+        """Service for ``host_services.svc_name``, or None if unknowable.
+
+        nuclei reports a URL, not a service name, so the scheme in
+        ``matched-at`` is the service: ``http://x/robots.txt`` is an ``http``
+        service. ``v_http_services`` already accepts the literal ``http`` and
+        ``https`` tokens, so these rows need no view change.
+
+        Where there is no scheme -- an ``ssl`` template's ``matched-at`` is a
+        bare ``host:port`` -- the record's ``type`` is used instead. That is
+        deliberately *not* mapped to http/https: an ssl template firing on
+        3389 is not a web service, and claiming otherwise would put RDP in the
+        web-target list. The view's port-based arm still catches 443.
+        """
+        scheme, sep, _ = self.matched_at.partition("://")
+        if sep and scheme.strip().lower() in _SCHEME_PORTS:
+            return scheme.strip().lower()
+        return self.result_type.strip().lower() or None
+
 
 @dataclass
 class ParsedNucleiTemplate:

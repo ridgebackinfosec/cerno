@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-Cerno - Modern CLI for Nessus finding host review and security tool orchestration.
+Cerno - Modern CLI for vulnerability finding review and security tool orchestration.
 
-This tool provides an interactive TUI for reviewing Nessus finding exports,
-running security tools (nmap, netexec, metasploit), and tracking progress.
+This tool provides an interactive TUI for reviewing findings imported from
+Nessus and nuclei, running security tools (nmap, netexec, metasploit), and
+tracking progress.
 """
 
 # --- import path shim (supports both `python cerno.py` and `python -m cerno`) ---
@@ -1123,7 +1124,7 @@ def browse_file_list(
             continue
         elif action_type == "mark_all":
             # Bulk move: each filtered finding moves to its next status
-            from cerno_pkg.fs import move_review_state
+            from cerno_pkg.fs import finding_label, move_review_state
             from rich.prompt import Confirm
 
             to_start = sum(
@@ -1163,9 +1164,7 @@ def browse_file_list(
                 for finding, plugin in candidates:
                     new_state = move_review_state(finding, plugin, quiet=True)
                     if new_state is not None:
-                        display_name = (
-                            f"Plugin {plugin.plugin_id}: {plugin.plugin_name}"
-                        )
+                        display_name = finding_label(finding, plugin)
                         if new_state == REVIEW_STATE_DONE:
                             finished += 1
                             done_total.append(display_name)
@@ -1567,7 +1566,8 @@ def main(args: types.SimpleNamespace) -> None:
                 except Exception as e:
                     err(f"Failed to query scans from database: {e}")
                     info(
-                        "If the database is corrupted, try: rm ~/.cerno/cerno.db && cerno import nessus <file>"
+                        "If the database is corrupted, try: rm ~/.cerno/cerno.db, then "
+                        "re-import with cerno import nessus|nuclei <file>"
                     )
                     return
 
@@ -1577,7 +1577,7 @@ def main(args: types.SimpleNamespace) -> None:
 
                     show_guided_tour()
                     # After tour, show import instructions
-                    info("\nTo get started, import a Nessus scan:")
+                    info("\nTo get started, import a scan:")
                     info("  cerno import nessus /path/to/scan.nessus")
                     info("  cerno import nuclei /path/to/nuclei.json\n")
                     return
@@ -1825,7 +1825,7 @@ def main(args: types.SimpleNamespace) -> None:
 
                     # Workflow Mapped virtual group (menu counts) - query from database
                     # Apply host filter if active (intersect workflow plugins with host filter)
-                    workflow_plugin_ids = workflow_mapper.get_all_plugin_ids()
+                    workflow_plugin_ids = workflow_mapper.get_all_finding_ids()
                     if workflow_plugin_ids:
                         # plugin_id is TEXT and namespaced per source, so this
                         # must stay string-keyed: an int()/isdigit() filter here
@@ -2941,6 +2941,58 @@ def _derive_nuclei_scan_name(results: Path) -> str:
 GENERIC_NUCLEI_STEMS = frozenset({"nuclei", "results", "output", "nuclei_results"})
 
 
+def show_nuclei_tool_suggestions(scan_name: str) -> None:
+    """Display suggested next steps after a nuclei import completes.
+
+    A nuclei-only scan is a first-class case -- a web-app engagement may import
+    nothing else -- so it needs its own suggestions. The Nessus path reaches
+    ``_show_nuclei_suggestion`` and stops there, which would leave an operator
+    who started with nuclei no onward step at all.
+
+    Args:
+        scan_name: Name of the imported scan (for DB queries)
+    """
+    try:
+        from cerno_pkg.constants import SCANS_ROOT
+        from cerno_pkg.models import Scan, get_http_urls_for_scan
+        from cerno_pkg.tools import NUCLEI_OUTPUT_NAMES, build_nuclei_cmd
+
+        scan = Scan.get_by_name(scan_name)
+        if not scan or scan.scan_id is None:
+            return
+
+        urls = get_http_urls_for_scan(scan.scan_id)
+        if not urls:
+            return  # Nothing web-shaped to follow up on — skip silently
+
+        out_dir = SCANS_ROOT / scan_name
+        out_dir.mkdir(parents=True, exist_ok=True)
+        urls_file = out_dir / "http_urls.txt"
+        urls_file.write_text("\n".join(urls) + "\n")
+
+        header("Suggested Next Steps")
+        info(
+            f"\nnuclei matched {len(urls)} web service(s) — the URL(s) have been "
+            f"written to {urls_file}\n"
+        )
+
+        info(fmt_action("1. nmap (fingerprint the services nuclei matched):"))
+        info(f"   nmap -sV -iL {urls_file} -oA {out_dir / 'nmap-web'}\n")
+
+        info(fmt_action("2. nuclei (re-run with a wider template set):"))
+        info(f"   {build_nuclei_cmd(urls_file, out_dir)}\n")
+        info("   Then import the results into this database:")
+        info(f"   cerno import nuclei {out_dir / NUCLEI_OUTPUT_NAMES['json']}\n")
+
+        info(fmt_action("3. Corroborate these findings with a Nessus scan:"))
+        info("   cerno import nessus /path/to/scan.nessus\n")
+
+        info("Tip: Copy these commands to run them in your terminal.\n")
+
+    except Exception:
+        pass  # Non-fatal — never break the import flow over a hint
+
+
 def _import_single_nuclei(
     results: Path, name: Optional[str], min_severity: int
 ) -> bool:
@@ -3008,8 +3060,10 @@ def _import_single_nuclei(
     ok(f"Import complete: {result.plugins_exported} findings")
     _show_severity_breakdown(result.severities)
 
+    show_nuclei_tool_suggestions(scan_name)
+
     _console_global.print()
-    info(f"Review them with: cerno review")
+    info("Review them with: cerno review")
     return True
 
 
@@ -3168,6 +3222,7 @@ def list_scans(
         return
 
     from cerno_pkg.ansi import style_if_enabled
+    from rich.text import Text
 
     def _fmt_last_reviewed(value: object) -> str:
         if not value:
@@ -3178,6 +3233,10 @@ def list_scans(
             return datetime.fromisoformat(str(value)).strftime("%Y-%m-%d")
         except Exception:
             return str(value)
+
+    def _fmt_source(scan: dict) -> str:
+        """Scanner that produced the scan, or "-" for an empty scan."""
+        return str(scan.get("source") or "-")
 
     def _done_pct(scan: dict) -> str:
         total = scan["total_findings"] or 0
@@ -3193,6 +3252,11 @@ def list_scans(
 
     if wide:
         table.add_column("Scan Name", style=style_if_enabled("yellow"), no_wrap=True)
+        # min_width: "nessus"/"nuclei" are 6 chars and the column is useless
+        # truncated to "ne…", so it keeps its width when the table is cramped.
+        table.add_column(
+            "Source", style=style_if_enabled("magenta"), no_wrap=True, min_width=6
+        )
         table.add_column(
             "Total Unique Hosts", justify="right", style=style_if_enabled("bright_cyan")
         )
@@ -3206,7 +3270,8 @@ def list_scans(
         table.add_column("Last Reviewed", style=style_if_enabled("dim"))
         for scan in scans:
             table.add_row(
-                scan["scan_name"],
+                Text(scan["scan_name"]),  # Text: scan-derived
+                Text(_fmt_source(scan)),
                 str(scan["unique_hosts"] or 0),
                 str(scan["total_findings"] or 0),
                 str(scan["critical_count"] or 0),
@@ -3219,6 +3284,11 @@ def list_scans(
             )
     else:
         table.add_column("Scan Name", style=style_if_enabled("yellow"), no_wrap=True)
+        # min_width: "nessus"/"nuclei" are 6 chars and the column is useless
+        # truncated to "ne…", so it keeps its width when the table is cramped.
+        table.add_column(
+            "Source", style=style_if_enabled("magenta"), no_wrap=True, min_width=6
+        )
         table.add_column(
             "Hosts", justify="right", style=style_if_enabled("bright_cyan")
         )
@@ -3229,7 +3299,8 @@ def list_scans(
         table.add_column("Last Reviewed", style=style_if_enabled("dim"))
         for scan in scans:
             table.add_row(
-                scan["scan_name"],
+                Text(scan["scan_name"]),  # Text: scan-derived
+                Text(_fmt_source(scan)),
                 str(scan["unique_hosts"] or 0),
                 str(scan["total_findings"] or 0),
                 str(scan["critical_count"] or 0),
@@ -3709,7 +3780,7 @@ def workflow_list(
         None, "--custom-workflows", "-w", help="Path to custom workflows YAML file"
     ),
 ) -> None:
-    """Display all available workflows with plugin IDs and descriptions."""
+    """Display all available workflows with finding IDs and descriptions."""
     from cerno_pkg.workflow_mapper import WorkflowMapper
     from rich.table import Table
     from cerno_pkg.ansi import get_console
@@ -3744,12 +3815,15 @@ def workflow_list(
         show_header=True,
         header_style="bold magenta",
     )
-    table.add_column("Finding ID(s)", style="cyan", no_wrap=True)
+    # Folds rather than no_wrap: namespacing every id made the longest
+    # multi-finding value ~160 chars, which with no_wrap squeezed the name
+    # and description columns down to nothing.
+    table.add_column("Finding ID(s)", style="cyan", max_width=34, overflow="fold")
     table.add_column("Workflow Name", style="yellow")
     table.add_column("Description", style="dim")
 
     for workflow in all_workflows:
-        plugin_ids = workflow.get("plugin_id", "")
+        finding_ids = workflow.get("finding_id", "")
         workflow_name = workflow.get("workflow_name", "")
         description = workflow.get("description", "")
 
@@ -3757,7 +3831,7 @@ def workflow_list(
         if len(description) > 80:
             description = description[:77] + "..."
 
-        table.add_row(plugin_ids, workflow_name, description)
+        table.add_row(finding_ids, workflow_name, description)
 
     console.print()
     console.print(table)

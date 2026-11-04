@@ -99,7 +99,7 @@ class TestBuildFindingContextWorkflow:
 
     def _make_workflow(self) -> Workflow:
         return Workflow(
-            plugin_id="11011",
+            finding_id="nessus:11011",
             workflow_name="EternalBlue Check",
             description="Verify MS17-010 exploitability on affected hosts.",
             steps=[

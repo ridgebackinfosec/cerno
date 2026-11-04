@@ -174,14 +174,14 @@ def contract(tmp_path, monkeypatch):
     scan_id = Scan(scan_name="engagement", export_root=str(tmp_path)).save(conn)
     Scan(scan_name="baseline", export_root=str(tmp_path)).save(conn)
     Plugin(
-        plugin_id=100,
+        plugin_id="nessus:100",
         plugin_name="SMB Signing",
         severity_int=4,
         has_metasploit=True,
         cves=["CVE-2021-1"],
         metasploit_names=["ms17_010"],
     ).save(conn)
-    finding_id = Finding(scan_id=scan_id, plugin_id=100).save(conn)
+    finding_id = Finding(scan_id=scan_id, plugin_id="nessus:100").save(conn)
     host_id = Host.get_or_create("10.0.0.1", "10.0.0.1", "ipv4", conn=conn)
     Port.get_or_create(445, conn=conn)
     conn.execute(
@@ -522,8 +522,8 @@ def test_prompts_do_not_touch_default_db(tmp_path, monkeypatch, temp_db):
     monkeypatch.setattr(database, "DATABASE_PATH", empty)
 
     scan_id = Scan(scan_name="s", export_root="/tmp").save(temp_db)
-    Plugin(plugin_id=1, plugin_name="P", severity_int=4).save(temp_db)
-    fid = Finding(scan_id=scan_id, plugin_id=1).save(temp_db)
+    Plugin(plugin_id="nessus:1", plugin_name="P", severity_int=4).save(temp_db)
+    fid = Finding(scan_id=scan_id, plugin_id="nessus:1").save(temp_db)
     host_id = Host.get_or_create("10.0.0.1", "10.0.0.1", "ipv4", conn=temp_db)
     Port.get_or_create(445, conn=temp_db)
     temp_db.execute(
