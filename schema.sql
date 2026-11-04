@@ -16,8 +16,8 @@
 CREATE TABLE IF NOT EXISTS scans (
     scan_id INTEGER PRIMARY KEY AUTOINCREMENT,
     scan_name TEXT NOT NULL UNIQUE,
-    nessus_file_path TEXT,                  -- Original .nessus file path
-    nessus_file_hash TEXT,                  -- SHA256 of .nessus file for change detection
+    source_file_path TEXT,                  -- Original scan file (.nessus, nuclei .json/.jsonl)
+    source_file_hash TEXT,                  -- SHA256 of the source file, for change detection
     export_root TEXT NOT NULL,              -- Root directory recorded at import (no files are written)
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     last_reviewed_at TIMESTAMP
@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS scans (
 CREATE INDEX IF NOT EXISTS idx_scans_name ON scans(scan_name);
 
 CREATE TABLE IF NOT EXISTS plugins (
-    plugin_id INTEGER PRIMARY KEY,          -- Nessus plugin ID (e.g., 57608)
+    plugin_id TEXT PRIMARY KEY,             -- '57608' (nessus) | 'nuclei:apache-detect'
+    source_id INTEGER NOT NULL DEFAULT 1,   -- FK -> finding_sources (1 = nessus)
     plugin_name TEXT NOT NULL,
     severity_int INTEGER NOT NULL,          -- 0=Info, 1=Low, 2=Medium, 3=High, 4=Critical
     has_metasploit BOOLEAN DEFAULT 0,
@@ -34,19 +35,21 @@ CREATE TABLE IF NOT EXISTS plugins (
     cvss2_score REAL,                       -- CVSS v2 base score (fallback)
     metasploit_names TEXT,                  -- JSON: ["Chargen Probe Utility", "Another Module"]
     cves TEXT,                              -- JSON: ["CVE-2023-1234", "CVE-2023-5678"]
-    plugin_url TEXT,                        -- https://www.tenable.com/plugins/nessus/{plugin_id}
+    plugin_url TEXT,                        -- source-specific details page (see constants.PLUGIN_URL_TEMPLATES)
     metadata_fetched_at TIMESTAMP,
     CONSTRAINT severity_range CHECK (severity_int BETWEEN 0 AND 4),
-    FOREIGN KEY (severity_int) REFERENCES severity_levels(severity_int)
+    FOREIGN KEY (severity_int) REFERENCES severity_levels(severity_int),
+    FOREIGN KEY (source_id) REFERENCES finding_sources(source_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_plugins_severity ON plugins(severity_int);
 CREATE INDEX IF NOT EXISTS idx_plugins_metasploit ON plugins(has_metasploit);
+CREATE INDEX IF NOT EXISTS idx_plugins_source ON plugins(source_id);
 
 CREATE TABLE IF NOT EXISTS findings (
     finding_id INTEGER PRIMARY KEY AUTOINCREMENT,
     scan_id INTEGER NOT NULL,
-    plugin_id INTEGER NOT NULL,
+    plugin_id TEXT NOT NULL,
     review_state TEXT NOT NULL DEFAULT 'unreviewed',
     reviewed_at TIMESTAMP,
     reviewed_by TEXT,
@@ -149,6 +152,15 @@ CREATE TABLE IF NOT EXISTS workflow_executions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_workflow_executions_finding ON workflow_executions(finding_id);
+
+-- Finding sources lookup table (which scanner produced a plugin row)
+-- Pre-populated with:
+-- (1, 'nessus')
+-- (2, 'nuclei')
+CREATE TABLE IF NOT EXISTS finding_sources (
+    source_id INTEGER PRIMARY KEY,
+    source_name TEXT NOT NULL UNIQUE
+);
 
 -- Severity levels lookup table (normalized reference data)
 -- Severity levels lookup table (normalized reference data)
@@ -474,7 +486,8 @@ SELECT
     p.cves,
     p.metasploit_names,
     p.plugin_url,
-    p.metadata_fetched_at
+    p.metadata_fetched_at,
+    p.source_id
 FROM plugins p
 JOIN severity_levels sl ON p.severity_int = sl.severity_int;
 

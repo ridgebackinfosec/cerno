@@ -25,6 +25,8 @@ from rich.prompt import Prompt
 
 from .ansi import header, info, ok, warn
 from .constants import (
+    NUCLEI_RESPONSE_SIZE_READ,
+    NUCLEI_RESPONSE_SIZE_SAVE,
     NETEXEC_PROTOCOLS,
     NSE_PROFILES,
 )
@@ -518,6 +520,76 @@ def credential_placeholder(ref: str) -> str:
     command, the logged command_text, or an artifact.
     """
     return f"@cred:{ref}@"
+
+
+#: Filenames the suggested nuclei command writes into a scan's directory.
+#:
+#: ``cerno import nuclei`` reads the ``json`` one, so these must stay stable:
+#: the suggestion and the importer are two halves of the same loop.
+NUCLEI_OUTPUT_NAMES: dict[str, str] = {
+    "json": "nuclei.json",
+    "text": "nuclei.txt",
+    "markdown": "markdown",
+}
+
+
+def build_nuclei_cmd(
+    urls_file: Path,
+    output_dir: Path,
+    *,
+    config: Optional["CernoConfig"] = None,
+) -> str:
+    """Build the nuclei command suggested after an import.
+
+    Every output path lands inside ``output_dir`` (the scan's directory) so the
+    operator can run the command and then hand the JSON straight back to
+    ``cerno import nuclei`` without retyping a path.
+
+    ``-je`` is used rather than ``-jle`` to match the artifact set operators
+    expect alongside ``-o``/``-me``; note that ``-je`` buffers results in
+    memory and writes once at exit, so an interrupted scan produces no file.
+    ``-jle`` streams and the importer accepts either shape.
+
+    Args:
+        urls_file: Target list to scan (``-l``), normally ``http_urls.txt``.
+        output_dir: Scan directory that receives the JSON, text and markdown
+            reports.
+        config: Configuration supplying the templates path, profile,
+            User-Agent and concurrency. Loaded if omitted.
+
+    Returns:
+        The command as a single shell-ready string.
+    """
+    if config is None:
+        from .config import load_config
+
+        config = load_config()
+    cfg = config
+
+    templates = str(Path(cfg.nuclei_templates_path).expanduser())
+    parts = [
+        "nuclei",
+        f"-l {urls_file}",
+        f"-ud {templates}",
+        "-duc",
+    ]
+
+    profile = (cfg.nuclei_profile or "").strip()
+    if profile:
+        parts.insert(2, f"-profile {Path(profile).expanduser()}")
+
+    parts += [
+        f"-je {output_dir / NUCLEI_OUTPUT_NAMES['json']}",
+        f"-o {output_dir / NUCLEI_OUTPUT_NAMES['text']}",
+        f"-me {output_dir / NUCLEI_OUTPUT_NAMES['markdown']}",
+        f"-H 'User-Agent: {cfg.nuclei_user_agent}'",
+        f"-rsr {NUCLEI_RESPONSE_SIZE_READ}",
+        f"-rss {NUCLEI_RESPONSE_SIZE_SAVE}",
+        f"-c {cfg.nuclei_concurrency}",
+        "-ts",
+        "-stats",
+    ]
+    return " ".join(parts)
 
 
 def build_netexec_cmd(
@@ -1296,10 +1368,10 @@ def run_tool_workflow(
 
     tool_used = False
 
-    # Get plugin details directly from Plugin object
-    from .constants import PLUGIN_DETAILS_BASE
-
-    plugin_url = f"{PLUGIN_DETAILS_BASE}{plugin.plugin_id}"
+    # Get plugin details directly from Plugin object. Use the source-aware
+    # details URL (and the one captured at import) rather than assuming every
+    # plugin id is a Nessus one -- a Tenable link for a nuclei finding is dead.
+    plugin_url = plugin.details_url or ""
     plugin_id = str(plugin.plugin_id)
 
     # Create synthetic path for ToolContext and logging (matches original chosen parameter)
@@ -1367,7 +1439,7 @@ def run_tool_workflow(
                 header("Metasploit Module Information")
 
                 with get_connection() as conn:
-                    plugin_obj = Plugin.get_by_id(int(plugin_id), conn=conn)
+                    plugin_obj = Plugin.get_by_id(plugin_id, conn=conn)
 
                 if not plugin_obj or not plugin_obj.metasploit_names:
                     warn("No Metasploit modules associated with this finding.")

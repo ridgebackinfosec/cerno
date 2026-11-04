@@ -4,15 +4,15 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cerno"
-version = "2.13.1"
-description = "Modern CLI for Nessus findings review and security tool orchestration"
+version = "3.0.0"
+description = "Modern CLI for vulnerability findings review and security tool orchestration"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [
     {name = "Ridgeback InfoSec, LLC"}
 ]
-keywords = ["nessus", "security", "penetration-testing", "vulnerability-scanning", "nmap", "netexec"]
+keywords = ["nessus", "nuclei", "security", "penetration-testing", "vulnerability-scanning", "nmap", "netexec"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Information Technology",
@@ -62,7 +62,7 @@ packages = ["cerno_pkg", "cerno_pkg.mcp_server"]
 py-modules = ["cerno"]
 
 [tool.setuptools.package-data]
-cerno_pkg = ["*.yaml", "skills/*.md", "demo/*.nessus", "demo/nxc-workspace/*"]
+cerno_pkg = ["*.yaml", "skills/*.md", "demo/*.nessus", "demo/*.json", "demo/nxc-workspace/*"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

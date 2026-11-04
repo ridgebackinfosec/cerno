@@ -1,0 +1,2752 @@
+[
+  {
+    "template": "http/technologies/tech-detect.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/tech-detect",
+    "template-id": "tech-detect",
+    "template-path": "/opt/nuclei-templates/http/technologies/tech-detect.yaml",
+    "info": {
+      "author": [
+        "hakluke",
+        "righettod",
+        "matejsmycka"
+      ],
+      "metadata": {
+        "max-request": 1
+      },
+      "name": "Wappalyzer Technology Detection",
+      "severity": "info",
+      "tags": [
+        "tech",
+        "discovery"
+      ]
+    },
+    "type": "http",
+    "host": "198.51.100.10",
+    "port": "80",
+    "scheme": "http",
+    "url": "http://198.51.100.10",
+    "matched-at": "http://198.51.100.10",
+    "matcher-name": "apache",
+    "ip": "198.51.100.10",
+    "timestamp": "2026-11-03T09:15:00-05:00",
+    "curl-command": "curl -X 'GET' -d '' -H 'Accept: */*' -H 'Accept-Language: en' -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0' 'http://198.51.100.10'",
+    "matcher-status": true
+  },
+  {
+    "template": "http/technologies/tech-detect.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/tech-detect",
+    "template-id": "tech-detect",
+    "template-path": "/opt/nuclei-templates/http/technologies/tech-detect.yaml",
+    "info": {
+      "author": [
+        "hakluke",
+        "righettod",
+        "matejsmycka"
+      ],
+      "metadata": {
+        "max-request": 1
+      },
+      "name": "Wappalyzer Technology Detection",
+      "severity": "info",
+      "tags": [
+        "tech",
+        "discovery"
+      ]
+    },
+    "type": "http",
+    "host": "198.51.100.10",
+    "port": "80",
+    "scheme": "http",
+    "url": "http://198.51.100.10",
+    "matched-at": "http://198.51.100.10",
+    "matcher-name": "ubuntu",
+    "ip": "198.51.100.10",
+    "timestamp": "2026-11-03T09:15:03-05:00",
+    "curl-command": "curl -X 'GET' -d '' -H 'Accept: */*' -H 'Accept-Language: en' -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0' 'http://198.51.100.10'",
+    "matcher-status": true
+  },
+  {
+    "template": "http/technologies/apache/apache-detect.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/apache-detect",
+    "template-id": "apache-detect",
+    "template-path": "/opt/nuclei-templates/http/technologies/apache/apache-detect.yaml",
+    "info": {
+      "author": [
+        "philippedelteil"
+      ],
+      "description": "Some Apache servers have the version on the response header. The OpenSSL version can be also obtained",
+      "metadata": {
+        "max-request": 1
+      },
+      "name": "Apache Detection",
+      "severity": "info",
+      "tags": [
+        "tech",
+        "apache",
+        "discovery"
+      ]
+    },
+    "type": "http",
+    "host": "198.51.100.10",
+    "port": "80",
+    "scheme": "http",
+    "url": "http://198.51.100.10",
+    "matched-at": "http://198.51.100.10",
+    "extracted-results": [
+      "Apache/2.4.29 (Ubuntu)"
+    ],
+    "ip": "198.51.100.10",
+    "timestamp": "2026-11-03T09:15:06-05:00",
+    "curl-command": "curl -X 'GET' -d '' -H 'Accept: */*' -H 'Accept-Language: en' -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0' 'http://198.51.100.10'",
+    "matcher-status": true
+  },
+  {
+    "template": "http/miscellaneous/robots-txt.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/robots-txt",
+    "template-id": "robots-txt",
+    "template-path": "/opt/nuclei-templates/http/miscellaneous/robots-txt.yaml",
+    "info": {
+      "author": [
+        "CasperGN",
+        "TheZakMan"
+      ],
+      "metadata": {
+        "max-request": 2
+      },
+      "name": "robots.txt file",
+      "severity": "info",
+      "tags": [
+        "miscellaneous",
+        "misc",
+        "generic",
+        "vuln"
+      ]
+    },
+    "type": "http",
+    "host": "198.51.100.10",
+    "port": "80",
+    "scheme": "http",
+    "url": "http://198.51.100.10",
+    "matched-at": "http://198.51.100.10/robots.txt",
+    "ip": "198.51.100.10",
+    "timestamp": "2026-11-03T09:15:09-05:00",
+    "curl-command": "curl -X 'GET' -d '' -H 'Accept: */*' -H 'Accept-Language: en' -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0' 'http://198.51.100.10/robots.txt'",
+    "matcher-status": true
+  },
+  {
+    "template": "http/misconfiguration/http-missing-security-headers.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/http-missing-security-headers",
+    "template-id": "http-missing-security-headers",
+    "template-path": "/opt/nuclei-templates/http/misconfiguration/http-missing-security-headers.yaml",
+    "info": {
+      "author": [
+        "socketz",
+        "geeknik",
+        "G4L1T0",
+        "convisoappsec",
+        "kurohost",
+        "dawid-czarnecki",
+        "forgedhallpass",
+        "jub0bs",
+        "userdehghani",
+        "celbahraoui",
+        "safejulian"
+      ],
+      "classification": {
+        "cwe-id": [
+          "CWE-693"
+        ]
+      },
+      "description": "This template searches for missing HTTP security headers. The impact of these missing headers can vary.",
+      "metadata": {
+        "max-request": 1
+      },
+      "name": "HTTP Missing Security Headers",
+      "severity": "info",
+      "tags": [
+        "misconfig",
+        "headers",
+        "generic",
+        "vuln"
+      ]
+    },
+    "type": "http",
+    "host": "198.51.100.10",
+    "port": "80",
+    "scheme": "http",
+    "url": "http://198.51.100.10",
+    "matched-at": "http://198.51.100.10",
+    "matcher-name": "strict-transport-security",
+    "ip": "198.51.100.10",
+    "timestamp": "2026-11-03T09:15:12-05:00",
+    "curl-command": "curl -X 'GET' -d '' -H 'Accept: */*' -H 'Accept-Language: en' -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0' 'http://198.51.100.10'",
+    "matcher-status": true
+  },
+  {
+    "template": "http/misconfiguration/http-missing-security-headers.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/http-missing-security-headers",
+    "template-id": "http-missing-security-headers",
+    "template-path": "/opt/nuclei-templates/http/misconfiguration/http-missing-security-headers.yaml",
+    "info": {
+      "author": [
+        "socketz",
+        "geeknik",
+        "G4L1T0",
+        "convisoappsec",
+        "kurohost",
+        "dawid-czarnecki",
+        "forgedhallpass",
+        "jub0bs",
+        "userdehghani",
+        "celbahraoui",
+        "safejulian"
+      ],
+      "classification": {
+        "cwe-id": [
+          "CWE-693"
+        ]
+      },
+      "description": "This template searches for missing HTTP security headers. The impact of these missing headers can vary.",
+      "metadata": {
+        "max-request": 1
+      },
+      "name": "HTTP Missing Security Headers",
+      "severity": "info",
+      "tags": [
+        "misconfig",
+        "headers",
+        "generic",
+        "vuln"
+      ]
+    },
+    "type": "http",
+    "host": "198.51.100.10",
+    "port": "80",
+    "scheme": "http",
+    "url": "http://198.51.100.10",
+    "matched-at": "http://198.51.100.10",
+    "matcher-name": "x-frame-options",
+    "ip": "198.51.100.10",
+    "timestamp": "2026-11-03T09:15:15-05:00",
+    "curl-command": "curl -X 'GET' -d '' -H 'Accept: */*' -H 'Accept-Language: en' -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0' 'http://198.51.100.10'",
+    "matcher-status": true
+  },
+  {
+    "template": "http/misconfiguration/http-missing-security-headers.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/http-missing-security-headers",
+    "template-id": "http-missing-security-headers",
+    "template-path": "/opt/nuclei-templates/http/misconfiguration/http-missing-security-headers.yaml",
+    "info": {
+      "author": [
+        "socketz",
+        "geeknik",
+        "G4L1T0",
+        "convisoappsec",
+        "kurohost",
+        "dawid-czarnecki",
+        "forgedhallpass",
+        "jub0bs",
+        "userdehghani",
+        "celbahraoui",
+        "safejulian"
+      ],
+      "classification": {
+        "cwe-id": [
+          "CWE-693"
+        ]
+      },
+      "description": "This template searches for missing HTTP security headers. The impact of these missing headers can vary.",
+      "metadata": {
+        "max-request": 1
+      },
+      "name": "HTTP Missing Security Headers",
+      "severity": "info",
+      "tags": [
+        "misconfig",
+        "headers",
+        "generic",
+        "vuln"
+      ]
+    },
+    "type": "http",
+    "host": "198.51.100.10",
+    "port": "80",
+    "scheme": "http",
+    "url": "http://198.51.100.10",
+    "matched-at": "http://198.51.100.10",
+    "matcher-name": "content-security-policy",
+    "ip": "198.51.100.10",
+    "timestamp": "2026-11-03T09:15:18-05:00",
+    "curl-command": "curl -X 'GET' -d '' -H 'Accept: */*' -H 'Accept-Language: en' -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0' 'http://198.51.100.10'",
+    "matcher-status": true
+  },
+  {
+    "template": "ssl/deprecated-tls.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/deprecated-tls",
+    "template-id": "deprecated-tls",
+    "template-path": "/opt/nuclei-templates/ssl/deprecated-tls.yaml",
+    "info": {
+      "author": [
+        "righettod",
+        "forgedhallpass",
+        "goosvorbook"
+      ],
+      "classification": {
+        "cwe-id": [
+          "CWE-327"
+        ]
+      },
+      "description": "The service accepts one or more deprecated SSL/TLS protocol versions: SSL 2.0, SSL 3.0, TLS 1.0 or TLS 1.1. These versions are prohibited or deprecated (RFC 6176, RFC 7568, RFC 8996) and are affected by known weaknesses such as DROWN and POODLE.",
+      "metadata": {
+        "max-request": 4
+      },
+      "name": "Deprecated SSL/TLS Protocols - Detect",
+      "reference": [
+        "https://ssl-config.mozilla.org/#config=intermediate",
+        "https://datatracker.ietf.org/doc/html/rfc6176",
+        "https://datatracker.ietf.org/doc/html/rfc7568",
+        "https://datatracker.ietf.org/doc/html/rfc8996",
+        "https://drownattack.com/"
+      ],
+      "severity": "info",
+      "tags": [
+        "ssl",
+        "tls",
+        "vuln"
+      ]
+    },
+    "type": "ssl",
+    "host": "198.51.100.10",
+    "port": "443",
+    "matched-at": "198.51.100.10:443",
+    "extracted-results": [
+      "ssl3"
+    ],
+    "ip": "198.51.100.10",
+    "timestamp": "2026-11-03T09:15:21-05:00",
+    "matcher-status": true
+  },
+  {
+    "template": "ssl/deprecated-tls.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/deprecated-tls",
+    "template-id": "deprecated-tls",
+    "template-path": "/opt/nuclei-templates/ssl/deprecated-tls.yaml",
+    "info": {
+      "author": [
+        "righettod",
+        "forgedhallpass",
+        "goosvorbook"
+      ],
+      "classification": {
+        "cwe-id": [
+          "CWE-327"
+        ]
+      },
+      "description": "The service accepts one or more deprecated SSL/TLS protocol versions: SSL 2.0, SSL 3.0, TLS 1.0 or TLS 1.1. These versions are prohibited or deprecated (RFC 6176, RFC 7568, RFC 8996) and are affected by known weaknesses such as DROWN and POODLE.",
+      "metadata": {
+        "max-request": 4
+      },
+      "name": "Deprecated SSL/TLS Protocols - Detect",
+      "reference": [
+        "https://ssl-config.mozilla.org/#config=intermediate",
+        "https://datatracker.ietf.org/doc/html/rfc6176",
+        "https://datatracker.ietf.org/doc/html/rfc7568",
+        "https://datatracker.ietf.org/doc/html/rfc8996",
+        "https://drownattack.com/"
+      ],
+      "severity": "info",
+      "tags": [
+        "ssl",
+        "tls",
+        "vuln"
+      ]
+    },
+    "type": "ssl",
+    "host": "198.51.100.11",
+    "port": "443",
+    "matched-at": "198.51.100.11:443",
+    "extracted-results": [
+      "tls10"
+    ],
+    "ip": "198.51.100.11",
+    "timestamp": "2026-11-03T09:15:24-05:00",
+    "matcher-status": true
+  },
+  {
+    "template": "ssl/weak-cipher-suites.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/weak-cipher-suites",
+    "template-id": "weak-cipher-suites",
+    "template-path": "/opt/nuclei-templates/ssl/weak-cipher-suites.yaml",
+    "info": {
+      "author": [
+        "pussycat0x"
+      ],
+      "description": "A weak cipher is defined as an encryption/decryption algorithm that uses a key of insufficient length. Using an insufficient length for a key in an encryption/decryption algorithm opens up the possibility (or probability) that the encryption scheme could be broken.",
+      "metadata": {
+        "max-request": 4
+      },
+      "name": "Weak Cipher Suites Detection",
+      "reference": [
+        "https://www.acunetix.com/vulnerabilities/web/tls-ssl-weak-cipher-suites/",
+        "http://ciphersuite.info"
+      ],
+      "severity": "low",
+      "tags": [
+        "ssl",
+        "tls",
+        "misconfig",
+        "vuln"
+      ]
+    },
+    "type": "ssl",
+    "host": "198.51.100.10",
+    "port": "443",
+    "matched-at": "198.51.100.10:443",
+    "extracted-results": [
+      "TLS_RSA_WITH_3DES_EDE_CBC_SHA"
+    ],
+    "ip": "198.51.100.10",
+    "timestamp": "2026-11-03T09:15:27-05:00",
+    "matcher-status": true
+  },
+  {
+    "template": "ssl/weak-cipher-suites.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/weak-cipher-suites",
+    "template-id": "weak-cipher-suites",
+    "template-path": "/opt/nuclei-templates/ssl/weak-cipher-suites.yaml",
+    "info": {
+      "author": [
+        "pussycat0x"
+      ],
+      "description": "A weak cipher is defined as an encryption/decryption algorithm that uses a key of insufficient length. Using an insufficient length for a key in an encryption/decryption algorithm opens up the possibility (or probability) that the encryption scheme could be broken.",
+      "metadata": {
+        "max-request": 4
+      },
+      "name": "Weak Cipher Suites Detection",
+      "reference": [
+        "https://www.acunetix.com/vulnerabilities/web/tls-ssl-weak-cipher-suites/",
+        "http://ciphersuite.info"
+      ],
+      "severity": "low",
+      "tags": [
+        "ssl",
+        "tls",
+        "misconfig",
+        "vuln"
+      ]
+    },
+    "type": "ssl",
+    "host": "198.51.100.11",
+    "port": "443",
+    "matched-at": "198.51.100.11:443",
+    "extracted-results": [
+      "TLS_RSA_WITH_3DES_EDE_CBC_SHA"
+    ],
+    "ip": "198.51.100.11",
+    "timestamp": "2026-11-03T09:15:30-05:00",
+    "matcher-status": true
+  },
+  {
+    "template": "ssl/tls-version.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/tls-version",
+    "template-id": "tls-version",
+    "template-path": "/opt/nuclei-templates/ssl/tls-version.yaml",
+    "info": {
+      "author": [
+        "pdteam",
+        "pussycat0x"
+      ],
+      "description": "TLS version detection is a security process used to determine the version of the Transport Layer Security (TLS) protocol used by a computer or server.\nIt is important to detect the TLS version in order to ensure secure communication between two computers or servers.",
+      "metadata": {
+        "max-request": 4
+      },
+      "name": "TLS Version - Detect",
+      "severity": "info",
+      "tags": [
+        "ssl",
+        "tls",
+        "discovery"
+      ]
+    },
+    "type": "ssl",
+    "host": "198.51.100.10",
+    "port": "443",
+    "matched-at": "198.51.100.10:443",
+    "matcher-name": "tls11",
+    "ip": "198.51.100.10",
+    "timestamp": "2026-11-03T09:15:33-05:00",
+    "matcher-status": true
+  },
+  {
+    "template": "ssl/tls-version.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/tls-version",
+    "template-id": "tls-version",
+    "template-path": "/opt/nuclei-templates/ssl/tls-version.yaml",
+    "info": {
+      "author": [
+        "pdteam",
+        "pussycat0x"
+      ],
+      "description": "TLS version detection is a security process used to determine the version of the Transport Layer Security (TLS) protocol used by a computer or server.\nIt is important to detect the TLS version in order to ensure secure communication between two computers or servers.",
+      "metadata": {
+        "max-request": 4
+      },
+      "name": "TLS Version - Detect",
+      "severity": "info",
+      "tags": [
+        "ssl",
+        "tls",
+        "discovery"
+      ]
+    },
+    "type": "ssl",
+    "host": "198.51.100.10",
+    "port": "443",
+    "matched-at": "198.51.100.10:443",
+    "matcher-name": "tls12",
+    "ip": "198.51.100.10",
+    "timestamp": "2026-11-03T09:15:36-05:00",
+    "matcher-status": true
+  },
+  {
+    "template": "ssl/tls-version.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/tls-version",
+    "template-id": "tls-version",
+    "template-path": "/opt/nuclei-templates/ssl/tls-version.yaml",
+    "info": {
+      "author": [
+        "pdteam",
+        "pussycat0x"
+      ],
+      "description": "TLS version detection is a security process used to determine the version of the Transport Layer Security (TLS) protocol used by a computer or server.\nIt is important to detect the TLS version in order to ensure secure communication between two computers or servers.",
+      "metadata": {
+        "max-request": 4
+      },
+      "name": "TLS Version - Detect",
+      "severity": "info",
+      "tags": [
+        "ssl",
+        "tls",
+        "discovery"
+      ]
+    },
+    "type": "ssl",
+    "host": "198.51.100.11",
+    "port": "443",
+    "matched-at": "198.51.100.11:443",
+    "extracted-results": [
+      "tls12"
+    ],
+    "ip": "198.51.100.11",
+    "timestamp": "2026-11-03T09:15:39-05:00",
+    "matcher-status": true
+  },
+  {
+    "template": "http/technologies/tech-detect.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/tech-detect",
+    "template-id": "tech-detect",
+    "template-path": "/opt/nuclei-templates/http/technologies/tech-detect.yaml",
+    "info": {
+      "author": [
+        "hakluke",
+        "righettod",
+        "matejsmycka"
+      ],
+      "metadata": {
+        "max-request": 1
+      },
+      "name": "Wappalyzer Technology Detection",
+      "severity": "info",
+      "tags": [
+        "tech",
+        "discovery"
+      ]
+    },
+    "type": "http",
+    "host": "portal.demo.example",
+    "port": "443",
+    "scheme": "https",
+    "url": "https://portal.demo.example",
+    "matched-at": "https://portal.demo.example",
+    "matcher-name": "nginx",
+    "ip": "203.0.113.50",
+    "timestamp": "2026-11-03T09:15:42-05:00",
+    "curl-command": "curl -X 'GET' -d '' -H 'Accept: */*' -H 'Accept-Language: en' -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0' 'https://portal.demo.example'",
+    "matcher-status": true
+  },
+  {
+    "template": "http/technologies/nginx/nginx-version.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/nginx-version",
+    "template-id": "nginx-version",
+    "template-path": "/opt/nuclei-templates/http/technologies/nginx/nginx-version.yaml",
+    "info": {
+      "author": [
+        "philippedelteil",
+        "daffainfo"
+      ],
+      "description": "Some nginx servers have the version on the response header. Useful when you need to find specific CVEs on your targets.",
+      "metadata": {
+        "max-request": 1
+      },
+      "name": "Nginx version detect",
+      "severity": "info",
+      "tags": [
+        "tech",
+        "nginx",
+        "discovery"
+      ]
+    },
+    "type": "http",
+    "host": "portal.demo.example",
+    "port": "443",
+    "scheme": "https",
+    "url": "https://portal.demo.example",
+    "matched-at": "https://portal.demo.example",
+    "extracted-results": [
+      "nginx/1.14.0"
+    ],
+    "ip": "203.0.113.50",
+    "timestamp": "2026-11-03T09:15:45-05:00",
+    "curl-command": "curl -X 'GET' -d '' -H 'Accept: */*' -H 'Accept-Language: en' -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0' 'https://portal.demo.example'",
+    "matcher-status": true
+  },
+  {
+    "template": "ssl/ssl-dns-names.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/ssl-dns-names",
+    "template-id": "ssl-dns-names",
+    "template-path": "/opt/nuclei-templates/ssl/ssl-dns-names.yaml",
+    "info": {
+      "author": [
+        "pdteam"
+      ],
+      "description": "Extract the Subject Alternative Name (SAN) from the target's certificate. SAN facilitates the usage of additional hostnames with the same certificate.",
+      "metadata": {
+        "max-request": 1
+      },
+      "name": "SSL DNS Names",
+      "severity": "info",
+      "tags": [
+        "ssl",
+        "tls",
+        "vuln"
+      ]
+    },
+    "type": "ssl",
+    "host": "portal.demo.example",
+    "port": "443",
+    "matched-at": "portal.demo.example:443",
+    "extracted-results": [
+      "portal.demo.example"
+    ],
+    "ip": "203.0.113.50",
+    "timestamp": "2026-11-03T09:15:48-05:00",
+    "matcher-status": true
+  },
+  {
+    "template": "http/technologies/apache/apache-detect.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/apache-detect",
+    "template-id": "apache-detect",
+    "template-path": "/opt/nuclei-templates/http/technologies/apache/apache-detect.yaml",
+    "info": {
+      "author": [
+        "philippedelteil"
+      ],
+      "description": "Some Apache servers have the version on the response header. The OpenSSL version can be also obtained",
+      "metadata": {
+        "max-request": 1
+      },
+      "name": "Apache Detection",
+      "severity": "info",
+      "tags": [
+        "tech",
+        "apache",
+        "discovery"
+      ]
+    },
+    "type": "http",
+    "host": "198.51.100.12",
+    "port": "8080",
+    "scheme": "http",
+    "url": "http://198.51.100.12:8080",
+    "matched-at": "http://198.51.100.12:8080",
+    "extracted-results": [
+      "Apache/2.4.49 (Unix)"
+    ],
+    "ip": "198.51.100.12",
+    "timestamp": "2026-11-03T09:15:51-05:00",
+    "curl-command": "curl -X 'GET' -d '' -H 'Accept: */*' -H 'Accept-Language: en' -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0' 'http://198.51.100.12:8080'",
+    "matcher-status": true
+  },
+  {
+    "template": "http/cves/2021/CVE-2021-41773.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/CVE-2021-41773",
+    "template-id": "CVE-2021-41773",
+    "template-path": "/opt/nuclei-templates/http/cves/2021/CVE-2021-41773.yaml",
+    "info": {
+      "author": [
+        "daffainfo",
+        "666asd"
+      ],
+      "classification": {
+        "cve-id": [
+          "CVE-2021-41773"
+        ],
+        "cvss-metrics": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+        "cvss-score": 7.5,
+        "cwe-id": [
+          "CWE-22"
+        ]
+      },
+      "description": "A flaw was found in a change made to path normalization in Apache HTTP Server 2.4.49. An attacker could use a path traversal attack to map URLs to files outside the expected document root. If files outside of the document root are not protected by \"require all denied\" these requests can succeed. Additionally, this flaw could leak the source of interpreted files like CGI scripts. This issue is known to be exploited in the wild. This issue only affects Apache 2.4.49 and not earlier versions.",
+      "metadata": {
+        "max-request": 3
+      },
+      "name": "Apache 2.4.49 - Path Traversal and Remote Code Execution",
+      "reference": [
+        "https://github.com/apache/httpd/commit/e150697086e70c552b2588f369f2d17815cb1782",
+        "https://nvd.nist.gov/vuln/detail/CVE-2021-41773",
+        "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2021-41773",
+        "https://twitter.com/ptswarm/status/1445376079548624899",
+        "https://twitter.com/h4x0r_dz/status/1445401960371429381",
+        "https://github.com/blasty/CVE-2021-41773"
+      ],
+      "severity": "high",
+      "tags": [
+        "cve2021",
+        "cve",
+        "lfi",
+        "rce",
+        "apache",
+        "misconfig",
+        "traversal",
+        "kev",
+        "vkev",
+        "vuln"
+      ]
+    },
+    "type": "http",
+    "host": "198.51.100.12",
+    "port": "8080",
+    "scheme": "http",
+    "url": "http://198.51.100.12:8080",
+    "matched-at": "http://198.51.100.12:8080/cgi-bin/.%2e/%2e%2e/%2e%2e/etc/passwd",
+    "extracted-results": [
+      "root:x:0:0:root:/root:/bin/bash"
+    ],
+    "ip": "198.51.100.12",
+    "timestamp": "2026-11-03T09:15:54-05:00",
+    "curl-command": "curl -X 'GET' -d '' -H 'Accept: */*' -H 'Accept-Language: en' -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0' 'http://198.51.100.12:8080/cgi-bin/.%2e/%2e%2e/%2e%2e/etc/passwd'",
+    "matcher-status": true
+  },
+  {
+    "template": "http/exposed-panels/phpmyadmin-panel.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/phpmyadmin-panel",
+    "template-id": "phpmyadmin-panel",
+    "template-path": "/opt/nuclei-templates/http/exposed-panels/phpmyadmin-panel.yaml",
+    "info": {
+      "author": [
+        "pdteam",
+        "righettod"
+      ],
+      "classification": {
+        "cvss-metrics": "CVSS:3.0/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:N",
+        "cwe-id": [
+          "CWE-200"
+        ]
+      },
+      "description": "phpMyAdmin panel was detected.",
+      "metadata": {
+        "max-request": 14
+      },
+      "name": "phpMyAdmin Panel - Detect",
+      "severity": "info",
+      "tags": [
+        "panel",
+        "phpmyadmin",
+        "detect",
+        "discovery"
+      ]
+    },
+    "type": "http",
+    "host": "198.51.100.12",
+    "port": "8080",
+    "scheme": "http",
+    "url": "http://198.51.100.12:8080",
+    "matched-at": "http://198.51.100.12:8080/phpmyadmin/",
+    "ip": "198.51.100.12",
+    "timestamp": "2026-11-03T09:15:57-05:00",
+    "curl-command": "curl -X 'GET' -d '' -H 'Accept: */*' -H 'Accept-Language: en' -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0' 'http://198.51.100.12:8080/phpmyadmin/'",
+    "matcher-status": true
+  },
+  {
+    "template": "ssl/self-signed-ssl.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/self-signed-ssl",
+    "template-id": "self-signed-ssl",
+    "template-path": "/opt/nuclei-templates/ssl/self-signed-ssl.yaml",
+    "info": {
+      "author": [
+        "righettod",
+        "pdteam"
+      ],
+      "description": "self-signed certificates are public key certificates that are not issued by a certificate authority. These self-signed\ncertificates are easy to make and do not cost money. However, they do not provide any trust value.",
+      "metadata": {
+        "max-request": 1
+      },
+      "name": "Self Signed SSL Certificate",
+      "reference": [
+        "https://www.rapid7.com/db/vulnerabilities/ssl-self-signed-certificate/"
+      ],
+      "severity": "low",
+      "tags": [
+        "ssl",
+        "tls",
+        "self-signed",
+        "vuln"
+      ]
+    },
+    "type": "ssl",
+    "host": "198.51.100.12",
+    "port": "443",
+    "matched-at": "198.51.100.12:443",
+    "extracted-results": [
+      "api01.demo.example"
+    ],
+    "ip": "198.51.100.12",
+    "timestamp": "2026-11-03T09:16:00-05:00",
+    "matcher-status": true
+  },
+  {
+    "template": "ssl/deprecated-tls.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/deprecated-tls",
+    "template-id": "deprecated-tls",
+    "template-path": "/opt/nuclei-templates/ssl/deprecated-tls.yaml",
+    "info": {
+      "author": [
+        "righettod",
+        "forgedhallpass",
+        "goosvorbook"
+      ],
+      "classification": {
+        "cwe-id": [
+          "CWE-327"
+        ]
+      },
+      "description": "The service accepts one or more deprecated SSL/TLS protocol versions: SSL 2.0, SSL 3.0, TLS 1.0 or TLS 1.1. These versions are prohibited or deprecated (RFC 6176, RFC 7568, RFC 8996) and are affected by known weaknesses such as DROWN and POODLE.",
+      "metadata": {
+        "max-request": 4
+      },
+      "name": "Deprecated SSL/TLS Protocols - Detect",
+      "reference": [
+        "https://ssl-config.mozilla.org/#config=intermediate",
+        "https://datatracker.ietf.org/doc/html/rfc6176",
+        "https://datatracker.ietf.org/doc/html/rfc7568",
+        "https://datatracker.ietf.org/doc/html/rfc8996",
+        "https://drownattack.com/"
+      ],
+      "severity": "info",
+      "tags": [
+        "ssl",
+        "tls",
+        "vuln"
+      ]
+    },
+    "type": "ssl",
+    "host": "198.51.100.12",
+    "port": "443",
+    "matched-at": "198.51.100.12:443",
+    "extracted-results": [
+      "tls10"
+    ],
+    "ip": "198.51.100.12",
+    "timestamp": "2026-11-03T09:16:03-05:00",
+    "matcher-status": true
+  },
+  {
+    "template": "ssl/deprecated-tls.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/deprecated-tls",
+    "template-id": "deprecated-tls",
+    "template-path": "/opt/nuclei-templates/ssl/deprecated-tls.yaml",
+    "info": {
+      "author": [
+        "righettod",
+        "forgedhallpass",
+        "goosvorbook"
+      ],
+      "classification": {
+        "cwe-id": [
+          "CWE-327"
+        ]
+      },
+      "description": "The service accepts one or more deprecated SSL/TLS protocol versions: SSL 2.0, SSL 3.0, TLS 1.0 or TLS 1.1. These versions are prohibited or deprecated (RFC 6176, RFC 7568, RFC 8996) and are affected by known weaknesses such as DROWN and POODLE.",
+      "metadata": {
+        "max-request": 4
+      },
+      "name": "Deprecated SSL/TLS Protocols - Detect",
+      "reference": [
+        "https://ssl-config.mozilla.org/#config=intermediate",
+        "https://datatracker.ietf.org/doc/html/rfc6176",
+        "https://datatracker.ietf.org/doc/html/rfc7568",
+        "https://datatracker.ietf.org/doc/html/rfc8996",
+        "https://drownattack.com/"
+      ],
+      "severity": "info",
+      "tags": [
+        "ssl",
+        "tls",
+        "vuln"
+      ]
+    },
+    "type": "ssl",
+    "host": "198.51.100.13",
+    "port": "443",
+    "matched-at": "198.51.100.13:443",
+    "extracted-results": [
+      "tls11"
+    ],
+    "ip": "198.51.100.13",
+    "timestamp": "2026-11-03T09:16:06-05:00",
+    "matcher-status": true
+  },
+  {
+    "template": "ssl/mismatched-ssl-certificate.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/mismatched-ssl-certificate",
+    "template-id": "mismatched-ssl-certificate",
+    "template-path": "/opt/nuclei-templates/ssl/mismatched-ssl-certificate.yaml",
+    "info": {
+      "author": [
+        "pdteam"
+      ],
+      "description": "Mismatched certificates occur when there is inconsistency between the common name to which the certificate was issued and the domain name in the URL. This issue impacts the trust value of the affected website.",
+      "metadata": {
+        "max-request": 1
+      },
+      "name": "Mismatched SSL Certificate",
+      "reference": [
+        "https://www.invicti.com/web-vulnerability-scanner/vulnerabilities/ssl-certificate-name-hostname-mismatch/"
+      ],
+      "severity": "info",
+      "tags": [
+        "ssl",
+        "tls",
+        "mismatched",
+        "vuln"
+      ]
+    },
+    "type": "ssl",
+    "host": "198.51.100.13",
+    "port": "8443",
+    "matched-at": "198.51.100.13:8443",
+    "extracted-results": [
+      "api02.demo.example"
+    ],
+    "ip": "198.51.100.13",
+    "timestamp": "2026-11-03T09:16:09-05:00",
+    "matcher-status": true
+  },
+  {
+    "template": "http/cves/2021/CVE-2021-44228.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/CVE-2021-44228",
+    "template-id": "CVE-2021-44228",
+    "template-path": "/opt/nuclei-templates/http/cves/2021/CVE-2021-44228.yaml",
+    "info": {
+      "author": [
+        "melbadry9",
+        "dhiyaneshDK",
+        "daffainfo",
+        "anon-artist",
+        "0xceba",
+        "Tea",
+        "j4vaovo"
+      ],
+      "classification": {
+        "cve-id": [
+          "CVE-2021-44228"
+        ],
+        "cvss-metrics": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H",
+        "cvss-score": 10,
+        "cwe-id": [
+          "CWE-20",
+          "CWE-917"
+        ]
+      },
+      "description": "Apache Log4j2 <=2.14.1 JNDI features used in configuration, log messages, and parameters do not protect against attacker controlled LDAP and other JNDI related endpoints. An attacker who can control log messages or log message parameters can execute arbitrary code loaded from LDAP servers when message lookup substitution is enabled.",
+      "metadata": {
+        "max-request": 2
+      },
+      "name": "Apache Log4j2 Remote Code Injection",
+      "reference": [
+        "https://logging.apache.org/log4j/2.x/security.html",
+        "https://nvd.nist.gov/vuln/detail/CVE-2021-44228",
+        "https://github.com/advisories/GHSA-jfh8-c2jp-5v3q",
+        "https://www.lunasec.io/docs/blog/log4j-zero-day/",
+        "https://gist.github.com/bugbountynights/dde69038573db1c12705edb39f9a704a"
+      ],
+      "severity": "critical",
+      "tags": [
+        "cve2021",
+        "cve",
+        "rce",
+        "oast",
+        "log4j",
+        "injection",
+        "kev",
+        "apache",
+        "vkev",
+        "vuln"
+      ]
+    },
+    "type": "http",
+    "host": "198.51.100.31",
+    "port": "8080",
+    "scheme": "http",
+    "url": "http://198.51.100.31:8080",
+    "matched-at": "http://198.51.100.31:8080",
+    "ip": "198.51.100.31",
+    "timestamp": "2026-11-03T09:16:12-05:00",
+    "curl-command": "curl -X 'GET' -d '' -H 'Accept: */*' -H 'Accept-Language: en' -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0' 'http://198.51.100.31:8080'",
+    "matcher-status": true
+  },
+  {
+    "template": "http/technologies/apache/tomcat-detect.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/tomcat-detect",
+    "template-id": "tomcat-detect",
+    "template-path": "/opt/nuclei-templates/http/technologies/apache/tomcat-detect.yaml",
+    "info": {
+      "author": [
+        "philippedelteil",
+        "dhiyaneshDk",
+        "AdamCrosser"
+      ],
+      "description": "If an Tomcat instance is deployed on the target URL, when we send a request for a non existent resource we receive a Tomcat error page with version.",
+      "metadata": {
+        "max-request": 3
+      },
+      "name": "Tomcat Detection",
+      "severity": "info",
+      "tags": [
+        "tech",
+        "tomcat",
+        "apache",
+        "intrusive",
+        "discovery"
+      ]
+    },
+    "type": "http",
+    "host": "198.51.100.90",
+    "port": "8080",
+    "scheme": "http",
+    "url": "http://198.51.100.90:8080",
+    "matched-at": "http://198.51.100.90:8080",
+    "extracted-results": [
+      "Apache Tomcat/9.0.30"
+    ],
+    "ip": "198.51.100.90",
+    "timestamp": "2026-11-03T09:16:15-05:00",
+    "curl-command": "curl -X 'GET' -d '' -H 'Accept: */*' -H 'Accept-Language: en' -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0' 'http://198.51.100.90:8080'",
+    "matcher-status": true
+  },
+  {
+    "template": "http/default-logins/apache/tomcat-default-login.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/tomcat-default-login",
+    "template-id": "tomcat-default-login",
+    "template-path": "/opt/nuclei-templates/http/default-logins/apache/tomcat-default-login.yaml",
+    "info": {
+      "author": [
+        "pdteam",
+        "sinKettu",
+        "nybble04"
+      ],
+      "description": "Apache Tomcat Manager default login credentials were discovered.",
+      "metadata": {
+        "max-request": 25
+      },
+      "name": "Apache Tomcat Manager Default Login",
+      "reference": [
+        "https://www.rapid7.com/db/vulnerabilities/apache-tomcat-default-ovwebusr-password/",
+        "https://github.com/danielmiessler/SecLists/blob/master/Passwords/Default-Credentials/tomcat-betterdefaultpasslist.txt"
+      ],
+      "severity": "high",
+      "tags": [
+        "tomcat",
+        "apache",
+        "default-login",
+        "vuln"
+      ]
+    },
+    "type": "http",
+    "host": "198.51.100.90",
+    "port": "8080",
+    "scheme": "http",
+    "url": "http://198.51.100.90:8080",
+    "matched-at": "http://198.51.100.90:8080/manager/html",
+    "extracted-results": [
+      "tomcat:tomcat"
+    ],
+    "ip": "198.51.100.90",
+    "timestamp": "2026-11-03T09:16:18-05:00",
+    "curl-command": "curl -X 'GET' -d '' -H 'Accept: */*' -H 'Accept-Language: en' -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0' 'http://198.51.100.90:8080/manager/html'",
+    "matcher-status": true
+  },
+  {
+    "template": "http/miscellaneous/robots-txt.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/robots-txt",
+    "template-id": "robots-txt",
+    "template-path": "/opt/nuclei-templates/http/miscellaneous/robots-txt.yaml",
+    "info": {
+      "author": [
+        "CasperGN",
+        "TheZakMan"
+      ],
+      "metadata": {
+        "max-request": 2
+      },
+      "name": "robots.txt file",
+      "severity": "info",
+      "tags": [
+        "miscellaneous",
+        "misc",
+        "generic",
+        "vuln"
+      ]
+    },
+    "type": "http",
+    "host": "198.51.100.91",
+    "port": "80",
+    "scheme": "http",
+    "url": "http://198.51.100.91",
+    "matched-at": "http://198.51.100.91/robots.txt",
+    "ip": "198.51.100.91",
+    "timestamp": "2026-11-03T09:16:21-05:00",
+    "curl-command": "curl -X 'GET' -d '' -H 'Accept: */*' -H 'Accept-Language: en' -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0' 'http://198.51.100.91/robots.txt'",
+    "matcher-status": true
+  },
+  {
+    "template": "http/technologies/tech-detect.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/tech-detect",
+    "template-id": "tech-detect",
+    "template-path": "/opt/nuclei-templates/http/technologies/tech-detect.yaml",
+    "info": {
+      "author": [
+        "hakluke",
+        "righettod",
+        "matejsmycka"
+      ],
+      "metadata": {
+        "max-request": 1
+      },
+      "name": "Wappalyzer Technology Detection",
+      "severity": "info",
+      "tags": [
+        "tech",
+        "discovery"
+      ]
+    },
+    "type": "http",
+    "host": "198.51.100.91",
+    "port": "80",
+    "scheme": "http",
+    "url": "http://198.51.100.91",
+    "matched-at": "http://198.51.100.91",
+    "matcher-name": "nginx",
+    "ip": "198.51.100.91",
+    "timestamp": "2026-11-03T09:16:24-05:00",
+    "curl-command": "curl -X 'GET' -d '' -H 'Accept: */*' -H 'Accept-Language: en' -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0' 'http://198.51.100.91'",
+    "matcher-status": true
+  },
+  {
+    "template": "ssl/expired-ssl.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/expired-ssl",
+    "template-id": "expired-ssl",
+    "template-path": "/opt/nuclei-templates/ssl/expired-ssl.yaml",
+    "info": {
+      "author": [
+        "pdteam"
+      ],
+      "description": "After an SSL certificate expires, you will no longer be able to communicate over a secure, encrypted HTTPS connection.",
+      "metadata": {
+        "max-request": 1
+      },
+      "name": "Expired SSL Certificate",
+      "reference": [
+        "https://www.acunetix.com/vulnerabilities/web/tls-ssl-certificate-about-to-expire/"
+      ],
+      "severity": "low",
+      "tags": [
+        "ssl",
+        "tls",
+        "vuln"
+      ]
+    },
+    "type": "ssl",
+    "host": "vpn.demo.example",
+    "port": "443",
+    "matched-at": "vpn.demo.example:443",
+    "extracted-results": [
+      "2025-04-12T00:00:00Z"
+    ],
+    "ip": "203.0.113.60",
+    "timestamp": "2026-11-03T09:16:27-05:00",
+    "matcher-status": true
+  },
+  {
+    "template": "ssl/deprecated-tls.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/deprecated-tls",
+    "template-id": "deprecated-tls",
+    "template-path": "/opt/nuclei-templates/ssl/deprecated-tls.yaml",
+    "info": {
+      "author": [
+        "righettod",
+        "forgedhallpass",
+        "goosvorbook"
+      ],
+      "classification": {
+        "cwe-id": [
+          "CWE-327"
+        ]
+      },
+      "description": "The service accepts one or more deprecated SSL/TLS protocol versions: SSL 2.0, SSL 3.0, TLS 1.0 or TLS 1.1. These versions are prohibited or deprecated (RFC 6176, RFC 7568, RFC 8996) and are affected by known weaknesses such as DROWN and POODLE.",
+      "metadata": {
+        "max-request": 4
+      },
+      "name": "Deprecated SSL/TLS Protocols - Detect",
+      "reference": [
+        "https://ssl-config.mozilla.org/#config=intermediate",
+        "https://datatracker.ietf.org/doc/html/rfc6176",
+        "https://datatracker.ietf.org/doc/html/rfc7568",
+        "https://datatracker.ietf.org/doc/html/rfc8996",
+        "https://drownattack.com/"
+      ],
+      "severity": "info",
+      "tags": [
+        "ssl",
+        "tls",
+        "vuln"
+      ]
+    },
+    "type": "ssl",
+    "host": "vpn.demo.example",
+    "port": "443",
+    "matched-at": "vpn.demo.example:443",
+    "extracted-results": [
+      "ssl3"
+    ],
+    "ip": "203.0.113.60",
+    "timestamp": "2026-11-03T09:16:30-05:00",
+    "matcher-status": true
+  },
+  {
+    "template": "ssl/weak-cipher-suites.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/weak-cipher-suites",
+    "template-id": "weak-cipher-suites",
+    "template-path": "/opt/nuclei-templates/ssl/weak-cipher-suites.yaml",
+    "info": {
+      "author": [
+        "pussycat0x"
+      ],
+      "description": "A weak cipher is defined as an encryption/decryption algorithm that uses a key of insufficient length. Using an insufficient length for a key in an encryption/decryption algorithm opens up the possibility (or probability) that the encryption scheme could be broken.",
+      "metadata": {
+        "max-request": 4
+      },
+      "name": "Weak Cipher Suites Detection",
+      "reference": [
+        "https://www.acunetix.com/vulnerabilities/web/tls-ssl-weak-cipher-suites/",
+        "http://ciphersuite.info"
+      ],
+      "severity": "low",
+      "tags": [
+        "ssl",
+        "tls",
+        "misconfig",
+        "vuln"
+      ]
+    },
+    "type": "ssl",
+    "host": "vpn.demo.example",
+    "port": "443",
+    "matched-at": "vpn.demo.example:443",
+    "extracted-results": [
+      "TLS_RSA_EXPORT_WITH_RC4_40_MD5"
+    ],
+    "ip": "203.0.113.60",
+    "timestamp": "2026-11-03T09:16:33-05:00",
+    "matcher-status": true
+  },
+  {
+    "template": "ssl/ssl-dns-names.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/ssl-dns-names",
+    "template-id": "ssl-dns-names",
+    "template-path": "/opt/nuclei-templates/ssl/ssl-dns-names.yaml",
+    "info": {
+      "author": [
+        "pdteam"
+      ],
+      "description": "Extract the Subject Alternative Name (SAN) from the target's certificate. SAN facilitates the usage of additional hostnames with the same certificate.",
+      "metadata": {
+        "max-request": 1
+      },
+      "name": "SSL DNS Names",
+      "severity": "info",
+      "tags": [
+        "ssl",
+        "tls",
+        "vuln"
+      ]
+    },
+    "type": "ssl",
+    "host": "ipv6-web.demo.example",
+    "port": "443",
+    "matched-at": "ipv6-web.demo.example:443",
+    "extracted-results": [
+      "ipv6-web.demo.example"
+    ],
+    "ip": "2001:db8:10::25",
+    "timestamp": "2026-11-03T09:16:36-05:00",
+    "matcher-status": true
+  },
+  {
+    "template": "ssl/tls-version.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/tls-version",
+    "template-id": "tls-version",
+    "template-path": "/opt/nuclei-templates/ssl/tls-version.yaml",
+    "info": {
+      "author": [
+        "pdteam",
+        "pussycat0x"
+      ],
+      "description": "TLS version detection is a security process used to determine the version of the Transport Layer Security (TLS) protocol used by a computer or server.\nIt is important to detect the TLS version in order to ensure secure communication between two computers or servers.",
+      "metadata": {
+        "max-request": 4
+      },
+      "name": "TLS Version - Detect",
+      "severity": "info",
+      "tags": [
+        "ssl",
+        "tls",
+        "discovery"
+      ]
+    },
+    "type": "ssl",
+    "host": "ipv6-web.demo.example",
+    "port": "443",
+    "matched-at": "ipv6-web.demo.example:443",
+    "extracted-results": [
+      "tls12"
+    ],
+    "ip": "2001:db8:10::25",
+    "timestamp": "2026-11-03T09:16:39-05:00",
+    "matcher-status": true
+  },
+  {
+    "template": "http/misconfiguration/http-missing-security-headers.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/http-missing-security-headers",
+    "template-id": "http-missing-security-headers",
+    "template-path": "/opt/nuclei-templates/http/misconfiguration/http-missing-security-headers.yaml",
+    "info": {
+      "author": [
+        "socketz",
+        "geeknik",
+        "G4L1T0",
+        "convisoappsec",
+        "kurohost",
+        "dawid-czarnecki",
+        "forgedhallpass",
+        "jub0bs",
+        "userdehghani",
+        "celbahraoui",
+        "safejulian"
+      ],
+      "classification": {
+        "cwe-id": [
+          "CWE-693"
+        ]
+      },
+      "description": "This template searches for missing HTTP security headers. The impact of these missing headers can vary.",
+      "metadata": {
+        "max-request": 1
+      },
+      "name": "HTTP Missing Security Headers",
+      "severity": "info",
+      "tags": [
+        "misconfig",
+        "headers",
+        "generic",
+        "vuln"
+      ]
+    },
+    "type": "http",
+    "host": "203.0.113.80",
+    "port": "443",
+    "scheme": "https",
+    "url": "https://203.0.113.80",
+    "matched-at": "https://203.0.113.80",
+    "matcher-name": "strict-transport-security",
+    "ip": "203.0.113.80",
+    "timestamp": "2026-11-03T09:16:42-05:00",
+    "curl-command": "curl -X 'GET' -d '' -H 'Accept: */*' -H 'Accept-Language: en' -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0' 'https://203.0.113.80'",
+    "matcher-status": true
+  },
+  {
+    "template": "http/misconfiguration/http-missing-security-headers.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/http-missing-security-headers",
+    "template-id": "http-missing-security-headers",
+    "template-path": "/opt/nuclei-templates/http/misconfiguration/http-missing-security-headers.yaml",
+    "info": {
+      "author": [
+        "socketz",
+        "geeknik",
+        "G4L1T0",
+        "convisoappsec",
+        "kurohost",
+        "dawid-czarnecki",
+        "forgedhallpass",
+        "jub0bs",
+        "userdehghani",
+        "celbahraoui",
+        "safejulian"
+      ],
+      "classification": {
+        "cwe-id": [
+          "CWE-693"
+        ]
+      },
+      "description": "This template searches for missing HTTP security headers. The impact of these missing headers can vary.",
+      "metadata": {
+        "max-request": 1
+      },
+      "name": "HTTP Missing Security Headers",
+      "severity": "info",
+      "tags": [
+        "misconfig",
+        "headers",
+        "generic",
+        "vuln"
+      ]
+    },
+    "type": "http",
+    "host": "203.0.113.80",
+    "port": "443",
+    "scheme": "https",
+    "url": "https://203.0.113.80",
+    "matched-at": "https://203.0.113.80",
+    "matcher-name": "x-frame-options",
+    "ip": "203.0.113.80",
+    "timestamp": "2026-11-03T09:16:45-05:00",
+    "curl-command": "curl -X 'GET' -d '' -H 'Accept: */*' -H 'Accept-Language: en' -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0' 'https://203.0.113.80'",
+    "matcher-status": true
+  },
+  {
+    "template": "http/misconfiguration/http-missing-security-headers.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/http-missing-security-headers",
+    "template-id": "http-missing-security-headers",
+    "template-path": "/opt/nuclei-templates/http/misconfiguration/http-missing-security-headers.yaml",
+    "info": {
+      "author": [
+        "socketz",
+        "geeknik",
+        "G4L1T0",
+        "convisoappsec",
+        "kurohost",
+        "dawid-czarnecki",
+        "forgedhallpass",
+        "jub0bs",
+        "userdehghani",
+        "celbahraoui",
+        "safejulian"
+      ],
+      "classification": {
+        "cwe-id": [
+          "CWE-693"
+        ]
+      },
+      "description": "This template searches for missing HTTP security headers. The impact of these missing headers can vary.",
+      "metadata": {
+        "max-request": 1
+      },
+      "name": "HTTP Missing Security Headers",
+      "severity": "info",
+      "tags": [
+        "misconfig",
+        "headers",
+        "generic",
+        "vuln"
+      ]
+    },
+    "type": "http",
+    "host": "203.0.113.80",
+    "port": "443",
+    "scheme": "https",
+    "url": "https://203.0.113.80",
+    "matched-at": "https://203.0.113.80",
+    "matcher-name": "content-security-policy",
+    "ip": "203.0.113.80",
+    "timestamp": "2026-11-03T09:16:48-05:00",
+    "curl-command": "curl -X 'GET' -d '' -H 'Accept: */*' -H 'Accept-Language: en' -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0' 'https://203.0.113.80'",
+    "matcher-status": true
+  },
+  {
+    "template": "http/misconfiguration/http-missing-security-headers.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/http-missing-security-headers",
+    "template-id": "http-missing-security-headers",
+    "template-path": "/opt/nuclei-templates/http/misconfiguration/http-missing-security-headers.yaml",
+    "info": {
+      "author": [
+        "socketz",
+        "geeknik",
+        "G4L1T0",
+        "convisoappsec",
+        "kurohost",
+        "dawid-czarnecki",
+        "forgedhallpass",
+        "jub0bs",
+        "userdehghani",
+        "celbahraoui",
+        "safejulian"
+      ],
+      "classification": {
+        "cwe-id": [
+          "CWE-693"
+        ]
+      },
+      "description": "This template searches for missing HTTP security headers. The impact of these missing headers can vary.",
+      "metadata": {
+        "max-request": 1
+      },
+      "name": "HTTP Missing Security Headers",
+      "severity": "info",
+      "tags": [
+        "misconfig",
+        "headers",
+        "generic",
+        "vuln"
+      ]
+    },
+    "type": "http",
+    "host": "203.0.113.81",
+    "port": "443",
+    "scheme": "https",
+    "url": "https://203.0.113.81",
+    "matched-at": "https://203.0.113.81",
+    "matcher-name": "strict-transport-security",
+    "ip": "203.0.113.81",
+    "timestamp": "2026-11-03T09:16:51-05:00",
+    "curl-command": "curl -X 'GET' -d '' -H 'Accept: */*' -H 'Accept-Language: en' -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0' 'https://203.0.113.81'",
+    "matcher-status": true
+  },
+  {
+    "template": "http/misconfiguration/http-missing-security-headers.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/http-missing-security-headers",
+    "template-id": "http-missing-security-headers",
+    "template-path": "/opt/nuclei-templates/http/misconfiguration/http-missing-security-headers.yaml",
+    "info": {
+      "author": [
+        "socketz",
+        "geeknik",
+        "G4L1T0",
+        "convisoappsec",
+        "kurohost",
+        "dawid-czarnecki",
+        "forgedhallpass",
+        "jub0bs",
+        "userdehghani",
+        "celbahraoui",
+        "safejulian"
+      ],
+      "classification": {
+        "cwe-id": [
+          "CWE-693"
+        ]
+      },
+      "description": "This template searches for missing HTTP security headers. The impact of these missing headers can vary.",
+      "metadata": {
+        "max-request": 1
+      },
+      "name": "HTTP Missing Security Headers",
+      "severity": "info",
+      "tags": [
+        "misconfig",
+        "headers",
+        "generic",
+        "vuln"
+      ]
+    },
+    "type": "http",
+    "host": "203.0.113.81",
+    "port": "443",
+    "scheme": "https",
+    "url": "https://203.0.113.81",
+    "matched-at": "https://203.0.113.81",
+    "matcher-name": "x-frame-options",
+    "ip": "203.0.113.81",
+    "timestamp": "2026-11-03T09:16:54-05:00",
+    "curl-command": "curl -X 'GET' -d '' -H 'Accept: */*' -H 'Accept-Language: en' -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0' 'https://203.0.113.81'",
+    "matcher-status": true
+  },
+  {
+    "template": "http/misconfiguration/http-missing-security-headers.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/http-missing-security-headers",
+    "template-id": "http-missing-security-headers",
+    "template-path": "/opt/nuclei-templates/http/misconfiguration/http-missing-security-headers.yaml",
+    "info": {
+      "author": [
+        "socketz",
+        "geeknik",
+        "G4L1T0",
+        "convisoappsec",
+        "kurohost",
+        "dawid-czarnecki",
+        "forgedhallpass",
+        "jub0bs",
+        "userdehghani",
+        "celbahraoui",
+        "safejulian"
+      ],
+      "classification": {
+        "cwe-id": [
+          "CWE-693"
+        ]
+      },
+      "description": "This template searches for missing HTTP security headers. The impact of these missing headers can vary.",
+      "metadata": {
+        "max-request": 1
+      },
+      "name": "HTTP Missing Security Headers",
+      "severity": "info",
+      "tags": [
+        "misconfig",
+        "headers",
+        "generic",
+        "vuln"
+      ]
+    },
+    "type": "http",
+    "host": "203.0.113.81",
+    "port": "443",
+    "scheme": "https",
+    "url": "https://203.0.113.81",
+    "matched-at": "https://203.0.113.81",
+    "matcher-name": "content-security-policy",
+    "ip": "203.0.113.81",
+    "timestamp": "2026-11-03T09:16:57-05:00",
+    "curl-command": "curl -X 'GET' -d '' -H 'Accept: */*' -H 'Accept-Language: en' -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0' 'https://203.0.113.81'",
+    "matcher-status": true
+  },
+  {
+    "template": "http/misconfiguration/http-missing-security-headers.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/http-missing-security-headers",
+    "template-id": "http-missing-security-headers",
+    "template-path": "/opt/nuclei-templates/http/misconfiguration/http-missing-security-headers.yaml",
+    "info": {
+      "author": [
+        "socketz",
+        "geeknik",
+        "G4L1T0",
+        "convisoappsec",
+        "kurohost",
+        "dawid-czarnecki",
+        "forgedhallpass",
+        "jub0bs",
+        "userdehghani",
+        "celbahraoui",
+        "safejulian"
+      ],
+      "classification": {
+        "cwe-id": [
+          "CWE-693"
+        ]
+      },
+      "description": "This template searches for missing HTTP security headers. The impact of these missing headers can vary.",
+      "metadata": {
+        "max-request": 1
+      },
+      "name": "HTTP Missing Security Headers",
+      "severity": "info",
+      "tags": [
+        "misconfig",
+        "headers",
+        "generic",
+        "vuln"
+      ]
+    },
+    "type": "http",
+    "host": "203.0.113.82",
+    "port": "443",
+    "scheme": "https",
+    "url": "https://203.0.113.82",
+    "matched-at": "https://203.0.113.82",
+    "matcher-name": "strict-transport-security",
+    "ip": "203.0.113.82",
+    "timestamp": "2026-11-03T09:17:00-05:00",
+    "curl-command": "curl -X 'GET' -d '' -H 'Accept: */*' -H 'Accept-Language: en' -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0' 'https://203.0.113.82'",
+    "matcher-status": true
+  },
+  {
+    "template": "http/misconfiguration/http-missing-security-headers.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/http-missing-security-headers",
+    "template-id": "http-missing-security-headers",
+    "template-path": "/opt/nuclei-templates/http/misconfiguration/http-missing-security-headers.yaml",
+    "info": {
+      "author": [
+        "socketz",
+        "geeknik",
+        "G4L1T0",
+        "convisoappsec",
+        "kurohost",
+        "dawid-czarnecki",
+        "forgedhallpass",
+        "jub0bs",
+        "userdehghani",
+        "celbahraoui",
+        "safejulian"
+      ],
+      "classification": {
+        "cwe-id": [
+          "CWE-693"
+        ]
+      },
+      "description": "This template searches for missing HTTP security headers. The impact of these missing headers can vary.",
+      "metadata": {
+        "max-request": 1
+      },
+      "name": "HTTP Missing Security Headers",
+      "severity": "info",
+      "tags": [
+        "misconfig",
+        "headers",
+        "generic",
+        "vuln"
+      ]
+    },
+    "type": "http",
+    "host": "203.0.113.82",
+    "port": "443",
+    "scheme": "https",
+    "url": "https://203.0.113.82",
+    "matched-at": "https://203.0.113.82",
+    "matcher-name": "x-frame-options",
+    "ip": "203.0.113.82",
+    "timestamp": "2026-11-03T09:17:03-05:00",
+    "curl-command": "curl -X 'GET' -d '' -H 'Accept: */*' -H 'Accept-Language: en' -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0' 'https://203.0.113.82'",
+    "matcher-status": true
+  },
+  {
+    "template": "http/misconfiguration/http-missing-security-headers.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/http-missing-security-headers",
+    "template-id": "http-missing-security-headers",
+    "template-path": "/opt/nuclei-templates/http/misconfiguration/http-missing-security-headers.yaml",
+    "info": {
+      "author": [
+        "socketz",
+        "geeknik",
+        "G4L1T0",
+        "convisoappsec",
+        "kurohost",
+        "dawid-czarnecki",
+        "forgedhallpass",
+        "jub0bs",
+        "userdehghani",
+        "celbahraoui",
+        "safejulian"
+      ],
+      "classification": {
+        "cwe-id": [
+          "CWE-693"
+        ]
+      },
+      "description": "This template searches for missing HTTP security headers. The impact of these missing headers can vary.",
+      "metadata": {
+        "max-request": 1
+      },
+      "name": "HTTP Missing Security Headers",
+      "severity": "info",
+      "tags": [
+        "misconfig",
+        "headers",
+        "generic",
+        "vuln"
+      ]
+    },
+    "type": "http",
+    "host": "203.0.113.82",
+    "port": "443",
+    "scheme": "https",
+    "url": "https://203.0.113.82",
+    "matched-at": "https://203.0.113.82",
+    "matcher-name": "content-security-policy",
+    "ip": "203.0.113.82",
+    "timestamp": "2026-11-03T09:17:06-05:00",
+    "curl-command": "curl -X 'GET' -d '' -H 'Accept: */*' -H 'Accept-Language: en' -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0' 'https://203.0.113.82'",
+    "matcher-status": true
+  },
+  {
+    "template": "http/misconfiguration/http-missing-security-headers.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/http-missing-security-headers",
+    "template-id": "http-missing-security-headers",
+    "template-path": "/opt/nuclei-templates/http/misconfiguration/http-missing-security-headers.yaml",
+    "info": {
+      "author": [
+        "socketz",
+        "geeknik",
+        "G4L1T0",
+        "convisoappsec",
+        "kurohost",
+        "dawid-czarnecki",
+        "forgedhallpass",
+        "jub0bs",
+        "userdehghani",
+        "celbahraoui",
+        "safejulian"
+      ],
+      "classification": {
+        "cwe-id": [
+          "CWE-693"
+        ]
+      },
+      "description": "This template searches for missing HTTP security headers. The impact of these missing headers can vary.",
+      "metadata": {
+        "max-request": 1
+      },
+      "name": "HTTP Missing Security Headers",
+      "severity": "info",
+      "tags": [
+        "misconfig",
+        "headers",
+        "generic",
+        "vuln"
+      ]
+    },
+    "type": "http",
+    "host": "203.0.113.83",
+    "port": "443",
+    "scheme": "https",
+    "url": "https://203.0.113.83",
+    "matched-at": "https://203.0.113.83",
+    "matcher-name": "strict-transport-security",
+    "ip": "203.0.113.83",
+    "timestamp": "2026-11-03T09:17:09-05:00",
+    "curl-command": "curl -X 'GET' -d '' -H 'Accept: */*' -H 'Accept-Language: en' -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0' 'https://203.0.113.83'",
+    "matcher-status": true
+  },
+  {
+    "template": "http/misconfiguration/http-missing-security-headers.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/http-missing-security-headers",
+    "template-id": "http-missing-security-headers",
+    "template-path": "/opt/nuclei-templates/http/misconfiguration/http-missing-security-headers.yaml",
+    "info": {
+      "author": [
+        "socketz",
+        "geeknik",
+        "G4L1T0",
+        "convisoappsec",
+        "kurohost",
+        "dawid-czarnecki",
+        "forgedhallpass",
+        "jub0bs",
+        "userdehghani",
+        "celbahraoui",
+        "safejulian"
+      ],
+      "classification": {
+        "cwe-id": [
+          "CWE-693"
+        ]
+      },
+      "description": "This template searches for missing HTTP security headers. The impact of these missing headers can vary.",
+      "metadata": {
+        "max-request": 1
+      },
+      "name": "HTTP Missing Security Headers",
+      "severity": "info",
+      "tags": [
+        "misconfig",
+        "headers",
+        "generic",
+        "vuln"
+      ]
+    },
+    "type": "http",
+    "host": "203.0.113.83",
+    "port": "443",
+    "scheme": "https",
+    "url": "https://203.0.113.83",
+    "matched-at": "https://203.0.113.83",
+    "matcher-name": "x-frame-options",
+    "ip": "203.0.113.83",
+    "timestamp": "2026-11-03T09:17:12-05:00",
+    "curl-command": "curl -X 'GET' -d '' -H 'Accept: */*' -H 'Accept-Language: en' -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0' 'https://203.0.113.83'",
+    "matcher-status": true
+  },
+  {
+    "template": "http/misconfiguration/http-missing-security-headers.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/http-missing-security-headers",
+    "template-id": "http-missing-security-headers",
+    "template-path": "/opt/nuclei-templates/http/misconfiguration/http-missing-security-headers.yaml",
+    "info": {
+      "author": [
+        "socketz",
+        "geeknik",
+        "G4L1T0",
+        "convisoappsec",
+        "kurohost",
+        "dawid-czarnecki",
+        "forgedhallpass",
+        "jub0bs",
+        "userdehghani",
+        "celbahraoui",
+        "safejulian"
+      ],
+      "classification": {
+        "cwe-id": [
+          "CWE-693"
+        ]
+      },
+      "description": "This template searches for missing HTTP security headers. The impact of these missing headers can vary.",
+      "metadata": {
+        "max-request": 1
+      },
+      "name": "HTTP Missing Security Headers",
+      "severity": "info",
+      "tags": [
+        "misconfig",
+        "headers",
+        "generic",
+        "vuln"
+      ]
+    },
+    "type": "http",
+    "host": "203.0.113.83",
+    "port": "443",
+    "scheme": "https",
+    "url": "https://203.0.113.83",
+    "matched-at": "https://203.0.113.83",
+    "matcher-name": "content-security-policy",
+    "ip": "203.0.113.83",
+    "timestamp": "2026-11-03T09:17:15-05:00",
+    "curl-command": "curl -X 'GET' -d '' -H 'Accept: */*' -H 'Accept-Language: en' -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0' 'https://203.0.113.83'",
+    "matcher-status": true
+  },
+  {
+    "template": "http/misconfiguration/http-missing-security-headers.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/http-missing-security-headers",
+    "template-id": "http-missing-security-headers",
+    "template-path": "/opt/nuclei-templates/http/misconfiguration/http-missing-security-headers.yaml",
+    "info": {
+      "author": [
+        "socketz",
+        "geeknik",
+        "G4L1T0",
+        "convisoappsec",
+        "kurohost",
+        "dawid-czarnecki",
+        "forgedhallpass",
+        "jub0bs",
+        "userdehghani",
+        "celbahraoui",
+        "safejulian"
+      ],
+      "classification": {
+        "cwe-id": [
+          "CWE-693"
+        ]
+      },
+      "description": "This template searches for missing HTTP security headers. The impact of these missing headers can vary.",
+      "metadata": {
+        "max-request": 1
+      },
+      "name": "HTTP Missing Security Headers",
+      "severity": "info",
+      "tags": [
+        "misconfig",
+        "headers",
+        "generic",
+        "vuln"
+      ]
+    },
+    "type": "http",
+    "host": "203.0.113.84",
+    "port": "443",
+    "scheme": "https",
+    "url": "https://203.0.113.84",
+    "matched-at": "https://203.0.113.84",
+    "matcher-name": "strict-transport-security",
+    "ip": "203.0.113.84",
+    "timestamp": "2026-11-03T09:17:18-05:00",
+    "curl-command": "curl -X 'GET' -d '' -H 'Accept: */*' -H 'Accept-Language: en' -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0' 'https://203.0.113.84'",
+    "matcher-status": true
+  },
+  {
+    "template": "http/misconfiguration/http-missing-security-headers.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/http-missing-security-headers",
+    "template-id": "http-missing-security-headers",
+    "template-path": "/opt/nuclei-templates/http/misconfiguration/http-missing-security-headers.yaml",
+    "info": {
+      "author": [
+        "socketz",
+        "geeknik",
+        "G4L1T0",
+        "convisoappsec",
+        "kurohost",
+        "dawid-czarnecki",
+        "forgedhallpass",
+        "jub0bs",
+        "userdehghani",
+        "celbahraoui",
+        "safejulian"
+      ],
+      "classification": {
+        "cwe-id": [
+          "CWE-693"
+        ]
+      },
+      "description": "This template searches for missing HTTP security headers. The impact of these missing headers can vary.",
+      "metadata": {
+        "max-request": 1
+      },
+      "name": "HTTP Missing Security Headers",
+      "severity": "info",
+      "tags": [
+        "misconfig",
+        "headers",
+        "generic",
+        "vuln"
+      ]
+    },
+    "type": "http",
+    "host": "203.0.113.84",
+    "port": "443",
+    "scheme": "https",
+    "url": "https://203.0.113.84",
+    "matched-at": "https://203.0.113.84",
+    "matcher-name": "x-frame-options",
+    "ip": "203.0.113.84",
+    "timestamp": "2026-11-03T09:17:21-05:00",
+    "curl-command": "curl -X 'GET' -d '' -H 'Accept: */*' -H 'Accept-Language: en' -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0' 'https://203.0.113.84'",
+    "matcher-status": true
+  },
+  {
+    "template": "http/misconfiguration/http-missing-security-headers.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/http-missing-security-headers",
+    "template-id": "http-missing-security-headers",
+    "template-path": "/opt/nuclei-templates/http/misconfiguration/http-missing-security-headers.yaml",
+    "info": {
+      "author": [
+        "socketz",
+        "geeknik",
+        "G4L1T0",
+        "convisoappsec",
+        "kurohost",
+        "dawid-czarnecki",
+        "forgedhallpass",
+        "jub0bs",
+        "userdehghani",
+        "celbahraoui",
+        "safejulian"
+      ],
+      "classification": {
+        "cwe-id": [
+          "CWE-693"
+        ]
+      },
+      "description": "This template searches for missing HTTP security headers. The impact of these missing headers can vary.",
+      "metadata": {
+        "max-request": 1
+      },
+      "name": "HTTP Missing Security Headers",
+      "severity": "info",
+      "tags": [
+        "misconfig",
+        "headers",
+        "generic",
+        "vuln"
+      ]
+    },
+    "type": "http",
+    "host": "203.0.113.84",
+    "port": "443",
+    "scheme": "https",
+    "url": "https://203.0.113.84",
+    "matched-at": "https://203.0.113.84",
+    "matcher-name": "content-security-policy",
+    "ip": "203.0.113.84",
+    "timestamp": "2026-11-03T09:17:24-05:00",
+    "curl-command": "curl -X 'GET' -d '' -H 'Accept: */*' -H 'Accept-Language: en' -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0' 'https://203.0.113.84'",
+    "matcher-status": true
+  },
+  {
+    "template": "http/misconfiguration/http-missing-security-headers.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/http-missing-security-headers",
+    "template-id": "http-missing-security-headers",
+    "template-path": "/opt/nuclei-templates/http/misconfiguration/http-missing-security-headers.yaml",
+    "info": {
+      "author": [
+        "socketz",
+        "geeknik",
+        "G4L1T0",
+        "convisoappsec",
+        "kurohost",
+        "dawid-czarnecki",
+        "forgedhallpass",
+        "jub0bs",
+        "userdehghani",
+        "celbahraoui",
+        "safejulian"
+      ],
+      "classification": {
+        "cwe-id": [
+          "CWE-693"
+        ]
+      },
+      "description": "This template searches for missing HTTP security headers. The impact of these missing headers can vary.",
+      "metadata": {
+        "max-request": 1
+      },
+      "name": "HTTP Missing Security Headers",
+      "severity": "info",
+      "tags": [
+        "misconfig",
+        "headers",
+        "generic",
+        "vuln"
+      ]
+    },
+    "type": "http",
+    "host": "203.0.113.85",
+    "port": "443",
+    "scheme": "https",
+    "url": "https://203.0.113.85",
+    "matched-at": "https://203.0.113.85",
+    "matcher-name": "strict-transport-security",
+    "ip": "203.0.113.85",
+    "timestamp": "2026-11-03T09:17:27-05:00",
+    "curl-command": "curl -X 'GET' -d '' -H 'Accept: */*' -H 'Accept-Language: en' -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0' 'https://203.0.113.85'",
+    "matcher-status": true
+  },
+  {
+    "template": "http/misconfiguration/http-missing-security-headers.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/http-missing-security-headers",
+    "template-id": "http-missing-security-headers",
+    "template-path": "/opt/nuclei-templates/http/misconfiguration/http-missing-security-headers.yaml",
+    "info": {
+      "author": [
+        "socketz",
+        "geeknik",
+        "G4L1T0",
+        "convisoappsec",
+        "kurohost",
+        "dawid-czarnecki",
+        "forgedhallpass",
+        "jub0bs",
+        "userdehghani",
+        "celbahraoui",
+        "safejulian"
+      ],
+      "classification": {
+        "cwe-id": [
+          "CWE-693"
+        ]
+      },
+      "description": "This template searches for missing HTTP security headers. The impact of these missing headers can vary.",
+      "metadata": {
+        "max-request": 1
+      },
+      "name": "HTTP Missing Security Headers",
+      "severity": "info",
+      "tags": [
+        "misconfig",
+        "headers",
+        "generic",
+        "vuln"
+      ]
+    },
+    "type": "http",
+    "host": "203.0.113.85",
+    "port": "443",
+    "scheme": "https",
+    "url": "https://203.0.113.85",
+    "matched-at": "https://203.0.113.85",
+    "matcher-name": "x-frame-options",
+    "ip": "203.0.113.85",
+    "timestamp": "2026-11-03T09:17:30-05:00",
+    "curl-command": "curl -X 'GET' -d '' -H 'Accept: */*' -H 'Accept-Language: en' -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0' 'https://203.0.113.85'",
+    "matcher-status": true
+  },
+  {
+    "template": "http/misconfiguration/http-missing-security-headers.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/http-missing-security-headers",
+    "template-id": "http-missing-security-headers",
+    "template-path": "/opt/nuclei-templates/http/misconfiguration/http-missing-security-headers.yaml",
+    "info": {
+      "author": [
+        "socketz",
+        "geeknik",
+        "G4L1T0",
+        "convisoappsec",
+        "kurohost",
+        "dawid-czarnecki",
+        "forgedhallpass",
+        "jub0bs",
+        "userdehghani",
+        "celbahraoui",
+        "safejulian"
+      ],
+      "classification": {
+        "cwe-id": [
+          "CWE-693"
+        ]
+      },
+      "description": "This template searches for missing HTTP security headers. The impact of these missing headers can vary.",
+      "metadata": {
+        "max-request": 1
+      },
+      "name": "HTTP Missing Security Headers",
+      "severity": "info",
+      "tags": [
+        "misconfig",
+        "headers",
+        "generic",
+        "vuln"
+      ]
+    },
+    "type": "http",
+    "host": "203.0.113.85",
+    "port": "443",
+    "scheme": "https",
+    "url": "https://203.0.113.85",
+    "matched-at": "https://203.0.113.85",
+    "matcher-name": "content-security-policy",
+    "ip": "203.0.113.85",
+    "timestamp": "2026-11-03T09:17:33-05:00",
+    "curl-command": "curl -X 'GET' -d '' -H 'Accept: */*' -H 'Accept-Language: en' -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0' 'https://203.0.113.85'",
+    "matcher-status": true
+  },
+  {
+    "template": "http/technologies/tech-detect.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/tech-detect",
+    "template-id": "tech-detect",
+    "template-path": "/opt/nuclei-templates/http/technologies/tech-detect.yaml",
+    "info": {
+      "author": [
+        "hakluke",
+        "righettod",
+        "matejsmycka"
+      ],
+      "metadata": {
+        "max-request": 1
+      },
+      "name": "Wappalyzer Technology Detection",
+      "severity": "info",
+      "tags": [
+        "tech",
+        "discovery"
+      ]
+    },
+    "type": "http",
+    "host": "203.0.113.80",
+    "port": "443",
+    "scheme": "https",
+    "url": "https://203.0.113.80",
+    "matched-at": "https://203.0.113.80",
+    "matcher-name": "php",
+    "ip": "203.0.113.80",
+    "timestamp": "2026-11-03T09:17:36-05:00",
+    "curl-command": "curl -X 'GET' -d '' -H 'Accept: */*' -H 'Accept-Language: en' -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0' 'https://203.0.113.80'",
+    "matcher-status": true
+  },
+  {
+    "template": "ssl/deprecated-tls.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/deprecated-tls",
+    "template-id": "deprecated-tls",
+    "template-path": "/opt/nuclei-templates/ssl/deprecated-tls.yaml",
+    "info": {
+      "author": [
+        "righettod",
+        "forgedhallpass",
+        "goosvorbook"
+      ],
+      "classification": {
+        "cwe-id": [
+          "CWE-327"
+        ]
+      },
+      "description": "The service accepts one or more deprecated SSL/TLS protocol versions: SSL 2.0, SSL 3.0, TLS 1.0 or TLS 1.1. These versions are prohibited or deprecated (RFC 6176, RFC 7568, RFC 8996) and are affected by known weaknesses such as DROWN and POODLE.",
+      "metadata": {
+        "max-request": 4
+      },
+      "name": "Deprecated SSL/TLS Protocols - Detect",
+      "reference": [
+        "https://ssl-config.mozilla.org/#config=intermediate",
+        "https://datatracker.ietf.org/doc/html/rfc6176",
+        "https://datatracker.ietf.org/doc/html/rfc7568",
+        "https://datatracker.ietf.org/doc/html/rfc8996",
+        "https://drownattack.com/"
+      ],
+      "severity": "info",
+      "tags": [
+        "ssl",
+        "tls",
+        "vuln"
+      ]
+    },
+    "type": "ssl",
+    "host": "203.0.113.70",
+    "port": "443",
+    "matched-at": "203.0.113.70:443",
+    "extracted-results": [
+      "ssl3"
+    ],
+    "ip": "203.0.113.70",
+    "timestamp": "2026-11-03T09:17:39-05:00",
+    "matcher-status": true
+  },
+  {
+    "template": "ssl/weak-cipher-suites.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/weak-cipher-suites",
+    "template-id": "weak-cipher-suites",
+    "template-path": "/opt/nuclei-templates/ssl/weak-cipher-suites.yaml",
+    "info": {
+      "author": [
+        "pussycat0x"
+      ],
+      "description": "A weak cipher is defined as an encryption/decryption algorithm that uses a key of insufficient length. Using an insufficient length for a key in an encryption/decryption algorithm opens up the possibility (or probability) that the encryption scheme could be broken.",
+      "metadata": {
+        "max-request": 4
+      },
+      "name": "Weak Cipher Suites Detection",
+      "reference": [
+        "https://www.acunetix.com/vulnerabilities/web/tls-ssl-weak-cipher-suites/",
+        "http://ciphersuite.info"
+      ],
+      "severity": "low",
+      "tags": [
+        "ssl",
+        "tls",
+        "misconfig",
+        "vuln"
+      ]
+    },
+    "type": "ssl",
+    "host": "203.0.113.70",
+    "port": "443",
+    "matched-at": "203.0.113.70:443",
+    "extracted-results": [
+      "TLS_RSA_WITH_3DES_EDE_CBC_SHA"
+    ],
+    "ip": "203.0.113.70",
+    "timestamp": "2026-11-03T09:17:42-05:00",
+    "matcher-status": true
+  },
+  {
+    "template": "ssl/deprecated-tls.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/deprecated-tls",
+    "template-id": "deprecated-tls",
+    "template-path": "/opt/nuclei-templates/ssl/deprecated-tls.yaml",
+    "info": {
+      "author": [
+        "righettod",
+        "forgedhallpass",
+        "goosvorbook"
+      ],
+      "classification": {
+        "cwe-id": [
+          "CWE-327"
+        ]
+      },
+      "description": "The service accepts one or more deprecated SSL/TLS protocol versions: SSL 2.0, SSL 3.0, TLS 1.0 or TLS 1.1. These versions are prohibited or deprecated (RFC 6176, RFC 7568, RFC 8996) and are affected by known weaknesses such as DROWN and POODLE.",
+      "metadata": {
+        "max-request": 4
+      },
+      "name": "Deprecated SSL/TLS Protocols - Detect",
+      "reference": [
+        "https://ssl-config.mozilla.org/#config=intermediate",
+        "https://datatracker.ietf.org/doc/html/rfc6176",
+        "https://datatracker.ietf.org/doc/html/rfc7568",
+        "https://datatracker.ietf.org/doc/html/rfc8996",
+        "https://drownattack.com/"
+      ],
+      "severity": "info",
+      "tags": [
+        "ssl",
+        "tls",
+        "vuln"
+      ]
+    },
+    "type": "ssl",
+    "host": "203.0.113.71",
+    "port": "443",
+    "matched-at": "203.0.113.71:443",
+    "extracted-results": [
+      "ssl3"
+    ],
+    "ip": "203.0.113.71",
+    "timestamp": "2026-11-03T09:17:45-05:00",
+    "matcher-status": true
+  },
+  {
+    "template": "ssl/weak-cipher-suites.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/weak-cipher-suites",
+    "template-id": "weak-cipher-suites",
+    "template-path": "/opt/nuclei-templates/ssl/weak-cipher-suites.yaml",
+    "info": {
+      "author": [
+        "pussycat0x"
+      ],
+      "description": "A weak cipher is defined as an encryption/decryption algorithm that uses a key of insufficient length. Using an insufficient length for a key in an encryption/decryption algorithm opens up the possibility (or probability) that the encryption scheme could be broken.",
+      "metadata": {
+        "max-request": 4
+      },
+      "name": "Weak Cipher Suites Detection",
+      "reference": [
+        "https://www.acunetix.com/vulnerabilities/web/tls-ssl-weak-cipher-suites/",
+        "http://ciphersuite.info"
+      ],
+      "severity": "low",
+      "tags": [
+        "ssl",
+        "tls",
+        "misconfig",
+        "vuln"
+      ]
+    },
+    "type": "ssl",
+    "host": "203.0.113.71",
+    "port": "443",
+    "matched-at": "203.0.113.71:443",
+    "extracted-results": [
+      "TLS_RSA_WITH_3DES_EDE_CBC_SHA"
+    ],
+    "ip": "203.0.113.71",
+    "timestamp": "2026-11-03T09:17:48-05:00",
+    "matcher-status": true
+  },
+  {
+    "template": "ssl/deprecated-tls.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/deprecated-tls",
+    "template-id": "deprecated-tls",
+    "template-path": "/opt/nuclei-templates/ssl/deprecated-tls.yaml",
+    "info": {
+      "author": [
+        "righettod",
+        "forgedhallpass",
+        "goosvorbook"
+      ],
+      "classification": {
+        "cwe-id": [
+          "CWE-327"
+        ]
+      },
+      "description": "The service accepts one or more deprecated SSL/TLS protocol versions: SSL 2.0, SSL 3.0, TLS 1.0 or TLS 1.1. These versions are prohibited or deprecated (RFC 6176, RFC 7568, RFC 8996) and are affected by known weaknesses such as DROWN and POODLE.",
+      "metadata": {
+        "max-request": 4
+      },
+      "name": "Deprecated SSL/TLS Protocols - Detect",
+      "reference": [
+        "https://ssl-config.mozilla.org/#config=intermediate",
+        "https://datatracker.ietf.org/doc/html/rfc6176",
+        "https://datatracker.ietf.org/doc/html/rfc7568",
+        "https://datatracker.ietf.org/doc/html/rfc8996",
+        "https://drownattack.com/"
+      ],
+      "severity": "info",
+      "tags": [
+        "ssl",
+        "tls",
+        "vuln"
+      ]
+    },
+    "type": "ssl",
+    "host": "203.0.113.72",
+    "port": "443",
+    "matched-at": "203.0.113.72:443",
+    "extracted-results": [
+      "ssl3"
+    ],
+    "ip": "203.0.113.72",
+    "timestamp": "2026-11-03T09:17:51-05:00",
+    "matcher-status": true
+  },
+  {
+    "template": "ssl/weak-cipher-suites.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/weak-cipher-suites",
+    "template-id": "weak-cipher-suites",
+    "template-path": "/opt/nuclei-templates/ssl/weak-cipher-suites.yaml",
+    "info": {
+      "author": [
+        "pussycat0x"
+      ],
+      "description": "A weak cipher is defined as an encryption/decryption algorithm that uses a key of insufficient length. Using an insufficient length for a key in an encryption/decryption algorithm opens up the possibility (or probability) that the encryption scheme could be broken.",
+      "metadata": {
+        "max-request": 4
+      },
+      "name": "Weak Cipher Suites Detection",
+      "reference": [
+        "https://www.acunetix.com/vulnerabilities/web/tls-ssl-weak-cipher-suites/",
+        "http://ciphersuite.info"
+      ],
+      "severity": "low",
+      "tags": [
+        "ssl",
+        "tls",
+        "misconfig",
+        "vuln"
+      ]
+    },
+    "type": "ssl",
+    "host": "203.0.113.72",
+    "port": "443",
+    "matched-at": "203.0.113.72:443",
+    "extracted-results": [
+      "TLS_RSA_WITH_3DES_EDE_CBC_SHA"
+    ],
+    "ip": "203.0.113.72",
+    "timestamp": "2026-11-03T09:17:54-05:00",
+    "matcher-status": true
+  },
+  {
+    "template": "ssl/deprecated-tls.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/deprecated-tls",
+    "template-id": "deprecated-tls",
+    "template-path": "/opt/nuclei-templates/ssl/deprecated-tls.yaml",
+    "info": {
+      "author": [
+        "righettod",
+        "forgedhallpass",
+        "goosvorbook"
+      ],
+      "classification": {
+        "cwe-id": [
+          "CWE-327"
+        ]
+      },
+      "description": "The service accepts one or more deprecated SSL/TLS protocol versions: SSL 2.0, SSL 3.0, TLS 1.0 or TLS 1.1. These versions are prohibited or deprecated (RFC 6176, RFC 7568, RFC 8996) and are affected by known weaknesses such as DROWN and POODLE.",
+      "metadata": {
+        "max-request": 4
+      },
+      "name": "Deprecated SSL/TLS Protocols - Detect",
+      "reference": [
+        "https://ssl-config.mozilla.org/#config=intermediate",
+        "https://datatracker.ietf.org/doc/html/rfc6176",
+        "https://datatracker.ietf.org/doc/html/rfc7568",
+        "https://datatracker.ietf.org/doc/html/rfc8996",
+        "https://drownattack.com/"
+      ],
+      "severity": "info",
+      "tags": [
+        "ssl",
+        "tls",
+        "vuln"
+      ]
+    },
+    "type": "ssl",
+    "host": "203.0.113.73",
+    "port": "443",
+    "matched-at": "203.0.113.73:443",
+    "extracted-results": [
+      "ssl3"
+    ],
+    "ip": "203.0.113.73",
+    "timestamp": "2026-11-03T09:17:57-05:00",
+    "matcher-status": true
+  },
+  {
+    "template": "ssl/weak-cipher-suites.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/weak-cipher-suites",
+    "template-id": "weak-cipher-suites",
+    "template-path": "/opt/nuclei-templates/ssl/weak-cipher-suites.yaml",
+    "info": {
+      "author": [
+        "pussycat0x"
+      ],
+      "description": "A weak cipher is defined as an encryption/decryption algorithm that uses a key of insufficient length. Using an insufficient length for a key in an encryption/decryption algorithm opens up the possibility (or probability) that the encryption scheme could be broken.",
+      "metadata": {
+        "max-request": 4
+      },
+      "name": "Weak Cipher Suites Detection",
+      "reference": [
+        "https://www.acunetix.com/vulnerabilities/web/tls-ssl-weak-cipher-suites/",
+        "http://ciphersuite.info"
+      ],
+      "severity": "low",
+      "tags": [
+        "ssl",
+        "tls",
+        "misconfig",
+        "vuln"
+      ]
+    },
+    "type": "ssl",
+    "host": "203.0.113.73",
+    "port": "443",
+    "matched-at": "203.0.113.73:443",
+    "extracted-results": [
+      "TLS_RSA_WITH_3DES_EDE_CBC_SHA"
+    ],
+    "ip": "203.0.113.73",
+    "timestamp": "2026-11-03T09:18:00-05:00",
+    "matcher-status": true
+  },
+  {
+    "template": "ssl/deprecated-tls.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/deprecated-tls",
+    "template-id": "deprecated-tls",
+    "template-path": "/opt/nuclei-templates/ssl/deprecated-tls.yaml",
+    "info": {
+      "author": [
+        "righettod",
+        "forgedhallpass",
+        "goosvorbook"
+      ],
+      "classification": {
+        "cwe-id": [
+          "CWE-327"
+        ]
+      },
+      "description": "The service accepts one or more deprecated SSL/TLS protocol versions: SSL 2.0, SSL 3.0, TLS 1.0 or TLS 1.1. These versions are prohibited or deprecated (RFC 6176, RFC 7568, RFC 8996) and are affected by known weaknesses such as DROWN and POODLE.",
+      "metadata": {
+        "max-request": 4
+      },
+      "name": "Deprecated SSL/TLS Protocols - Detect",
+      "reference": [
+        "https://ssl-config.mozilla.org/#config=intermediate",
+        "https://datatracker.ietf.org/doc/html/rfc6176",
+        "https://datatracker.ietf.org/doc/html/rfc7568",
+        "https://datatracker.ietf.org/doc/html/rfc8996",
+        "https://drownattack.com/"
+      ],
+      "severity": "info",
+      "tags": [
+        "ssl",
+        "tls",
+        "vuln"
+      ]
+    },
+    "type": "ssl",
+    "host": "203.0.113.74",
+    "port": "443",
+    "matched-at": "203.0.113.74:443",
+    "extracted-results": [
+      "ssl3"
+    ],
+    "ip": "203.0.113.74",
+    "timestamp": "2026-11-03T09:18:03-05:00",
+    "matcher-status": true
+  },
+  {
+    "template": "ssl/weak-cipher-suites.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/weak-cipher-suites",
+    "template-id": "weak-cipher-suites",
+    "template-path": "/opt/nuclei-templates/ssl/weak-cipher-suites.yaml",
+    "info": {
+      "author": [
+        "pussycat0x"
+      ],
+      "description": "A weak cipher is defined as an encryption/decryption algorithm that uses a key of insufficient length. Using an insufficient length for a key in an encryption/decryption algorithm opens up the possibility (or probability) that the encryption scheme could be broken.",
+      "metadata": {
+        "max-request": 4
+      },
+      "name": "Weak Cipher Suites Detection",
+      "reference": [
+        "https://www.acunetix.com/vulnerabilities/web/tls-ssl-weak-cipher-suites/",
+        "http://ciphersuite.info"
+      ],
+      "severity": "low",
+      "tags": [
+        "ssl",
+        "tls",
+        "misconfig",
+        "vuln"
+      ]
+    },
+    "type": "ssl",
+    "host": "203.0.113.74",
+    "port": "443",
+    "matched-at": "203.0.113.74:443",
+    "extracted-results": [
+      "TLS_RSA_WITH_3DES_EDE_CBC_SHA"
+    ],
+    "ip": "203.0.113.74",
+    "timestamp": "2026-11-03T09:18:06-05:00",
+    "matcher-status": true
+  },
+  {
+    "template": "ssl/deprecated-tls.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/deprecated-tls",
+    "template-id": "deprecated-tls",
+    "template-path": "/opt/nuclei-templates/ssl/deprecated-tls.yaml",
+    "info": {
+      "author": [
+        "righettod",
+        "forgedhallpass",
+        "goosvorbook"
+      ],
+      "classification": {
+        "cwe-id": [
+          "CWE-327"
+        ]
+      },
+      "description": "The service accepts one or more deprecated SSL/TLS protocol versions: SSL 2.0, SSL 3.0, TLS 1.0 or TLS 1.1. These versions are prohibited or deprecated (RFC 6176, RFC 7568, RFC 8996) and are affected by known weaknesses such as DROWN and POODLE.",
+      "metadata": {
+        "max-request": 4
+      },
+      "name": "Deprecated SSL/TLS Protocols - Detect",
+      "reference": [
+        "https://ssl-config.mozilla.org/#config=intermediate",
+        "https://datatracker.ietf.org/doc/html/rfc6176",
+        "https://datatracker.ietf.org/doc/html/rfc7568",
+        "https://datatracker.ietf.org/doc/html/rfc8996",
+        "https://drownattack.com/"
+      ],
+      "severity": "info",
+      "tags": [
+        "ssl",
+        "tls",
+        "vuln"
+      ]
+    },
+    "type": "ssl",
+    "host": "203.0.113.75",
+    "port": "443",
+    "matched-at": "203.0.113.75:443",
+    "extracted-results": [
+      "ssl3"
+    ],
+    "ip": "203.0.113.75",
+    "timestamp": "2026-11-03T09:18:09-05:00",
+    "matcher-status": true
+  },
+  {
+    "template": "ssl/weak-cipher-suites.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/weak-cipher-suites",
+    "template-id": "weak-cipher-suites",
+    "template-path": "/opt/nuclei-templates/ssl/weak-cipher-suites.yaml",
+    "info": {
+      "author": [
+        "pussycat0x"
+      ],
+      "description": "A weak cipher is defined as an encryption/decryption algorithm that uses a key of insufficient length. Using an insufficient length for a key in an encryption/decryption algorithm opens up the possibility (or probability) that the encryption scheme could be broken.",
+      "metadata": {
+        "max-request": 4
+      },
+      "name": "Weak Cipher Suites Detection",
+      "reference": [
+        "https://www.acunetix.com/vulnerabilities/web/tls-ssl-weak-cipher-suites/",
+        "http://ciphersuite.info"
+      ],
+      "severity": "low",
+      "tags": [
+        "ssl",
+        "tls",
+        "misconfig",
+        "vuln"
+      ]
+    },
+    "type": "ssl",
+    "host": "203.0.113.75",
+    "port": "443",
+    "matched-at": "203.0.113.75:443",
+    "extracted-results": [
+      "TLS_RSA_WITH_3DES_EDE_CBC_SHA"
+    ],
+    "ip": "203.0.113.75",
+    "timestamp": "2026-11-03T09:18:12-05:00",
+    "matcher-status": true
+  }
+]

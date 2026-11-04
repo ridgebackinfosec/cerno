@@ -26,7 +26,8 @@ import sqlite3
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional
 
-from .database import db_transaction, query_all
+from .constants import SOURCE_IDS
+from .database import db_transaction, plugin_id_order_sql, query_all
 from .models import Finding, Plugin
 from .workflow_mapper import WorkflowMapper, build_workflow_mapper
 
@@ -48,6 +49,7 @@ class FindingQuery:
     service: Optional[str] = None  # host_services.svc_name substring
     host: Optional[str] = None  # scan_target / ip_address substring
     plugin_name: Optional[str] = None  # plugin name substring (case-insensitive)
+    source: Optional[str] = None  # scan source: nessus|nuclei
     has_metasploit: Optional[bool] = None
     has_workflow: Optional[bool] = None  # consults the workflow mapper, not the DB
     merged: bool = False  # dedup by plugin across >1 scan (TUI multi-scan semantics)
@@ -122,6 +124,16 @@ def _build_where(q: FindingQuery) -> tuple[str, list[Any], bool]:
         clauses.append("p.severity_int >= ?")
         params.append(q.severity_min)
 
+    if q.source is not None:
+        # Filter on the stored, indexed source_id rather than a LIKE on the
+        # plugin_id prefix. An unknown source name matches nothing.
+        source_id = SOURCE_IDS.get(q.source.strip().lower())
+        if source_id is None:
+            clauses.append("0")
+        else:
+            clauses.append("p.source_id = ?")
+            params.append(source_id)
+
     if q.review_state is not None:
         clauses.append("f.review_state = ?")
         params.append(q.review_state)
@@ -189,7 +201,7 @@ def _candidate_rows(q: FindingQuery, conn: sqlite3.Connection) -> list:
         INNER JOIN v_plugins_with_severity p ON f.plugin_id = p.plugin_id
         {verdict_join}
         WHERE {where}
-        ORDER BY p.plugin_id ASC, f.scan_id ASC
+        ORDER BY {plugin_id_order_sql('p.plugin_id')}, f.scan_id ASC
     """
     return query_all(conn, sql, tuple(params))
 
@@ -212,7 +224,7 @@ def _merge_by_plugin(
     selected scans, so downstream host/port lookups span all scans (matching
     ``Finding.get_by_scan_ids_merged``).
     """
-    by_plugin: dict[int, tuple[Finding, Plugin]] = {}
+    by_plugin: dict[str, tuple[Finding, Plugin]] = {}
     for finding, plugin in rows:
         pid = plugin.plugin_id
         existing = by_plugin.get(pid)

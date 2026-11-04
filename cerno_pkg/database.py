@@ -37,7 +37,7 @@ DATABASE_PATH = get_database_path()
 
 # ========== Schema ==========
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 """Schema version, stored in ``PRAGMA user_version``.
 
 Note: Database is created directly in normalized structure.
@@ -57,6 +57,10 @@ History:
      verdict_types / nse_verdicts / port_states lookup tables, and the
      v_finding_current_verdict / v_finding_verified_stats /
      v_nse_results_with_verdict views
+- 5: Multi-source findings: ``plugins.plugin_id`` widened to TEXT and
+     namespaced per source ('57608' for Nessus, 'nuclei:apache-detect' for
+     nuclei), ``plugins.source_id`` + the ``finding_sources`` lookup table
+     added, and ``findings.plugin_id`` widened to match
 
 Schema features:
 - Normalized host and port tables (cross-scan tracking)
@@ -82,8 +86,8 @@ SCHEMA_SQL_TABLES = """
 CREATE TABLE IF NOT EXISTS scans (
     scan_id INTEGER PRIMARY KEY AUTOINCREMENT,
     scan_name TEXT NOT NULL UNIQUE,
-    nessus_file_path TEXT,
-    nessus_file_hash TEXT,
+    source_file_path TEXT,
+    source_file_hash TEXT,
     export_root TEXT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     last_reviewed_at TIMESTAMP
@@ -92,7 +96,8 @@ CREATE TABLE IF NOT EXISTS scans (
 CREATE INDEX IF NOT EXISTS idx_scans_name ON scans(scan_name);
 
 CREATE TABLE IF NOT EXISTS plugins (
-    plugin_id INTEGER PRIMARY KEY,
+    plugin_id TEXT PRIMARY KEY,
+    source_id INTEGER NOT NULL DEFAULT 1,
     plugin_name TEXT NOT NULL,
     severity_int INTEGER NOT NULL,
     has_metasploit BOOLEAN DEFAULT 0,
@@ -103,16 +108,18 @@ CREATE TABLE IF NOT EXISTS plugins (
     plugin_url TEXT,
     metadata_fetched_at TIMESTAMP,
     CONSTRAINT severity_range CHECK (severity_int BETWEEN 0 AND 4),
-    FOREIGN KEY (severity_int) REFERENCES severity_levels(severity_int)
+    FOREIGN KEY (severity_int) REFERENCES severity_levels(severity_int),
+    FOREIGN KEY (source_id) REFERENCES finding_sources(source_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_plugins_severity ON plugins(severity_int);
 CREATE INDEX IF NOT EXISTS idx_plugins_metasploit ON plugins(has_metasploit);
+CREATE INDEX IF NOT EXISTS idx_plugins_source ON plugins(source_id);
 
 CREATE TABLE IF NOT EXISTS findings (
     finding_id INTEGER PRIMARY KEY AUTOINCREMENT,
     scan_id INTEGER NOT NULL,
-    plugin_id INTEGER NOT NULL,
+    plugin_id TEXT NOT NULL,
     review_state TEXT NOT NULL DEFAULT 'unreviewed',
     reviewed_at TIMESTAMP,
     reviewed_by TEXT,
@@ -215,6 +222,17 @@ CREATE TABLE IF NOT EXISTS workflow_executions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_workflow_executions_finding ON workflow_executions(finding_id);
+
+-- Finding sources lookup table (which scanner produced a plugin row)
+-- plugins.plugin_id is namespaced per source ('57608' for Nessus,
+-- 'nuclei:apache-detect' for nuclei), so source_id is strictly derivable from
+-- that prefix. It is stored anyway, deliberately: it gives query.py an indexed
+-- SQL predicate and real referential integrity, where the alternative is a
+-- LIKE 'nuclei:%' scan on every source-filtered query. See docs/DATABASE.md.
+CREATE TABLE IF NOT EXISTS finding_sources (
+    source_id INTEGER PRIMARY KEY,
+    source_name TEXT NOT NULL UNIQUE
+);
 
 -- Severity levels lookup table (normalized reference data)
 CREATE TABLE IF NOT EXISTS severity_levels (
@@ -497,7 +515,8 @@ SELECT
     p.cves,
     p.metasploit_names,
     p.plugin_url,
-    p.metadata_fetched_at
+    p.metadata_fetched_at,
+    p.source_id
 FROM plugins p
 JOIN severity_levels sl ON p.severity_int = sl.severity_int;
 
@@ -763,8 +782,99 @@ def _check_schema_version(conn: sqlite3.Connection, db_path: Path) -> None:
             f"Database schema at {db_path} is version {db_version}, but this "
             f"version of Cerno requires schema version {SCHEMA_VERSION}. "
             f"Back up and delete {db_path}, then re-import your scans "
-            f"with 'cerno import nessus <file>'."
+            f"with 'cerno import nessus <file>' / 'cerno import nuclei <file>'."
         )
+
+
+#: Reference rows for every lookup table, as ``(sql, rows)`` pairs.
+#:
+#: Single source of truth: :func:`seed_lookup_tables` is called both by
+#: :func:`initialize_database` and by the ``temp_db`` test fixture, so a new
+#: lookup table cannot be seeded in production but forgotten in tests.
+LOOKUP_SEEDS: tuple[tuple[str, list[tuple]], ...] = (
+    (
+        "INSERT OR IGNORE INTO severity_levels VALUES (?, ?, ?, ?)",
+        [
+            (4, "Critical", 4, "#8B0000"),
+            (3, "High", 3, "#FF4500"),
+            (2, "Medium", 2, "#FFA500"),
+            (1, "Low", 1, "#FFD700"),
+            (0, "Info", 0, "#4682B4"),
+        ],
+    ),
+    # Import sources (plugins.plugin_id is namespaced per source)
+    (
+        "INSERT OR IGNORE INTO finding_sources (source_id, source_name) VALUES (?, ?)",
+        [(1, "nessus"), (2, "nuclei")],
+    ),
+    (
+        "INSERT OR IGNORE INTO artifact_types "
+        "(type_name, file_extension, description) VALUES (?, ?, ?)",
+        [
+            ("nmap_xml", ".xml", "Nmap XML output"),
+            ("nmap_gnmap", ".gnmap", "Nmap greppable output"),
+            ("nmap_nmap", ".nmap", "Nmap normal output"),
+            ("netexec_txt", ".txt", "NetExec text output"),
+            ("log", ".log", "Tool execution log"),
+        ],
+    ),
+    # Verification verdict types (truth, distinct from review_state)
+    (
+        "INSERT OR IGNORE INTO verdict_types (label, description) VALUES (?, ?)",
+        [
+            ("confirmed", "Finding verified as a true positive"),
+            ("false_positive", "Finding verified as a false positive"),
+            ("unable", "Unable to verify the finding"),
+        ],
+    ),
+    # NSE vuln-script verdict classifications
+    (
+        "INSERT OR IGNORE INTO nse_verdicts (label) VALUES (?)",
+        [
+            ("VULNERABLE",),
+            ("NOT_VULNERABLE",),
+            ("LIKELY_VULNERABLE",),
+            ("UNKNOWN",),
+        ],
+    ),
+    # Nmap port states
+    (
+        "INSERT OR IGNORE INTO port_states (label) VALUES (?)",
+        [
+            ("open",),
+            ("closed",),
+            ("filtered",),
+            ("open|filtered",),
+            ("closed|filtered",),
+            ("unfiltered",),
+        ],
+    ),
+)
+
+
+def plugin_id_order_sql(column: str) -> str:
+    """``ORDER BY`` fragment that sorts a namespaced ``plugin_id`` sensibly.
+
+    ``plugins.plugin_id`` became TEXT in schema v5, so sorting it directly is
+    lexicographic -- ``'9'`` would land after ``'10114'``. Casting first keeps
+    bare numeric Nessus ids in numeric order; namespaced ids (``nuclei:...``)
+    cast to 0, so they group together ahead of them and are ordered by the
+    textual tiebreaker.
+
+    Args:
+        column: Qualified column name. An internal constant, never user input.
+    """
+    return f"CAST({column} AS INTEGER) ASC, {column} ASC"
+
+
+def seed_lookup_tables(conn: sqlite3.Connection) -> None:
+    """Populate every lookup table with its reference rows.
+
+    Idempotent (``INSERT OR IGNORE``), so it is safe to re-run against an
+    existing database.
+    """
+    for sql, rows in LOOKUP_SEEDS:
+        conn.executemany(sql, rows)
 
 
 def initialize_database(database_path: Optional[Path] = None) -> bool:
@@ -794,62 +904,8 @@ def initialize_database(database_path: Optional[Path] = None) -> bool:
             # Create all tables
             conn.executescript(SCHEMA_SQL_TABLES)
 
-            # Populate foundation tables (INSERT OR IGNORE for idempotency)
-            conn.executemany(
-                "INSERT OR IGNORE INTO severity_levels VALUES (?, ?, ?, ?)",
-                [
-                    (4, "Critical", 4, "#8B0000"),
-                    (3, "High", 3, "#FF4500"),
-                    (2, "Medium", 2, "#FFA500"),
-                    (1, "Low", 1, "#FFD700"),
-                    (0, "Info", 0, "#4682B4"),
-                ],
-            )
-
-            conn.executemany(
-                "INSERT OR IGNORE INTO artifact_types (type_name, file_extension, description) VALUES (?, ?, ?)",
-                [
-                    ("nmap_xml", ".xml", "Nmap XML output"),
-                    ("nmap_gnmap", ".gnmap", "Nmap greppable output"),
-                    ("nmap_nmap", ".nmap", "Nmap normal output"),
-                    ("netexec_txt", ".txt", "NetExec text output"),
-                    ("log", ".log", "Tool execution log"),
-                ],
-            )
-
-            # Verification verdict types (truth, distinct from review_state)
-            conn.executemany(
-                "INSERT OR IGNORE INTO verdict_types (label, description) VALUES (?, ?)",
-                [
-                    ("confirmed", "Finding verified as a true positive"),
-                    ("false_positive", "Finding verified as a false positive"),
-                    ("unable", "Unable to verify the finding"),
-                ],
-            )
-
-            # NSE vuln-script verdict classifications
-            conn.executemany(
-                "INSERT OR IGNORE INTO nse_verdicts (label) VALUES (?)",
-                [
-                    ("VULNERABLE",),
-                    ("NOT_VULNERABLE",),
-                    ("LIKELY_VULNERABLE",),
-                    ("UNKNOWN",),
-                ],
-            )
-
-            # Nmap port states
-            conn.executemany(
-                "INSERT OR IGNORE INTO port_states (label) VALUES (?)",
-                [
-                    ("open",),
-                    ("closed",),
-                    ("filtered",),
-                    ("open|filtered",),
-                    ("closed|filtered",),
-                    ("unfiltered",),
-                ],
-            )
+            # Populate foundation / lookup tables
+            seed_lookup_tables(conn)
 
             # Create views
             conn.executescript(SCHEMA_SQL_VIEWS)

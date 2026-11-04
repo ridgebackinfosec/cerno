@@ -13,6 +13,18 @@ from typing import Optional
 
 from .database import get_connection, query_all, query_one
 from .logging_setup import log_timing
+from .parsing import plugin_source
+
+
+class MixedSourceComparisonError(ValueError):
+    """Raised when asked to compare two scans from different scan sources.
+
+    ``compare_scans`` classifies findings purely by ``plugin_id`` set
+    membership. Plugin ids are namespaced per source, so a Nessus scan and a
+    nuclei scan share none: every finding would be reported as "new" in one and
+    "resolved" in the other. That is not a comparison, so it is refused rather
+    than rendered.
+    """
 
 
 @dataclass
@@ -75,7 +87,7 @@ class ScanSnapshot:
     medium_count: int
     low_count: int
     info_count: int
-    plugin_ids: list[int] = field(default_factory=list)
+    plugin_ids: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -165,6 +177,19 @@ def compare_scans(
             """,
             (scan_id_2, min_severity),
         )
+
+        # Refuse a cross-source comparison before it produces nonsense.
+        sources_1 = {plugin_source(row["plugin_id"]) for row in scan1_plugins}
+        sources_2 = {plugin_source(row["plugin_id"]) for row in scan2_plugins}
+        if sources_1 and sources_2 and sources_1 != sources_2:
+            raise MixedSourceComparisonError(
+                f"Cannot compare '{scan1['scan_name']}' "
+                f"({'/'.join(sorted(sources_1))}) with "
+                f"'{scan2['scan_name']}' ({'/'.join(sorted(sources_2))}): "
+                "findings from different scan sources share no plugin ids, so "
+                "every finding would be reported as both new and resolved. "
+                "Compare scans from the same source."
+            )
 
         # Build plugin ID sets for comparison
         scan1_plugin_ids = {row["plugin_id"] for row in scan1_plugins}
@@ -330,7 +355,7 @@ def get_host_vulnerability_history(
                 JOIN finding_affected_hosts fah ON f.finding_id = fah.finding_id
                 JOIN hosts h ON fah.host_id = h.host_id
                 WHERE f.scan_id = ? AND h.ip_address = ?
-                ORDER BY f.plugin_id
+                ORDER BY CAST(f.plugin_id AS INTEGER) ASC, f.plugin_id ASC
                 """,
                 (row["scan_id"], ip_address),
             )

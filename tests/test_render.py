@@ -127,7 +127,7 @@ def test_actions_help_mentions_status_toggle(monkeypatch):
     "mode,label",
     [
         ("severity", "Severity"),
-        ("plugin_id", "Plugin ID"),
+        ("plugin_id", "Finding ID"),
         ("name", "Name"),
         ("hosts", "Hosts"),
     ],
@@ -199,7 +199,7 @@ def test_finding_preview_shows_plugin_url(monkeypatch):
         monkeypatch, "https://www.tenable.com/plugins/nessus/41028"
     )
     out = console.export_text(clear=False)
-    assert "Plugin Details: https://tenable.com/plugins/nessus/41028" in out
+    assert "Finding Details: https://tenable.com/plugins/nessus/41028" in out
     assert "www." not in out
 
 
@@ -207,7 +207,7 @@ def test_finding_preview_shows_plugin_url(monkeypatch):
 def test_finding_preview_plugin_url_fallback(monkeypatch):
     console = _render_preview(monkeypatch, None)
     assert (
-        "Plugin Details: https://tenable.com/plugins/nessus/41028"
+        "Finding Details: https://tenable.com/plugins/nessus/41028"
         in console.export_text()
     )
 
@@ -370,3 +370,99 @@ def test_finding_footer_no_tools_keeps_conditional_row_items(monkeypatch):
     assert "Workflow" in out
     assert "NetExec Data" in out
     assert "Run tool" not in out
+
+
+# ---------------------------------------------------------------------------
+# Findings-list identifier column
+# ---------------------------------------------------------------------------
+
+
+def _finding_list_output(ids, *, width: int = 200) -> str:
+    """Render the findings list for the given plugin ids and return the text."""
+    import io
+
+    from rich.console import Console
+
+    from cerno_pkg import render as render_mod
+    from cerno_pkg.models import Finding, Plugin
+
+    display = [
+        (
+            Finding(finding_id=i, scan_id=1, plugin_id=pid),
+            Plugin(plugin_id=pid, plugin_name=f"Finding {i}", severity_int=2),
+        )
+        for i, pid in enumerate(ids, 1)
+    ]
+    buf = io.StringIO()
+    console = Console(file=buf, width=width, force_terminal=False, legacy_windows=False)
+    original = render_mod._console_global
+    render_mod._console_global = console
+    try:
+        render_mod.render_finding_list_table(display, "severity", lambda _f: (1, "443"))
+    finally:
+        render_mod._console_global = original
+    return buf.getvalue()
+
+
+@pytest.mark.unit
+class TestFindingIdColumn:
+    LONG = "nuclei:http-missing-security-headers"  # 36 chars
+
+    def test_header_is_finding_id(self):
+        assert "Finding ID" in _finding_list_output(["57608"])
+
+    def test_long_namespaced_id_is_not_truncated(self):
+        """A fixed max_width used to crop this to "nuclei:ht…"."""
+        out = _finding_list_output([self.LONG])
+        assert self.LONG in out
+        assert "…" not in out
+
+    def test_nessus_only_column_stays_narrow(self):
+        """A numeric-only page must not pay for the wider column."""
+        narrow = _finding_list_output(["57608", "10107"])
+        wide = _finding_list_output([self.LONG])
+        assert len(max(narrow.splitlines(), key=len)) < len(
+            max(wide.splitlines(), key=len)
+        )
+
+    def test_header_is_never_cropped_by_short_ids(self):
+        """max_width below the header length would truncate the header itself."""
+        assert "Finding ID" in _finding_list_output(["1", "2"])
+
+    def test_mixed_sources_fit_the_longest_id(self):
+        out = _finding_list_output(["57608", self.LONG])
+        assert self.LONG in out
+        assert "57608" in out
+
+    def test_pathological_id_is_capped(self):
+        """An absurd id is cropped rather than swallowing the Name column."""
+        out = _finding_list_output(["nuclei:" + "x" * 300])
+        assert "…" in out
+        assert "Name" in out
+
+    def test_hostile_markup_in_an_id_is_not_parsed(self):
+        """The id reaches Rich as Text, like the name beside it."""
+        out = _finding_list_output(["nuclei:[bold]weird[/bold]-template"])
+        assert "[bold]weird[/bold]" in out
+
+    def test_wide_terminal_shows_the_whole_id(self):
+        out = _finding_list_output([self.LONG], width=120)
+        assert self.LONG in out
+
+    def test_narrow_terminal_keeps_the_name_readable(self):
+        """At 80 columns a 36-char id and a readable name do not both fit.
+
+        The id ellipsizes rather than shrinking Name to a few letters per line.
+        """
+        out = _finding_list_output([self.LONG], width=80)
+        assert "…" in out
+        header_line = next(ln for ln in out.splitlines() if "Finding ID" in ln)
+        name_col = header_line.index("Name")
+        # Name must have room for more than a handful of characters.
+        assert len(header_line) - name_col >= 20
+
+    def test_budget_scales_with_console_width(self):
+        at_80 = _finding_list_output([self.LONG], width=80)
+        at_200 = _finding_list_output([self.LONG], width=200)
+        assert self.LONG not in at_80
+        assert self.LONG in at_200

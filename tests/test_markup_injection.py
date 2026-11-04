@@ -7,8 +7,11 @@ output, or inject a clickable hyperlink into the operator's terminal.
 
 Raw ESC bytes cannot reach us through ``.nessus`` (a literal ``\\x1b`` is an
 invalid XML character, so the parser rejects the file), but they can arrive via
-CLI arguments, the NetExec workspace DB and tool output -- hence the message
-helper tests below.
+CLI arguments, the NetExec workspace DB, tool output -- and, since the nuclei
+importer landed, through scan data itself: JSON escapes ESC legally as
+``\\u001b``, and nuclei's ``extracted-results`` is copied verbatim out of
+response bodies. Hence the message helper tests below and
+``TestNucleiEscapesAreNeutralizedAtRender``.
 """
 
 import io
@@ -446,3 +449,67 @@ class TestChooseFromListHostileItems:
         )
 
         assert token in out, f"{token!r} was swallowed by markup parsing"
+
+
+# A nuclei template name / extraction carrying terminal escapes and Rich markup.
+# Unlike .nessus, JSON can legally transport these (as \u001b), so scan data is
+# now itself an ESC-bearing channel.
+NUCLEI_ESC_NAME = "Missing \x1b[31mHeader\x1b[0m [/] Detection"
+NUCLEI_ESC_EXTRACTION = "body said \x1b]0;pwned\x07 \x1b[1;32mOK\x1b[0m"
+
+
+@pytest.mark.unit
+class TestNucleiEscapesAreNeutralizedAtRender:
+    """The importer stores escapes verbatim; rendering must neutralize them."""
+
+    def test_safe_text_strips_every_escape_from_a_template_name(self) -> None:
+        out = safe_text(NUCLEI_ESC_NAME)
+        assert "\x1b" not in out
+        # The markup is escaped rather than parsed, so no text is lost.
+        assert "Header" in out and "Detection" in out
+
+    def test_safe_text_strips_escapes_from_an_extraction(self) -> None:
+        out = safe_text(NUCLEI_ESC_EXTRACTION)
+        assert "\x1b" not in out
+        assert "\x07" not in out
+        assert "OK" in out
+
+    def test_unbalanced_markup_in_a_template_name_does_not_crash_render(self) -> None:
+        plugin = Plugin(
+            plugin_id="nuclei:esc-template",
+            plugin_name=NUCLEI_ESC_NAME,
+            severity_int=1,
+        )
+        finding = Finding(finding_id=1, scan_id=1, plugin_id="nuclei:esc-template")
+        finding.get_hosts_and_ports = lambda *a, **k: ([], "")  # type: ignore[method-assign]
+        render.display_finding_preview(plugin, finding, None, None)  # type: ignore[arg-type]
+
+    def test_merged_plugin_output_with_escapes_renders(self) -> None:
+        """format_plugin_output is stored raw, so the renderer must cope."""
+        from cerno_pkg.nuclei_parse import ParsedNucleiMatch, format_plugin_output
+
+        text = format_plugin_output(
+            [
+                ParsedNucleiMatch(
+                    host="h.example.com",
+                    ip=None,
+                    port=443,
+                    matched_at="https://h.example.com/",
+                    matcher_name=None,
+                    extracted_results=[NUCLEI_ESC_EXTRACTION],
+                    result_type="http",
+                )
+            ]
+        )
+        assert "\x1b" in text  # stored verbatim
+        assert "\x1b" not in safe_text(text)  # neutralized for display
+
+    def test_nuclei_plugin_id_is_not_markup_parsed(self, capsys) -> None:
+        """A template id with brackets must not restyle or vanish from the panel."""
+        hostile = "nuclei:[bold]weird[/bold]-template"
+        plugin = Plugin(plugin_id=hostile, plugin_name="Weird", severity_int=0)
+        finding = Finding(finding_id=1, scan_id=1, plugin_id=hostile)
+        finding.get_hosts_and_ports = lambda *a, **k: ([], "")  # type: ignore[method-assign]
+        render.display_finding_preview(plugin, finding, None, None)  # type: ignore[arg-type]
+        out = capsys.readouterr().out
+        assert "[bold]weird[/bold]" in out

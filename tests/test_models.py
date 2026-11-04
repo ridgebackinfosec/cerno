@@ -22,7 +22,7 @@ class TestScanModel:
         """Test saving a new scan."""
         scan = Scan(
             scan_name="test_scan",
-            nessus_file_path="/tmp/test.nessus",
+            source_file_path="/tmp/test.nessus",
             export_root="/tmp/exports",
         )
 
@@ -36,7 +36,7 @@ class TestScanModel:
         # Create scan
         scan = Scan(
             scan_name="test_scan",
-            nessus_file_path="/tmp/test.nessus",
+            source_file_path="/tmp/test.nessus",
             export_root="/tmp/exports",
         )
         scan.save(temp_db)
@@ -46,7 +46,7 @@ class TestScanModel:
 
         assert retrieved is not None
         assert retrieved.scan_name == "test_scan"
-        assert retrieved.nessus_file_path == "/tmp/test.nessus"
+        assert retrieved.source_file_path == "/tmp/test.nessus"
 
     def test_scan_get_by_name_nonexistent(self, temp_db):
         """Test retrieving nonexistent scan returns None."""
@@ -119,13 +119,13 @@ class TestScanModel:
 
         # Update
         scan.scan_id = scan_id
-        scan.nessus_file_hash = "abc123"
+        scan.source_file_hash = "abc123"
         scan.save(temp_db)
 
         # Retrieve and verify
         retrieved = Scan.get_by_id(scan_id, temp_db)
         assert retrieved is not None
-        assert retrieved.nessus_file_hash == "abc123"
+        assert retrieved.source_file_hash == "abc123"
 
     def test_scan_unique_constraint(self, temp_db):
         """Test that scan names must be unique."""
@@ -164,7 +164,7 @@ class TestPluginModel:
         retrieved = Plugin.get_by_id(12345, temp_db)
 
         assert retrieved is not None
-        assert retrieved.plugin_id == 12345
+        assert retrieved.plugin_id == "12345"
         assert retrieved.plugin_name == "Test Plugin"
 
     def test_plugin_cve_list_serialization(self, temp_db):

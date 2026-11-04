@@ -42,7 +42,7 @@ class BatchItem:
     """One finding's generated command and its execution classification."""
 
     finding_id: int
-    plugin_id: int
+    plugin_id: str
     plugin_name: str
     tool: str
     generated_command: Optional[list[str]] = None

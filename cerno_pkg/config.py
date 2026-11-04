@@ -218,6 +218,53 @@ class CernoConfig:
     )
     """Path to custom workflows YAML."""
 
+    nuclei_templates_path: str = field(
+        default="~/nuclei-templates",
+        metadata={
+            "section": "Tools & Workflows",
+            "kind": "path",
+            "help": "nuclei templates directory (-ud)",
+        },
+    )
+    """Templates directory passed to nuclei as ``-ud``.
+
+    Used only to build the suggested command printed after an import; Cerno
+    never reads the directory itself."""
+
+    nuclei_profile: Optional[str] = field(
+        default="~/nuclei-templates/profiles/pentest.yml",
+        metadata={
+            "section": "Tools & Workflows",
+            "kind": "path",
+            "help": "nuclei profile YAML (-profile)",
+            "placeholder": "(none)",
+        },
+    )
+    """Profile passed to nuclei as ``-profile``. Empty or unset omits the flag."""
+
+    nuclei_user_agent: str = field(
+        default=(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) "
+            "Gecko/20100101 Firefox/132.0"
+        ),
+        metadata={
+            "section": "Tools & Workflows",
+            "kind": "str",
+            "help": "User-Agent nuclei sends (-H)",
+        },
+    )
+    """User-Agent header for the suggested nuclei command."""
+
+    nuclei_concurrency: int = field(
+        default=10,
+        metadata={
+            "section": "Tools & Workflows",
+            "kind": "int",
+            "help": "nuclei template concurrency (-c)",
+        },
+    )
+    """Template concurrency passed to nuclei as ``-c``."""
+
     # Logging
     debug_logging: bool = field(
         default=False,
@@ -504,6 +551,12 @@ MCP_NOT_APPLICABLE_KEYS: frozenset[str] = frozenset(
         "pivot_interface",
         "pivot_http_port",
         "top_ports_count",
+        # These only shape the nuclei command suggested after a CLI import;
+        # the MCP server prints no suggestions.
+        "nuclei_templates_path",
+        "nuclei_profile",
+        "nuclei_user_agent",
+        "nuclei_concurrency",
     }
 )
 

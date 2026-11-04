@@ -304,19 +304,19 @@ class TestFilterFindingCandidates:
 
         assert self._ids(
             filter_finding_candidates(self._records(), "", None, None)
-        ) == [1, 2, 3]
+        ) == ["1", "2", "3"]
 
     def test_in_progress_only(self):
         from cerno_pkg.tui import filter_finding_candidates
 
         result = filter_finding_candidates(self._records(), "", None, "in_progress")
-        assert self._ids(result) == [2, 3]
+        assert self._ids(result) == ["2", "3"]
 
     def test_combines_with_name_filter(self):
         from cerno_pkg.tui import filter_finding_candidates
 
         result = filter_finding_candidates(self._records(), "ssl", None, "in_progress")
-        assert self._ids(result) == [2]
+        assert self._ids(result) == ["2"]
 
     def test_combines_with_group_filter(self):
         from cerno_pkg.tui import filter_finding_candidates
@@ -324,10 +324,10 @@ class TestFilterFindingCandidates:
         group = (1, {"Plugin 3: SMB Signing", "Plugin 1: SSL Weak Cipher"}, "desc")
         assert self._ids(
             filter_finding_candidates(self._records(), "", group, None)
-        ) == [1, 3]
+        ) == ["1", "3"]
         assert self._ids(
             filter_finding_candidates(self._records(), "", group, "in_progress")
-        ) == [3]
+        ) == ["3"]
 
 
 @pytest.mark.integration

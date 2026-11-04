@@ -1,0 +1,645 @@
+[
+  {
+    "template": "http/technologies/tech-detect.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/tech-detect",
+    "template-id": "tech-detect",
+    "template-path": "/opt/nuclei-templates/http/technologies/tech-detect.yaml",
+    "info": {
+      "author": [
+        "hakluke",
+        "righettod",
+        "matejsmycka"
+      ],
+      "metadata": {
+        "max-request": 1
+      },
+      "name": "Wappalyzer Technology Detection",
+      "severity": "info",
+      "tags": [
+        "tech",
+        "discovery"
+      ]
+    },
+    "type": "http",
+    "host": "198.51.100.10",
+    "port": "80",
+    "scheme": "http",
+    "url": "http://198.51.100.10",
+    "matched-at": "http://198.51.100.10",
+    "matcher-name": "apache",
+    "ip": "198.51.100.10",
+    "timestamp": "2026-11-03T09:15:00-05:00",
+    "curl-command": "curl -X 'GET' -d '' -H 'Accept: */*' -H 'Accept-Language: en' -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0' 'http://198.51.100.10'",
+    "matcher-status": true
+  },
+  {
+    "template": "http/technologies/tech-detect.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/tech-detect",
+    "template-id": "tech-detect",
+    "template-path": "/opt/nuclei-templates/http/technologies/tech-detect.yaml",
+    "info": {
+      "author": [
+        "hakluke",
+        "righettod",
+        "matejsmycka"
+      ],
+      "metadata": {
+        "max-request": 1
+      },
+      "name": "Wappalyzer Technology Detection",
+      "severity": "info",
+      "tags": [
+        "tech",
+        "discovery"
+      ]
+    },
+    "type": "http",
+    "host": "198.51.100.10",
+    "port": "80",
+    "scheme": "http",
+    "url": "http://198.51.100.10",
+    "matched-at": "http://198.51.100.10",
+    "matcher-name": "ubuntu",
+    "ip": "198.51.100.10",
+    "timestamp": "2026-11-03T09:15:03-05:00",
+    "curl-command": "curl -X 'GET' -d '' -H 'Accept: */*' -H 'Accept-Language: en' -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0' 'http://198.51.100.10'",
+    "matcher-status": true
+  },
+  {
+    "template": "http/technologies/apache/apache-detect.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/apache-detect",
+    "template-id": "apache-detect",
+    "template-path": "/opt/nuclei-templates/http/technologies/apache/apache-detect.yaml",
+    "info": {
+      "author": [
+        "philippedelteil"
+      ],
+      "description": "Some Apache servers have the version on the response header. The OpenSSL version can be also obtained",
+      "metadata": {
+        "max-request": 1
+      },
+      "name": "Apache Detection",
+      "severity": "info",
+      "tags": [
+        "tech",
+        "apache",
+        "discovery"
+      ]
+    },
+    "type": "http",
+    "host": "198.51.100.10",
+    "port": "80",
+    "scheme": "http",
+    "url": "http://198.51.100.10",
+    "matched-at": "http://198.51.100.10",
+    "extracted-results": [
+      "Apache/2.4.29 (Ubuntu)"
+    ],
+    "ip": "198.51.100.10",
+    "timestamp": "2026-11-03T09:15:06-05:00",
+    "curl-command": "curl -X 'GET' -d '' -H 'Accept: */*' -H 'Accept-Language: en' -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0' 'http://198.51.100.10'",
+    "matcher-status": true
+  },
+  {
+    "template": "http/miscellaneous/robots-txt.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/robots-txt",
+    "template-id": "robots-txt",
+    "template-path": "/opt/nuclei-templates/http/miscellaneous/robots-txt.yaml",
+    "info": {
+      "author": [
+        "CasperGN",
+        "TheZakMan"
+      ],
+      "metadata": {
+        "max-request": 2
+      },
+      "name": "robots.txt file",
+      "severity": "info",
+      "tags": [
+        "miscellaneous",
+        "misc",
+        "generic",
+        "vuln"
+      ]
+    },
+    "type": "http",
+    "host": "198.51.100.10",
+    "port": "80",
+    "scheme": "http",
+    "url": "http://198.51.100.10",
+    "matched-at": "http://198.51.100.10/robots.txt",
+    "ip": "198.51.100.10",
+    "timestamp": "2026-11-03T09:15:09-05:00",
+    "curl-command": "curl -X 'GET' -d '' -H 'Accept: */*' -H 'Accept-Language: en' -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0' 'http://198.51.100.10/robots.txt'",
+    "matcher-status": true
+  },
+  {
+    "template": "http/misconfiguration/http-missing-security-headers.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/http-missing-security-headers",
+    "template-id": "http-missing-security-headers",
+    "template-path": "/opt/nuclei-templates/http/misconfiguration/http-missing-security-headers.yaml",
+    "info": {
+      "author": [
+        "socketz",
+        "geeknik",
+        "G4L1T0",
+        "convisoappsec",
+        "kurohost",
+        "dawid-czarnecki",
+        "forgedhallpass",
+        "jub0bs",
+        "userdehghani",
+        "celbahraoui",
+        "safejulian"
+      ],
+      "classification": {
+        "cwe-id": [
+          "CWE-693"
+        ]
+      },
+      "description": "This template searches for missing HTTP security headers. The impact of these missing headers can vary.",
+      "metadata": {
+        "max-request": 1
+      },
+      "name": "HTTP Missing Security Headers",
+      "severity": "info",
+      "tags": [
+        "misconfig",
+        "headers",
+        "generic",
+        "vuln"
+      ]
+    },
+    "type": "http",
+    "host": "198.51.100.10",
+    "port": "80",
+    "scheme": "http",
+    "url": "http://198.51.100.10",
+    "matched-at": "http://198.51.100.10",
+    "matcher-name": "strict-transport-security",
+    "ip": "198.51.100.10",
+    "timestamp": "2026-11-03T09:15:12-05:00",
+    "curl-command": "curl -X 'GET' -d '' -H 'Accept: */*' -H 'Accept-Language: en' -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0' 'http://198.51.100.10'",
+    "matcher-status": true
+  },
+  {
+    "template": "http/misconfiguration/http-missing-security-headers.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/http-missing-security-headers",
+    "template-id": "http-missing-security-headers",
+    "template-path": "/opt/nuclei-templates/http/misconfiguration/http-missing-security-headers.yaml",
+    "info": {
+      "author": [
+        "socketz",
+        "geeknik",
+        "G4L1T0",
+        "convisoappsec",
+        "kurohost",
+        "dawid-czarnecki",
+        "forgedhallpass",
+        "jub0bs",
+        "userdehghani",
+        "celbahraoui",
+        "safejulian"
+      ],
+      "classification": {
+        "cwe-id": [
+          "CWE-693"
+        ]
+      },
+      "description": "This template searches for missing HTTP security headers. The impact of these missing headers can vary.",
+      "metadata": {
+        "max-request": 1
+      },
+      "name": "HTTP Missing Security Headers",
+      "severity": "info",
+      "tags": [
+        "misconfig",
+        "headers",
+        "generic",
+        "vuln"
+      ]
+    },
+    "type": "http",
+    "host": "198.51.100.10",
+    "port": "80",
+    "scheme": "http",
+    "url": "http://198.51.100.10",
+    "matched-at": "http://198.51.100.10",
+    "matcher-name": "x-frame-options",
+    "ip": "198.51.100.10",
+    "timestamp": "2026-11-03T09:15:15-05:00",
+    "curl-command": "curl -X 'GET' -d '' -H 'Accept: */*' -H 'Accept-Language: en' -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0' 'http://198.51.100.10'",
+    "matcher-status": true
+  },
+  {
+    "template": "http/misconfiguration/http-missing-security-headers.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/http-missing-security-headers",
+    "template-id": "http-missing-security-headers",
+    "template-path": "/opt/nuclei-templates/http/misconfiguration/http-missing-security-headers.yaml",
+    "info": {
+      "author": [
+        "socketz",
+        "geeknik",
+        "G4L1T0",
+        "convisoappsec",
+        "kurohost",
+        "dawid-czarnecki",
+        "forgedhallpass",
+        "jub0bs",
+        "userdehghani",
+        "celbahraoui",
+        "safejulian"
+      ],
+      "classification": {
+        "cwe-id": [
+          "CWE-693"
+        ]
+      },
+      "description": "This template searches for missing HTTP security headers. The impact of these missing headers can vary.",
+      "metadata": {
+        "max-request": 1
+      },
+      "name": "HTTP Missing Security Headers",
+      "severity": "info",
+      "tags": [
+        "misconfig",
+        "headers",
+        "generic",
+        "vuln"
+      ]
+    },
+    "type": "http",
+    "host": "198.51.100.10",
+    "port": "80",
+    "scheme": "http",
+    "url": "http://198.51.100.10",
+    "matched-at": "http://198.51.100.10",
+    "matcher-name": "content-security-policy",
+    "ip": "198.51.100.10",
+    "timestamp": "2026-11-03T09:15:18-05:00",
+    "curl-command": "curl -X 'GET' -d '' -H 'Accept: */*' -H 'Accept-Language: en' -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0' 'http://198.51.100.10'",
+    "matcher-status": true
+  },
+  {
+    "template": "ssl/deprecated-tls.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/deprecated-tls",
+    "template-id": "deprecated-tls",
+    "template-path": "/opt/nuclei-templates/ssl/deprecated-tls.yaml",
+    "info": {
+      "author": [
+        "righettod",
+        "forgedhallpass",
+        "goosvorbook"
+      ],
+      "classification": {
+        "cwe-id": [
+          "CWE-327"
+        ]
+      },
+      "description": "The service accepts one or more deprecated SSL/TLS protocol versions: SSL 2.0, SSL 3.0, TLS 1.0 or TLS 1.1. These versions are prohibited or deprecated (RFC 6176, RFC 7568, RFC 8996) and are affected by known weaknesses such as DROWN and POODLE.",
+      "metadata": {
+        "max-request": 4
+      },
+      "name": "Deprecated SSL/TLS Protocols - Detect",
+      "reference": [
+        "https://ssl-config.mozilla.org/#config=intermediate",
+        "https://datatracker.ietf.org/doc/html/rfc6176",
+        "https://datatracker.ietf.org/doc/html/rfc7568",
+        "https://datatracker.ietf.org/doc/html/rfc8996",
+        "https://drownattack.com/"
+      ],
+      "severity": "info",
+      "tags": [
+        "ssl",
+        "tls",
+        "vuln"
+      ]
+    },
+    "type": "ssl",
+    "host": "198.51.100.10",
+    "port": "443",
+    "matched-at": "198.51.100.10:443",
+    "extracted-results": [
+      "ssl3"
+    ],
+    "ip": "198.51.100.10",
+    "timestamp": "2026-11-03T09:15:21-05:00",
+    "matcher-status": true
+  },
+  {
+    "template": "ssl/deprecated-tls.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/deprecated-tls",
+    "template-id": "deprecated-tls",
+    "template-path": "/opt/nuclei-templates/ssl/deprecated-tls.yaml",
+    "info": {
+      "author": [
+        "righettod",
+        "forgedhallpass",
+        "goosvorbook"
+      ],
+      "classification": {
+        "cwe-id": [
+          "CWE-327"
+        ]
+      },
+      "description": "The service accepts one or more deprecated SSL/TLS protocol versions: SSL 2.0, SSL 3.0, TLS 1.0 or TLS 1.1. These versions are prohibited or deprecated (RFC 6176, RFC 7568, RFC 8996) and are affected by known weaknesses such as DROWN and POODLE.",
+      "metadata": {
+        "max-request": 4
+      },
+      "name": "Deprecated SSL/TLS Protocols - Detect",
+      "reference": [
+        "https://ssl-config.mozilla.org/#config=intermediate",
+        "https://datatracker.ietf.org/doc/html/rfc6176",
+        "https://datatracker.ietf.org/doc/html/rfc7568",
+        "https://datatracker.ietf.org/doc/html/rfc8996",
+        "https://drownattack.com/"
+      ],
+      "severity": "info",
+      "tags": [
+        "ssl",
+        "tls",
+        "vuln"
+      ]
+    },
+    "type": "ssl",
+    "host": "198.51.100.11",
+    "port": "443",
+    "matched-at": "198.51.100.11:443",
+    "extracted-results": [
+      "tls10"
+    ],
+    "ip": "198.51.100.11",
+    "timestamp": "2026-11-03T09:15:24-05:00",
+    "matcher-status": true
+  },
+  {
+    "template": "ssl/weak-cipher-suites.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/weak-cipher-suites",
+    "template-id": "weak-cipher-suites",
+    "template-path": "/opt/nuclei-templates/ssl/weak-cipher-suites.yaml",
+    "info": {
+      "author": [
+        "pussycat0x"
+      ],
+      "description": "A weak cipher is defined as an encryption/decryption algorithm that uses a key of insufficient length. Using an insufficient length for a key in an encryption/decryption algorithm opens up the possibility (or probability) that the encryption scheme could be broken.",
+      "metadata": {
+        "max-request": 4
+      },
+      "name": "Weak Cipher Suites Detection",
+      "reference": [
+        "https://www.acunetix.com/vulnerabilities/web/tls-ssl-weak-cipher-suites/",
+        "http://ciphersuite.info"
+      ],
+      "severity": "low",
+      "tags": [
+        "ssl",
+        "tls",
+        "misconfig",
+        "vuln"
+      ]
+    },
+    "type": "ssl",
+    "host": "198.51.100.10",
+    "port": "443",
+    "matched-at": "198.51.100.10:443",
+    "extracted-results": [
+      "TLS_RSA_WITH_3DES_EDE_CBC_SHA"
+    ],
+    "ip": "198.51.100.10",
+    "timestamp": "2026-11-03T09:15:27-05:00",
+    "matcher-status": true
+  },
+  {
+    "template": "ssl/weak-cipher-suites.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/weak-cipher-suites",
+    "template-id": "weak-cipher-suites",
+    "template-path": "/opt/nuclei-templates/ssl/weak-cipher-suites.yaml",
+    "info": {
+      "author": [
+        "pussycat0x"
+      ],
+      "description": "A weak cipher is defined as an encryption/decryption algorithm that uses a key of insufficient length. Using an insufficient length for a key in an encryption/decryption algorithm opens up the possibility (or probability) that the encryption scheme could be broken.",
+      "metadata": {
+        "max-request": 4
+      },
+      "name": "Weak Cipher Suites Detection",
+      "reference": [
+        "https://www.acunetix.com/vulnerabilities/web/tls-ssl-weak-cipher-suites/",
+        "http://ciphersuite.info"
+      ],
+      "severity": "low",
+      "tags": [
+        "ssl",
+        "tls",
+        "misconfig",
+        "vuln"
+      ]
+    },
+    "type": "ssl",
+    "host": "198.51.100.11",
+    "port": "443",
+    "matched-at": "198.51.100.11:443",
+    "extracted-results": [
+      "TLS_RSA_WITH_3DES_EDE_CBC_SHA"
+    ],
+    "ip": "198.51.100.11",
+    "timestamp": "2026-11-03T09:15:30-05:00",
+    "matcher-status": true
+  },
+  {
+    "template": "ssl/tls-version.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/tls-version",
+    "template-id": "tls-version",
+    "template-path": "/opt/nuclei-templates/ssl/tls-version.yaml",
+    "info": {
+      "author": [
+        "pdteam",
+        "pussycat0x"
+      ],
+      "description": "TLS version detection is a security process used to determine the version of the Transport Layer Security (TLS) protocol used by a computer or server.\nIt is important to detect the TLS version in order to ensure secure communication between two computers or servers.",
+      "metadata": {
+        "max-request": 4
+      },
+      "name": "TLS Version - Detect",
+      "severity": "info",
+      "tags": [
+        "ssl",
+        "tls",
+        "discovery"
+      ]
+    },
+    "type": "ssl",
+    "host": "198.51.100.10",
+    "port": "443",
+    "matched-at": "198.51.100.10:443",
+    "matcher-name": "tls11",
+    "ip": "198.51.100.10",
+    "timestamp": "2026-11-03T09:15:33-05:00",
+    "matcher-status": true
+  },
+  {
+    "template": "ssl/tls-version.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/tls-version",
+    "template-id": "tls-version",
+    "template-path": "/opt/nuclei-templates/ssl/tls-version.yaml",
+    "info": {
+      "author": [
+        "pdteam",
+        "pussycat0x"
+      ],
+      "description": "TLS version detection is a security process used to determine the version of the Transport Layer Security (TLS) protocol used by a computer or server.\nIt is important to detect the TLS version in order to ensure secure communication between two computers or servers.",
+      "metadata": {
+        "max-request": 4
+      },
+      "name": "TLS Version - Detect",
+      "severity": "info",
+      "tags": [
+        "ssl",
+        "tls",
+        "discovery"
+      ]
+    },
+    "type": "ssl",
+    "host": "198.51.100.10",
+    "port": "443",
+    "matched-at": "198.51.100.10:443",
+    "matcher-name": "tls12",
+    "ip": "198.51.100.10",
+    "timestamp": "2026-11-03T09:15:36-05:00",
+    "matcher-status": true
+  },
+  {
+    "template": "ssl/tls-version.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/tls-version",
+    "template-id": "tls-version",
+    "template-path": "/opt/nuclei-templates/ssl/tls-version.yaml",
+    "info": {
+      "author": [
+        "pdteam",
+        "pussycat0x"
+      ],
+      "description": "TLS version detection is a security process used to determine the version of the Transport Layer Security (TLS) protocol used by a computer or server.\nIt is important to detect the TLS version in order to ensure secure communication between two computers or servers.",
+      "metadata": {
+        "max-request": 4
+      },
+      "name": "TLS Version - Detect",
+      "severity": "info",
+      "tags": [
+        "ssl",
+        "tls",
+        "discovery"
+      ]
+    },
+    "type": "ssl",
+    "host": "198.51.100.11",
+    "port": "443",
+    "matched-at": "198.51.100.11:443",
+    "extracted-results": [
+      "tls12"
+    ],
+    "ip": "198.51.100.11",
+    "timestamp": "2026-11-03T09:15:39-05:00",
+    "matcher-status": true
+  },
+  {
+    "template": "http/technologies/tech-detect.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/tech-detect",
+    "template-id": "tech-detect",
+    "template-path": "/opt/nuclei-templates/http/technologies/tech-detect.yaml",
+    "info": {
+      "author": [
+        "hakluke",
+        "righettod",
+        "matejsmycka"
+      ],
+      "metadata": {
+        "max-request": 1
+      },
+      "name": "Wappalyzer Technology Detection",
+      "severity": "info",
+      "tags": [
+        "tech",
+        "discovery"
+      ]
+    },
+    "type": "http",
+    "host": "portal.demo.example",
+    "port": "443",
+    "scheme": "https",
+    "url": "https://portal.demo.example",
+    "matched-at": "https://portal.demo.example",
+    "matcher-name": "nginx",
+    "ip": "203.0.113.50",
+    "timestamp": "2026-11-03T09:15:42-05:00",
+    "curl-command": "curl -X 'GET' -d '' -H 'Accept: */*' -H 'Accept-Language: en' -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0' 'https://portal.demo.example'",
+    "matcher-status": true
+  },
+  {
+    "template": "http/technologies/nginx/nginx-version.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/nginx-version",
+    "template-id": "nginx-version",
+    "template-path": "/opt/nuclei-templates/http/technologies/nginx/nginx-version.yaml",
+    "info": {
+      "author": [
+        "philippedelteil",
+        "daffainfo"
+      ],
+      "description": "Some nginx servers have the version on the response header. Useful when you need to find specific CVEs on your targets.",
+      "metadata": {
+        "max-request": 1
+      },
+      "name": "Nginx version detect",
+      "severity": "info",
+      "tags": [
+        "tech",
+        "nginx",
+        "discovery"
+      ]
+    },
+    "type": "http",
+    "host": "portal.demo.example",
+    "port": "443",
+    "scheme": "https",
+    "url": "https://portal.demo.example",
+    "matched-at": "https://portal.demo.example",
+    "extracted-results": [
+      "nginx/1.14.0"
+    ],
+    "ip": "203.0.113.50",
+    "timestamp": "2026-11-03T09:15:45-05:00",
+    "curl-command": "curl -X 'GET' -d '' -H 'Accept: */*' -H 'Accept-Language: en' -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0' 'https://portal.demo.example'",
+    "matcher-status": true
+  },
+  {
+    "template": "ssl/ssl-dns-names.yaml",
+    "template-url": "https://cloud.projectdiscovery.io/public/ssl-dns-names",
+    "template-id": "ssl-dns-names",
+    "template-path": "/opt/nuclei-templates/ssl/ssl-dns-names.yaml",
+    "info": {
+      "author": [
+        "pdteam"
+      ],
+      "description": "Extract the Subject Alternative Name (SAN) from the target's certificate. SAN facilitates the usage of additional hostnames with the same certificate.",
+      "metadata": {
+        "max-request": 1
+      },
+      "name": "SSL DNS Names",
+      "severity": "info",
+      "tags": [
+        "ssl",
+        "tls",
+        "vuln"
+      ]
+    },
+    "type": "ssl",
+    "host": "portal.demo.example",
+    "port": "443",
+    "matched-at": "portal.demo.example:443",
+    "extracted-results": [
+      "portal.demo.example"
+    ],
+    "ip": "203.0.113.50",
+    "timestamp": "2026-11-03T09:15:48-05:00",
+    "matcher-status": true
+  }
+]

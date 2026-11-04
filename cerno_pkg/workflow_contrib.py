@@ -202,7 +202,7 @@ class Candidate:
     """A drafted (or operator-edited) workflow entry ready for review/export."""
 
     finding_id: int
-    plugin_id: int
+    plugin_id: str
     yaml_plugin_id: str  # the entry's plugin_id (keeps a multi-ID entry intact)
     reason: str  # "new" | "enhanced"
     workflow_name: str

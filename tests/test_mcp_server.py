@@ -69,6 +69,7 @@ def test_readonly_omits_execution_and_mutation_tools():
     assert "execute_command" not in names
     assert "set_review_state" not in names
     assert "import_nessus" not in names
+    assert "import_nuclei" not in names
     assert "list_scans" in names
     assert "generate_nmap_cmd" in names
 
@@ -79,6 +80,7 @@ def test_flags_enable_gated_tools():
     assert "execute_command" in names
     assert "set_review_state" in names
     assert "import_nessus" in names
+    assert "import_nuclei" in names
 
 
 @pytest.mark.integration
@@ -143,7 +145,7 @@ def test_list_scans(seeded):
 @pytest.mark.integration
 def test_list_findings_all(seeded):
     findings = mcp.tool_list_findings([seeded["scan_id"]], conn=seeded["conn"])
-    assert {f["plugin_id"] for f in findings} == {100, 200}
+    assert {f["plugin_id"] for f in findings} == {"100", "200"}
 
 
 @pytest.mark.integration
@@ -151,7 +153,7 @@ def test_list_findings_severity_filter(seeded):
     crit = mcp.tool_list_findings(
         [seeded["scan_id"]], severity_int=4, conn=seeded["conn"]
     )
-    assert [f["plugin_id"] for f in crit] == [100]
+    assert [f["plugin_id"] for f in crit] == ["100"]
     assert crit[0]["has_metasploit"] is True
 
 
@@ -160,7 +162,7 @@ def test_list_findings_metasploit_filter(seeded):
     msf = mcp.tool_list_findings(
         [seeded["scan_id"]], has_metasploit=True, conn=seeded["conn"]
     )
-    assert [f["plugin_id"] for f in msf] == [100]
+    assert [f["plugin_id"] for f in msf] == ["100"]
 
 
 @pytest.mark.integration
@@ -289,7 +291,7 @@ def test_list_workflow_gaps_returns_unmapped_worst_first(seeded):
         scan_ids=[seeded["scan_id"]], conn=seeded["conn"]
     )
     plugin_ids = [r["plugin_id"] for r in rows]
-    assert plugin_ids == [100, 200]
+    assert plugin_ids == ["100", "200"]
     assert rows[0]["has_metasploit"] is True
     assert rows[0]["scan_name"] == "engagement"
 
@@ -299,7 +301,7 @@ def test_list_workflow_gaps_severity_min_filters(seeded):
     rows = mcp.tool_list_workflow_gaps(
         scan_ids=[seeded["scan_id"]], severity_min=4, conn=seeded["conn"]
     )
-    assert [r["plugin_id"] for r in rows] == [100]
+    assert [r["plugin_id"] for r in rows] == ["100"]
 
 
 # ---------------------------------------------------------------------------
@@ -496,7 +498,7 @@ def test_execute_command_no_output_flag_registers_nothing(seeded):
 @pytest.mark.integration
 def test_get_finding_detail(seeded):
     detail = mcp.tool_get_finding_detail(seeded["f1"], conn=seeded["conn"])
-    assert detail["plugin_id"] == 100
+    assert detail["plugin_id"] == "100"
     assert detail["severity_label"] == "Critical"
     assert detail["has_metasploit"] is True
     # per-host plugin output present
@@ -593,7 +595,7 @@ def test_list_cves(temp_db):
     by_cve = {c["cve"]: c for c in cves}
     assert set(by_cve) == {"CVE-2021-1", "CVE-2021-2"}
     # CVE-2021-2 shared by both plugins
-    assert {p["plugin_id"] for p in by_cve["CVE-2021-2"]["plugins"]} == {1, 2}
+    assert {p["plugin_id"] for p in by_cve["CVE-2021-2"]["plugins"]} == {"1", "2"}
     # severity filter keeps only critical plugin's CVEs
     crit = mcp.tool_list_cves([scan_id], severity_int=4, conn=temp_db)
     assert {c["cve"] for c in crit} == {"CVE-2021-1", "CVE-2021-2"}
@@ -778,7 +780,7 @@ def test_find_affected_by_cve_exact_match(temp_db):
 
     # Case-insensitive, and must NOT match CVE-2021-10
     res = mcp.tool_find_affected_by_cve("cve-2021-1", conn=temp_db)
-    assert [r["plugin_id"] for r in res] == [1]
+    assert [r["plugin_id"] for r in res] == ["1"]
     assert "10.0.0.9:443" in res[0]["hosts"]
 
 
@@ -962,7 +964,7 @@ def test_list_findings_merged_dedups_by_plugin(temp_db):
     assert len(concat) == 2  # two distinct finding_ids
     merged = mcp.tool_list_findings([s1, s2], merged=True, conn=temp_db)
     assert len(merged) == 1
-    assert merged[0]["plugin_id"] == 500
+    assert merged[0]["plugin_id"] == "500"
 
 
 @pytest.mark.integration
@@ -979,7 +981,7 @@ def test_get_finding_detail_truncates(seeded):
 @pytest.mark.integration
 def test_search_findings_cross_scan(seeded):
     hits = mcp.tool_search_findings(severity_int=4, conn=seeded["conn"])
-    assert [h["plugin_id"] for h in hits] == [100]
+    assert [h["plugin_id"] for h in hits] == ["100"]
     assert hits[0]["scan_name"] == "engagement"
     none = mcp.tool_search_findings(plugin_name="no-such-plugin", conn=seeded["conn"])
     assert none == []
@@ -1741,3 +1743,69 @@ def test_successful_run_has_no_timed_out_key(seeded):
         conn=seeded["conn"],
     )
     assert "timed_out" not in out
+
+
+# ---------------------------------------------------------------------------
+# import_nuclei (mcp_allow_mutations)
+# ---------------------------------------------------------------------------
+
+NUCLEI_FIXTURES = Path(__file__).parent / "fixtures" / "nuclei"
+
+
+@pytest.mark.integration
+class TestToolImportNuclei:
+    @pytest.fixture(autouse=True)
+    def _db_path(self, tmp_path, monkeypatch):
+        """Point the importer's own connections at a throwaway on-disk DB."""
+        import cerno_pkg.database as database
+
+        dbfile = tmp_path / "cerno.db"
+        monkeypatch.setattr(database, "DATABASE_PATH", dbfile)
+        database.initialize_database(dbfile)
+        monkeypatch.setattr(
+            "cerno_pkg.constants.SCANS_ROOT", tmp_path / "scans", raising=False
+        )
+        return dbfile
+
+    def test_imports_the_json_array_shape(self):
+        out = mcp.tool_import_nuclei(
+            str(NUCLEI_FIXTURES / "web_scan.json"), scan_name="web"
+        )
+        assert out["scan_name"] == "web"
+        assert out["plugins_exported"] == 20
+        assert out["total_hosts"] == 20
+        assert out["severities"] == {0: 20}
+
+    def test_imports_the_jsonl_shape(self):
+        out = mcp.tool_import_nuclei(
+            str(NUCLEI_FIXTURES / "web_scan.jsonl"), scan_name="web-jsonl"
+        )
+        assert out["plugins_exported"] == 20
+
+    def test_scan_name_defaults_to_the_file_stem(self):
+        out = mcp.tool_import_nuclei(str(NUCLEI_FIXTURES / "web_scan.json"))
+        assert out["scan_name"] == "web_scan"
+
+    def test_min_severity_is_honored(self):
+        out = mcp.tool_import_nuclei(
+            str(NUCLEI_FIXTURES / "web_scan.json"),
+            scan_name="filtered",
+            min_severity=3,
+        )
+        assert out["plugins_exported"] == 0
+
+    def test_missing_file_raises_a_readable_error(self):
+        with pytest.raises(ValueError, match="No such file"):
+            mcp.tool_import_nuclei(str(NUCLEI_FIXTURES / "absent.json"))
+
+    def test_out_of_range_min_severity_raises(self):
+        with pytest.raises(ValueError, match="min_severity"):
+            mcp.tool_import_nuclei(
+                str(NUCLEI_FIXTURES / "web_scan.json"), min_severity=9
+            )
+
+    def test_malformed_file_imports_nothing_without_raising(self):
+        out = mcp.tool_import_nuclei(
+            str(NUCLEI_FIXTURES / "malformed.json"), scan_name="bad"
+        )
+        assert out["plugins_exported"] == 0

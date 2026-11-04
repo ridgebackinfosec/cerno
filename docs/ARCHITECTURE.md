@@ -84,7 +84,7 @@ Everything both interfaces depend on:
 | [database.py](../cerno_pkg/database.py) | Connection handling, `SCHEMA_SQL_TABLES` / `SCHEMA_SQL_VIEWS`, `SCHEMA_VERSION`, `db_transaction()` |
 | [tools.py](../cerno_pkg/tools.py) + [tool_registry.py](../cerno_pkg/tool_registry.py) · [tool_definitions.py](../cerno_pkg/tool_definitions.py) · [tool_context.py](../cerno_pkg/tool_context.py) | Command builders, workflow builders, the `Tool` registry |
 | [ops.py](../cerno_pkg/ops.py) | Command execution, sudo/proxychains4 handling, remote-scan HTTPS server |
-| [nessus_import.py](../cerno_pkg/nessus_import.py) · [cross_scan.py](../cerno_pkg/cross_scan.py) · [parsing.py](../cerno_pkg/parsing.py) | XML import, compare/history queries, canonical host:port parsing |
+| [nessus_import.py](../cerno_pkg/nessus_import.py) · [nuclei_import.py](../cerno_pkg/nuclei_import.py) · [nuclei_parse.py](../cerno_pkg/nuclei_parse.py) · [cross_scan.py](../cerno_pkg/cross_scan.py) · [parsing.py](../cerno_pkg/parsing.py) | `.nessus` XML and nuclei JSON/JSONL import, compare/history queries, canonical host:port and plugin-identity parsing |
 | [nxc_db.py](../cerno_pkg/nxc_db.py) · [creds.py](../cerno_pkg/creds.py) | Read-only NetExec workspace access, audited credential reveal |
 | [workflow_mapper.py](../cerno_pkg/workflow_mapper.py) · [claude_assistant.py](../cerno_pkg/claude_assistant.py) | Workflow YAML loading/merging, Claude Assistant context + consent |
 | [config.py](../cerno_pkg/config.py) · [constants.py](../cerno_pkg/constants.py) · [logging_setup.py](../cerno_pkg/logging_setup.py) · [enums.py](../cerno_pkg/enums.py) | Configuration, paths, review-state constants, logging |
@@ -104,7 +104,7 @@ Run the **full** suite before every PR, not just the tests near your change. See
 
 | Target | Role |
 |---|---|
-| `~/.cerno/cerno.db` | **Source of truth.** 25 tables, 11 views, schema v4. No migration system — an older DB raises `SchemaVersionError` |
+| `~/.cerno/cerno.db` | **Source of truth.** 26 tables, 11 views, schema v5. No migration system — an older DB raises `SchemaVersionError` |
 | `~/.cerno/artifacts` | Tool output and logs, registered in the `artifacts` table |
 | `~/.nxc/workspaces/default` | NetExec workspace, **read-only**. Credentials are surfaced as refs, never duplicated into Cerno's DB |
 | `nmap` · `nxc` · `msfconsole` · `claude` | External binaries, all optional |

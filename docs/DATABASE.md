@@ -23,7 +23,7 @@ Cerno uses an **integrated SQLite database** with a fully normalized schema for 
 
 The Cerno database tracks:
 
-- **Scans**: Nessus export metadata (scan name, export root, .nessus file hash)
+- **Scans**: Imported scan metadata (scan name, export root, source file hash) — a `.nessus` export or a nuclei results file
 - **Plugins**: Vulnerability definitions (plugin ID, name, severity, CVSS scores, CVEs, Metasploit modules)
 - **Findings**: Individual vulnerability findings per scan (review state, append-only review notes)
 - **Hosts, Ports & Services**: Normalized host/port data with cross-scan tracking, plus per-scan discovered services
@@ -45,7 +45,7 @@ The database is global across all scans, enabling cross-scan queries and histori
 
 **Directory**: `~/.cerno/` is created automatically on first use.
 
-**Schema Version**: 4, stored in `PRAGMA user_version`. There is no migration system: an older database is rejected at startup with `SchemaVersionError`, and you re-import your scans into a fresh one.
+**Schema Version**: 5, stored in `PRAGMA user_version`. There is no migration system: an older database is rejected at startup with `SchemaVersionError`, and you re-import your scans into a fresh one.
 
 ---
 
@@ -57,6 +57,7 @@ Cerno uses a **fully normalized database schema** following relational best prac
 
 1. **Normalized Lookup Tables**
    - `severity_levels` - Centralized severity reference data
+   - `finding_sources` - Which scanner produced a plugin row (nessus, nuclei)
    - `artifact_types` - Standardized artifact type definitions
    - `verdict_types`, `nse_verdicts`, `port_states` - Verification lookup values
    - `hosts` - Deduplicated host data across scans
@@ -97,7 +98,7 @@ Cerno uses a **fully normalized database schema** following relational best prac
 
 ## Schema Overview
 
-The database consists of **25 tables** and **11 views**:
+The database consists of **26 tables** and **11 views**:
 
 ### Foundation Tables (Normalized Reference Data)
 
@@ -111,7 +112,7 @@ The database consists of **25 tables** and **11 views**:
 ### Core Tables
 
 7. **scans** - Top-level scan tracking
-8. **plugins** - Plugin metadata (Nessus plugin ID, severity, CVEs)
+8. **plugins** - Finding-type metadata per source (namespaced plugin ID, severity, CVEs)
 9. **findings** - Vulnerability findings per scan (review state, notes)
 10. **hosts** - Normalized host data (cross-scan tracking)
 11. **ports** - Port metadata
@@ -190,6 +191,28 @@ Normalized severity reference data - enforces valid severity values.
 
 ---
 
+### finding_sources
+
+Scan sources - which scanner produced a `plugins` row.
+
+| Column | Type | Description |
+|---|---|---|
+| `source_id` | INTEGER | Primary key |
+| `source_name` | TEXT | Unique source name |
+
+**Pre-populated Data**:
+```text
+(1, 'nessus')
+(2, 'nuclei')
+```
+
+**Foreign Keys**: Referenced by `plugins.source_id`
+
+**Note**: Seeded by `database.seed_lookup_tables()`, the single source of truth
+shared by `initialize_database()` and the test fixtures.
+
+---
+
 ### artifact_types
 
 Artifact type definitions - enforces consistent artifact categorization.
@@ -248,7 +271,7 @@ primary key and a unique `label`; `verdict_types` also has a `description`.
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="images/diagrams/03-er-core-dark.png">
-    <img alt="Entity relationship diagram of Cerno's core tables: scans cascade to findings and sessions, plugins are shared across scans, findings cascade to finding_affected_hosts which references the normalized hosts and ports tables, and session_scans joins sessions to scans for multi-scan review" src="images/diagrams/03-er-core-light.png" width="100%">
+    <img alt="Entity relationship diagram of Cerno's core tables: scans cascade to findings and sessions, plugins are shared across scans and keyed to a finding_sources lookup row, findings cascade to finding_affected_hosts which references the normalized hosts and ports tables, and session_scans joins sessions to scans for multi-scan review" src="images/diagrams/03-er-core-light.png" width="100%">
   </picture>
 </p>
 
@@ -256,14 +279,15 @@ primary key and a unique `label`; `verdict_types` also has a `description`.
 
 ### scans
 
-Top-level scan tracking - one row per Nessus export.
+Top-level scan tracking - one row per imported scan file (a `.nessus` export,
+or a nuclei `-je`/`-jle` results file).
 
 | Column | Type | Description |
 |---|---|---|
 | `scan_id` | INTEGER | Primary key (auto-increment) |
 | `scan_name` | TEXT | Unique scan name |
-| `nessus_file_path` | TEXT | Original .nessus file path |
-| `nessus_file_hash` | TEXT | SHA256 of .nessus file for change detection |
+| `source_file_path` | TEXT | Original scan file path (`.nessus`, or nuclei `.json`/`.jsonl`) |
+| `source_file_hash` | TEXT | SHA256 of the source file, for change detection |
 | `export_root` | TEXT | Root directory recorded at import (no files are written there) |
 | `created_at` | TIMESTAMP | Scan creation time |
 | `last_reviewed_at` | TIMESTAMP | Last review session timestamp |
@@ -274,29 +298,48 @@ Top-level scan tracking - one row per Nessus export.
 
 ### plugins
 
-Plugin metadata - one row per Nessus plugin ID.
+Finding-type metadata - one row per finding type, across every scan and every
+source. Global: there is no `scan_id` column, so all scans share these rows.
 
 | Column | Type | Description |
 |---|---|---|
-| `plugin_id` | INTEGER | Primary key - Nessus plugin ID (e.g., 57608) |
-| `plugin_name` | TEXT | Plugin name |
+| `plugin_id` | TEXT | Primary key - namespaced per source: a bare Nessus plugin ID (`'57608'`) or a prefixed nuclei template ID (`'nuclei:apache-detect'`) |
+| `source_id` | INTEGER | Foreign key to `finding_sources` (default 1 = nessus) |
+| `plugin_name` | TEXT | Plugin name (nuclei: `info.name`) |
 | `severity_int` | INTEGER | 0=Info, 1=Low, 2=Medium, 3=High, 4=Critical |
 | `has_metasploit` | BOOLEAN | Metasploit module availability |
 | `cvss3_score` | REAL | CVSS v3 base score |
 | `cvss2_score` | REAL | CVSS v2 base score (fallback) |
 | `metasploit_names` | TEXT | JSON array of Metasploit module names |
 | `cves` | TEXT | JSON array of CVE IDs |
-| `plugin_url` | TEXT | Tenable plugin URL |
+| `plugin_url` | TEXT | Details page captured at import. Nessus: the Tenable plugin page. nuclei: the template's source in the nuclei-templates repo, built from the result's `template` path, falling back to the public template viewer when that path is absent or unusable. See `nuclei_parse.resolve_template_url()` and `constants.PLUGIN_URL_TEMPLATES` |
 | `metadata_fetched_at` | TIMESTAMP | When metadata was last fetched |
 
 **Note**: The `severity_label` is accessed via the `v_plugins_with_severity` view or by JOINing with `severity_levels`.
 
-**Foreign Keys**: `severity_int` → `severity_levels.severity_int`
+**Foreign Keys**:
+- `severity_int` → `severity_levels.severity_int`
+- `source_id` → `finding_sources.source_id`
 
 **Constraints**:
 - `CHECK(severity_int BETWEEN 0 AND 4)`
 
 **Note**: "plugin" is internal terminology. User-facing commands use "findings".
+
+**Why `plugin_id` is TEXT (schema v5)**: nuclei identifies findings by template
+name, not number, so an `INTEGER PRIMARY KEY` (a SQLite rowid alias) could not
+store them at all. Nessus IDs deliberately stay unprefixed so every existing
+`plugin_id` key in `workflow_mappings.yaml` keeps working.
+
+**Why `source_id` is stored even though it is derivable** from the `plugin_id`
+prefix: it gives `query.py` an indexed SQL predicate (`FindingQuery.source`) and
+real referential integrity. The alternative — a `LIKE 'nuclei:%'` scan on every
+source-filtered query — is a table scan that no index can serve. The two are kept
+consistent by `Plugin.save()`, which derives `source_id` from the id on write.
+
+**Sorting**: because the column is TEXT, a plain `ORDER BY plugin_id` is
+lexicographic (`'9'` after `'10114'`). Use `database.plugin_id_order_sql()`,
+which casts first so numeric Nessus IDs keep numeric order.
 
 **Relationships**: One plugin has many `findings` (across different scans)
 
@@ -313,7 +356,7 @@ Supports both IP-targeted (internal) and FQDN-targeted (external) scans:
 | Column | Type | Description |
 |---|---|---|
 | `host_id` | INTEGER | Primary key |
-| `ip_address` | TEXT | Resolved IP address (from Nessus host-ip tag) |
+| `ip_address` | TEXT | Resolved IP address (Nessus `host-ip` tag; nuclei `ip`, falling back to the target itself for dns templates, which report none) |
 | `scan_target` | TEXT | What was scanned (IP or FQDN from ReportHost@name) |
 | `scan_target_type` | TEXT | 'ipv4', 'ipv6', or 'fqdn' |
 | `netbios_name` | TEXT | NetBIOS/computer name (from Nessus netbios-name tag) |
@@ -359,7 +402,7 @@ Finding records - one row per plugin per scan.
 |---|---|---|
 | `finding_id` | INTEGER | Primary key |
 | `scan_id` | INTEGER | Foreign key to scans |
-| `plugin_id` | INTEGER | Foreign key to plugins |
+| `plugin_id` | TEXT | Foreign key to plugins (namespaced; see `plugins`) |
 | `review_state` | TEXT NOT NULL | 'unreviewed' (default), 'in_progress', 'done'. Transitions (unreviewed → in_progress → done → unreviewed) are enforced in the app layer by `Finding.transition_review_state()` |
 | `reviewed_at` | TIMESTAMP | Timestamp of the last review-state change |
 | `reviewed_by` | TEXT | User tracking (future feature) |
@@ -389,7 +432,7 @@ Host:port combinations per finding using normalized foreign keys.
 | `finding_id` | INTEGER | Foreign key to findings |
 | `host_id` | INTEGER | Foreign key to normalized hosts table |
 | `port_number` | INTEGER | Foreign key to ports table |
-| `plugin_output` | TEXT | Plugin output from Nessus scanner |
+| `plugin_output` | TEXT | Per-host evidence. Nessus: the scanner's `plugin_output`. nuclei: every match on this host:port merged into one block — `matched-at`, `matcher-name`, `extracted-results`, then de-duplicated `curl` reproduction commands (see `nuclei_parse.format_plugin_output()`) |
 
 **Note**: This table uses foreign keys to normalized `hosts` and `ports` tables rather than storing host addresses and port numbers directly. The host type (`ipv4`, `ipv6`, `fqdn`) is stored in the `hosts` table.
 
@@ -443,6 +486,13 @@ restores the same set.
 
 Services discovered per scan, from the Nessus ReportItem `svc_name`/`protocol`
 attributes at import. Feeds `v_http_services` and MCP `list_services`/`get_web_targets`.
+
+**Nessus only.** The nuclei importer writes no rows here: nuclei reports a URL,
+not a service name, and `v_http_services` keys off Nessus `svc_name` tokens
+(`www`, `http?`, `https?`). So for a nuclei-only scan, `v_http_services`,
+`get_web_targets`, `list_services` and `FindingQuery.service` all return nothing.
+That is the intended direction of the loop: `v_http_services` produces the URL
+list that a nuclei run *consumes*.
 
 | Column | Type | Description |
 |---|---|---|
@@ -714,6 +764,12 @@ Replaces `severity_label` column from `plugins` table - JOINs with `severity_lev
 - `severity_label` - From severity_levels table
 - `color_hint` - From severity_levels table
 - `has_metasploit`, `cvss3_score`, `cvss2_score`, `cves`, `metasploit_names`, `plugin_url`, `metadata_fetched_at`
+- `source_id` - From the plugins table, so `FindingQuery.source` can filter on an indexed column
+
+**Note**: This is an INNER JOIN on `severity_levels`, so a plugin whose
+`severity_int` has no lookup row disappears from every query that uses the
+view rather than raising. Any new source must map its severities into 0-4
+(nuclei's `unknown` and `""` both floor to 0 — see `nuclei_parse.SEVERITY_BY_LABEL`).
 
 **Usage**:
 ```sql
@@ -1121,7 +1177,7 @@ Full schema available in [`../schema.sql`](../schema.sql), a reference copy of `
 The database is initialized automatically on first use. Schema creation is handled by `cerno_pkg/database.py:initialize_database()`.
 
 **Key Points**:
-- Schema version: 4, stored in `PRAGMA user_version` (no migration system; an older database raises `SchemaVersionError` at startup and must be deleted and scans re-imported)
+- Schema version: 5, stored in `PRAGMA user_version` (no migration system; an older database raises `SchemaVersionError` at startup and must be deleted and scans re-imported)
 - All tables created with `CREATE TABLE IF NOT EXISTS` for idempotency
 - Lookup tables pre-populated automatically (`severity_levels`, `artifact_types`, `verdict_types`, `nse_verdicts`, `port_states`)
 - Views created after tables
@@ -1262,4 +1318,4 @@ Planned database features:
 
 **Last Updated**: 2026-10-27 (v2.6.0)
 **Maintained By**: Ridgeback InfoSec, LLC
-**Schema Version**: 4
+**Schema Version**: 5

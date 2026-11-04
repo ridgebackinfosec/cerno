@@ -76,6 +76,7 @@ EXPECTED_TOOLS = {
     "set_review_state",
     "add_note",  # mcp_allow_mutations
     "import_nessus",  # mcp_allow_mutations
+    "import_nuclei",  # mcp_allow_mutations
     "ingest_results",  # mcp_allow_mutations
     "set_finding_verdict",  # mcp_allow_mutations
     "reveal_credential",  # mcp_allow_cred_reveal
@@ -94,7 +95,7 @@ EXPECTED_PROMPTS = {"triage_finding", "exploit_plan", "triage_scope", "verify_fi
 
 # Advisory tool annotations (hints clients use to decide auto-approval). Tools not
 # listed here intentionally carry no annotations (export_workflow_contribution,
-# add_note, import_nessus, reveal_credential).
+# add_note, import_nessus, import_nuclei, reveal_credential).
 EXPECTED_READONLY_TOOLS = {
     "list_scans",
     "list_findings",
@@ -143,6 +144,7 @@ EXPECTED_UNANNOTATED_TOOLS = {
     "export_workflow_contribution",
     "add_note",
     "import_nessus",
+    "import_nuclei",
     "reveal_credential",
 }
 
@@ -157,43 +159,7 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA foreign_keys=OFF")
     conn.executescript(database.SCHEMA_SQL_TABLES)
     conn.execute("PRAGMA foreign_keys=ON")
-    conn.executemany(
-        "INSERT INTO severity_levels VALUES (?, ?, ?, ?)",
-        [
-            (4, "Critical", 4, "#8B0000"),
-            (3, "High", 3, "#FF4500"),
-            (2, "Medium", 2, "#FFA500"),
-            (1, "Low", 1, "#FFD700"),
-            (0, "Info", 0, "#4682B4"),
-        ],
-    )
-    conn.executemany(
-        "INSERT INTO artifact_types (type_name, file_extension, description) VALUES (?, ?, ?)",
-        [("nmap_xml", ".xml", "Nmap XML output"), ("log", ".log", "Tool log")],
-    )
-    conn.executemany(
-        "INSERT INTO verdict_types (label, description) VALUES (?, ?)",
-        [
-            ("confirmed", "true positive"),
-            ("false_positive", "false positive"),
-            ("unable", "unable to verify"),
-        ],
-    )
-    conn.executemany(
-        "INSERT INTO nse_verdicts (label) VALUES (?)",
-        [("VULNERABLE",), ("NOT_VULNERABLE",), ("LIKELY_VULNERABLE",), ("UNKNOWN",)],
-    )
-    conn.executemany(
-        "INSERT INTO port_states (label) VALUES (?)",
-        [
-            ("open",),
-            ("closed",),
-            ("filtered",),
-            ("open|filtered",),
-            ("closed|filtered",),
-            ("unfiltered",),
-        ],
-    )
+    database.seed_lookup_tables(conn)
     conn.executescript(database.SCHEMA_SQL_VIEWS)
     conn.commit()
 
@@ -268,7 +234,9 @@ def contract(tmp_path, monkeypatch):
         "server": srv,
         "scan_id": scan_id,
         "finding_id": finding_id,
-        "plugin_id": 100,
+        # plugins.plugin_id is TEXT and namespaced per source from schema v5 on,
+        # so the MCP surface takes it as a string.
+        "plugin_id": "100",
         "artifact_id": artifact_id,
         "execution_id": exec_id,
         "host_ip": "10.0.0.1",
@@ -402,7 +370,7 @@ def test_tools_callable_through_server(contract):
         "export_workflow_contribution": {"finding_id": fid},
     }
     # execute_command + the async job tools (start/get/cancel/list_jobs are
-    # subprocess/async) and import_nessus (needs a file) are covered by the
+    # subprocess/async) and import_nessus/import_nuclei (need a file) are covered by the
     # inventory test + test_mcp_server.py/test_jobs.py; exercising them here would
     # add platform/side-effect flakiness.
     for name, result in _client_call_tools(s, args).items():

@@ -60,6 +60,7 @@ def show_guided_tour() -> str:
     if choice == "s":
         ok("Tour skipped. To get started, import a Nessus scan:")
         info("  cerno import nessus /path/to/scan.nessus")
+        info("  cerno import nuclei /path/to/nuclei.json")
         info("")
         return "skipped"
 
@@ -87,11 +88,13 @@ def show_guided_tour() -> str:
         elif choice in ("q", "skip", "quit"):
             ok("Tour skipped. To get started, import a Nessus scan:")
             info("  cerno import nessus /path/to/scan.nessus")
+            info("  cerno import nuclei /path/to/nuclei.json")
             info("")
             return "skipped"
 
     ok("Tour completed! Import your first scan to get started:")
     info("  cerno import nessus /path/to/scan.nessus")
+    info("  cerno import nuclei /path/to/nuclei.json")
     info("")
     return "completed"
 
@@ -111,6 +114,7 @@ def show_tour_step(step: int) -> None:
         info("First, import a .nessus file:")
         info("")
         info("  $ cerno import nessus /path/to/scan.nessus")
+        info("  $ cerno import nuclei /path/to/nuclei.json")
         info("")
         info("This parses findings and stores them in ~/.cerno/cerno.db")
         info("You can import multiple scans and switch between them.")

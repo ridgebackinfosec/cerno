@@ -1,8 +1,9 @@
-"""Host and port parsing for Nessus plugin findings.
+"""Host, port and plugin-identity parsing for scan findings.
 
 This module provides functions to parse host:port combinations from
 plugin data (database and reference files), supporting IPv4, IPv6 (bracketed),
-and hostname formats.
+and hostname formats, plus the helpers that interpret a namespaced
+``plugins.plugin_id`` (see :data:`cerno_pkg.constants.PLUGIN_ID_PREFIXES`).
 """
 
 from __future__ import annotations
@@ -10,6 +11,13 @@ from __future__ import annotations
 import ipaddress
 import re
 from typing import TYPE_CHECKING, Any, Optional
+
+from .constants import (
+    PLUGIN_ID_PREFIXES,
+    PLUGIN_URL_TEMPLATES,
+    SOURCE_IDS,
+    SOURCE_NESSUS,
+)
 
 if TYPE_CHECKING:
     from .workflow_mapper import WorkflowMapper
@@ -276,6 +284,64 @@ def build_item_set(
             for host in hosts:
                 items.add(host)
     return items
+
+
+# ====== Plugin identity (multi-source) ======
+def plugin_source(plugin_id: Any) -> str:
+    """Return the name of the source a ``plugins.plugin_id`` came from.
+
+    From schema v5 on, ``plugin_id`` is TEXT and namespaced per source: Nessus
+    ids stay bare (``'57608'``), every other source carries a ``<source>:``
+    prefix (``'nuclei:apache-detect'``).
+
+    Examples:
+        >>> plugin_source("57608")
+        'nessus'
+        >>> plugin_source("nuclei:apache-detect")
+        'nuclei'
+    """
+    text = str(plugin_id)
+    for source, prefix in PLUGIN_ID_PREFIXES.items():
+        if text.startswith(prefix):
+            return source
+    return SOURCE_NESSUS
+
+
+def plugin_source_id(plugin_id: Any) -> int:
+    """Return the ``finding_sources.source_id`` for a ``plugin_id``."""
+    return SOURCE_IDS.get(plugin_source(plugin_id), SOURCE_IDS[SOURCE_NESSUS])
+
+
+def plugin_ref(plugin_id: Any) -> str:
+    """Return the source-native identifier, with any namespace prefix removed.
+
+    Examples:
+        >>> plugin_ref("57608")
+        '57608'
+        >>> plugin_ref("nuclei:apache-detect")
+        'apache-detect'
+    """
+    text = str(plugin_id)
+    for prefix in PLUGIN_ID_PREFIXES.values():
+        if text.startswith(prefix):
+            return text[len(prefix) :]
+    return text
+
+
+def plugin_details_url(
+    plugin_id: Any, stored_url: Optional[str] = None
+) -> Optional[str]:
+    """Best known details page for a plugin, or None if the source has none.
+
+    Prefers the URL captured at import time; otherwise builds one from the
+    source's template. Returning None matters: callers must not fall back to
+    the Tenable base URL, which would fabricate a dead link for a finding that
+    did not come from Nessus.
+    """
+    if stored_url:
+        return stored_url
+    template = PLUGIN_URL_TEMPLATES.get(plugin_source(plugin_id))
+    return template.format(ref=plugin_ref(plugin_id)) if template else None
 
 
 def extract_plugin_id_from_filename(name_or_path) -> Optional[str]:

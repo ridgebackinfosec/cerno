@@ -10,9 +10,14 @@ erDiagram
         TEXT severity_label "Info..Critical"
         TEXT color_hint
     }
+    finding_sources {
+        INTEGER source_id PK "2 seeded rows"
+        TEXT source_name UK "nessus|nuclei"
+    }
     plugins {
-        INTEGER plugin_id PK
+        TEXT plugin_id PK "namespaced per source"
         INTEGER severity_int FK
+        INTEGER source_id FK
     }
     artifact_types {
         INTEGER artifact_type_id PK "5 seeded rows"
@@ -65,6 +70,7 @@ erDiagram
     }
 
     severity_levels ||--o{ plugins            : "lookup"
+    finding_sources ||--o{ plugins            : "lookup"
     artifact_types  ||--o{ artifacts          : "lookup"
     verdict_types   ||--o{ finding_verdicts   : "lookup"
     nse_verdicts    ||--o{ nse_script_results : "lookup"

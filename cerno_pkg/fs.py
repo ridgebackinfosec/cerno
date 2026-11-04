@@ -292,7 +292,7 @@ def display_workflow(workflow: "Workflow") -> None:
 
     # Header
     header(f"Verification Workflow: {workflow.workflow_name}")
-    info(f"Plugin ID(s): {workflow.plugin_id}")
+    info(f"Finding ID(s): {workflow.plugin_id}")
     info(f"Description: {workflow.description}")
     _console_global.print()
 

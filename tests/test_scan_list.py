@@ -22,16 +22,7 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA foreign_keys=OFF")
     conn.executescript(database.SCHEMA_SQL_TABLES)
     conn.execute("PRAGMA foreign_keys=ON")
-    conn.executemany(
-        "INSERT INTO severity_levels VALUES (?, ?, ?, ?)",
-        [
-            (4, "Critical", 4, "#8B0000"),
-            (3, "High", 3, "#FF4500"),
-            (2, "Medium", 2, "#FFA500"),
-            (1, "Low", 1, "#FFD700"),
-            (0, "Info", 0, "#4682B4"),
-        ],
-    )
+    database.seed_lookup_tables(conn)
     conn.executescript(database.SCHEMA_SQL_VIEWS)
     conn.commit()
 

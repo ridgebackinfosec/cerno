@@ -614,10 +614,10 @@ class TestNessusImportDatabaseIntegration:
                 "SELECT plugin_id, cves FROM plugins WHERE cves IS NOT NULL"
             ).fetchall()
         }
-        assert 20007 in cve_plugins
-        assert "CVE-2014-3566" in cve_plugins[20007]
-        assert 42263 in cve_plugins
-        assert "CVE-1999-0619" in cve_plugins[42263]
+        assert "20007" in cve_plugins
+        assert "CVE-2014-3566" in cve_plugins["20007"]
+        assert "42263" in cve_plugins
+        assert "CVE-1999-0619" in cve_plugins["42263"]
 
         telnet_plugin = temp_db.execute("""
             SELECT has_metasploit, metasploit_names

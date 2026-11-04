@@ -4,7 +4,7 @@
 
 # Cerno
 
-A **TUI tool** for reviewing Nessus scan findings and orchestrating security tools (**nmap**, **NetExec**, custom commands). Import `.nessus` files into a SQLite database for organized, persistent vulnerability verification and exploitation.
+A **TUI tool** for reviewing vulnerability scan findings and orchestrating security tools (**nmap**, **NetExec**, custom commands). Import `.nessus` exports and **nuclei** results into a SQLite database for organized, persistent vulnerability verification and exploitation.
 
 **Key capabilities:**
 - 🔍 Interactive TUI for browsing/reviewing vulnerability findings — triage hundreds of findings fast
@@ -54,20 +54,28 @@ pipx install git+https://github.com/ridgebackinfosec/cerno.git
 # Import a Nessus scan
 cerno import nessus scan.nessus
 
+# ...or nuclei results (-je JSON or -jle/-jsonl)
+cerno import nuclei nuclei.json
+
 # Review findings interactively
 cerno review
 ```
 
 **That's it!** See [Commands](#commands) for more.
 
-**No Nessus file handy?** Use the synthetic demo scan included in this repo:
+**No scan file handy?** Use the synthetic demo data included in this repo:
 
 ```bash
 cerno demo
 cerno review
 ```
 
-The demo fixture uses documentation-only IP ranges and `.example` hostnames.
+That loads four scans — two Nessus and two nuclei — so both import paths are
+covered. The nuclei scans target the same hosts the Nessus scans found, so at
+the `cerno review` scan prompt you can select one of each (e.g. `2,4`) and see
+where the two scanners agree, and what only nuclei caught.
+
+The demo fixtures use documentation-only IP ranges and `.example` hostnames.
 See [docs/demo](docs/demo) for details.
 
 <p align="center">
@@ -80,16 +88,16 @@ See [docs/demo](docs/demo) for details.
 
 ## How It Works
 
-Cerno turns a raw Nessus export into a tracked, actionable verification workflow:
+Cerno turns raw scanner output — a Nessus export, nuclei results, or both — into a tracked, actionable verification workflow:
 
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/diagrams/01-workflow-dark.png">
-    <img alt="Cerno engagement loop: .nessus exports are imported into cerno.db, reviewed in an interactive TUI, used to launch nmap, NetExec, Metasploit or custom commands against the finding's exact hosts and ports, and the resulting artifacts are ingested back into the database as verified ports, NSE verdicts and nxc flags" src="docs/images/diagrams/01-workflow-light.png" width="100%">
+    <img alt="Cerno engagement loop: .nessus exports and nuclei results are imported into cerno.db, reviewed in an interactive TUI, used to launch nmap, NetExec, Metasploit or custom commands against the finding's exact hosts and ports, and the resulting artifacts are ingested back into the database as verified ports, NSE verdicts and nxc flags" src="docs/images/diagrams/01-workflow-light.png" width="100%">
   </picture>
 </p>
 
-1. **Import** — parse one or more `.nessus` files into a local SQLite database (`~/.cerno/cerno.db`).
+1. **Import** — parse one or more `.nessus` files, or nuclei JSON/JSONL results, into a local SQLite database (`~/.cerno/cerno.db`). Both sources share one review loop, and a multi-scan review can span them.
 2. **Review** — browse findings in an interactive TUI: filter by severity, host, and exploitability; inspect plugin detail, CVEs, and affected `host:port`s.
 3. **Act** — launch nmap / NetExec / Metasploit / custom commands against the exact hosts and ports of a finding, with execution and artifacts logged automatically.
 4. **Track** — review state, sessions, and tool history persist in the database, so progress survives restarts and you can compare a host's risk across scans.
@@ -407,7 +415,10 @@ cerno review --no-proxy   # Force-disable proxychains4 routing for this session
 # Import and review
 cerno import nessus <scan.nessus>              # Import a single .nessus file
 cerno import nessus <directory>                # Recursively import all .nessus files in a directory
-cerno demo [--overwrite] [--no-nxc]            # Import the bundled demo scans + NetExec workspace
+cerno import nuclei <nuclei.json>              # Import nuclei results (-je array or -jle/-jsonl)
+cerno import nuclei <dir> --min-severity 2     # Recursive; drop Info/Low findings
+cerno import nuclei <f.json> --name webapp     # Override the scan name (defaults to the file stem)
+cerno demo [--overwrite] [--no-nxc]            # Import the bundled demo scans (Nessus + nuclei) + NetExec workspace
 cerno review [--custom-workflows PATH]         # Start interactive review (custom workflows merged over bundled)
 cerno review --custom-workflows-only PATH      # Use only this workflow YAML
 cerno review --no-tools                        # Review only, no tool prompts
@@ -589,6 +600,7 @@ cerno reset   # Prompts for typed confirmation before deleting
 
 **Import failures:**
 - Ensure the `.nessus` file is valid XML (not corrupted or truncated)
+- For nuclei, note that `-je` buffers results and writes once at exit, so an interrupted scan leaves no file; `-jle` streams and survives interruption (Cerno imports either)
 - Check file permissions and path
 - Turn on `cerno config set debug_logging true` and check `~/.cerno/cerno.log` for the parse error
 

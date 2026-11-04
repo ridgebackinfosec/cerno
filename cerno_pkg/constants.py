@@ -139,6 +139,73 @@ VERDICT_ICONS: dict[str, str] = {
 PLUGIN_DETAILS_BASE: str = "https://www.tenable.com/plugins/nessus/"
 """Base URL for Tenable plugin detail pages."""
 
+NUCLEI_TEMPLATE_URL_BASE: str = "https://cloud.projectdiscovery.io/public/"
+"""Base URL for the public nuclei template viewer.
+
+Keyed on the bare template id, so it works without knowing the template's path.
+Used as the fallback when a result carries no usable ``template`` path.
+"""
+
+NUCLEI_TEMPLATE_REPO_BASE: str = (
+    "https://github.com/projectdiscovery/nuclei-templates/blob/main/"
+)
+"""Base URL for a template's source in the nuclei-templates repository.
+
+Preferred over :data:`NUCLEI_TEMPLATE_URL_BASE` because it shows the operator
+the matcher logic that actually fired. It needs the result's ``template`` path
+(e.g. ``http/cves/2021/CVE-2021-44228.yaml``), which cannot be derived from a
+template id, hence the two bases. ``blob/`` is GitHub's canonical form for a
+file; ``tree/`` also resolves but redirects here.
+"""
+
+NUCLEI_RESPONSE_SIZE_READ: int = 10_485_760
+"""``-rsr``: max response bytes nuclei reads (10 MiB)."""
+
+NUCLEI_RESPONSE_SIZE_SAVE: int = 1_048_576
+"""``-rss``: max response bytes nuclei stores in its output (1 MiB).
+
+Cerno's importer discards ``request``/``response`` entirely, so this only
+bounds the size of the ``-je``/``-me`` artifacts the operator keeps.
+"""
+
+
+# ========== Finding sources (multi-source plugin identity) ==========
+SOURCE_NESSUS: str = "nessus"
+SOURCE_NUCLEI: str = "nuclei"
+
+SOURCE_IDS: dict[str, int] = {SOURCE_NESSUS: 1, SOURCE_NUCLEI: 2}
+"""``finding_sources.source_id`` per source name.
+
+Mirrors the ``finding_sources`` rows in ``database.LOOKUP_SEEDS``.
+"""
+
+PLUGIN_ID_PREFIXES: dict[str, str] = {SOURCE_NUCLEI: "nuclei:"}
+"""Namespace prefix applied to ``plugins.plugin_id`` per source.
+
+Nessus plugin ids deliberately stay bare (``'57608'``): prefixing them too
+would be more uniform but would invalidate every ``plugin_id`` key in
+``workflow_mappings.yaml``, every "Nessus Plugin ID" display and the docs.
+Every *other* source is namespaced, so a nuclei template called ``57608``
+cannot collide with a Nessus plugin of that number in the global ``plugins``
+table.
+"""
+
+PLUGIN_ID_LABELS: dict[str, str] = {
+    SOURCE_NESSUS: "Nessus Plugin ID",
+    SOURCE_NUCLEI: "Nuclei Template ID",
+}
+"""Label for the identifier row in the finding panel, per source."""
+
+PLUGIN_URL_TEMPLATES: dict[str, str] = {
+    SOURCE_NESSUS: PLUGIN_DETAILS_BASE + "{ref}",
+    SOURCE_NUCLEI: NUCLEI_TEMPLATE_URL_BASE + "{ref}",
+}
+"""Details-page template per source, keyed on the source-native ``{ref}``.
+
+A source absent from this map has no known details page, and callers must
+render no link rather than fabricate one.
+"""
+
 
 # ========== NetExec protocol support ==========
 NETEXEC_PROTOCOLS: list[str] = [

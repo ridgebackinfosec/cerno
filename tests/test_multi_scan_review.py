@@ -71,11 +71,11 @@ class TestGetByScanIdsMerged:
         """Helper: two scans with one shared plugin and one unique plugin each."""
         # Scans
         scan_a = Scan(
-            scan_name="scan_a", export_root="/tmp", nessus_file_path="/tmp/a.nessus"
+            scan_name="scan_a", export_root="/tmp", source_file_path="/tmp/a.nessus"
         )
         scan_a_id = scan_a.save(conn)
         scan_b = Scan(
-            scan_name="scan_b", export_root="/tmp", nessus_file_path="/tmp/b.nessus"
+            scan_name="scan_b", export_root="/tmp", source_file_path="/tmp/b.nessus"
         )
         scan_b_id = scan_b.save(conn)
 
@@ -132,7 +132,7 @@ class TestGetByScanIdsMerged:
         # Should have 3 unique plugins
         assert len(display_list) == 3
         plugin_ids = [p.plugin_id for _, p in display_list]
-        assert set(plugin_ids) == {11111, 22222, 33333}
+        assert set(plugin_ids) == {"11111", "22222", "33333"}
 
     def test_all_instances_maps_plugin_to_findings(self, temp_db):
         scan_a_id, scan_b_id = self._setup_two_scans(temp_db)
@@ -140,11 +140,11 @@ class TestGetByScanIdsMerged:
             [scan_a_id, scan_b_id], conn=temp_db
         )
         # Shared plugin should have 2 instances (one per scan)
-        assert len(all_instances[11111]) == 2
+        assert len(all_instances["11111"]) == 2
         # Plugin a only has 1 instance
-        assert len(all_instances[22222]) == 1
+        assert len(all_instances["22222"]) == 1
         # Plugin b only has 1 instance
-        assert len(all_instances[33333]) == 1
+        assert len(all_instances["33333"]) == 1
 
     def test_representative_has_lowest_scan_id(self, temp_db):
         scan_a_id, scan_b_id = self._setup_two_scans(temp_db)
@@ -153,7 +153,7 @@ class TestGetByScanIdsMerged:
         )
         # For shared plugin, representative should be from scan_a (lower scan_id)
         for finding, plugin in display_list:
-            if plugin.plugin_id == 11111:
+            if plugin.plugin_id == "11111":
                 assert finding.scan_id == scan_a_id
                 break
 
@@ -163,9 +163,9 @@ class TestGetByScanIdsMerged:
             scan_ids=[scan_a_id, scan_b_id], conn=temp_db
         )
         reps = {f.plugin_id: f for f, _p in display_list}
-        assert reps[11111].extra_finding_ids == [all_instances[11111][1].finding_id]
-        assert reps[22222].extra_finding_ids == []
-        assert reps[33333].extra_finding_ids == []
+        assert reps["11111"].extra_finding_ids == [all_instances["11111"][1].finding_id]
+        assert reps["22222"].extra_finding_ids == []
+        assert reps["33333"].extra_finding_ids == []
 
     def test_single_scan_id_works(self, temp_db):
         scan_a_id, scan_b_id = self._setup_two_scans(temp_db)
@@ -180,7 +180,7 @@ class TestGetByScanIdsMerged:
         )
         # Only High severity plugin (11111)
         assert len(display_list) == 1
-        assert display_list[0][1].plugin_id == 11111
+        assert display_list[0][1].plugin_id == "11111"
 
 
 # ========== TestScanLabels ==========
@@ -223,11 +223,11 @@ class TestReviewStateBroadcast:
     def test_update_review_state(self, temp_db):
         """Test that update_review_state() works for individual findings."""
         scan_a = Scan(
-            scan_name="scan_a", export_root="/tmp", nessus_file_path="/tmp/a.nessus"
+            scan_name="scan_a", export_root="/tmp", source_file_path="/tmp/a.nessus"
         )
         scan_a_id = scan_a.save(temp_db)
         scan_b = Scan(
-            scan_name="scan_b", export_root="/tmp", nessus_file_path="/tmp/b.nessus"
+            scan_name="scan_b", export_root="/tmp", source_file_path="/tmp/b.nessus"
         )
         scan_b_id = scan_b.save(temp_db)
 
@@ -250,10 +250,10 @@ class TestReviewStateBroadcast:
         _, all_instances = Finding.get_by_scan_ids_merged(
             [scan_a_id, scan_b_id], conn=temp_db
         )
-        assert len(all_instances[44444]) == 2
+        assert len(all_instances["44444"]) == 2
 
         # Update both findings to completed (simulating broadcast)
-        for f in all_instances[44444]:
+        for f in all_instances["44444"]:
             f.update_review_state("done", conn=temp_db)
 
         temp_db.commit()
@@ -305,21 +305,21 @@ class TestHostPluginIdsMultiScan:
         result = Host.get_plugin_ids_for_scan(
             ip_address="10.0.0.5", scan_id=a, scan_ids=[a, b], conn=temp_db
         )
-        assert result == [100, 200, 300]
+        assert result == ["100", "200", "300"]
 
     def test_host_only_in_secondary_scan(self, temp_db):
         a, b = self._setup(temp_db)
         result = Host.get_plugin_ids_for_scan(
             ip_address="10.0.0.9", scan_id=a, scan_ids=[a, b], conn=temp_db
         )
-        assert result == [400]
+        assert result == ["400"]
 
     def test_single_scan_unchanged(self, temp_db):
         a, _b = self._setup(temp_db)
         result = Host.get_plugin_ids_for_scan(
             ip_address="10.0.0.5", scan_id=a, conn=temp_db
         )
-        assert result == [100, 300]
+        assert result == ["100", "300"]
 
     def test_partial_match_across_scans(self, temp_db):
         a, b = self._setup(temp_db)
@@ -330,4 +330,4 @@ class TestHostPluginIdsMultiScan:
             partial_match=True,
             conn=temp_db,
         )
-        assert result == [100, 200, 300, 400]
+        assert result == ["100", "200", "300", "400"]

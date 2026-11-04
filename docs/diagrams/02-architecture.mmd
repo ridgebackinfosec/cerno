@@ -30,7 +30,7 @@ flowchart TB
         dbmod["<b>database.py</b><br/>schema v4 · SCHEMA_SQL_*<br/>db_transaction()"]
         toolsmod["<b>tools.py</b><br/>+ tool_registry · tool_definitions<br/>· tool_context"]
         opsmod["<b>ops.py</b><br/>execution, sudo,<br/>proxychains4, remote scan"]
-        importmod["<b>nessus_import.py</b><br/>cross_scan.py · parsing.py"]
+        importmod["<b>nessus_import.py · nuclei_import.py</b><br/>nuclei_parse.py · cross_scan.py · parsing.py"]
         credsmod["<b>nxc_db.py · creds.py</b><br/>NetExec access, audited reveal"]
         wmap["<b>workflow_mapper.py</b><br/>claude_assistant.py"]
         cfg["<b>config.py · constants.py</b><br/>logging_setup.py · enums.py"]

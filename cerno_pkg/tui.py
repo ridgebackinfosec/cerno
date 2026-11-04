@@ -403,7 +403,7 @@ def handle_finding_list_actions(
 
         sort_label = {
             "severity": "Severity ↓",
-            "plugin_id": "Plugin ID ↑",
+            "plugin_id": "Finding ID ↑",
             "hosts": "Host count ↓",
             "name": "Name A↑Z",
         }.get(sort_mode, "Severity ↓")

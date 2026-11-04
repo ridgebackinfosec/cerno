@@ -447,7 +447,7 @@ def browse_file_list(
     is_msf_mode: bool = False,
     workflow_mapper: Optional[WorkflowMapper] = None,
     has_metasploit_filter: Optional[bool] = None,
-    plugin_ids_filter: Optional[list[int]] = None,
+    plugin_ids_filter: Optional[list[str]] = None,
     severity_dirs_filter: Optional[list[str]] = None,
     config: Optional["CernoConfig"] = None,
     session_start_time: Optional[Any] = None,
@@ -560,8 +560,8 @@ def browse_file_list(
             return (row[0] if row else 0, "")
 
     # Initialize multi-scan tracking variables (updated each loop iteration)
-    all_instances: dict[int, list["Finding"]] = {}
-    scan_labels: Optional[dict[int, str]] = None
+    all_instances: dict[str, list["Finding"]] = {}
+    scan_labels: Optional[dict[str, str]] = None
 
     while True:
         # Query database for findings with plugin info
@@ -776,18 +776,18 @@ def browse_file_list(
 
             sort_label = {
                 "severity": "Severity ↓",
-                "plugin_id": "Plugin ID ↑",
+                "plugin_id": "Finding ID ↑",
                 "hosts": "Host count ↓",
                 "name": "Name A↑Z",
             }.get(sort_mode, "Severity ↓")
 
             # Show next sort mode indicator
             next_sort_mode = {
-                "severity": "Plugin ID ↑",
+                "severity": "Finding ID ↑",
                 "plugin_id": "Name A↑Z",
                 "name": "Host count ↓",
                 "hosts": "Severity ↓",
-            }.get(sort_mode, "Plugin ID ↑")
+            }.get(sort_mode, "Finding ID ↑")
 
             status_parts.append(f"Sort: {sort_label} (next: {next_sort_mode})")
 
@@ -1578,7 +1578,8 @@ def main(args: types.SimpleNamespace) -> None:
                     show_guided_tour()
                     # After tour, show import instructions
                     info("\nTo get started, import a Nessus scan:")
-                    info("  cerno import nessus /path/to/scan.nessus\n")
+                    info("  cerno import nessus /path/to/scan.nessus")
+                    info("  cerno import nuclei /path/to/nuclei.json\n")
                     return
 
                 # Display scan selection menu
@@ -1753,7 +1754,7 @@ def main(args: types.SimpleNamespace) -> None:
 
                 # Host filter state (persists across severity loop iterations)
                 host_filter: Optional[str] = None  # Active host filter (IP/hostname)
-                host_filter_plugin_ids: Optional[list[int]] = (
+                host_filter_plugin_ids: Optional[list[str]] = (
                     None  # Cached plugin IDs for filter
                 )
 
@@ -1826,25 +1827,32 @@ def main(args: types.SimpleNamespace) -> None:
                     # Apply host filter if active (intersect workflow plugins with host filter)
                     workflow_plugin_ids = workflow_mapper.get_all_plugin_ids()
                     if workflow_plugin_ids:
-                        workflow_plugin_ids_int = [
-                            int(pid) for pid in workflow_plugin_ids if pid.isdigit()
+                        # plugin_id is TEXT and namespaced per source, so this
+                        # must stay string-keyed: an int()/isdigit() filter here
+                        # would silently drop every non-Nessus workflow id.
+                        workflow_plugin_ids_filtered = [
+                            str(pid) for pid in workflow_plugin_ids
                         ]
                         # If host filter is active, intersect with host filter plugin IDs
                         if host_filter_plugin_ids is not None:
-                            workflow_plugin_ids_int = [
+                            host_filter_set = {
+                                str(pid) for pid in host_filter_plugin_ids
+                            }
+                            workflow_plugin_ids_filtered = [
                                 pid
-                                for pid in workflow_plugin_ids_int
-                                if pid in host_filter_plugin_ids
+                                for pid in workflow_plugin_ids_filtered
+                                if pid in host_filter_set
                             ]
-                        if workflow_plugin_ids_int:
+                        if workflow_plugin_ids_filtered:
                             if len(all_scan_ids) > 1:
                                 workflow_files, _ = Finding.get_by_scan_ids_merged(
                                     scan_ids=all_scan_ids,
-                                    plugin_ids=workflow_plugin_ids_int,
+                                    plugin_ids=workflow_plugin_ids_filtered,
                                 )
                             else:
                                 workflow_files = Finding.get_by_scan_with_plugin(
-                                    scan_id=scan_id, plugin_ids=workflow_plugin_ids_int
+                                    scan_id=scan_id,
+                                    plugin_ids=workflow_plugin_ids_filtered,
                                 )
                         else:
                             workflow_files = []
@@ -2222,6 +2230,56 @@ def _demo_assets_dir() -> Path:
     )
 
 
+DEMO_NUCLEI_INITIAL_SCAN = "Cerno_Demo_Nuclei_Initial_Scan"
+DEMO_NUCLEI_EXPANDED_SCAN = "Cerno_Demo_Nuclei_Expanded_Scan"
+
+
+def _import_demo_nuclei(
+    nuclei_file: Path, scan_name: str, overwrite: bool = False
+) -> tuple[str, bool]:
+    """Import a bundled demo nuclei results file.
+
+    Mirrors :func:`_import_demo_nessus` -- same hash-based idempotency, same
+    ``--overwrite`` semantics, and the same deliberate bypass of the interactive
+    duplicate prompt. The one difference is that the scan name must be supplied:
+    nuclei output has no equivalent of a ``.nessus`` ``Report@name``.
+
+    Args:
+        nuclei_file: Bundled demo results file (a ``-je`` JSON array).
+        scan_name: Scan name to import under.
+        overwrite: Replace an existing scan whose source file changed.
+
+    Returns:
+        Tuple of (scan_name, did_import).
+    """
+    from cerno_pkg.constants import SCANS_ROOT
+    from cerno_pkg.database import compute_file_hash
+    from cerno_pkg.models import Scan
+    from cerno_pkg.nuclei_import import import_nuclei_file
+
+    out_dir = SCANS_ROOT / scan_name
+    new_file_hash = compute_file_hash(nuclei_file)
+    existing_scan = Scan.get_by_name(scan_name)
+
+    if existing_scan:
+        if existing_scan.source_file_hash == new_file_hash:
+            info(f"Scan already imported: {scan_name}")
+            return scan_name, False
+        if not overwrite:
+            warn(f"Scan exists with different content, skipping: {scan_name}")
+            warn("Use `cerno demo --overwrite` to replace demo scans.")
+            return scan_name, False
+
+        if not Scan.delete_by_name(scan_name):
+            raise RuntimeError(f"Failed to replace existing scan: {scan_name}")
+        info(f"Replaced existing scan: {scan_name}")
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    result = import_nuclei_file(nuclei_file, out_dir, scan_name=scan_name)
+    ok(f"Imported {scan_name}: {result.plugins_exported} findings")
+    return scan_name, True
+
+
 def _import_demo_nessus(nessus_file: Path, overwrite: bool = False) -> tuple[str, bool]:
     """Import a bundled demo Nessus file without post-import tool suggestions."""
     from cerno_pkg.constants import SCANS_ROOT
@@ -2238,7 +2296,7 @@ def _import_demo_nessus(nessus_file: Path, overwrite: bool = False) -> tuple[str
     existing_scan = Scan.get_by_name(scan_name)
 
     if existing_scan:
-        if existing_scan.nessus_file_hash == new_file_hash:
+        if existing_scan.source_file_hash == new_file_hash:
             info(f"Scan already imported: {scan_name}")
             return scan_name, False
         if not overwrite:
@@ -2327,9 +2385,12 @@ def demo_cmd(
 
     initial_scan = assets_dir / "cerno-demo-initial.nessus"
     expanded_scan = assets_dir / "cerno-demo-expanded.nessus"
+    initial_nuclei = assets_dir / "cerno-demo-nuclei-initial.json"
+    expanded_nuclei = assets_dir / "cerno-demo-nuclei-expanded.json"
     nxc_workspace = assets_dir / "nxc-workspace"
 
-    missing = [path for path in (initial_scan, expanded_scan) if not path.exists()]
+    demo_scans = (initial_scan, expanded_scan, initial_nuclei, expanded_nuclei)
+    missing = [path for path in demo_scans if not path.exists()]
     if not no_nxc and not nxc_workspace.exists():
         missing.append(nxc_workspace)
 
@@ -2361,12 +2422,30 @@ def demo_cmd(
         if did_import:
             imported += 1
 
+    # The nuclei halves target exactly the web services the Nessus scans found,
+    # so they land on the same host rows and can be reviewed side by side.
+    for nuclei_file, scan_name in (
+        (initial_nuclei, DEMO_NUCLEI_INITIAL_SCAN),
+        (expanded_nuclei, DEMO_NUCLEI_EXPANDED_SCAN),
+    ):
+        _, did_import = _import_demo_nuclei(nuclei_file, scan_name, overwrite=overwrite)
+        if did_import:
+            imported += 1
+
     _console_global.print()
     ok(f"Demo setup complete: {imported} scan(s) imported or updated.")
     info("Next commands:")
     info("  cerno scan list")
     info("  cerno scan compare Cerno_Demo_Initial_Scan Cerno_Demo_Expanded_Scan")
+    info(
+        f"  cerno scan compare {DEMO_NUCLEI_INITIAL_SCAN} "
+        f"{DEMO_NUCLEI_EXPANDED_SCAN}"
+    )
     info("  cerno review")
+    info(
+        "At the scan prompt, select a Nessus and a nuclei scan together "
+        "(e.g. '2,4') to review both sources side by side."
+    )
     if not no_nxc:
         info(
             "Open an SMB/SSH/FTP/VNC/LDAP/RDP finding and press [N] for NetExec context."
@@ -2532,10 +2611,18 @@ def _show_nuclei_suggestion(scan_name: str) -> None:
             )
         )
         info(
-            f"   Found {len(urls)} HTTP/HTTPS services available — the URL(s) have been written to {urls_file}"
+            f"   Found {len(urls)} HTTP/HTTPS service(s) — the URL(s) have been "
+            f"written to {urls_file}"
         )
-        nuclei_cmd = f"nuclei -l {urls_file} -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0' -ts -mhe 500 -c 32 -stats -si 300 -o ~/nuclei_results.txt -je ~/nuclei_results.json -elog ~/nuclei_errors.txt -me ~/"
+        # Built from config (templates dir, profile, User-Agent, concurrency) with
+        # every output path inside the scan directory, so the operator can run it
+        # and hand the JSON straight back to `cerno import nuclei`.
+        from cerno_pkg.tools import NUCLEI_OUTPUT_NAMES, build_nuclei_cmd
+
+        nuclei_cmd = build_nuclei_cmd(urls_file, urls_dir)
         info(f"   {nuclei_cmd}\n")
+        info("   Then import the results into this database:")
+        info(f"   cerno import nuclei {urls_dir / NUCLEI_OUTPUT_NAMES['json']}\n")
 
     except Exception:
         pass  # Non-fatal — don't break import flow
@@ -2614,6 +2701,100 @@ def import_scan(
         raise typer.Exit(1)
 
 
+def _show_severity_breakdown(severities: dict) -> None:
+    """Print an import's severity breakdown as a table (shared by all sources).
+
+    Args:
+        severities: Mapping of ``severity_int`` to finding count.
+    """
+    if not severities:
+        return
+
+    from rich import box
+    from rich.table import Table
+
+    from cerno_pkg.ansi import style_if_enabled
+    from cerno_pkg.nessus_import import severity_label_from_int
+    from cerno_pkg.render import severity_cell
+
+    _console_global.print()  # Blank line before table
+    info("Severity Breakdown:")
+
+    sev_table = Table(
+        show_header=True,
+        header_style=style_if_enabled("bold cyan"),
+        box=box.SIMPLE,
+    )
+    sev_table.add_column("Severity", style=style_if_enabled("cyan"))
+    sev_table.add_column("Findings", justify="right", style=style_if_enabled("yellow"))
+
+    # Sort by severity (highest first: 4->0), skipping empty buckets
+    for sev_int in sorted(severities.keys(), reverse=True):
+        count = severities[sev_int]
+        if count > 0:
+            sev_table.add_row(
+                severity_cell(severity_label_from_int(sev_int)), str(count)
+            )
+
+    _console_global.print(sev_table)
+
+
+def _resolve_duplicate_scan(scan_name: str, source_file: Path) -> Optional[str]:
+    """Settle a scan-name collision before importing, whatever the source.
+
+    Shared by every ``cerno import`` subcommand so each source behaves the same
+    on re-import.
+
+    Args:
+        scan_name: Scan name the importer intends to use.
+        source_file: File being imported (its hash decides "identical").
+
+    Returns:
+        The scan name to import under -- the original, or a suffixed one if the
+        operator chose to rename -- or None to skip/cancel the import.
+    """
+    from cerno_pkg.database import compute_file_hash
+    from cerno_pkg.models import Scan
+
+    existing_scan = Scan.get_by_name(scan_name)
+    if not existing_scan:
+        return scan_name
+
+    if existing_scan.source_file_hash == compute_file_hash(source_file):
+        ok(f"Scan '{scan_name}' already imported (identical file). Skipping.")
+        return None
+
+    warn(f"A scan named '{scan_name}' already exists.")
+    if existing_scan.created_at:
+        warn(f"Existing: imported on {existing_scan.created_at}")
+    warn(f"New file: {source_file.name}")
+    _console_global.print()
+
+    for choice in (
+        "1. Overwrite existing scan",
+        "2. Import with new name (add suffix)",
+        "3. Cancel import",
+    ):
+        _console_global.print(f"  {choice}")
+
+    ans = Prompt.ask("\nChoice", default="3").strip()
+
+    if ans == "1":
+        info("Overwriting existing scan...")
+        return scan_name
+    if ans == "2":
+        counter = 2
+        candidate = f"{scan_name}_{counter}"
+        while Scan.get_by_name(candidate):
+            counter += 1
+            candidate = f"{scan_name}_{counter}"
+        info(f"Importing as: {candidate}")
+        return candidate
+
+    info("Import cancelled.")
+    return None
+
+
 def _import_single_nessus(nessus: Path) -> bool:
     """Import a single .nessus file. Returns True on success, False on skip/cancel."""
     from cerno_pkg.nessus_import import (
@@ -2630,51 +2811,11 @@ def _import_single_nessus(nessus: Path) -> bool:
     info(f"Using scan name: {scan_name}")
 
     # Check for duplicate imports
-    from cerno_pkg.database import compute_file_hash
-    from cerno_pkg.models import Scan
-
-    new_file_hash = compute_file_hash(nessus)
-    existing_scan = Scan.get_by_name(scan_name)
-
-    if existing_scan:
-        # Check if it's the identical file
-        if existing_scan.nessus_file_hash == new_file_hash:
-            ok(f"Scan '{scan_name}' already imported (identical file). Skipping.")
-            return False
-
-        # Different file, same name - prompt user
-        warn(f"A scan named '{scan_name}' already exists.")
-        if existing_scan.created_at:
-            warn(f"Existing: imported on {existing_scan.created_at}")
-        warn(f"New file: {nessus.name}")
-        _console_global.print()
-
-        choices = [
-            "1. Overwrite existing scan",
-            "2. Import with new name (add suffix)",
-            "3. Cancel import",
-        ]
-        for choice in choices:
-            _console_global.print(f"  {choice}")
-
-        ans = Prompt.ask("\nChoice", default="3").strip()
-
-        if ans == "1":
-            info("Overwriting existing scan...")
-        elif ans == "2":
-            # Find unique suffix
-            counter = 2
-            new_scan_name = f"{scan_name}_{counter}"
-            while Scan.get_by_name(new_scan_name):
-                counter += 1
-                new_scan_name = f"{scan_name}_{counter}"
-
-            scan_name = new_scan_name
-            out_dir = out_dir.parent / scan_name
-            info(f"Importing as: {scan_name}")
-        else:
-            info("Import cancelled.")
-            return False
+    resolved = _resolve_duplicate_scan(scan_name, nessus)
+    if resolved is None:
+        return False
+    scan_name = resolved
+    out_dir = SCANS_ROOT / scan_name
 
     # Run import
     header("Importing scan to database")
@@ -2699,35 +2840,7 @@ def _import_single_nessus(nessus: Path) -> bool:
 
         ok(f"Import complete: {result.plugins_exported} findings")
 
-        # Display severity breakdown
-        if result.severities:
-            from rich.table import Table
-            from rich import box
-            from cerno_pkg.render import severity_cell
-            from cerno_pkg.nessus_import import severity_label_from_int
-
-            _console_global.print()  # Blank line before table
-            info("Severity Breakdown:")
-            from cerno_pkg.ansi import style_if_enabled
-
-            sev_table = Table(
-                show_header=True,
-                header_style=style_if_enabled("bold cyan"),
-                box=box.SIMPLE,
-            )
-            sev_table.add_column("Severity", style=style_if_enabled("cyan"))
-            sev_table.add_column(
-                "Plugins", justify="right", style=style_if_enabled("yellow")
-            )
-
-            # Sort by severity (highest first: 4->0)
-            for sev_int in sorted(result.severities.keys(), reverse=True):
-                count = result.severities[sev_int]
-                if count > 0:  # Only show non-zero severities
-                    sev_label = severity_label_from_int(sev_int)
-                    sev_table.add_row(severity_cell(sev_label), str(count))
-
-            _console_global.print(sev_table)
+        _show_severity_breakdown(result.severities)
 
     except Exception as e:
         err(f"Import failed: {e}")
@@ -2737,6 +2850,224 @@ def _import_single_nessus(nessus: Path) -> bool:
     _console_global.print()  # Blank line for spacing
     show_nessus_tool_suggestions(nessus, scan_name)
     return True
+
+
+NUCLEI_SUFFIXES: tuple[str, ...] = (".json", ".jsonl")
+"""File extensions ``cerno import nuclei`` accepts (``-je`` and ``-jle`` output)."""
+
+
+@import_app.command(
+    name="nuclei",
+    help="Import nuclei JSON/JSONL results (or a directory of them) and populate database with findings",
+)
+def import_nuclei(
+    results: Path = typer.Argument(
+        ...,
+        help="Path to a nuclei .json/.jsonl results file, or a directory containing them",
+    ),
+    name: Optional[str] = typer.Option(
+        None,
+        "--name",
+        help="Scan name to import under (default: the file's stem)",
+    ),
+    min_severity: int = typer.Option(
+        0,
+        "--min-severity",
+        min=0,
+        max=4,
+        help="Drop findings below this severity (0=Info, 1=Low, 2=Medium, 3=High, 4=Critical)",
+    ),
+) -> None:
+    """
+    Import nuclei results into the database.
+
+    Accepts either shape nuclei writes: a single JSON array (``-je``) or
+    newline-delimited records (``-jle`` / ``-jsonl``). The shape is detected
+    from the file contents, not the extension.
+
+    Unlike a ``.nessus`` export, nuclei output carries no scan name, so the
+    file's stem is used unless ``--name`` is given. One finding is created per
+    template; a template that matched the same host:port several times (six
+    missing security headers, say) keeps every match's evidence in that host's
+    plugin output.
+    """
+    if not results.exists():
+        err(f"Path does not exist: {results}")
+        raise typer.Exit(1)
+
+    if results.is_dir():
+        _import_nuclei_directory(results, min_severity)
+    elif results.is_file():
+        if results.suffix.lower() not in NUCLEI_SUFFIXES:
+            err(f"File does not have a .json or .jsonl extension: {results.name}")
+            raise typer.Exit(1)
+        if not _import_single_nuclei(results, name, min_severity):
+            raise typer.Exit(1)
+    else:
+        err(f"Path is not a file or directory: {results}")
+        raise typer.Exit(1)
+
+
+def _derive_nuclei_scan_name(results: Path) -> str:
+    """Pick a scan name for a nuclei results file that has no embedded name.
+
+    The command Cerno suggests after an import writes
+    ``~/.cerno/scans/<scan>/nuclei.json``, so the file stem is *always*
+    ``nuclei``. Naming every such import "nuclei" makes the second one collide
+    with the first, so a file sitting directly inside a scan directory is named
+    after that directory instead -- keeping it tied to the Nessus scan whose
+    target list produced it.
+
+    Args:
+        results: Path to the nuclei results file.
+
+    Returns:
+        A sanitized scan name.
+    """
+    from cerno_pkg.constants import SCANS_ROOT
+    from cerno_pkg.nessus_import import sanitize_filename
+
+    try:
+        in_scan_dir = results.resolve().parent.parent == SCANS_ROOT.resolve()
+    except OSError:
+        in_scan_dir = False
+
+    if in_scan_dir and results.parent.name:
+        return sanitize_filename(f"{results.parent.name}-nuclei")
+    return sanitize_filename(results.stem)
+
+
+#: Stems that say nothing about which engagement a results file belongs to.
+GENERIC_NUCLEI_STEMS = frozenset({"nuclei", "results", "output", "nuclei_results"})
+
+
+def _import_single_nuclei(
+    results: Path, name: Optional[str], min_severity: int
+) -> bool:
+    """Import one nuclei results file. Returns True on success."""
+    from cerno_pkg.constants import SCANS_ROOT
+    from cerno_pkg.nessus_import import sanitize_filename
+    from cerno_pkg.nuclei_import import import_nuclei_file
+
+    if results.stat().st_size == 0:
+        warn(f"{results.name} is empty — nothing to import.")
+        info(
+            "nuclei writes an empty results file when no template matched — "
+            "including when no target was reachable."
+        )
+        info("For pre-built data to explore, run: cerno demo")
+        return False
+
+    if name:
+        scan_name = sanitize_filename(name)
+    else:
+        scan_name = _derive_nuclei_scan_name(results)
+        if scan_name.lower() in GENERIC_NUCLEI_STEMS:
+            warn(
+                f"'{scan_name}' says nothing about this engagement — "
+                "pass --name to label the scan."
+            )
+    info(f"Using scan name: {scan_name}")
+
+    resolved = _resolve_duplicate_scan(scan_name, results)
+    if resolved is None:
+        return False
+    scan_name = resolved
+    out_dir = SCANS_ROOT / scan_name
+
+    header("Importing nuclei results to database")
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        with Progress(
+            SpinnerColumn(style="cyan"),
+            TextColumn("[progress.description]{task.description}"),
+            TimeElapsedColumn(),
+            console=_console_global,
+            transient=True,
+        ) as progress:
+            progress.add_task(f"Importing {results.name}...", total=None)
+            result = import_nuclei_file(
+                results,
+                out_dir,
+                scan_name=scan_name,
+                min_severity=min_severity,
+            )
+    except Exception as e:
+        err(f"Import failed: {e}")
+        return False
+
+    if result.plugins_exported == 0:
+        warn("No nuclei findings were imported.")
+        if min_severity > 0:
+            info(f"--min-severity {min_severity} may have filtered everything out.")
+        else:
+            info("The file parsed, but it contains no matched findings.")
+        return False
+
+    ok(f"Import complete: {result.plugins_exported} findings")
+    _show_severity_breakdown(result.severities)
+
+    _console_global.print()
+    info(f"Review them with: cerno review")
+    return True
+
+
+def _import_nuclei_directory(directory: Path, min_severity: int) -> None:
+    """Discover and import every nuclei .json/.jsonl file under a directory."""
+    from rich import box
+    from rich.table import Table
+
+    from cerno_pkg.ansi import safe_text, style_if_enabled
+
+    files = sorted(
+        f
+        for suffix in NUCLEI_SUFFIXES
+        for f in directory.rglob(f"*{suffix}")
+        if f.is_file()
+    )
+    if not files:
+        err(f"No .json or .jsonl files found in: {directory}")
+        raise typer.Exit(1)
+
+    count = len(files)
+    header(
+        f"Found {count} nuclei result file{'s' if count != 1 else ''} in {directory}"
+    )
+
+    table = Table(
+        show_header=True,
+        header_style=style_if_enabled("bold cyan"),
+        box=box.SIMPLE,
+    )
+    table.add_column("#", justify="right", style=style_if_enabled("cyan"))
+    table.add_column("File")
+    table.add_column("Size", justify="right", style=style_if_enabled("yellow"))
+    for idx, f in enumerate(files, 1):
+        size = f.stat().st_size
+        if size >= 1_048_576:
+            human = f"{size / 1_048_576:.1f} MB"
+        elif size >= 1024:
+            human = f"{size / 1024:.1f} KB"
+        else:
+            human = f"{size} B"
+        table.add_row(str(idx), safe_text(str(f.relative_to(directory))), human)
+    _console_global.print(table)
+
+    if not Confirm.ask(f"\nImport all {count} file(s) above?", default=True):
+        info("Import cancelled.")
+        raise typer.Exit(0)
+
+    imported = skipped = 0
+    for idx, f in enumerate(files, 1):
+        _console_global.rule(f"[cyan][{idx}/{count}] {safe_text(f.name)}[/cyan]")
+        if _import_single_nuclei(f, None, min_severity):
+            imported += 1
+        else:
+            skipped += 1
+
+    _console_global.rule("[bold cyan]Import Complete[/bold cyan]")
+    ok(f"Summary: {imported} imported, {skipped} skipped")
 
 
 def _import_nessus_directory(directory: Path) -> None:
@@ -2830,7 +3161,10 @@ def list_scans(
 
     if not scans:
         info("No scans found in database.")
-        info("Tip: Use 'cerno import nessus <scan.nessus>' to import a scan")
+        info(
+            "Tip: Use 'cerno import nessus <scan.nessus>' or "
+            "'cerno import nuclei <nuclei.json>' to import a scan"
+        )
         return
 
     from cerno_pkg.ansi import style_if_enabled
@@ -3025,11 +3359,17 @@ def compare_scans_cmd(
         warn("Comparing a scan with itself - all findings will be persistent")
 
     # Perform comparison
-    result = compare_scans(
-        scan_id_1=scan1_data["scan_id"],
-        scan_id_2=scan2_data["scan_id"],
-        min_severity=severity,
-    )
+    from cerno_pkg.cross_scan import MixedSourceComparisonError
+
+    try:
+        result = compare_scans(
+            scan_id_1=scan1_data["scan_id"],
+            scan_id_2=scan2_data["scan_id"],
+            min_severity=severity,
+        )
+    except MixedSourceComparisonError as e:
+        err(str(e))
+        raise typer.Exit(1)
 
     if not result:
         err("Failed to compare scans")
@@ -3404,7 +3744,7 @@ def workflow_list(
         show_header=True,
         header_style="bold magenta",
     )
-    table.add_column("Plugin ID(s)", style="cyan", no_wrap=True)
+    table.add_column("Finding ID(s)", style="cyan", no_wrap=True)
     table.add_column("Workflow Name", style="yellow")
     table.add_column("Description", style="dim")
 

@@ -121,6 +121,7 @@ version: "1.0"  # Recommended: Schema version (currently always "1.0")
 
 workflows:      # Required: List of workflow definitions
   - plugin_id: "12345"           # Required: Plugin ID(s) - string, can be comma-separated
+                                 #   Nessus: bare number. nuclei: "nuclei:<template-id>"
     workflow_name: "Workflow Name"  # Recommended: Human-readable workflow name
     description: "Brief description"  # Recommended: What this workflow verifies
 
@@ -140,11 +141,34 @@ workflows:      # Required: List of workflow definitions
 
 The loader only enforces `workflows` and `plugin_id`: an entry without a `plugin_id` is skipped, and every other field falls back to an empty value. Fill in the recommended fields anyway, since an empty workflow isn't much use.
 
+#### Mapping a workflow to a nuclei template
+
+`plugin_id` is the finding's ID as stored in the database, and those IDs are
+namespaced per scan source. Nessus plugin IDs stay bare, so every existing
+mapping keeps working; a nuclei template is prefixed with `nuclei:`:
+
+```yaml
+workflows:
+  - plugin_id: "nuclei:http-missing-security-headers"
+    workflow_name: "Verify Missing Security Headers"
+    description: "Confirm which security headers are absent and assess impact"
+    steps:
+      - title: "Re-check the headers directly"
+        commands:
+          - "curl -sSI <TARGET>"
+        notes: "Compare against the matcher names in the finding's plugin output."
+    references:
+      - "https://github.com/projectdiscovery/nuclei-templates/blob/main/http/misconfiguration/http-missing-security-headers.yaml"
+```
+
+The template ID is shown as "Nuclei Template ID" in the finding panel, and is
+the `template-id` field in nuclei's JSON output.
+
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `version` | string | Recommended | Schema version (currently "1.0") |
 | `workflows` | list | Yes | List of workflow definitions |
-| `plugin_id` | string | Yes | Nessus plugin ID (can be comma-separated for multi-plugin workflows) |
+| `plugin_id` | string | Yes | Finding ID to map (can be comma-separated for multi-plugin workflows). A bare number is a Nessus plugin ID (`"57608"`); a nuclei template is prefixed (`"nuclei:apache-detect"`) — see below |
 | `workflow_name` | string | Recommended | Human-readable workflow name (shown in the TUI and `cerno workflow list`) |
 | `description` | string | Recommended | Brief description of what the workflow verifies |
 | `steps` | list | Recommended | List of verification steps |

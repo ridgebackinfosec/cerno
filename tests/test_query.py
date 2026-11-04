@@ -94,7 +94,7 @@ def _plugin_ids(results):
 
 def test_scan_ids_scopes_to_one_scan(seeded):
     res = run_finding_query(FindingQuery(scan_ids=[seeded["scan_a"]]), seeded["conn"])
-    assert _plugin_ids(res) == [100, 200, 57608]
+    assert _plugin_ids(res) == ["100", "200", "57608"]
 
 
 def test_no_scan_ids_spans_all_scans(seeded):
@@ -105,39 +105,39 @@ def test_no_scan_ids_spans_all_scans(seeded):
 
 def test_severity_int_exact(seeded):
     res = run_finding_query(FindingQuery(severity_int=4), seeded["conn"])
-    assert _plugin_ids(res) == [100]
+    assert _plugin_ids(res) == ["100"]
 
 
 def test_severity_min_inclusive(seeded):
     res = run_finding_query(
         FindingQuery(scan_ids=[seeded["scan_a"]], severity_min=3), seeded["conn"]
     )
-    assert _plugin_ids(res) == [100, 57608]
+    assert _plugin_ids(res) == ["100", "57608"]
 
 
 def test_review_state(seeded):
     res = run_finding_query(FindingQuery(review_state="in_progress"), seeded["conn"])
-    assert _plugin_ids(res) == [200]
+    assert _plugin_ids(res) == ["200"]
 
 
 def test_has_metasploit(seeded):
     res = run_finding_query(FindingQuery(has_metasploit=True), seeded["conn"])
-    assert _plugin_ids(res) == [100]
+    assert _plugin_ids(res) == ["100"]
 
 
 def test_plugin_name_substring_case_insensitive(seeded):
     res = run_finding_query(FindingQuery(plugin_name="telnet"), seeded["conn"])
-    assert _plugin_ids(res) == [100]
+    assert _plugin_ids(res) == ["100"]
 
 
 def test_cve_exact_element_match(seeded):
     res = run_finding_query(FindingQuery(cve="CVE-2021-1"), seeded["conn"])
-    assert _plugin_ids(res) == [100]
+    assert _plugin_ids(res) == ["100"]
 
 
 def test_cve_match_is_case_insensitive(seeded):
     res = run_finding_query(FindingQuery(cve="cve-2021-1"), seeded["conn"])
-    assert _plugin_ids(res) == [100]
+    assert _plugin_ids(res) == ["100"]
 
 
 def test_cve_no_substring_false_positive(seeded):
@@ -150,22 +150,22 @@ def test_port_predicate(seeded):
     res = run_finding_query(
         FindingQuery(scan_ids=[seeded["scan_a"]], port=23), seeded["conn"]
     )
-    assert _plugin_ids(res) == [100]
+    assert _plugin_ids(res) == ["100"]
 
 
 def test_service_predicate(seeded):
     res = run_finding_query(FindingQuery(service="cifs"), seeded["conn"])
-    assert _plugin_ids(res) == [57608]
+    assert _plugin_ids(res) == ["57608"]
 
 
 def test_host_predicate(seeded):
     res = run_finding_query(FindingQuery(host="10.0.0.2"), seeded["conn"])
-    assert _plugin_ids(res) == [100]
+    assert _plugin_ids(res) == ["100"]
 
 
 def test_verdict_confirmed(seeded):
     res = run_finding_query(FindingQuery(verdict="confirmed"), seeded["conn"])
-    assert _plugin_ids(res) == [100]
+    assert _plugin_ids(res) == ["100"]
 
 
 def test_verdict_none_excludes_findings_with_a_verdict(seeded):
@@ -173,7 +173,7 @@ def test_verdict_none_excludes_findings_with_a_verdict(seeded):
         FindingQuery(scan_ids=[seeded["scan_a"]], verdict="none"), seeded["conn"]
     )
     # F2 has a verdict; the rest do not.
-    assert _plugin_ids(res) == [200, 57608]
+    assert _plugin_ids(res) == ["200", "57608"]
 
 
 def test_has_workflow_true(seeded, tmp_path):
@@ -183,7 +183,7 @@ def test_has_workflow_true(seeded, tmp_path):
         seeded["conn"],
         workflow_mapper=mapper,
     )
-    assert _plugin_ids(res) == [57608]
+    assert _plugin_ids(res) == ["57608"]
 
 
 def test_has_workflow_false(seeded, tmp_path):
@@ -193,7 +193,7 @@ def test_has_workflow_false(seeded, tmp_path):
         seeded["conn"],
         workflow_mapper=mapper,
     )
-    assert _plugin_ids(res) == [100, 200]
+    assert _plugin_ids(res) == ["100", "200"]
 
 
 def test_has_workflow_handles_grouped_plugin_keys(seeded, tmp_path):
@@ -204,7 +204,7 @@ def test_has_workflow_handles_grouped_plugin_keys(seeded, tmp_path):
         seeded["conn"],
         workflow_mapper=mapper,
     )
-    assert _plugin_ids(res) == [57608]
+    assert _plugin_ids(res) == ["57608"]
 
 
 def test_combined_predicates_are_anded(seeded):
@@ -216,7 +216,7 @@ def test_combined_predicates_are_anded(seeded):
         port=23,
     )
     res = run_finding_query(q, seeded["conn"])
-    assert _plugin_ids(res) == [100]
+    assert _plugin_ids(res) == ["100"]
 
 
 def test_merged_dedups_by_plugin_across_scans(seeded):
@@ -225,7 +225,7 @@ def test_merged_dedups_by_plugin_across_scans(seeded):
         seeded["conn"],
     )
     # 57608 appears in both scans -> one representative row when merged.
-    assert _plugin_ids(res) == [100, 200, 57608]
+    assert _plugin_ids(res) == ["100", "200", "57608"]
 
 
 def test_empty_scan_ids_matches_nothing(seeded):
@@ -265,3 +265,74 @@ def _mapper_with(tmp_path, plugin_id_keys):
     path = tmp_path / "wf.yaml"
     path.write_text(yaml.safe_dump(data), encoding="utf-8")
     return WorkflowMapper(yaml_path=path)
+
+
+# ---------------------------------------------------------------------------
+# source predicate (multi-source findings)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def mixed_source_db(temp_db):
+    """One Nessus finding and one nuclei finding in the same scan."""
+    from cerno_pkg.models import Finding, Plugin, Scan
+
+    scan = Scan(scan_name="mixed", export_root="/tmp").save(temp_db)
+    Plugin(plugin_id="57608", plugin_name="SMB Signing", severity_int=3).save(temp_db)
+    Plugin(
+        plugin_id="nuclei:tech-detect", plugin_name="Tech Detect", severity_int=3
+    ).save(temp_db)
+    Finding(scan_id=scan, plugin_id="57608").save(temp_db)
+    Finding(scan_id=scan, plugin_id="nuclei:tech-detect").save(temp_db)
+    return temp_db
+
+
+@pytest.mark.integration
+def test_source_predicate_selects_nessus_only(mixed_source_db):
+    res = run_finding_query(FindingQuery(source="nessus"), mixed_source_db)
+    assert _plugin_ids(res) == ["57608"]
+
+
+@pytest.mark.integration
+def test_source_predicate_selects_nuclei_only(mixed_source_db):
+    res = run_finding_query(FindingQuery(source="nuclei"), mixed_source_db)
+    assert _plugin_ids(res) == ["nuclei:tech-detect"]
+
+
+@pytest.mark.integration
+def test_source_predicate_is_case_insensitive(mixed_source_db):
+    res = run_finding_query(FindingQuery(source="  NUCLEI "), mixed_source_db)
+    assert _plugin_ids(res) == ["nuclei:tech-detect"]
+
+
+@pytest.mark.integration
+def test_unset_source_spans_every_source(mixed_source_db):
+    res = run_finding_query(FindingQuery(), mixed_source_db)
+    assert set(_plugin_ids(res)) == {"57608", "nuclei:tech-detect"}
+
+
+@pytest.mark.integration
+def test_unknown_source_matches_nothing(mixed_source_db):
+    res = run_finding_query(FindingQuery(source="openvas"), mixed_source_db)
+    assert res == []
+
+
+@pytest.mark.integration
+def test_source_combines_with_other_predicates(mixed_source_db):
+    res = run_finding_query(
+        FindingQuery(source="nuclei", severity_min=4), mixed_source_db
+    )
+    assert res == []
+
+
+@pytest.mark.integration
+def test_numeric_nessus_ids_still_sort_numerically(temp_db):
+    """plugin_id is TEXT now; a plain sort would put '9' after '10114'."""
+    from cerno_pkg.models import Finding, Plugin, Scan
+
+    scan = Scan(scan_name="ordering", export_root="/tmp").save(temp_db)
+    for pid in ("9", "10114", "100"):
+        Plugin(plugin_id=pid, plugin_name=f"P{pid}", severity_int=1).save(temp_db)
+        Finding(scan_id=scan, plugin_id=pid).save(temp_db)
+    res = run_finding_query(FindingQuery(), temp_db)
+    assert [p.plugin_id for _f, p in res] == ["9", "100", "10114"]

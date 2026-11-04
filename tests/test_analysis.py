@@ -79,6 +79,6 @@ class TestAggregateHostPortsMultiScan:
     """[V] aggregate host view must include hosts from all selected scans."""
 
     def test_includes_secondary_scan_hosts(self, temp_db, merged_candidates):
-        rep_100 = [(f, p) for f, p in merged_candidates if p.plugin_id == 100]
+        rep_100 = [(f, p) for f, p in merged_candidates if p.plugin_id == "100"]
         host_ports, _ = _collect_aggregate_host_ports(rep_100, temp_db)
         assert set(host_ports) == {HOST_X, HOST_Y}

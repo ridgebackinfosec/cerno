@@ -38,14 +38,7 @@ def seeded(tmp_path, monkeypatch):
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=OFF")
     conn.executescript(database.SCHEMA_SQL_TABLES)
-    conn.executemany(
-        "INSERT INTO severity_levels VALUES (?,?,?,?)",
-        [(4, "Critical", 4, "#8B0000"), (0, "Info", 0, "#4682B4")],
-    )
-    conn.executemany(
-        "INSERT INTO verdict_types (label, description) VALUES (?, ?)",
-        [("confirmed", "tp"), ("false_positive", "fp"), ("unable", "n")],
-    )
+    database.seed_lookup_tables(conn)
     conn.executescript(database.SCHEMA_SQL_VIEWS)
     conn.commit()
 

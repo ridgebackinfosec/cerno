@@ -155,7 +155,7 @@ class TestCompareScan:
 
         # Check the new finding
         new_plugin_ids = [f["plugin_id"] for f in result.new_findings]
-        assert 102 in new_plugin_ids
+        assert "102" in new_plugin_ids
 
     def test_compare_finds_resolved_findings(self, temp_db):
         """Resolved findings (in scan1 only) detected correctly."""
@@ -214,7 +214,7 @@ class TestCompareScan:
 
         # Check the resolved finding
         resolved_plugin_ids = [f["plugin_id"] for f in result.resolved_findings]
-        assert 102 in resolved_plugin_ids
+        assert "102" in resolved_plugin_ids
 
     def test_compare_severity_filter(self, temp_db):
         """Minimum severity filter works correctly."""
@@ -276,7 +276,7 @@ class TestCompareScan:
         assert result is not None
         assert result.total_persistent == 1  # Only the High plugin
         persistent_plugin_ids = [f["plugin_id"] for f in result.persistent_findings]
-        assert 102 in persistent_plugin_ids
+        assert "102" in persistent_plugin_ids
         assert 100 not in persistent_plugin_ids
         assert 101 not in persistent_plugin_ids
 
@@ -480,8 +480,8 @@ class TestHostVulnerabilityHistory:
 
         assert history is not None
         assert len(history.scans[0].plugin_ids) == 2
-        assert 100 in history.scans[0].plugin_ids
-        assert 101 in history.scans[0].plugin_ids
+        assert "100" in history.scans[0].plugin_ids
+        assert "101" in history.scans[0].plugin_ids
 
 
 class TestGetScanByName:
@@ -567,3 +567,58 @@ class TestDataclasses:
         )
 
         assert history.scan_count == 2
+
+
+@pytest.mark.integration
+class TestMixedSourceComparisonRefused:
+    """A Nessus scan and a nuclei scan share no plugin ids, so comparing them
+    would report every finding as both new and resolved."""
+
+    @staticmethod
+    def _seed(temp_db):
+        from cerno_pkg.models import Finding, Plugin, Scan
+
+        nessus_scan = Scan(scan_name="nessus-scan", export_root="/tmp").save(temp_db)
+        nuclei_scan = Scan(scan_name="nuclei-scan", export_root="/tmp").save(temp_db)
+        Plugin(plugin_id="57608", plugin_name="SMB Signing", severity_int=3).save(
+            temp_db
+        )
+        Plugin(
+            plugin_id="nuclei:tech-detect",
+            plugin_name="Technology Detection",
+            severity_int=3,
+        ).save(temp_db)
+        Finding(scan_id=nessus_scan, plugin_id="57608").save(temp_db)
+        Finding(scan_id=nuclei_scan, plugin_id="nuclei:tech-detect").save(temp_db)
+        return nessus_scan, nuclei_scan
+
+    def test_cross_source_comparison_raises(self, temp_db):
+        from cerno_pkg.cross_scan import MixedSourceComparisonError, compare_scans
+
+        nessus_scan, nuclei_scan = self._seed(temp_db)
+        with pytest.raises(MixedSourceComparisonError) as exc:
+            compare_scans(nessus_scan, nuclei_scan, conn=temp_db)
+        message = str(exc.value)
+        assert "nessus-scan" in message and "nuclei-scan" in message
+        assert "same source" in message
+
+    def test_error_is_a_valueerror_so_mcp_surfaces_it(self, temp_db):
+        from cerno_pkg.cross_scan import MixedSourceComparisonError
+
+        assert issubclass(MixedSourceComparisonError, ValueError)
+
+    def test_same_source_comparison_still_works(self, temp_db):
+        from cerno_pkg.cross_scan import compare_scans
+        from cerno_pkg.models import Finding, Plugin, Scan
+
+        a = Scan(scan_name="nuclei-a", export_root="/tmp").save(temp_db)
+        b = Scan(scan_name="nuclei-b", export_root="/tmp").save(temp_db)
+        Plugin(plugin_id="nuclei:x", plugin_name="X", severity_int=2).save(temp_db)
+        Plugin(plugin_id="nuclei:y", plugin_name="Y", severity_int=2).save(temp_db)
+        Finding(scan_id=a, plugin_id="nuclei:x").save(temp_db)
+        Finding(scan_id=b, plugin_id="nuclei:y").save(temp_db)
+
+        result = compare_scans(a, b, conn=temp_db)
+        assert result is not None
+        assert [f["plugin_id"] for f in result.new_findings] == ["nuclei:y"]
+        assert [f["plugin_id"] for f in result.resolved_findings] == ["nuclei:x"]

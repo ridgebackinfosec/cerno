@@ -97,14 +97,14 @@ def test_workflow_gaps_drop_custom_mapped_plugin(seeded, custom_wf):
     rows = mcp.tool_list_workflow_gaps(
         scan_ids=[seeded["scan_id"]], config=cfg, conn=seeded["conn"]
     )
-    assert [r["plugin_id"] for r in rows] == [200]
+    assert [r["plugin_id"] for r in rows] == ["200"]
 
 
 def test_workflow_gaps_unset_uses_bundled_only(seeded):
     rows = mcp.tool_list_workflow_gaps(
         scan_ids=[seeded["scan_id"]], config=CernoConfig(), conn=seeded["conn"]
     )
-    assert [r["plugin_id"] for r in rows] == [100, 200]
+    assert [r["plugin_id"] for r in rows] == ["100", "200"]
 
 
 def test_workflow_missing_custom_path_falls_back_to_bundled(seeded, tmp_path):
@@ -112,7 +112,7 @@ def test_workflow_missing_custom_path_falls_back_to_bundled(seeded, tmp_path):
     rows = mcp.tool_list_workflow_gaps(
         scan_ids=[seeded["scan_id"]], config=cfg, conn=seeded["conn"]
     )
-    assert [r["plugin_id"] for r in rows] == [100, 200]
+    assert [r["plugin_id"] for r in rows] == ["100", "200"]
 
 
 def test_malformed_custom_workflows_never_write_stdout(tmp_path, capsys):
@@ -131,7 +131,7 @@ def test_query_findings_has_workflow_uses_custom(seeded, custom_wf):
     rows = mcp.tool_query_findings(
         scan_ids=[seeded["scan_id"]], has_workflow=True, config=cfg, conn=seeded["conn"]
     )
-    assert [r["plugin_id"] for r in rows] == [100]
+    assert [r["plugin_id"] for r in rows] == ["100"]
     assert rows[0]["has_workflow"] is True
 
 
@@ -173,7 +173,7 @@ def test_plan_batch_has_workflow_uses_custom(seeded, custom_wf):
         config=cfg,
         conn=seeded["conn"],
     )
-    assert [i["plugin_id"] for i in plan["items"]] == [100]
+    assert [i["plugin_id"] for i in plan["items"]] == ["100"]
 
 
 # ---------------------------------------------------------------------------

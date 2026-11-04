@@ -15,7 +15,11 @@ def temp_db() -> Generator[sqlite3.Connection, None, None]:
     Yields:
         sqlite3.Connection: In-memory database connection with schema initialized
     """
-    from cerno_pkg.database import SCHEMA_SQL_TABLES, SCHEMA_SQL_VIEWS
+    from cerno_pkg.database import (
+        SCHEMA_SQL_TABLES,
+        SCHEMA_SQL_VIEWS,
+        seed_lookup_tables,
+    )
 
     # Use in-memory database
     conn = sqlite3.connect(":memory:")
@@ -30,51 +34,8 @@ def temp_db() -> Generator[sqlite3.Connection, None, None]:
     conn.executescript(SCHEMA_SQL_TABLES)
     conn.execute("PRAGMA foreign_keys=ON")
 
-    # Populate foundation tables
-    conn.executemany(
-        "INSERT INTO severity_levels VALUES (?, ?, ?, ?)",
-        [
-            (4, "Critical", 4, "#8B0000"),
-            (3, "High", 3, "#FF4500"),
-            (2, "Medium", 2, "#FFA500"),
-            (1, "Low", 1, "#FFD700"),
-            (0, "Info", 0, "#4682B4"),
-        ],
-    )
-    conn.executemany(
-        "INSERT INTO artifact_types (type_name, file_extension, description) VALUES (?, ?, ?)",
-        [
-            ("nmap_xml", ".xml", "Nmap XML output"),
-            ("nmap_gnmap", ".gnmap", "Nmap greppable output"),
-            ("nmap_nmap", ".nmap", "Nmap normal output"),
-            ("netexec_txt", ".txt", "NetExec text output"),
-            ("log", ".log", "Tool execution log"),
-        ],
-    )
-    # Execution->data loop lookup tables (schema v4)
-    conn.executemany(
-        "INSERT INTO verdict_types (label, description) VALUES (?, ?)",
-        [
-            ("confirmed", "Finding verified as a true positive"),
-            ("false_positive", "Finding verified as a false positive"),
-            ("unable", "Unable to verify the finding"),
-        ],
-    )
-    conn.executemany(
-        "INSERT INTO nse_verdicts (label) VALUES (?)",
-        [("VULNERABLE",), ("NOT_VULNERABLE",), ("LIKELY_VULNERABLE",), ("UNKNOWN",)],
-    )
-    conn.executemany(
-        "INSERT INTO port_states (label) VALUES (?)",
-        [
-            ("open",),
-            ("closed",),
-            ("filtered",),
-            ("open|filtered",),
-            ("closed|filtered",),
-            ("unfiltered",),
-        ],
-    )
+    # Populate foundation / lookup tables (same source as initialize_database)
+    seed_lookup_tables(conn)
 
     # Create views
     conn.executescript(SCHEMA_SQL_VIEWS)
@@ -171,10 +132,15 @@ def reset_environment(monkeypatch, tmp_path_factory):
 
     This ensures tests don't interfere with each other through env vars or cached config.
     The config file is pointed at a fresh temp path so ``load_config()`` never reads
-    (or auto-creates) the developer's real ``~/.cerno/config.yaml``.
+    (or auto-creates) the developer's real ``~/.cerno/config.yaml``, and
+    ``database.DATABASE_PATH`` is redirected the same way so no test ever opens
+    (or schema-version-checks) the developer's real ``~/.cerno/cerno.db``.
+    Tests that need a database still point ``DATABASE_PATH`` at their own file.
     """
-    isolated_config = tmp_path_factory.mktemp("cerno_cfg") / "config.yaml"
+    isolated_dir = tmp_path_factory.mktemp("cerno_cfg")
+    isolated_config = isolated_dir / "config.yaml"
     monkeypatch.setattr("cerno_pkg.config.get_config_path", lambda: isolated_config)
+    monkeypatch.setattr("cerno_pkg.database.DATABASE_PATH", isolated_dir / "cerno.db")
 
     # Clear database-related env vars (no longer used - config file only)
     monkeypatch.delenv("CERNO_RESULTS_ROOT", raising=False)

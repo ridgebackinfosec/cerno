@@ -72,7 +72,7 @@ class ScanInfo(TypedDict, total=False):
 class FindingSummary(TypedDict, total=False):
     finding_id: int
     scan_id: int
-    plugin_id: int
+    plugin_id: str
     review_state: str
     plugin_name: str
     severity_int: int
@@ -151,7 +151,7 @@ class ArtifactInfo(TypedDict, total=False):
 class CveAffected(TypedDict, total=False):
     finding_id: int
     scan_id: int
-    plugin_id: int
+    plugin_id: str
     plugin_name: str
     severity_int: int
     hosts: list[str]
@@ -255,7 +255,7 @@ class VerdictResult(TypedDict, total=False):
 
 class WorkflowCandidateResult(TypedDict):
     finding_id: int
-    plugin_id: int
+    plugin_id: str
     available: bool
     reason: Optional[str]
     verdict: Optional[str]
@@ -271,7 +271,7 @@ class WorkflowCandidateResult(TypedDict):
 class WorkflowExportResult(TypedDict):
     path: str
     reason: str
-    plugin_id: int
+    plugin_id: str
     submission_instructions: str
 
 
@@ -476,6 +476,7 @@ def tool_query_findings(
     service: Optional[str] = None,
     host: Optional[str] = None,
     plugin_name: Optional[str] = None,
+    source: Optional[str] = None,
     has_metasploit: Optional[bool] = None,
     has_workflow: Optional[bool] = None,
     merged: bool = False,
@@ -509,6 +510,7 @@ def tool_query_findings(
         service=service,
         host=host,
         plugin_name=plugin_name,
+        source=source,
         has_metasploit=has_metasploit,
         has_workflow=has_workflow,
         merged=merged,
@@ -685,7 +687,12 @@ def tool_compare_scans(
     min_severity: int = 0,
     conn: Optional[sqlite3.Connection] = None,
 ) -> Optional[dict]:
-    """Compare two scans by name; returns new/resolved/persistent findings and hosts."""
+    """Compare two scans by name; returns new/resolved/persistent findings and hosts.
+
+    Raises ``MixedSourceComparisonError`` (a ``ValueError``, so it reaches the
+    client as a tool error) when the two scans come from different sources --
+    their plugin ids share no namespace, so the comparison would be meaningless.
+    """
     from ..cross_scan import compare_scans, get_scan_by_name
 
     with _db(conn) as c:
@@ -704,8 +711,39 @@ def tool_compare_scans(
     return dataclasses.asdict(result) if result is not None else None
 
 
+def tool_import_nuclei(
+    nuclei_path: str,
+    scan_name: Optional[str] = None,
+    min_severity: int = 0,
+) -> dict:
+    """Import a nuclei JSON/JSONL results file. Returns import statistics.
+
+    Accepts either shape nuclei writes -- a single JSON array (``-je``) or
+    newline-delimited records (``-jle``/``-jsonl``) -- detected from the file
+    contents rather than its extension.
+    """
+    from ..constants import SCANS_ROOT
+    from ..nuclei_import import import_nuclei_file
+
+    path = Path(nuclei_path).expanduser()
+    if not path.exists():
+        raise ValueError(f"No such file: {nuclei_path}")
+    if not 0 <= min_severity <= 4:
+        raise ValueError("min_severity must be between 0 and 4")
+
+    result = import_nuclei_file(
+        path, SCANS_ROOT, scan_name=scan_name, min_severity=min_severity
+    )
+    return {
+        "scan_name": result.scan_name,
+        "plugins_exported": result.plugins_exported,
+        "total_hosts": result.total_hosts,
+        "severities": result.severities,
+    }
+
+
 def tool_get_workflow(
-    plugin_id: int, config: Optional[CernoConfig] = None
+    plugin_id: str, config: Optional[CernoConfig] = None
 ) -> Optional[dict]:
     """Return the verification workflow mapped to a plugin, or None if none exists.
 
@@ -1727,6 +1765,7 @@ def _batch_query(
     service: Optional[str],
     host: Optional[str],
     plugin_name: Optional[str],
+    source: Optional[str],
     has_metasploit: Optional[bool],
     has_workflow: Optional[bool],
     limit: int,
@@ -1745,6 +1784,7 @@ def _batch_query(
         service=service,
         host=host,
         plugin_name=plugin_name,
+        source=source,
         has_metasploit=has_metasploit,
         has_workflow=has_workflow,
         limit=limit,
@@ -1764,6 +1804,7 @@ def tool_plan_batch(
     service: Optional[str] = None,
     host: Optional[str] = None,
     plugin_name: Optional[str] = None,
+    source: Optional[str] = None,
     has_metasploit: Optional[bool] = None,
     has_workflow: Optional[bool] = None,
     limit: int = 500,
@@ -1793,6 +1834,7 @@ def tool_plan_batch(
         service=service,
         host=host,
         plugin_name=plugin_name,
+        source=source,
         has_metasploit=has_metasploit,
         has_workflow=has_workflow,
         limit=limit,
@@ -3188,6 +3230,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         service: Optional[str] = None,
         host: Optional[str] = None,
         plugin_name: Optional[str] = None,
+        source: Optional[str] = None,
         has_metasploit: Optional[bool] = None,
         has_workflow: Optional[bool] = None,
         merged: bool = False,
@@ -3198,7 +3241,8 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
 
         All predicates optional. scan_ids=None spans all scans. verdict is
         confirmed/false_positive/unable or "none" (no verdict yet). cve is an exact
-        CVE id (case-insensitive). has_workflow consults the workflow mapper. Each
+        CVE id (case-insensitive). source is the scan source ("nessus" or
+        "nuclei"). has_workflow consults the workflow mapper. Each
         row carries scan_name and has_workflow. merged dedups by plugin across scans.
         limit defaults to the configured default_page_size (min 8) when set, else
         500; use offset to page past it.
@@ -3216,6 +3260,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
                 service=service,
                 host=host,
                 plugin_name=plugin_name,
+                source=source,
                 has_metasploit=has_metasploit,
                 has_workflow=has_workflow,
                 merged=merged,
@@ -3248,8 +3293,12 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         return tool_compare_scans(scan1_name, scan2_name, min_severity=min_severity)
 
     @mcp.tool(annotations=_READONLY_ANN)
-    def get_workflow(plugin_id: int) -> Optional[dict]:
-        """Get the verification workflow mapped to a plugin, if any."""
+    def get_workflow(plugin_id: str) -> Optional[dict]:
+        """Get the verification workflow mapped to a plugin, if any.
+
+        ``plugin_id`` is the namespaced id: a bare Nessus plugin id
+        ("57608") or a prefixed nuclei template id ("nuclei:apache-detect").
+        """
         return tool_get_workflow(plugin_id, config=cfg)
 
     @mcp.tool(annotations=_READONLY_ANN)
@@ -3505,6 +3554,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         service: Optional[str] = None,
         host: Optional[str] = None,
         plugin_name: Optional[str] = None,
+        source: Optional[str] = None,
         has_metasploit: Optional[bool] = None,
         has_workflow: Optional[bool] = None,
         limit: int = 500,
@@ -3515,7 +3565,8 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
 
         strategy is "nmap", "netexec:<proto>" (bare "netexec" = configured default
         protocol, else smb), "msf", or "workflow". Predicates are
-        the same AND-combined set as query_findings. Each item reports the generated
+        the same AND-combined set as query_findings (including source, to batch
+        over one scanner's findings only). Each item reports the generated
         command and whether it is executable-via-execute_command or manual; already-
         resolved findings are skipped when skip_done. Review this, then execute_batch.
         """
@@ -3531,6 +3582,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
             service=service,
             host=host,
             plugin_name=plugin_name,
+            source=source,
             has_metasploit=has_metasploit,
             has_workflow=has_workflow,
             limit=limit,
@@ -3747,6 +3799,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
             service: Optional[str] = None,
             host: Optional[str] = None,
             plugin_name: Optional[str] = None,
+            source: Optional[str] = None,
             has_metasploit: Optional[bool] = None,
             has_workflow: Optional[bool] = None,
             limit: int = 500,
@@ -3777,6 +3830,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
                 service=service,
                 host=host,
                 plugin_name=plugin_name,
+                source=source,
                 has_metasploit=has_metasploit,
                 has_workflow=has_workflow,
                 limit=limit,
@@ -3816,6 +3870,22 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         def import_nessus(nessus_path: str) -> dict:
             """Import a .nessus file into the database."""
             return tool_import_nessus(nessus_path)
+
+        @mcp.tool()
+        def import_nuclei(
+            nuclei_path: str,
+            scan_name: Optional[str] = None,
+            min_severity: int = 0,
+        ) -> dict:
+            """Import a nuclei JSON (-je) or JSONL (-jle/-jsonl) results file.
+
+            scan_name defaults to the file's stem, since nuclei output carries no
+            scan name of its own. min_severity (0-4) drops findings below that
+            severity; a typical nuclei run is dominated by Info results.
+            """
+            return tool_import_nuclei(
+                nuclei_path, scan_name=scan_name, min_severity=min_severity
+            )
 
         @mcp.tool(annotations=_IDEMPOTENT_ANN)
         def ingest_results(execution_id: int) -> IngestResult:
@@ -3857,8 +3927,9 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
 
     else:
         log_info(
-            "mcp: set_review_state/add_note/import_nessus/ingest_results/"
-            "set_finding_verdict not registered (mcp_allow_mutations=false)"
+            "mcp: set_review_state/add_note/import_nessus/import_nuclei/"
+            "ingest_results/set_finding_verdict not registered "
+            "(mcp_allow_mutations=false)"
         )
 
     # --- Credential reveal (gated separately; strictly more sensitive) ---
