@@ -2619,6 +2619,79 @@ class NseScriptResult:
 
 
 @dataclass
+class NucleiMatchObservation:
+    """One nuclei template match from a tool run (provenance = execution_id).
+
+    Evidence, not a finding: `cerno import nuclei` is what creates `findings`
+    rows. `port_number` is None where nuclei reported no usable port (a dns
+    template, say), and both `matcher_name` and `extracted` are frequently
+    None -- which is why `ingest` reconciles these rows in Python rather than
+    relying on a UNIQUE index, where SQLite treats NULLs as distinct.
+    """
+
+    observation_id: Optional[int] = None
+    execution_id: int = 0
+    host_id: int = 0
+    port_number: Optional[int] = None
+    template_ref: str = ""
+    template_name: Optional[str] = None
+    severity_int: int = 0
+    matched_at: Optional[str] = None
+    matcher_name: Optional[str] = None
+    template_url: Optional[str] = None
+    extracted: Optional[str] = None
+    created_at: Optional[str] = None
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> NucleiMatchObservation:
+        return cls(
+            observation_id=row["observation_id"],
+            execution_id=row["execution_id"],
+            host_id=row["host_id"],
+            port_number=row["port_number"],
+            template_ref=row["template_ref"],
+            template_name=row["template_name"],
+            severity_int=row["severity_int"],
+            matched_at=row["matched_at"],
+            matcher_name=row["matcher_name"],
+            template_url=row["template_url"],
+            extracted=row["extracted"],
+            created_at=row["created_at"],
+        )
+
+    @classmethod
+    def get_by_execution(
+        cls, execution_id: int, conn: Optional[sqlite3.Connection] = None
+    ) -> list[NucleiMatchObservation]:
+        with db_transaction(conn) as c:
+            rows = query_all(
+                c,
+                "SELECT * FROM nuclei_match_observations WHERE execution_id = ? "
+                "ORDER BY observation_id",
+                (execution_id,),
+            )
+            return [cls.from_row(r) for r in rows]
+
+    @classmethod
+    def get_by_finding(
+        cls, finding_id: int, conn: Optional[sqlite3.Connection] = None
+    ) -> list[NucleiMatchObservation]:
+        """Every match from any execution attributed to this finding."""
+        with db_transaction(conn) as c:
+            rows = query_all(
+                c,
+                """
+                SELECT nmo.* FROM nuclei_match_observations nmo
+                JOIN tool_executions te ON nmo.execution_id = te.execution_id
+                WHERE te.finding_id = ?
+                ORDER BY nmo.observation_id
+                """,
+                (finding_id,),
+            )
+            return [cls.from_row(r) for r in rows]
+
+
+@dataclass
 class NxcFlagObservation:
     """A point-in-time snapshot of one nxc security flag (provenance = execution_id)."""
 

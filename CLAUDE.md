@@ -386,6 +386,8 @@ no dispatch changes. See `docs/TOOL_SYSTEM_GUIDE.md`.
 - `v_nuclei_observations`: `nuclei_match_observations` with resolved severity label and host IP
 - `v_finding_verified_stats`: per-finding verified_port/nse_result/vulnerable counts (via `tool_executions.finding_id`)
 
+**Views are recreated on every `initialize_database()`** (dropped then created), because `CREATE VIEW IF NOT EXISTS` does *not* replace an existing view — without the drop a changed definition reaches a fresh database and silently never reaches an upgraded one, the symptom being a missing column rather than an error. So a **view** change needs no schema version bump; a **table** change still does.
+
 **Schema changes**: Update `database.py:SCHEMA_SQL_TABLES` and `SCHEMA_SQL_VIEWS`, then mirror the change in `schema.sql` (`tests/test_database.py` fails if its tables/views/indexes differ) and `docs/DATABASE.md`. Test with fresh database before release.
 
 **Architecture & schema diagrams**: Mermaid sources live in `docs/diagrams/*.mmd` and render to light/dark PNG pairs in `docs/images/diagrams/` via `./scripts/render_diagrams.sh` (needs Node + Chromium). When a schema or module boundary changes, update the matching `.mmd` and re-render — the Markdown embeds the PNGs through a `<picture>` element, so stale diagrams are not caught by any test.

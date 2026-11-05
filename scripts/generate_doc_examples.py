@@ -379,10 +379,38 @@ def _superset_analysis(ctx: dict) -> None:
 
 
 def _tool_menu(ctx: dict) -> None:
-    """The `[T]` tool menu, which now includes nuclei."""
+    """The `[T]` tool menu, which now includes nuclei.
+
+    The real table probes the local PATH and reads each binary's version, so
+    captured unstubbed it documents whatever happens to be installed on the
+    machine that ran the generator -- it would differ on CI, on another
+    developer's box, and the day someone installs a tool. Stubbed to show the
+    menu an operator with the tools installed sees, which is the useful
+    illustration and is the same everywhere.
+    """
+    import shutil
+
+    from cerno_pkg import ops
     from cerno_pkg.render import render_tool_availability_table
 
-    render_tool_availability_table(include_unavailable=True)
+    real_which, real_version = shutil.which, ops.get_tool_version
+    try:
+        shutil.which = lambda cmd, *a, **k: f"/usr/bin/{cmd}"
+        ops.get_tool_version = lambda name, requires=None: _DEMO_TOOL_VERSIONS.get(
+            name, "1.0.0"
+        )
+        render_tool_availability_table(include_unavailable=True)
+    finally:
+        shutil.which, ops.get_tool_version = real_which, real_version
+
+
+#: Fixed versions for the tool-availability example. Illustrative, not probed.
+_DEMO_TOOL_VERSIONS = {
+    "nmap": "7.95",
+    "netexec": "1.5.1",
+    "nuclei": "3.4.10",
+    "metasploit": "6.4.0",
+}
 
 
 def _workflow_display(ctx: dict) -> None:

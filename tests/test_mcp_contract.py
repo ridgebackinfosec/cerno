@@ -651,3 +651,77 @@ def test_async_tool_round_trips_through_a_real_client():
         "coroutine object" not in detail
     ), f"the tool returned an un-awaited coroutine instead of running: {detail}"
     assert "ran" in detail
+
+
+# ---------------------------------------------------------------------------
+# Ingest reporting. The SDK builds each tool's output schema from its TypedDict
+# and drops anything absent from it, so a field present only on the dataclass
+# reaches the text body and is silently stripped from structured_content -- the
+# typed path clients actually read. nuclei_matches shipped that way in 3.0.0.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_ingest_result_matches_ingest_summary():
+    """Every field IngestSummary reports must be declared on IngestResult.
+
+    This is the guard the original bug needed: a count that exists on the
+    dataclass but not the TypedDict is not an error anywhere, it just never
+    reaches the client.
+    """
+    import dataclasses
+    import typing
+
+    from cerno_pkg.ingest import IngestSummary
+
+    summary = IngestSummary(execution_id=1, tool_name="nuclei")
+    reported = set(summary.as_dict())
+    declared = set(typing.get_type_hints(mcp.IngestResult))
+
+    missing = reported - declared
+    assert not missing, (
+        f"IngestSummary.as_dict() reports {sorted(missing)}, which IngestResult "
+        "does not declare — the SDK will strip them from structured_content"
+    )
+    # Guard the dataclass side too, so the two cannot drift in either direction.
+    assert {f.name for f in dataclasses.fields(IngestSummary)} <= reported | {
+        "nse_verdicts"
+    }
+
+
+@pytest.mark.integration
+def test_nuclei_ingest_count_reaches_structured_content(contract, tmp_path):
+    """The symptom: 28 rows written, structured_content reporting all zeros."""
+    from pathlib import Path
+
+    import cerno_pkg.database as database
+    from cerno_pkg.models import Artifact, ArtifactType
+
+    fixture = Path(__file__).parent / "fixtures" / "nuclei" / "web_scan.json"
+
+    with database.get_connection() as c:
+        c.execute(
+            "INSERT INTO tool_executions (tool_name, command_text, finding_id) "
+            "VALUES ('nuclei', 'nuclei -jle out.jsonl', ?)",
+            (contract["finding_id"],),
+        )
+        eid = c.execute("SELECT MAX(execution_id) e FROM tool_executions").fetchone()[
+            "e"
+        ]
+        type_row = ArtifactType.get_by_name("nuclei_json", c)
+        assert type_row is not None
+        Artifact(
+            execution_id=eid,
+            artifact_path=str(fixture),
+            artifact_type_id=type_row.artifact_type_id,
+        ).save(c)
+        c.commit()
+
+    (result,) = _client_call_tools(
+        contract["server"], {"ingest_results": {"execution_id": eid}}
+    ).values()
+    assert not result.is_error, result.content[0].text if result.content else ""
+    structured = result.structured_content or {}
+    assert structured.get("nuclei_matches") == 28, (
+        "the ingest count did not survive the output schema: " f"{structured!r}"
+    )

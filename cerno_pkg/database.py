@@ -10,6 +10,7 @@ Database location: ~/.cerno/cerno.db (global, cross-scan queries)
 from __future__ import annotations
 
 import hashlib
+import re
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
@@ -728,11 +729,13 @@ SELECT
     te.finding_id,
     COUNT(DISTINCT vp.verified_port_id) AS verified_port_count,
     COUNT(DISTINCT nsr.nse_result_id) AS nse_result_count,
-    COUNT(DISTINCT CASE WHEN nv.label = 'VULNERABLE' THEN nsr.nse_result_id END) AS vulnerable_count
+    COUNT(DISTINCT CASE WHEN nv.label = 'VULNERABLE' THEN nsr.nse_result_id END) AS vulnerable_count,
+    COUNT(DISTINCT nmo.observation_id) AS nuclei_match_count
 FROM tool_executions te
 LEFT JOIN verified_ports vp ON vp.execution_id = te.execution_id
 LEFT JOIN nse_script_results nsr ON nsr.execution_id = te.execution_id
 LEFT JOIN nse_verdicts nv ON nsr.nse_verdict_id = nv.nse_verdict_id
+LEFT JOIN nuclei_match_observations nmo ON nmo.execution_id = te.execution_id
 WHERE te.finding_id IS NOT NULL
 GROUP BY te.finding_id;
 """
@@ -940,6 +943,17 @@ def seed_lookup_tables(conn: sqlite3.Connection) -> None:
         conn.executemany(sql, rows)
 
 
+def _view_names(views_sql: str) -> list[str]:
+    """Every view name declared in a schema script.
+
+    Only views Cerno declares are dropped on init -- a view someone created by
+    hand in their own database is left alone.
+    """
+    return re.findall(
+        r"CREATE VIEW(?:\s+IF NOT EXISTS)?\s+(\w+)", views_sql, re.IGNORECASE
+    )
+
+
 def initialize_database(database_path: Optional[Path] = None) -> bool:
     """Initialize database schema with final structure.
 
@@ -970,7 +984,14 @@ def initialize_database(database_path: Optional[Path] = None) -> bool:
             # Populate foundation / lookup tables
             seed_lookup_tables(conn)
 
-            # Create views
+            # Recreate views. CREATE VIEW IF NOT EXISTS does *not* update an
+            # existing view, so without the drop a changed definition reaches a
+            # fresh database and silently never reaches an upgraded one -- the
+            # failure being a missing column rather than an error. Views hold no
+            # data, so dropping and recreating them is free and keeps every
+            # definition current without a schema version bump.
+            for view_name in _view_names(SCHEMA_SQL_VIEWS):
+                conn.execute(f"DROP VIEW IF EXISTS {view_name}")
             conn.executescript(SCHEMA_SQL_VIEWS)
 
             conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")

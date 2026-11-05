@@ -184,7 +184,7 @@ resources:
 - `cerno://finding/{id}/output` — raw per-host plugin output
 - `cerno://finding/{id}/workflow` — verification workflow for the finding
 - `cerno://finding/{id}/verdict` — current verification verdict, history and evidence (JSON)
-- `cerno://finding/{id}/results` — live-verified open ports and NSE verdicts ingested from runs (JSON)
+- `cerno://finding/{id}/results` — evidence ingested from runs attributed to this finding: live-verified open ports, NSE verdicts and nuclei template matches (JSON)
 - `cerno://config` — all current (read-only) config settings
 - `cerno://host/{ip}/nxc` — NetExec enrichment for a host
 
@@ -335,10 +335,30 @@ Turn a finding into a recorded, evidence-backed verdict:
    allowlisted `curl`/`wget`. Remove it with
    `cerno config set mcp_exec_allowlist "nmap,nxc,netexec,msfconsole"` if you
    would rather run nuclei only from the TUI.
-3. **Review the evidence.** `cerno://finding/{id}/results` and
-   `get_finding_detail` show what was verified; `get_finding_verdict` also
-   returns a non-binding `suggested_verdict` from NSE evidence (never applied
-   automatically).
+3. **Review the evidence.** `cerno://finding/{id}/results` lists the verified
+   ports, NSE results and nuclei matches; `get_finding_detail` carries the
+   counts (`verified_port_count`, `nse_result_count`, `vulnerable_count`,
+   `nuclei_match_count`). `get_finding_verdict` also returns a non-binding
+   `suggested_verdict` (never applied automatically).
+
+   **`suggested_verdict` is derived from NSE evidence only, deliberately.** The
+   obvious extension — let a nuclei match above some severity suggest
+   `confirmed` — does not survive contact with real template severities.
+   nuclei's `info` tier holds both pure fingerprinting (`tech-detect`,
+   `nginx-version`, `robots-txt`) and genuine findings (`deprecated-tls`,
+   `http-missing-security-headers`, `mismatched-ssl-certificate`), and `low`
+   holds `expired-ssl` and `weak-cipher-suites`. A High floor would exclude
+   every corroboration case the nuclei integration exists to demonstrate; a
+   floor at Info would let a technology fingerprint suggest `confirmed`. Since
+   a wrong suggestion is the first thing an operator reads, the matches are
+   reported and the judgement is left to them.
+
+   The principled signal is **relevance, not severity**: a workflow entry
+   co-mapping `nessus:84502` with `nuclei:http-missing-security-headers` is an
+   explicit statement that they are the same issue, so a match on a
+   co-mapped template would be real corroboration. That is worth implementing
+   once `workflow_mappings.yaml` carries enough `nuclei:` entries for the rule
+   to fire — today it would cover one template.
 4. **Record the verdict.** `set_finding_verdict(finding_id, verdict, note,
    execution_id|artifact_id|nse_result_id)` with `confirmed`, `false_positive` or
    `unable`. Verdicts are append-only history and separate from review state.

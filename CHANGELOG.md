@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.2.0] - 2026-11-05
+
+### Added
+- **nuclei evidence is readable.** `nuclei_match_observations` was write-only for two releases: the ingester filled it and nothing read it back, so an operator could ingest matches and have no way to see them short of SQL. Now `models.NucleiMatchObservation` (`get_by_execution` / `get_by_finding`, mirroring `NseScriptResult`), `cerno://finding/{id}/results` gains a `nuclei_matches` list through `v_nuclei_observations` (which already resolved the severity label and host IP but was never queried), and `v_finding_verified_stats` gains `nuclei_match_count`, surfaced by `get_finding_detail`.
+  - **`suggested_verdict` stays NSE-only, deliberately.** Letting a nuclei match above some severity suggest `confirmed` does not survive contact with real template severities: nuclei's `info` tier holds both pure fingerprinting (`tech-detect`, `nginx-version`) and genuine findings (`deprecated-tls`, `http-missing-security-headers`), and `low` holds `expired-ssl` and `weak-cipher-suites`. A High floor would exclude every corroboration case the integration exists to demonstrate; a floor at Info would let a technology fingerprint suggest `confirmed`. The count is reported instead. The principled signal is relevance — a workflow entry co-mapping a Nessus plugin with a nuclei template — which is recorded in `docs/MCP.md` as the rule to implement once enough `nuclei:` workflow entries exist for it to fire.
+
+### Fixed
+- **A view change never reached an existing database.** `initialize_database()` ran `CREATE VIEW IF NOT EXISTS`, which does **not** replace an existing view, so every view change since the schema was written applied to fresh databases only — the symptom a missing column rather than an error, which is why it went unnoticed. Views hold no data, so init now drops and recreates the views it declares (leaving any a user created by hand alone). A view change consequently needs no schema version bump; a table change still does.
+- **MCP `ingest_results` reported nothing for a nuclei run.** It returned `nuclei_matches` in the text body but the field was absent from the `IngestResult` TypedDict, so the SDK built an output schema without it and stripped it from `structured_content` — the typed path clients prefer. An agent saw `verified_ports: 0, nse_results: 0, nxc_flags: 0` and concluded the ingest did nothing, while 28 rows had landed. Shipped in 3.0.0. A parity guard now asserts every field `IngestSummary.as_dict()` reports is declared on `IngestResult`, in both directions.
+- **The tool-availability doc example documented whatever was installed on the machine that generated it.** `render_tool_availability_table()` probes `PATH` and reads each binary's version, so the committed example changed the moment a tool was installed, and would have differed on CI and on every contributor's machine. The capture now stubs the probe to show the menu an operator with the tools installed sees; verified byte-identical with an empty `PATH`.
+
 ## [3.1.1] - 2026-11-04
 
 ### Added

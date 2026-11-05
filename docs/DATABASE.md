@@ -80,7 +80,7 @@ Cerno uses a **fully normalized database schema** following relational best prac
    - `v_finding_current_verdict` - Latest verification verdict per finding
    - `v_nse_results_with_verdict` - NSE results with their verdict label
    - `v_nuclei_observations` - nuclei matches with their severity label and host IP
-   - `v_finding_verified_stats` - Verified port / NSE result counts per finding
+   - `v_finding_verified_stats` - Verified port / NSE result / nuclei match counts per finding
 
 4. **Foreign Key Constraints Throughout**
    - All relationships enforced at database level
@@ -967,7 +967,9 @@ The latest `finding_verdicts` row per finding, joined to `verdict_types`.
 
 Per-finding counts of verified facts, joined through `tool_executions.finding_id`.
 
-**Columns**: `finding_id`, `verified_port_count`, `nse_result_count`, `vulnerable_count` (NSE results with verdict `VULNERABLE`)
+**Columns**: `finding_id`, `verified_port_count`, `nse_result_count`, `vulnerable_count` (NSE results with verdict `VULNERABLE`), `nuclei_match_count`
+
+Note `nuclei_match_count` counts matches, not vulnerabilities: nuclei's severity does not separate fingerprinting from a finding (its `info` tier holds both `tech-detect` and `http-missing-security-headers`), so there is no nuclei equivalent of `vulnerable_count` and nuclei evidence deliberately does not feed `suggested_verdict`.
 
 ```sql
 -- Findings with at least one VULNERABLE NSE result, and their current verdict

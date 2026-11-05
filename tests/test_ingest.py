@@ -548,3 +548,73 @@ class TestTuiRunArtifactsIngest:
         for ext in (".xml", ".nmap", ".gnmap"):
             Path(str(oabase) + ext).write_text("x", encoding="utf-8")
         assert len(log_artifacts_for_run("nmap", eid, oabase, conn=temp_db)) == 3
+
+
+@pytest.mark.integration
+class TestNucleiEvidenceIsReadable:
+    """The evidence must be reachable, not merely stored.
+
+    `nuclei_match_observations` was write-only for two releases: the ingester
+    filled it and nothing read it back, so an operator could ingest matches and
+    have no way to see them short of SQL.
+    """
+
+    def _ingested(self, temp_db: sqlite3.Connection) -> tuple[int, int]:
+        eid = _seed_nuclei_execution(temp_db, "web_scan.json")
+        ingest.ingest_execution(eid, conn=temp_db)
+        fid = temp_db.execute(
+            "SELECT finding_id FROM tool_executions WHERE execution_id = ?", (eid,)
+        ).fetchone()["finding_id"]
+        return eid, fid
+
+    def test_model_reads_by_execution(self, temp_db: sqlite3.Connection) -> None:
+        from cerno_pkg.models import NucleiMatchObservation
+
+        eid, _ = self._ingested(temp_db)
+        rows = NucleiMatchObservation.get_by_execution(eid, temp_db)
+        assert len(rows) == 28
+        assert all(r.template_ref for r in rows)
+        assert all(0 <= r.severity_int <= 4 for r in rows)
+
+    def test_model_reads_by_finding(self, temp_db: sqlite3.Connection) -> None:
+        """Evidence is attributed through the execution's finding_id."""
+        from cerno_pkg.models import NucleiMatchObservation
+
+        _, fid = self._ingested(temp_db)
+        assert len(NucleiMatchObservation.get_by_finding(fid, temp_db)) == 28
+
+    def test_verified_stats_counts_matches(self, temp_db: sqlite3.Connection) -> None:
+        _, fid = self._ingested(temp_db)
+        row = temp_db.execute(
+            "SELECT * FROM v_finding_verified_stats WHERE finding_id = ?", (fid,)
+        ).fetchone()
+        assert row is not None and row["nuclei_match_count"] == 28
+
+    def test_finding_results_resource_lists_matches(
+        self, temp_db: sqlite3.Connection
+    ) -> None:
+        import json
+
+        from cerno_pkg.mcp_server import server as mcp
+
+        _, fid = self._ingested(temp_db)
+        payload = json.loads(mcp.resource_finding_results(fid, conn=temp_db))
+        assert len(payload["nuclei_matches"]) == 28
+        first = payload["nuclei_matches"][0]
+        # The view resolves these; a bare table query would not.
+        assert first["host"] and first["severity_label"] and first["template_ref"]
+
+    def test_suggested_verdict_is_unaffected_by_nuclei(
+        self, temp_db: sqlite3.Connection
+    ) -> None:
+        """Deliberate: nuclei severity does not separate detection from vuln.
+
+        Its `info` tier holds both `tech-detect` and
+        `http-missing-security-headers`, so no severity floor distinguishes
+        fingerprinting from a finding. The count is reported instead, and the
+        operator judges.
+        """
+        from cerno_pkg.mcp_server import server as mcp
+
+        _, fid = self._ingested(temp_db)
+        assert mcp._suggested_verdict(fid, temp_db) is None

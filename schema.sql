@@ -706,11 +706,13 @@ SELECT
     te.finding_id,
     COUNT(DISTINCT vp.verified_port_id) AS verified_port_count,
     COUNT(DISTINCT nsr.nse_result_id) AS nse_result_count,
-    COUNT(DISTINCT CASE WHEN nv.label = 'VULNERABLE' THEN nsr.nse_result_id END) AS vulnerable_count
+    COUNT(DISTINCT CASE WHEN nv.label = 'VULNERABLE' THEN nsr.nse_result_id END) AS vulnerable_count,
+    COUNT(DISTINCT nmo.observation_id) AS nuclei_match_count
 FROM tool_executions te
 LEFT JOIN verified_ports vp ON vp.execution_id = te.execution_id
 LEFT JOIN nse_script_results nsr ON nsr.execution_id = te.execution_id
 LEFT JOIN nse_verdicts nv ON nsr.nse_verdict_id = nv.nse_verdict_id
+LEFT JOIN nuclei_match_observations nmo ON nmo.execution_id = te.execution_id
 WHERE te.finding_id IS NOT NULL
 GROUP BY te.finding_id;
 

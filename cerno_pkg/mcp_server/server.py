@@ -95,6 +95,7 @@ class FindingDetail(FindingSummary, total=False):
     verified_port_count: int
     nse_result_count: int
     vulnerable_count: int
+    nuclei_match_count: int
 
 
 class FindingSearchResult(FindingSummary, total=False):
@@ -219,11 +220,17 @@ class CveEntry(TypedDict, total=False):
 
 
 class IngestResult(TypedDict, total=False):
+    # Must stay in step with ingest.IngestSummary.as_dict(): the SDK builds this
+    # tool's output schema from these fields and drops anything absent from it,
+    # so a field present only on the dataclass reaches the text body and is
+    # silently stripped from structured_content. Guarded by
+    # tests/test_mcp_contract.py::test_ingest_result_matches_ingest_summary.
     execution_id: int
     tool_name: str
     verified_ports: int
     nse_results: int
     nxc_flags: int
+    nuclei_matches: int
     nse_verdicts: dict
     skipped_reason: Optional[str]
 
@@ -813,6 +820,11 @@ def tool_get_finding_detail(
         "verified_port_count": stats["verified_port_count"],
         "nse_result_count": stats["nse_result_count"],
         "vulnerable_count": stats["vulnerable_count"],
+        # Reported but deliberately NOT fed into suggested_verdict: nuclei's
+        # severity does not separate fingerprinting from vulnerability (its
+        # `info` tier holds both tech-detect and http-missing-security-headers),
+        # so a count the operator can see beats a suggestion they may trust.
+        "nuclei_match_count": stats["nuclei_match_count"],
     }
 
 
@@ -826,11 +838,17 @@ def _finding_verified_stats(finding_id: int, conn: sqlite3.Connection) -> dict:
         (finding_id,),
     )
     if row is None:
-        return {"verified_port_count": 0, "nse_result_count": 0, "vulnerable_count": 0}
+        return {
+            "verified_port_count": 0,
+            "nse_result_count": 0,
+            "vulnerable_count": 0,
+            "nuclei_match_count": 0,
+        }
     return {
         "verified_port_count": row["verified_port_count"],
         "nse_result_count": row["nse_result_count"],
         "vulnerable_count": row["vulnerable_count"],
+        "nuclei_match_count": row["nuclei_match_count"],
     }
 
 
@@ -2760,7 +2778,11 @@ def resource_finding_verdict(
 def resource_finding_results(
     finding_id: int, conn: Optional[sqlite3.Connection] = None
 ) -> str:
-    """`cerno://finding/{finding_id}/results` — JSON live-verified ports + NSE verdicts."""
+    """`cerno://finding/{finding_id}/results` — JSON evidence for a finding.
+
+    Everything ingested from runs attributed to this finding: live-verified
+    ports, NSE script verdicts, and nuclei template matches.
+    """
     from ..database import query_all
 
     with _db(conn) as c:
@@ -2792,10 +2814,27 @@ def resource_finding_results(
             """,
             (finding_id,),
         )
+        matches = query_all(
+            c,
+            """
+            SELECT nmo.ip_address AS host, nmo.port_number, nmo.template_ref,
+                   nmo.template_name, nmo.severity_label, nmo.matcher_name,
+                   nmo.matched_at, nmo.extracted, nmo.execution_id
+            FROM v_nuclei_observations nmo
+            JOIN tool_executions te ON nmo.execution_id = te.execution_id
+            WHERE te.finding_id = ?
+            ORDER BY nmo.ip_address, nmo.template_ref
+            """,
+            (finding_id,),
+        )
     payload = {
         "finding_id": finding_id,
         "verified_ports": [dict(r) for r in ports],
         "nse_results": [dict(r) for r in scripts],
+        # Evidence, not findings: a match corroborates (or fails to) the finding
+        # the run was attributed to. `cerno import nuclei` is what creates
+        # findings of their own.
+        "nuclei_matches": [dict(r) for r in matches],
     }
     return json.dumps(payload, indent=2)
 

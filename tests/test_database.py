@@ -445,3 +445,66 @@ class TestPluginIdOrdering:
             conn.close()
         nuclei = [p for p in ordered if p.startswith("nuclei:")]
         assert nuclei == sorted(nuclei)
+
+
+@pytest.mark.integration
+class TestViewsAreRecreatedOnInit:
+    """A changed view definition must reach an existing database.
+
+    `CREATE VIEW IF NOT EXISTS` does not replace an existing view, so before
+    this every view change silently applied to fresh databases only. The
+    symptom was a missing column rather than an error, which is why it went
+    unnoticed across several releases. Views hold no data, so init drops and
+    recreates them.
+    """
+
+    def test_changed_view_definition_reaches_an_existing_db(self, tmp_path):
+        from cerno_pkg import database as db
+
+        path = tmp_path / "upgrade.db"
+        db.initialize_database(path)
+
+        original = db.SCHEMA_SQL_VIEWS
+        try:
+            db.SCHEMA_SQL_VIEWS = original.replace(
+                "COUNT(DISTINCT vp.verified_port_id) AS verified_port_count",
+                "COUNT(DISTINCT vp.verified_port_id) AS verified_port_count,"
+                " 99 AS probe_column",
+            )
+            db.initialize_database(path)
+        finally:
+            db.SCHEMA_SQL_VIEWS = original
+
+        conn = sqlite3.connect(path)
+        try:
+            cols = [
+                d[0]
+                for d in conn.execute(
+                    "SELECT * FROM v_finding_verified_stats LIMIT 0"
+                ).description
+            ]
+        finally:
+            conn.close()
+        assert (
+            "probe_column" in cols
+        ), "a changed view definition did not reach the existing database"
+
+    def test_every_declared_view_exists_after_init(self, tmp_path):
+        from cerno_pkg import database as db
+
+        path = tmp_path / "views.db"
+        db.initialize_database(path)
+        conn = sqlite3.connect(path)
+        try:
+            present = {
+                r[0]
+                for r in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='view'"
+                )
+            }
+        finally:
+            conn.close()
+        declared = set(db._view_names(db.SCHEMA_SQL_VIEWS))
+        assert (
+            declared and declared <= present
+        ), f"missing: {sorted(declared - present)}"
