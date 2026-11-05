@@ -110,7 +110,7 @@ The same database and tooling are also exposed over the [Model Context Protocol]
 ## Installation
 
 **Requirements:**
-- **Python 3.11+** on Linux, macOS, or Windows (Linux recommended)
+- **Python 3.11+** on Linux or macOS (Linux recommended). Windows is best-effort and currently untested — parts of the MCP job runner rely on POSIX process groups
 - **Optional tools** (only if you use them): `nmap`, `nxc`/`netexec`, `msfconsole`, `claude`
 - **Clipboard support on Linux:** `xclip`, `xsel`, or `wl-copy`
 

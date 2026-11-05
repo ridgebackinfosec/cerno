@@ -148,10 +148,60 @@ _DATE_RE = re.compile(r"20\d{2}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?)?")
 
 
 def mask(text: str) -> str:
-    """Replace machine-specific values with stable placeholders."""
+    """Replace machine-specific values with stable placeholders.
+
+    These substitutions change string *length*, so applying them to text Rich has
+    already laid out corrupts the layout. Inside a fixed-width table cell it goes
+    wrong two different ways depending on how long the real path is:
+
+    * short enough to sit in one cell -- the replace succeeds and shortens that
+      line, shifting every column after it and misaligning the borders;
+    * longer than the cell -- Rich has already split it across lines with ``|``
+      padding in between, so the contiguous substring no longer exists, nothing
+      matches, and the machine's real path leaks into the docs.
+
+    Either way the committed output only ever matches a checkout whose path is
+    exactly as long as the one that generated it, so CI can never agree with it.
+    Masking must therefore happen on the *data* before a renderer measures it --
+    see ``masked_config_rows()``. This function stays for prose and Markdown,
+    where there is no layout to corrupt.
+    """
     text = text.replace(str(_TMP_HOME), "~")
     text = text.replace(str(REPO_ROOT), "/path/to/cerno")
     return _DATE_RE.sub("2026-01-01", text)
+
+
+@contextlib.contextmanager
+def masked_config_rows():
+    """Pre-mask ``build_config_rows()`` values for the duration of the block.
+
+    ``config show`` renders paths resolved from ``Path.home()`` and the repo
+    checkout, both machine-specific. Masking them in the captured output would
+    wreck the table (see ``mask``), and rebuilding the table here would defeat
+    the point of the example -- it exists to prove the doc matches what the real
+    renderer produces. So patch the renderer's *input* instead: the placeholder
+    is what Rich measures and wraps, identically on every machine.
+
+    ``cerno.config_show()`` imports ``build_config_rows`` inside its body, so
+    patching the module attribute takes effect at call time.
+    """
+    from cerno_pkg import config as config_mod
+
+    original = config_mod.build_config_rows
+
+    def masked(cfg):
+        # (section, key, value_str, is_default, help) -- only the value can
+        # carry a machine-specific path.
+        return [
+            (section, key, mask(value), is_default, help_text)
+            for section, key, value, is_default, help_text in original(cfg)
+        ]
+
+    config_mod.build_config_rows = masked
+    try:
+        yield
+    finally:
+        config_mod.build_config_rows = original
 
 
 # ---------------------------------------------------------------------------
@@ -452,10 +502,16 @@ def _config_table(ctx: dict) -> str:
 
 
 def _config_show(ctx: dict) -> None:
-    """`cerno config show` -- backs README's claim that its table matches."""
+    """`cerno config show` -- backs README's claim that its table matches.
+
+    Runs the real renderer over pre-masked rows, so the placeholder paths are
+    what Rich wraps. Masking the captured table instead produced output that
+    only matched the machine it was generated on.
+    """
     import cerno
 
-    cerno.config_show()
+    with masked_config_rows():
+        cerno.config_show()
 
 
 def _scan_history(ctx: dict) -> None:
