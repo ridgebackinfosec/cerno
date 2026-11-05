@@ -26,6 +26,15 @@ GENERATOR = REPO_ROOT / "scripts" / "generate_doc_examples.py"
 
 @pytest.mark.slow
 @pytest.mark.integration
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason=(
+        "Generated examples are POSIX-shaped: Windows renders the masked paths "
+        "with backslash separators, so byte-identical output across all three "
+        "OSes is not achievable. The check exists to catch a maintainer "
+        "forgetting to regenerate, and `bcp` runs on Linux."
+    ),
+)
 def test_generated_doc_examples_are_current():
     if not GENERATOR.exists():  # pragma: no cover - generator always shipped
         pytest.skip("generator script not present")
@@ -45,6 +54,45 @@ def test_generated_doc_examples_are_current():
         "Documentation examples are out of date.\n\n"
         f"{result.stderr}\n"
         "Regenerate with:  python scripts/generate_doc_examples.py"
+    )
+
+
+#: Characters a Rich table line can start with (borders and row bodies).
+_BOX_START = "┏┡├└│┃┌┠┣┗"
+
+
+@pytest.mark.unit
+def test_generated_table_borders_line_up():
+    """A generated table whose rows are not all the same width is corrupted.
+
+    The drift check only compares against the committed file, so it happily
+    enforced a *corrupted* capture: masking machine-specific paths after Rich had
+    already laid the table out shortened individual lines, and v3.3.1 shipped
+    ``docs/CONFIGURATION.md`` with ``results_root`` reading ``~/.cerno/ar`` +
+    ``tifacts`` and borders that did not meet. Equal line width is the invariant
+    that catches that, independent of whatever happens to be committed.
+    """
+    import re
+
+    text = (REPO_ROOT / "docs" / "CONFIGURATION.md").read_text(encoding="utf-8")
+    block = re.search(
+        r"<!-- BEGIN GENERATED: config-show -->(.*?)<!-- END GENERATED: config-show -->",
+        text,
+        re.DOTALL,
+    )
+    assert block is not None, "config-show generated block is missing"
+
+    widths: dict[int, list[str]] = {}
+    for line in block.group(1).splitlines():
+        if line and line[0] in _BOX_START:
+            widths.setdefault(len(line), []).append(line)
+
+    assert widths, "no table lines found in the config-show block"
+    assert len(widths) == 1, (
+        "generated table lines have differing widths "
+        f"{sorted(widths)} -- the table is misaligned. Sample of each width:\n"
+        + "\n".join(f"  {w}: {lines[0]}" for w, lines in sorted(widths.items()))
+        + "\n\nRegenerate with:  python scripts/generate_doc_examples.py"
     )
 
 

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.3.2] - 2026-11-05
+
+### Changed
+- **Windows CI jobs are non-gating, and the README no longer implies Windows is a tested platform.** The suite has a known cluster of Windows failures — `mcp_server/jobs.py:_terminate()` calls the POSIX-only `os.getpgid`, so cancelling any MCP job raises `AttributeError` there, and several tests shell out to `sh`/`date`/`sleep` or assert POSIX path separators. These predate the 3.x work (Windows 3.11/3.12 were already red on 2026-10-30 while Linux and macOS were green) and are unrelated to the doc-example fix below, so they are soft-failed rather than hidden: the workflow carries a comment stating that green on Windows does not mean Windows works. Linux and macOS remain fully gating on 3.11/3.12.
+- The generated doc-example drift check (`tests/test_doc_examples.py`) is skipped on Windows. The examples are POSIX-shaped, so Windows renders the masked paths with backslash separators and byte-identical output across all three OSes is not achievable; the check exists to catch a maintainer forgetting to regenerate, and `bcp` runs on Linux. Linux and macOS both still enforce it.
+
+### Fixed
+- **`docs/CONFIGURATION.md` shipped a mangled `cerno config show` table, and its drift check could only ever pass on the machine that generated it.** `scripts/generate_doc_examples.py:mask()` replaced machine-specific paths with placeholders *after* Rich had laid the table out, and those substitutions change string length. Inside a fixed-width cell that fails two ways depending on how long the real path is: short enough to fit and the replace succeeds but shortens the line, shifting every column after it (3.3.1 shipped `results_root` reading `~/.cerno/ar` + `tifacts`, `log_path` as `~/.cerno/ce` + `rno.log`, and borders that did not meet); longer than the cell and Rich has already split it across lines with `│` padding between the pieces, so the contiguous substring no longer exists, nothing matches, and the runner's real path leaks into the docs (CI rendered `/var/folders/…/cerno-docgen-…` on macOS). Because the `nxc_workspace_path` row wrapped at a column fixed by the length of the *real* checkout path before masking, the committed file only matched a checkout whose path was exactly as long as the maintainer's — 19 chars locally versus 29 on CI — so every Ubuntu and macOS job failed on `test_generated_doc_examples_are_current` and regenerating could only move which machine was wrong. Masking now happens on the row data via a new `masked_config_rows()` context manager that patches `config.build_config_rows` for the duration of the capture, so the placeholder is what Rich measures and wraps. The real `cerno.config_show()` renderer still produces the example, so the doc cannot drift from the command. Verified byte-identical from checkout paths of 19, 138 and 147 characters.
+- A new `test_generated_table_borders_line_up` guard asserts every line of the generated `config-show` table has the same width. The drift check only compares against the committed file, so it had been enforcing the corrupted capture; this invariant is independent of what is committed and fails on the 3.3.1 output (widths 95/115/120).
+
 ## [3.3.1] - 2026-11-05
 
 ### Changed

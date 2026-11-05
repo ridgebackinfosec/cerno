@@ -168,10 +168,8 @@ Config file: ~/.cerno/config.yaml
 ┃   ┃ Setting                  ┃ Value                                ┃ Description                          ┃ Status  ┃
 ┡━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━┩
 │   │ Paths                    │                                      │                                      │         │
-│   │ results_root             │ ~/.cerno/ar │ Directory for tool output            │ default │
-│   │                          │ tifacts                              │                                      │         │
-│   │ log_path                 │ ~/.cerno/ce │ Log file location                    │ default │
-│   │                          │ rno.log                              │                                      │         │
+│   │ results_root             │ ~/.cerno/artifacts                   │ Directory for tool output            │ default │
+│   │ log_path                 │ ~/.cerno/cerno.log                   │ Log file location                    │ default │
 ├───┼──────────────────────────┼──────────────────────────────────────┼──────────────────────────────────────┼─────────┤
 │   │ Review & Display         │                                      │                                      │         │
 │   │ default_page_size        │ auto                                 │ Items per page in lists              │ default │
@@ -198,8 +196,8 @@ Config file: ~/.cerno/config.yaml
 │   │ debug_logging            │ False                                │ Enable DEBUG logs                    │ default │
 ├───┼──────────────────────────┼──────────────────────────────────────┼──────────────────────────────────────┼─────────┤
 │   │ NetExec Integration      │                                      │                                      │         │
-│ ▶ │ nxc_workspace_path       │ /path/to/cerno/docs/demo/nxc-wo │ NetExec workspace directory          │ changed │
-│   │                          │ rkspace                              │                                      │         │
+│ ▶ │ nxc_workspace_path       │ /path/to/cerno/docs/demo/nxc-workspa │ NetExec workspace directory          │ changed │
+│   │                          │ ce                                   │                                      │         │
 │   │ nxc_enrichment_enabled   │ True                                 │ NetExec enrichment, cred refs and    │ default │
 │   │                          │                                      │ nxc ingest                           │         │
 ├───┼──────────────────────────┼──────────────────────────────────────┼──────────────────────────────────────┼─────────┤
