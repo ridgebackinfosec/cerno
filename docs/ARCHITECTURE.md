@@ -56,7 +56,7 @@ import them.**
 | [mcp_server/server.py](../cerno_pkg/mcp_server/server.py) | Pure `tool_*` / `resource_*` / `prompt_*` adapters + `MCPServer` registration |
 | [mcp_server/jobs.py](../cerno_pkg/mcp_server/jobs.py) | In-memory async job registry (start/status/cancel/list, `killpg` cancellation) |
 | [query.py](../cerno_pkg/query.py) · [batch.py](../cerno_pkg/batch.py) | `FindingQuery` predicates; `plan_batch` dry run and `execute_batch` fan-out |
-| [ingest.py](../cerno_pkg/ingest.py) · [nmap_parse.py](../cerno_pkg/nmap_parse.py) | Run output → `verified_ports` / `nse_script_results` / `nxc_flag_observations` |
+| [ingest.py](../cerno_pkg/ingest.py) · [nmap_parse.py](../cerno_pkg/nmap_parse.py) | Run output → `verified_ports` / `nse_script_results` / `nuclei_match_observations` / `nxc_flag_observations` |
 | [workflow_prep.py](../cerno_pkg/workflow_prep.py) · [workflow_contrib.py](../cerno_pkg/workflow_contrib.py) | Placeholder filling; sanitized workflow contribution |
 | [exec_chain.py](../cerno_pkg/exec_chain.py) | Wrapper unwrapping and allow/deny glob matching |
 
@@ -104,10 +104,10 @@ Run the **full** suite before every PR, not just the tests near your change. See
 
 | Target | Role |
 |---|---|
-| `~/.cerno/cerno.db` | **Source of truth.** 26 tables, 11 views, schema v5. No migration system — an older DB raises `SchemaVersionError` |
+| `~/.cerno/cerno.db` | **Source of truth.** 27 tables, 12 views, schema v5. No migration system — an older DB raises `SchemaVersionError` |
 | `~/.cerno/artifacts` | Tool output and logs, registered in the `artifacts` table |
 | `~/.nxc/workspaces/default` | NetExec workspace, **read-only**. Credentials are surfaced as refs, never duplicated into Cerno's DB |
-| `nmap` · `nxc` · `msfconsole` · `claude` | External binaries, all optional |
+| `nmap` · `nxc` · `nuclei` · `msfconsole` · `claude` | External binaries, all optional |
 
 Import writes **no** per-plugin files — only the database (plus
 `scans/<name>/http_urls.txt` when web services exist).
@@ -124,7 +124,7 @@ browsing queries the database rather than walking the filesystem.
 views (`v_finding_stats`, `v_session_stats`, …), not cached in columns. See the
 normalization rules in [CLAUDE.md](../CLAUDE.md#database-design-principles).
 
-**All scan text is untrusted.** Plugin names, hostnames, workflow step titles and
+**All scan text is untrusted.** Finding names, hostnames, workflow step titles and
 tool output come from third-party files and must not be handed raw to Rich — a
 value containing `[/]` raises `MarkupError`, and one containing a style word is
 silently swallowed. Use `rich.text.Text` or `ansi.safe_text()`. Regression tests
@@ -157,3 +157,34 @@ thing to edit. Rendering needs Node and a Chromium build:
 Each source produces a `-light.png` and a `-dark.png` in
 [docs/images/diagrams/](images/diagrams/); the Markdown picks between them with a
 `<picture>` element keyed on `prefers-color-scheme`.
+
+## Regenerating the TUI examples
+
+The terminal examples in [README.md](../README.md) and under `docs/` are not
+screenshots. They are captured from the real renderers against the bundled demo
+data, so they track the code instead of rotting:
+
+```bash
+python scripts/generate_doc_examples.py            # regenerate everything
+python scripts/generate_doc_examples.py --only scan-list
+python scripts/generate_doc_examples.py --check    # fail if any are stale
+```
+
+Each example is captured once and emitted twice — a colour SVG under
+[docs/images/examples/](images/examples/) for the README, and a plain text block
+for `docs/`, where copy-paste and review diffs matter more than colour.
+
+Content is written between marker pairs:
+
+```markdown
+<!-- BEGIN GENERATED: scan-list -->
+...generated, do not edit...
+<!-- END GENERATED: scan-list -->
+```
+
+Only the region between the markers is rewritten, so the prose and captions
+around an example are hand-owned. `tests/test_doc_examples.py` runs `--check`,
+so an example that no longer matches its renderer fails the suite rather than
+quietly misleading a reader — which is what the screenshots it replaced did for
+eight months. Adding an example means adding an `Example(...)` entry to the
+script and a marker pair in the target file.

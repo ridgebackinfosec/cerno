@@ -20,7 +20,7 @@ erDiagram
         INTEGER source_id FK
     }
     artifact_types {
-        INTEGER artifact_type_id PK "5 seeded rows"
+        INTEGER artifact_type_id PK "6 seeded rows"
         TEXT type_name UK
         TEXT file_extension
         TEXT parser_module
@@ -44,6 +44,10 @@ erDiagram
     nse_script_results {
         INTEGER nse_result_id PK
         INTEGER nse_verdict_id FK
+    }
+    nuclei_match_observations {
+        INTEGER observation_id PK
+        INTEGER severity_int FK
     }
     port_states {
         INTEGER port_state_id PK "6 seeded rows"

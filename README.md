@@ -4,12 +4,12 @@
 
 # Cerno
 
-A **TUI tool** for reviewing vulnerability scan findings and orchestrating security tools (**nmap**, **NetExec**, custom commands). Import `.nessus` exports and **nuclei** results into a SQLite database for organized, persistent vulnerability verification and exploitation.
+A **TUI tool** for reviewing vulnerability scan findings and orchestrating security tools (**nmap**, **NetExec**, **nuclei**, custom commands). Import `.nessus` exports and **nuclei** results into a SQLite database for organized, persistent vulnerability verification and exploitation.
 
 **Key capabilities:**
 - 🔍 Interactive TUI for browsing/reviewing vulnerability findings — triage hundreds of findings fast
 - 💾 SQLite-backed persistence — never lose review progress; track risk across scans
-- ⚡ One-command tool launches (nmap NSE scripts, NetExec, custom workflows) — no retyping targets
+- ⚡ One-command tool launches (nmap NSE scripts, NetExec, nuclei, custom workflows) — no retyping targets
 - 📊 CVE extraction, Metasploit module search, host comparison — go from finding to exploit path
 - 🔗 NetExec database integration — see where your credentials already work
 - 🤖 Claude Assistant — on-demand AI second opinion without leaving the TUI
@@ -30,7 +30,7 @@ A **TUI tool** for reviewing vulnerability scan findings and orchestrating secur
 - [How It Works](#how-it-works)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Installation](#installation)
-- [Configuration](#configuration)
+- [Configuration](#configuration) · [full reference](docs/CONFIGURATION.md)
 - [Features](#features)
 - [Commands](#commands)
 - [MCP Server (BETA)](#mcp-server-beta)
@@ -78,11 +78,12 @@ where the two scanners agree, and what only nuclei caught.
 The demo fixtures use documentation-only IP ranges and `.example` hostnames.
 See [docs/demo](docs/demo) for details.
 
+<!-- BEGIN GENERATED: severity-selection -->
 <p align="center">
-  <img src="docs/images/severity-selection.png" alt="Severity selection screen showing color-coded review progress" width="50%">
-  <br>
-  <em>Start your review with an overview of findings by severity level</em>
+  <img src="docs/images/examples/severity-selection.svg" alt="cerno review" width="100%">
 </p>
+<!-- END GENERATED: severity-selection -->
+<p align="center"><em>Start your review with an overview of findings by severity level</em></p>
 
 ---
 
@@ -98,8 +99,8 @@ Cerno turns raw scanner output — a Nessus export, nuclei results, or both — 
 </p>
 
 1. **Import** — parse one or more `.nessus` files, or nuclei JSON/JSONL results, into a local SQLite database (`~/.cerno/cerno.db`). Both sources share one review loop, and a multi-scan review can span them.
-2. **Review** — browse findings in an interactive TUI: filter by severity, host, and exploitability; inspect plugin detail, CVEs, and affected `host:port`s.
-3. **Act** — launch nmap / NetExec / Metasploit / custom commands against the exact hosts and ports of a finding, with execution and artifacts logged automatically.
+2. **Review** — browse findings in an interactive TUI: filter by severity, host, and exploitability; inspect finding detail, CVEs, and affected `host:port`s.
+3. **Act** — launch nmap / NetExec / nuclei / Metasploit / custom commands against the exact hosts and ports of a finding, with execution and artifacts logged automatically.
 4. **Track** — review state, sessions, and tool history persist in the database, so progress survives restarts and you can compare a host's risk across scans.
 
 The same database and tooling are also exposed over the [Model Context Protocol](#mcp-server-beta), so an MCP client (e.g. Claude CLI) can query findings and generate commands programmatically.
@@ -140,9 +141,7 @@ cerno --install-completion  # Enable tab completion for your shell
 
 ## Configuration
 
-**Configuration file** (`~/.cerno/config.yaml`):
-
-Auto-created with defaults on first run. All settings managed via config file.
+All settings live in `~/.cerno/config.yaml`, created with defaults on first run.
 
 ```bash
 cerno config show                    # View all settings with current values
@@ -153,65 +152,21 @@ cerno config reset                   # Reset to defaults (creates backup)
 ```
 
 **Terminal colors:** colors are tuned for a light (white) terminal background by default. On a dark terminal, switch to the classic palette:
+
 ```bash
 cerno config set color_scheme dark    # light (default) | dark
 ```
 
 **Proxychains4 proxy settings:**
+
 ```bash
 cerno config set proxychains_enabled true        # Route tools through proxychains4 (default: false)
 cerno config set proxychains_host 127.0.0.1      # proxychains4 SOCKS5 proxy host
 cerno config set proxychains_port 9000           # proxychains4 SOCKS5 proxy port (matches ssh -D default)
 ```
 
-**All settings** (`cerno config show` prints the same list with current values):
-
-| Key | Default | Purpose |
-| --- | --- | --- |
-| **General / UI** | | |
-| `results_root` | `~/.cerno/artifacts` | Where tool output and artifacts are written |
-| `log_path` | `~/.cerno/cerno.log` | Log file location |
-| `debug_logging` | `false` | Log at DEBUG level |
-| `default_page_size` | auto (terminal height) | Rows per page in lists (min 8); also the MCP default `limit` |
-| `top_ports_count` | `5` | Top ports shown in the scan overview (capped at 100) |
-| `color_scheme` | `light` | Terminal background the colors are tuned for: `light` or `dark` |
-| `no_color` | `false` | Disable ANSI colors |
-| `term_override` | unset | Force a terminal type (`dumb` disables colors) |
-| **Tools & workflows** | | |
-| `default_tool` | unset | Pre-select a tool in the Run Tool menu (`nmap`, `netexec`, `metasploit`, `custom`) |
-| `default_netexec_protocol` | unset (`smb`) | Default NetExec protocol |
-| `nmap_default_profile` | unset | Default NSE profile name |
-| `custom_workflows_path` | unset | Custom workflows YAML merged over the bundled ones (TUI default and MCP) |
-| **NetExec** | | |
-| `nxc_workspace_path` | `~/.nxc/workspaces/default` | NetExec workspace to read (`""` disables) |
-| `nxc_enrichment_enabled` | `true` | NetExec enrichment, credential refs (`cerno creds`) and nxc ingest |
-| **Proxy & remote scan** | | |
-| `proxychains_enabled` | `false` | Route tools through `proxychains4` |
-| `proxychains_host` | `127.0.0.1` | SOCKS5 proxy host |
-| `proxychains_port` | `9000` | SOCKS5 proxy port (matches `ssh -D 9000`) |
-| `pivot_interface` | unset | Interface whose IP serves targets in remote scan mode |
-| `pivot_http_port` | `8877` | HTTPS port for the remote scan target server |
-| **Claude Assistant** | | |
-| `claude_assistant_enabled` | `false` | Opt in to the `[A]` assistant (sends finding data to the local `claude` CLI) |
-| **MCP server** | | |
-| `mcp_allow_execution` | `false` | Allow `execute_command` and background jobs |
-| `mcp_allow_mutations` | `false` | Allow review-state, notes, verdicts, ingest and import |
-| `mcp_allow_batch` | `false` | Allow `execute_batch` (also needs execution) |
-| `mcp_batch_concurrency` | `3` | Max commands `execute_batch` runs at once (clamped to 1-8; use `1` through a single SOCKS pivot) |
-| `mcp_batch_timeout` | `300` | Per-command timeout (seconds) for `execute_batch` |
-| `mcp_allow_cred_injection` | `false` | Resolve `@cred:<ref>@` placeholders to real secrets at run time |
-| `mcp_allow_cred_reveal` | `false` | Allow `reveal_credential` to return cleartext secrets |
-| `mcp_exec_allowlist` | `nmap, nxc, netexec, msfconsole` + recon utilities (curl, wget, dig, ssh-audit, sslscan, …; full list in [docs/MCP.md](docs/MCP.md)) | Binaries `execute_command` may run (`*` = any; empty = none) |
-| `mcp_exec_denylist` | `rm, dd, mkfs*, shred, …` | Binaries `execute_command` may never run (always wins) |
-| `contribution_export_dir` | `<results_root>/contributions` | Where exported workflow contributions are written |
-
-List keys take CSV: `cerno config set mcp_exec_allowlist "nmap,nxc"`.
-
-<p align="center">
-  <img src="docs/images/default-config-values.png" alt="Output of cerno config show listing all configuration values" width="800">
-  <br>
-  <em>Show all configuration values using "cerno config show"</em>
-</p>
+**All 36 settings**, with defaults and notes on the ones that need them, are in
+the **[Configuration reference](docs/CONFIGURATION.md)**.
 
 ---
 
@@ -223,14 +178,15 @@ List keys take CSV: `cerno config set mcp_exec_allowlist "nmap,nxc"`.
 
 Rich tables with paged views, keyboard-driven navigation, and real-time filtering.
 
+<!-- BEGIN GENERATED: finding-browser -->
 <p align="center">
-  <img src="docs/images/finding-browser.png" alt="Finding browser with pagination and keyboard shortcuts" width="800">
-  <br>
-  <em>Browse findings with paged tables and comprehensive keyboard shortcuts</em>
+  <img src="docs/images/examples/finding-browser.svg" alt="cerno review - findings" width="100%">
 </p>
+<!-- END GENERATED: finding-browser -->
+<p align="center"><em>Browse findings from every imported scanner in one list — ids are namespaced by source</em></p>
 
 **Key capabilities:**
-- Browse by severity, preview plugin details, clipboard copy
+- Browse by severity, preview finding details, clipboard copy
 - Grouped view (`host:port,port`) or raw file view
 - Multi-select operations, reversible review states
 
@@ -242,29 +198,32 @@ Rich tables with paged views, keyboard-driven navigation, and real-time filterin
 
 Extract CVEs, search Metasploit modules, and compare findings across hosts.
 
+<!-- BEGIN GENERATED: finding-detail -->
 <p align="center">
-  <img src="docs/images/plugin-detail.png" alt="Plugin detail panel with Metasploit indicator" width="800">
-  <br>
-  <em>View plugin details with Metasploit module availability and metadata</em>
+  <img src="docs/images/examples/finding-detail.svg" alt="cerno review - finding detail" width="100%">
 </p>
+<!-- END GENERATED: finding-detail -->
+<p align="center"><em>Finding details, with a source-aware identifier and a link to the plugin or template it came from</em></p>
 
 **Features:**
 - **CVE extraction** - CVEs imported from .nessus file (press `[E]`)
 - **Metasploit search** - Find relevant modules by CVE/description
-- **Workflow mappings** - Plugin-specific verification/exploitation steps (press `[W]`)
+- **Workflow mappings** - Finding-specific verification/exploitation steps (press `[W]`)
 - **Host comparison** - Compare findings across hosts to find identical combinations and superset relationships
 
+<!-- BEGIN GENERATED: host-comparison -->
 <p align="center">
-  <img src="docs/images/host-comparison.png" alt="Host comparison showing identical host:port combinations" width="70%">
-  <br>
-  <em>Compare findings to identify identical host:port combinations across plugins</em>
+  <img src="docs/images/examples/host-comparison.svg" alt="cerno review - [H] compare" width="100%">
 </p>
+<!-- END GENERATED: host-comparison -->
+<p align="center"><em>Compare findings to identify identical host:port combinations</em></p>
 
+<!-- BEGIN GENERATED: superset-analysis -->
 <p align="center">
-  <img src="docs/images/superset-analysis.png" alt="Superset analysis showing coverage relationships" width="800">
-  <br>
-  <em>Analyze superset relationships to find which findings cover others</em>
+  <img src="docs/images/examples/superset-analysis.svg" alt="cerno review - [O] overlap" width="100%">
 </p>
+<!-- END GENERATED: superset-analysis -->
+<p align="center"><em>Analyze superset relationships to find which findings cover others</em></p>
 
 ---
 
@@ -275,7 +234,7 @@ Extract CVEs, search Metasploit modules, and compare findings across hosts.
 Ask Claude questions about findings without leaving the TUI. Powered by the `claude` CLI (`claude -p`) — no API key required, no data sent to external services beyond what `claude` itself handles.
 
 **Three scopes:**
-- **Finding level** — press `[A]` inside a finding detail view to discuss that specific plugin: CVEs, CVSS context, exploitability, verification steps
+- **Finding level** — press `[A]` inside a finding detail view to discuss that specific finding: CVEs, CVSS context, exploitability, verification steps
 - **Severity menu** — press `[A]` at the severity selection screen to discuss all findings across the selected scan(s)
 - **Findings list** — press `[A]` in the findings list footer to discuss the current set of findings (respects any active severity, name, or group filter)
 
@@ -327,16 +286,17 @@ cerno config set nxc_enrichment_enabled false                    # Disable featu
 
 *Skip retyping targets — launch the right tool against the exact hosts and ports of a finding.*
 
-Launch nmap NSE scripts, NetExec, Metasploit, or custom commands with placeholder substitution.
+Launch nmap NSE scripts, NetExec, nuclei, Metasploit, or custom commands with placeholder substitution.
 
+<!-- BEGIN GENERATED: tool-orchestration -->
 <p align="center">
-  <img src="docs/images/tool-orchestration.png" alt="Tool selection and command generation" width="70%">
-  <br>
-  <em>Select tools and review generated commands before execution</em>
+  <img src="docs/images/examples/tool-orchestration.svg" alt="cerno review - [T] tools" width="100%">
 </p>
+<!-- END GENERATED: tool-orchestration -->
+<p align="center"><em>Launch nmap, NetExec, nuclei or Metasploit against a finding's hosts</em></p>
 
 **Features:**
-- Launch **nmap** (NSE profiles, UDP), **NetExec**, or custom commands
+- Launch **nmap** (NSE profiles, UDP), **NetExec**, **nuclei**, or custom commands
 - Placeholder substitution for flexible templating
 - Execution logging & artifact tracking
 
@@ -347,7 +307,7 @@ Launch nmap NSE scripts, NetExec, Metasploit, or custom commands with placeholde
 *Record what you actually proved, not just what Nessus claimed.*
 
 - Tool runs from the TUI and the MCP server are logged and attributed to their finding.
-- Any logged nmap run (open ports, NSE vuln verdicts) or NetExec run, including TUI runs, can be ingested into structured results with the MCP `ingest_results` tool. MCP runs are ingested automatically when mutations are enabled.
+- Any logged nmap run (open ports, NSE vuln verdicts), nuclei run (template matches) or NetExec run, including TUI runs, can be ingested into structured results with the MCP `ingest_results` tool. MCP runs are ingested automatically when mutations are enabled.
 - Verdicts (`confirmed` / `false_positive` / `unable`) are recorded with evidence, separately from review status.
 - `cerno creds list` shows NetExec credential refs without secrets; `cerno creds reveal <ref>` prints one cleartext secret (audited).
 
@@ -372,7 +332,7 @@ Verdicts, ingestion and batch runs are driven through the [MCP server](docs/MCP.
 
 *Run every tool through your pivot with a single toggle — no per-command proxy fiddling.*
 
-Route all tool executions (nmap, NetExec, Metasploit, custom commands) through a SOCKS5 proxy via `proxychains4` (proxychains-ng). Designed for use with an SSH `-D` tunnel. Cerno always invokes the `proxychains4` binary; the `proxychains_*` config key names are kept for compatibility and configure `proxychains4`.
+Route all tool executions (nmap, NetExec, nuclei, Metasploit, custom commands) through a SOCKS5 proxy via `proxychains4` (proxychains-ng). Designed for use with an SSH `-D` tunnel. Cerno always invokes the `proxychains4` binary; the `proxychains_*` config key names are kept for compatibility and configure `proxychains4`.
 
 **Enable in config (persists across sessions):**
 ```bash
@@ -455,6 +415,13 @@ cerno reset                                    # Purge ~/.cerno and return to fr
 cerno --version                                # Show version
 ```
 
+<!-- BEGIN GENERATED: scan-list -->
+<p align="center">
+  <img src="docs/images/examples/scan-list.svg" alt="cerno scan list" width="100%">
+</p>
+<!-- END GENERATED: scan-list -->
+<p align="center"><em>Every imported scan with the scanner it came from; scans from different sources are not comparable</em></p>
+
 ---
 
 ## MCP Server (BETA)
@@ -492,7 +459,7 @@ cerno config set mcp_exec_denylist "rm,dd,sh"    # binaries execute_command may 
 
 > Gating flags are read once at startup; reconnect (remove + re-add, or restart the client) to apply a change.
 
-> Even with execution enabled, `execute_command` only runs binaries matching `mcp_exec_allowlist` (default: nmap, nxc, netexec, msfconsole plus low-impact recon utilities such as curl, wget, dig, whois, ssh-audit, sslscan and snmpwalk; an empty list denies everything) and never runs binaries matching `mcp_exec_denylist` (default: destructive commands such as rm, dd, mkfs\*, shred, shutdown). Common wrapper prefixes (`sudo`, `env`, `timeout`, `nice`, `nohup`, …) are unwrapped so the real target is checked. The denylist is a guardrail, not a security boundary: with `"*"`, shells and interpreters can still run denied programs unless you deny them too.
+> Even with execution enabled, `execute_command` only runs binaries matching `mcp_exec_allowlist` (default: nmap, nxc, netexec, msfconsole and nuclei, plus low-impact recon utilities such as curl, wget, dig, whois, ssh-audit, sslscan and snmpwalk; an empty list denies everything) and never runs binaries matching `mcp_exec_denylist` (default: destructive commands such as rm, dd, mkfs\*, shred, shutdown). Common wrapper prefixes (`sudo`, `env`, `timeout`, `nice`, `nohup`, …) are unwrapped so the real target is checked. The denylist is a guardrail, not a security boundary: with `"*"`, shells and interpreters can still run denied programs unless you deny them too.
 
 **See [docs/MCP.md](docs/MCP.md)** for the full tool/resource/prompt reference,
 scopes, and management commands.
@@ -504,7 +471,7 @@ scopes, and management commands.
 **In the findings list view:**
 - `Enter` - Open the first finding on the page; type a row number to open that finding
 - `[S]` - Cycle sort modes (severity, finding ID, name, host count)
-- `[F]` - Filter findings by text (plugin name, description, etc.)
+- `[F]` - Filter findings by text (finding name, description, etc.)
 - `[I]` - Toggle In Progress only / all statuses
 - `[C]` - Clear active text and status filters
 - `[V]` - View all unique hosts across the filtered findings
@@ -521,12 +488,12 @@ scopes, and management commands.
 - `[?]` - Show help menu with all available actions
 
 **In the finding detail view:**
-- `[I]` - Finding Info (plugin metadata, CVSS, CVEs)
-- `[D]` - Finding Details (host list, port distribution, plugin output)
+- `[I]` - Finding Info (finding metadata, CVSS, CVEs)
+- `[D]` - Finding Details (host list, port distribution, captured output)
 - `[V]` - View host(s) (grouped `host:port` or raw list; copy to clipboard)
 - `[E]` - CVE info for this finding
 - `[N]` - NetExec Data (per-host credential and access breakdown)
-- `[T]` - Run Tool (launch nmap, NetExec, Metasploit, or custom workflow)
+- `[T]` - Run Tool (launch nmap, NetExec, nuclei, Metasploit, or custom workflow)
 - `[A]` - Ask Claude — chat about this specific finding
 - `[W]` - View workflow verification steps (when one is mapped)
 - `[M]` - Move to In Progress / Move to Done (label follows the finding's status)
@@ -536,7 +503,7 @@ scopes, and management commands.
 
 ## Custom Workflows
 
-Add plugin-specific verification workflows with `--custom-workflows` (merged over the defaults; custom wins on conflict) or `--custom-workflows-only` (replaces defaults):
+Add finding-specific verification workflows with `--custom-workflows` (merged over the defaults; custom wins on conflict) or `--custom-workflows-only` (replaces defaults):
 
 ```bash
 cerno review --custom-workflows my_workflows.yaml
@@ -561,16 +528,17 @@ Set `custom_workflows_path` in config to load your workflows by default (the MCP
 
 **For comprehensive documentation**, see [Custom Workflows Guide](docs/CUSTOM_WORKFLOWS.md) covering:
 - Complete YAML schema reference
-- Multi-plugin workflows
+- Multi-finding workflows (one entry may cover findings from different scanners)
 - Placeholder system details
 - Configuration integration
 - Best practices and troubleshooting
 
+<!-- BEGIN GENERATED: workflow-display -->
 <p align="center">
-  <img src="docs/images/workflow-display.png" alt="Custom workflow verification steps" width="70%">
-  <br>
-  <em>View plugin-specific verification workflows with commands and references</em>
+  <img src="docs/images/examples/workflow-display.svg" alt="cerno review - [W] workflow" width="100%">
 </p>
+<!-- END GENERATED: workflow-display -->
+<p align="center"><em>Verification workflows — one entry can cover the same issue found by two scanners</em></p>
 
 ---
 
@@ -613,6 +581,7 @@ cerno reset   # Prompts for typed confirmation before deleting
 ## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md)
+- [Configuration reference](docs/CONFIGURATION.md)
 - [MCP server](docs/MCP.md)
 - [Custom workflows](docs/CUSTOM_WORKFLOWS.md)
 - [Database schema & queries](docs/DATABASE.md)

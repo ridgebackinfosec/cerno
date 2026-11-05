@@ -98,7 +98,7 @@ resources, and prompts Cerno exposes.
 
 Notes:
 
-- `list_findings` takes `merged` (dedup multi-scan results by plugin, matching
+- `list_findings` takes `merged` (dedup multi-scan results by finding, matching
   the TUI), `limit`, and `offset` for paging.
 - `query_findings` AND-combines optional predicates: `scan_ids` (omit for all
   scans), `severity_int`/`severity_min`, `review_state`, `verdict`
@@ -117,7 +117,7 @@ Notes:
   `get_workflow` takes the finding id as a **string**, because every id is
   source-namespaced (`"nessus:57608"`, `"nuclei:apache-detect"`). A bare number
   matches nothing.
-- `compare_scans` refuses two scans from different sources: their plugin ids share
+- `compare_scans` refuses two scans from different sources: their finding ids share
   no namespace, so every finding would be reported as both new and resolved.
 - `generate_nmap_cmd` takes `nse_option` as NSE script names or categories,
   comma-separated (e.g. `smb-security-mode,smb2-security-mode` or `vuln`); a
@@ -166,7 +166,9 @@ default:
 
 These keys are TUI-only and intentionally ignored by the server:
 `no_color`, `color_scheme`, `term_override`, `default_tool`, `claude_assistant_enabled`,
-`pivot_interface`, `pivot_http_port`, `top_ports_count`
+`pivot_interface`, `pivot_http_port`, `top_ports_count`,
+`nuclei_templates_path`, `nuclei_profile`, `nuclei_user_agent`,
+`nuclei_concurrency`
 (`config.MCP_NOT_APPLICABLE_KEYS`).
 Config is read when the server starts, so reconnect after changing it. Edits to
 the custom workflow YAML file itself are picked up on the next call.
@@ -180,7 +182,7 @@ resources:
 - `cerno://scan/{id}/hosts` — discovered `host:port` lines
 - `cerno://scan/{id}/cves` — unique CVEs mapped to plugins (JSON)
 - `cerno://finding/{id}/output` — raw per-host plugin output
-- `cerno://finding/{id}/workflow` — verification workflow for the finding's plugin
+- `cerno://finding/{id}/workflow` — verification workflow for the finding
 - `cerno://finding/{id}/verdict` — current verification verdict, history and evidence (JSON)
 - `cerno://finding/{id}/results` — live-verified open ports and NSE verdicts ingested from runs (JSON)
 - `cerno://config` — all current (read-only) config settings
@@ -196,7 +198,7 @@ One-click templates in clients that render MCP prompts:
   mapped workflow, run attributed commands, ingest, record a verdict, move the
   review state, offer a workflow contribution)
 - `triage_scope` — report brief across one or more scans (comma-separated
-  `scan_ids`, e.g. `1,3`; merged and deduplicated by plugin), optionally one severity
+  `scan_ids`, e.g. `1,3`; merged and deduplicated by finding), optionally one severity
 
 Both finding prompts tell the client to pass `finding_id` on every execution and
 to offer `get_workflow_candidate` when a verdict reports a candidate.
@@ -247,7 +249,7 @@ cerno config set mcp_exec_denylist "rm,dd,sh"    # binaries execute_command may 
   3. The target (last binary) must match `mcp_exec_allowlist`. Wrappers need no
      entry. `"*"` permits anything not denied, and **an empty list denies
      everything**. The default is the core tools plus low-impact recon utilities:
-     - core: `nmap, nxc, netexec, msfconsole`
+     - core: `nmap, nxc, netexec, msfconsole, nuclei`
      - HTTP fetch: `curl, wget`
      - DNS / registry: `dig, host, nslookup, whois`
      - reachability: `ping, traceroute`

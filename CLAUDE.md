@@ -4,7 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Shorthand Commands
 
-- **bcp** — bump the version, commit, and push to the current branch
+- **bcp** — regenerate the docs, bump the version, commit, and push to the current branch, in that order:
+  1. `python scripts/generate_doc_examples.py` — refreshes the TUI examples embedded in `README.md` and `docs/`. Re-run `./scripts/render_diagrams.sh` if any `docs/diagrams/*.mmd` changed.
+  2. Run the suite. `tests/test_doc_examples.py` fails if a committed example no longer matches what the renderers produce, and `tests/test_docs_consistency.py` fails if a documented count (tables, views, seeded rows, workflows, MCP tools, schema version) has drifted from the code.
+  3. Bump `pyproject.toml` and move `[Unreleased]` into the dated section.
+  4. Commit and push.
+
+  A dirty working tree after step 1 means the docs were about to ship stale — commit the regenerated output with the change. This exists because the README screenshots sat stale for eight months; the generated examples replace them precisely so this cannot recur.
+
+**Never hand-edit anything between `<!-- BEGIN GENERATED: name -->` and `<!-- END GENERATED: name -->`** — the generator overwrites it. The prose and captions around those markers are hand-owned and safe.
 
 ## General Development Principles
 
@@ -83,9 +91,9 @@ Before implementing any schema change, verify:
 
 ## Project Overview
 
-**Cerno** is a Python CLI tool for reviewing Nessus vulnerability scan findings and orchestrating security tools (nmap, NetExec, Metasploit). It features a Rich-based TUI for interactive review, SQLite-backed persistence, and session state tracking.
+**Cerno** is a Python CLI tool for reviewing vulnerability findings from multiple scanners and orchestrating security tools (nmap, NetExec, nuclei, Metasploit). Findings are imported from Nessus `.nessus` exports and nuclei JSON/JSONL results, and both share one review loop. It features a Rich-based TUI for interactive review, SQLite-backed persistence, and session state tracking.
 
-**Core workflow**: Import `.nessus` files → Review findings in TUI → Run security tools → Track progress in database
+**Core workflow**: Import `.nessus` files and/or nuclei results → Review findings in TUI → Run security tools → Track progress in database
 
 **Target Python**: 3.11+ (3.8+ may work but not the target)
 
@@ -339,7 +347,7 @@ no dispatch changes. See `docs/TOOL_SYSTEM_GUIDE.md`.
 - `finding_affected_hosts`: Host:port combinations (finding_id, host_id FK, port_number FK, plugin_output)
   - Uses foreign keys to normalized `hosts` and `ports` tables
 - `host_services`: Per-scan service discovery (scan_id, host_id, port_number, protocol, svc_name)
-  - Populated from Nessus ReportItem `svc_name`/`protocol` attributes during import
+  - Both importers populate it: Nessus from ReportItem `svc_name`/`protocol`; nuclei from the scheme in `matched-at` (so a nuclei-only scan still reports web services)
   - Uses foreign keys to `scans`, `hosts`, and `ports` tables
 - `sessions`: Review session tracking (start time, end time)
   - Note: Statistics computed via `v_session_stats` view
@@ -534,6 +542,8 @@ Only after user confirms the changelog content:
 
 **Configuration** (`~/.cerno/config.yaml`): All user preferences managed via config file. Auto-created with defaults on first run. All configuration values are set through this file only.
 
+The user-facing reference is `docs/CONFIGURATION.md`, whose settings table is **generated** from `config.build_config_rows()` — the same source `cerno config show` renders from. Adding a config key therefore needs no doc edit there, but the per-key notes below carry implementation detail the user docs deliberately omit, so keep them current by hand.
+
 **CLI commands**:
 - `cerno config show` - Display all configuration settings with current values
 - `cerno config set <key> <value>` - Change a configuration value
@@ -572,22 +582,22 @@ Only after user confirms the changelog content:
 - `mcp_enforce_scope` - Refuse `execute_command` / `start_execution` / `execute_batch` runs whose IP or CIDR targets fall outside the engagement scope (default: `true`). In scope = every host in imported scans plus any range in `mcp_scope_extra`; out-of-scope IP/CIDR literals (positional args, URL hosts, `-iL` file entries) are refused, while an unresolved bare hostname is allowed with a `scope_warnings` note. Only consulted when `mcp_allow_execution` is on; set `false` to disable
 - `mcp_scope_extra` - Additional in-scope CIDRs / IPs / hostnames beyond the imported scan hosts (default: empty), via `config.coerce_str_list()`. Ignored when `mcp_enforce_scope` is `false`
 
-**MCP config contract**: the MCP server honors every config key with precedence explicit tool arg > config > hardcoded default (`default_page_size` → default `limit` for `list_findings`/`query_findings`/`search_findings`, min 8, else 500), except the TUI-only keys in `config.MCP_NOT_APPLICABLE_KEYS` (`no_color`, `color_scheme`, `term_override`, `default_tool`, `claude_assistant_enabled`, `pivot_interface`, `pivot_http_port`, `top_ports_count`). `tests/test_mcp_config.py` fails when a new key is added without classifying it. Tests isolate `config.get_config_path()` to a temp file (autouse `conftest.reset_environment`), so the developer's real config never leaks in.
+**MCP config contract**: the MCP server honors every config key with precedence explicit tool arg > config > hardcoded default (`default_page_size` → default `limit` for `list_findings`/`query_findings`/`search_findings`, min 8, else 500), except the TUI-only keys in `config.MCP_NOT_APPLICABLE_KEYS` (`no_color`, `color_scheme`, `term_override`, `default_tool`, `claude_assistant_enabled`, `pivot_interface`, `pivot_http_port`, `top_ports_count`, `nuclei_templates_path`, `nuclei_profile`, `nuclei_user_agent`, `nuclei_concurrency`). `tests/test_mcp_config.py` fails when a new key is added without classifying it. Tests isolate `config.get_config_path()` to a temp file (autouse `conftest.reset_environment`), so the developer's real config never leaks in.
 
 **NSE profiles** (`constants.py:NSE_PROFILES`): Pre-configured nmap script sets (SMB, SSL, HTTP, etc.)
 
 ### Workflow Mappings
 
-`workflow_mappings.yaml`: Maps plugin IDs → verification workflows (YAML format).
+`workflow_mappings.yaml`: Maps namespaced finding IDs → verification workflows (YAML format).
 
 **CLI options**:
 - `--custom-workflows PATH`: Supplement bundled workflows (custom overrides on conflict)
 - `--custom-workflows-only PATH`: Replace bundled workflows entirely
 
 **Workflow features**:
-- Multi-plugin workflows (comma-separated plugin IDs)
+- Multi-finding workflows (comma-separated finding IDs, which may span sources)
 - Display-only (commands, notes, references)
-- Press `[W]` in TUI to view workflow for current plugin
+- Press `[W]` in TUI to view the workflow for the current finding
 
 ### Logging
 
@@ -770,12 +780,13 @@ sqlite3 ~/.cerno/cerno.db "PRAGMA user_version;"                   # Expected: 5
 2. Write a workflow builder `build_<tool>_workflow(ctx: ToolContext) -> Optional[CommandResult]` in `tools.py` (prompts, then calls the command builder)
 3. Register a `Tool(...)` in `tool_definitions.py:register_all_tools()`
 4. Add tool-specific constants to `constants.py` if needed
-5. Test in TUI: `cerno review` → Run tool → Verify command generation (see `docs/ADDING_TOOLS_QUICKSTART.md`)
+5. **If the tool writes an ingestible output file**, teach `ops.log_artifacts_for_run()` about it — the TUI run loop calls that helper for every run, and without an entry the tool logs a `tool_executions` row with no artifact, so `ingest_results` has nothing to read
+6. Test in TUI: `cerno review` → Run tool → Verify command generation (see `docs/ADDING_TOOLS_QUICKSTART.md`)
 
 ### Updating Workflow Mappings
 
 1. Edit `cerno_pkg/workflow_mappings.yaml` (or create custom YAML)
-2. Follow schema: `version`, `workflows` list, each with `plugin_id`, `workflow_name`, `description`, `steps`, `references`; use canonical `<TARGET>`/`<PORT>`/`<USERNAME>`/`<PASSWORD>`/`<DOMAIN>`/`<INTERFACE>` placeholders (see `docs/CUSTOM_WORKFLOWS.md`)
+2. Follow schema: `version`, `workflows` list, each with `finding_id` (source-prefixed, e.g. `nessus:57608`; may list ids from several sources), `workflow_name`, `description`, `steps`, `references`; use canonical `<TARGET>`/`<PORT>`/`<USERNAME>`/`<PASSWORD>`/`<DOMAIN>`/`<INTERFACE>` placeholders (see `docs/CUSTOM_WORKFLOWS.md`)
 3. Test in TUI: `cerno review --custom-workflows <path>` → Press `[W]` on matching plugin
 
 ### Debugging Database Issues

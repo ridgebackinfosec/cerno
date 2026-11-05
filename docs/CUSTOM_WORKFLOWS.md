@@ -21,7 +21,7 @@
 
 ### What are Custom Workflows?
 
-Custom workflows are plugin-specific verification procedures that guide security professionals through the process of validating and exploiting vulnerabilities discovered in Nessus scans. Each workflow provides:
+Custom workflows are finding-specific verification procedures that guide security professionals through the process of validating and exploiting vulnerabilities discovered in Nessus scans. Each workflow provides:
 
 - **Structured verification steps** with specific commands and tools
 - **Contextual notes** explaining what to look for and why
@@ -108,7 +108,7 @@ Save this file and run:
 cerno review --custom-workflows my_workflows.yaml
 ```
 
-When you review plugin 10863, press **[W]** to see your custom workflow.
+When you review finding `nessus:10863`, press **[W]** to see your custom workflow.
 
 ---
 
@@ -121,7 +121,7 @@ version: "1.0"  # Recommended: Schema version (currently always "1.0")
 
 workflows:      # Required: List of workflow definitions
   - finding_id: "nessus:12345"   # Required: Finding ID(s) - string, can be comma-separated
-                                 #   Nessus: bare number. nuclei: "nuclei:<template-id>"
+                                 #   Nessus: "nessus:<plugin-id>". nuclei: "nuclei:<template-id>"
     workflow_name: "Workflow Name"  # Recommended: Human-readable workflow name
     description: "Brief description"  # Recommended: What this workflow verifies
 
@@ -183,7 +183,7 @@ the `template-id` field in nuclei's JSON output.
 - **Strings**: Use quotes for strings containing special characters or colons
 - **Lists**: Use YAML list syntax with `-` prefix
 - **Empty lists**: Use `[]` for steps without commands (display-only)
-- **Plugin IDs**: Always strings (quoted), even though they look numeric
+- **Finding IDs**: Always strings (quoted) — they contain a `:` source separator, and a multi-finding value contains commas
 - **URLs**: Standard HTTP/HTTPS URLs in reference list
 
 ---
@@ -407,7 +407,7 @@ When a plugin ID exists in both bundled and custom workflows:
 
 1. **Custom workflow wins** - The entire workflow is replaced (not merged)
 2. **Workflow name uniqueness** - Internally tracked by `workflow_name` to avoid duplicates
-3. **Multi-plugin workflows** - Each plugin ID in a comma-separated list is registered separately
+3. **Multi-finding workflows** - Each finding ID in a comma-separated list is registered separately, and the list may span sources
 
 ---
 
@@ -720,7 +720,7 @@ python -c "import yaml; yaml.safe_load(open('my_workflows.yaml'))"
 
 ### Workflow Not Appearing in TUI
 
-**Symptom**: Press **[W]** but see "No workflow available for this plugin"
+**Symptom**: Press **[W]** but see "No workflow available for this finding."
 
 **Possible causes**:
 
@@ -728,7 +728,7 @@ python -c "import yaml; yaml.safe_load(open('my_workflows.yaml'))"
 
 ```bash
 # Find the plugin ID for a finding
-cerno review  # Navigate to finding, check displayed plugin ID
+cerno review  # Navigate to finding, check the displayed finding ID
 ```
 
 2. **Workflow file not loaded** - Pass the `--custom-workflows` flag, or set `custom_workflows_path`:
@@ -829,7 +829,7 @@ cerno workflow list --custom-workflows my_workflows.yaml
 
 Output shows:
 
-- Plugin ID(s)
+- Finding ID(s)
 - Workflow name
 - Description
 
@@ -934,7 +934,7 @@ git push --tags
 
 ## Additional Resources
 
-- **Bundled workflows**: See `cerno_pkg/workflow_mappings.yaml` for 9 complete examples
+- **Bundled workflows**: See `cerno_pkg/workflow_mappings.yaml` for 15 complete examples
 - **Configuration guide**: Run `cerno config show` to see all available settings
 - **Main documentation**: See [README.md](../README.md) for general Cerno usage
 - **Tool system guide**: See [TOOL_SYSTEM_GUIDE.md](TOOL_SYSTEM_GUIDE.md) for tool integration details
@@ -971,4 +971,4 @@ Found an issue or want to improve this guide? Contributions welcome:
 
 ---
 
-**Last Updated**: 2026-10-27
+**Last Updated**: 2026-11-04

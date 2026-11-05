@@ -18,7 +18,7 @@ flowchart TB
     end
 
     subgraph mcplayer["② MCP layer — every module here is MCP-only; the TUI imports none of them"]
-        server["<b>server.py</b><br/>46 tools · 9 resources · 4 prompts<br/><i>adapters never print to stdout</i>"]
+        server["<b>server.py</b><br/>47 tools · 9 resources · 4 prompts<br/><i>adapters never print to stdout</i>"]
         jobs["<b>jobs.py</b><br/>async job registry<br/>start / status / cancel"]
         query["<b>query.py</b> — FindingQuery<br/><b>batch.py</b> — plan / execute_batch"]
         ingestmod["<b>ingest.py · nmap_parse.py</b><br/>run output → verified data"]
@@ -27,7 +27,7 @@ flowchart TB
 
     subgraph core["③ Shared core — the TUI ↔ MCP contract, frozen by tests/test_mcp_contract.py"]
         models["<b>models.py</b><br/>Scan · Plugin · Finding<br/>FindingVerdict · Artifact"]
-        dbmod["<b>database.py</b><br/>schema v4 · SCHEMA_SQL_*<br/>db_transaction()"]
+        dbmod["<b>database.py</b><br/>schema v5 · SCHEMA_SQL_*<br/>db_transaction()"]
         toolsmod["<b>tools.py</b><br/>+ tool_registry · tool_definitions<br/>· tool_context"]
         opsmod["<b>ops.py</b><br/>execution, sudo,<br/>proxychains4, remote scan"]
         importmod["<b>nessus_import.py · nuclei_import.py</b><br/>nuclei_parse.py · cross_scan.py · parsing.py"]
@@ -37,7 +37,7 @@ flowchart TB
     end
 
     subgraph ext["④ Storage &amp; external"]
-        sqlite[("<b>cerno.db</b><br/>25 tables · 11 views<br/><i>source of truth</i>")]
+        sqlite[("<b>cerno.db</b><br/>27 tables · 12 views<br/><i>source of truth</i>")]
         artdir["<b>artifacts/</b><br/>tool output, logs"]
         nxcws[("<b>NetExec workspace</b><br/><i>read-only</i>")]
         bins["<b>nmap · nxc · msfconsole</b><br/><b>claude</b> CLI"]

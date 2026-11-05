@@ -66,12 +66,19 @@ def register_all_tools() -> None:
             workflow_builder=tools.build_mytool_workflow,
             command_builder=tools.build_mytool_cmd,
             requires=["mytool"],
-            menu_order=5,
+            menu_order=6,  # 1-5 are nmap, netexec, nuclei, metasploit, custom
         )
     )
 ```
 
-**Done!** Tool appears in menus automatically. No dispatch changes needed.
+**Almost done.** The tool appears in menus automatically -- no dispatch changes needed.
+
+**If your tool writes a file Cerno should ingest** (an nmap `-oA` set, a nuclei
+`-jle` export), teach `ops.log_artifacts_for_run()` about it as well. The TUI run
+loop calls that helper for every run, and without an entry your tool logs a
+`tool_executions` row with **no artifact**, so `ingest_results` reports
+"no artifact registered for this execution". That is exactly the bug nuclei hit
+in 3.1.0.
 
 ---
 

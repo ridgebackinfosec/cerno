@@ -191,7 +191,8 @@ class ToolContext:
     sev_dir: Path          # Severity directory
 
     # Optional metadata
-    plugin_url: Optional[str] = None    # Nessus plugin URL
+    plugin_url: Optional[str] = None    # Details page captured at import
+                                       # (Tenable for Nessus, nuclei-templates for nuclei)
     chosen_file: Optional[Path] = None  # Selected finding's display path
     use_proxy: bool = False             # Route through proxychains4
 ```
@@ -357,7 +358,7 @@ def register_all_tools() -> None:
             workflow_builder=tools.build_mytool_workflow,
             command_builder=tools.build_mytool_cmd,
             requires=["mytool"],
-            menu_order=5,
+            menu_order=6,
         )
     )
 ```

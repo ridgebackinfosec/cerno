@@ -1,5 +1,5 @@
 -- ============================================================================
--- CERNO DATABASE SCHEMA (schema version 4)
+-- CERNO DATABASE SCHEMA (schema version 5)
 -- ============================================================================
 -- Reference copy of the SQLite schema. The authoritative DDL is
 -- cerno_pkg/database.py (SCHEMA_SQL_TABLES + SCHEMA_SQL_VIEWS);
@@ -7,7 +7,7 @@
 -- views and indexes.
 --
 -- Database location: ~/.cerno/cerno.db (global, cross-scan queries)
--- Schema version: 4, stored in PRAGMA user_version. Older databases
+-- Schema version: 5, stored in PRAGMA user_version. Older databases
 --   are rejected with SchemaVersionError (no migration system; re-import).
 -- Column-by-column documentation: docs/DATABASE.md
 -- ============================================================================
@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS scans (
 CREATE INDEX IF NOT EXISTS idx_scans_name ON scans(scan_name);
 
 CREATE TABLE IF NOT EXISTS plugins (
-    plugin_id TEXT PRIMARY KEY,             -- '57608' (nessus) | 'nuclei:apache-detect'
+    plugin_id TEXT PRIMARY KEY,             -- 'nessus:57608' | 'nuclei:apache-detect'
     source_id INTEGER NOT NULL DEFAULT 1,   -- FK -> finding_sources (1 = nessus)
     plugin_name TEXT NOT NULL,
     severity_int INTEGER NOT NULL,          -- 0=Info, 1=Low, 2=Medium, 3=High, 4=Critical

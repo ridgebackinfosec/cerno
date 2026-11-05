@@ -290,7 +290,7 @@ warn("Operation failed")
 ✅ **Actionable Messages**:
 ```python
 # GOOD
-warn("Failed to fetch CVEs for plugin 11356. Check network connection or try again later.")
+warn("Failed to fetch CVEs for nessus:11356. Check network connection or try again later.")
 ```
 
 ---
@@ -304,7 +304,7 @@ def test_network_error_handling(mock_fetch):
     """Test graceful handling of network errors."""
     mock_fetch.side_effect = requests.RequestException("Connection refused")
 
-    result = fetch_cves(plugin_id=12345)
+    result = fetch_cves(plugin_id="nessus:12345")
 
     assert result is None  # Graceful fallback
     # Verify logging occurred
@@ -340,5 +340,5 @@ When updating code to follow these standards:
 
 ---
 
-**Last Updated**: 2026-10-27
-**Applies To**: cerno v2.x
+**Last Updated**: 2026-11-04
+**Applies To**: cerno v3.x

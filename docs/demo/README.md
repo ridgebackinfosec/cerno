@@ -46,9 +46,41 @@ cerno scan compare Cerno_Demo_Initial_Scan Cerno_Demo_Expanded_Scan
 cerno scan compare Cerno_Demo_Nuclei_Initial_Scan Cerno_Demo_Nuclei_Expanded_Scan
 ```
 
-Comparing *across* sources is refused by design: plugin IDs are namespaced per
+Comparing *across* sources is refused by design: finding IDs are namespaced per
 source, so a Nessus scan and a nuclei scan share none and every finding would be
 reported as both new and resolved.
+
+A host's timeline across both scanners shows why: the Trend column reads `n/a`
+where the source changes, because a 5-finding Nessus scan followed by a
+1-finding nuclei scan is not four findings remediated.
+
+```bash
+cerno scan history 198.51.100.10
+```
+
+<!-- BEGIN GENERATED: scan-history -->
+```text
+╭──────────────────────────────────────── Host Vulnerability History ────────────────────────────────────────╮
+│  IP Address: 198.51.100.10                                                                                 │
+│  Scan Target: 198.51.100.10                                                                                │
+│  First Seen: 2026-01-01                                                                                    │
+│  Last Seen: 2026-01-01                                                                                     │
+│  Total Scans: 4                                                                                            │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+                                                Scan Timeline                                                 
+╭──────────────────────────────┬────────┬────────────┬───────┬──────────┬──────┬────────┬─────┬──────┬───────╮
+│ Scan Name                    │ Source │ Date       │ Total │ Critical │ High │ Medium │ Low │ Info │ Trend │
+├──────────────────────────────┼────────┼────────────┼───────┼──────────┼──────┼────────┼─────┼──────┼───────┤
+│ Cerno_Demo_Initial_Scan      │ nessus │ 2026-01-01 │     5 │        - │    - │      3 │   1 │    1 │       │
+│ Cerno_Demo_Expanded_Scan     │ nessus │ 2026-01-01 │     5 │        - │    - │      3 │   1 │    1 │   =   │
+│ Cerno_Demo_Nuclei_Initial_S… │ nuclei │ 2026-01-01 │     7 │        - │    - │      - │   1 │    6 │  n/a  │
+│ Cerno_Demo_Nuclei_Expanded_… │ nuclei │ 2026-01-01 │     7 │        - │    - │      - │   1 │    6 │   =   │
+╰──────────────────────────────┴────────┴────────────┴───────┴──────────┴──────┴────────┴─────┴──────┴───────╯
+
+Overall trend: not shown - this host's scans come from different sources (nessus, nuclei), which count different things. Compare scans from one source.
+```
+<!-- END GENERATED: scan-history -->
 
 To review both scanners together, run `cerno review` and select a Nessus and a
 nuclei scan at the prompt (e.g. `2,4`).
@@ -116,20 +148,20 @@ running at all:
 
 **Corroboration** — nuclei confirms Nessus findings on the same host:port:
 
-| Nessus plugin | nuclei template |
+| Nessus finding | nuclei template |
 |---|---|
-| 20007 SSL Version 2 and 3, 42873 Medium Strength Ciphers | `deprecated-tls`, `weak-cipher-suites` |
-| 11219 SSL Self-Signed Certificate, 104743 TLS 1.0 | `self-signed-ssl`, `deprecated-tls` |
-| 57582 SSL Certificate Expiry, 78479 POODLE | `expired-ssl`, `deprecated-tls` |
-| 45411 SSL Certificate with Wrong Hostname | `mismatched-ssl-certificate` |
-| 10107 HTTP Server Type and Version | `nginx-version`, `tech-detect` |
-| 56468 Apache Unsupported Version | `apache-detect` |
-| 34970 Apache Tomcat Default Files | `tomcat-detect` |
-| 40984 Web Server Directory Enumeration | `robots-txt` |
+| `nessus:20007` SSL Version 2 and 3, `nessus:42873` Medium Strength Ciphers | `deprecated-tls`, `weak-cipher-suites` |
+| `nessus:11219` SSL Self-Signed Certificate, `nessus:104743` TLS 1.0 | `self-signed-ssl`, `deprecated-tls` |
+| `nessus:57582` SSL Certificate Expiry, `nessus:78479` POODLE | `expired-ssl`, `deprecated-tls` |
+| `nessus:45411` SSL Certificate with Wrong Hostname | `mismatched-ssl-certificate` |
+| `nessus:10107` HTTP Server Type and Version | `nginx-version`, `tech-detect` |
+| `nessus:56468` Apache Unsupported Version | `apache-detect` |
+| `nessus:34970` Apache Tomcat Default Files | `tomcat-detect` |
+| `nessus:40984` Web Server Directory Enumeration | `robots-txt` |
 
 **The same evidence, two scanner models.** On each of the six `203.0.113.8x`
-shop hosts, Nessus reports three separate plugins — 84502 HSTS Not Enforced,
-85601 X-Frame-Options Not Set, 98033 CSP Not Set. nuclei reports all three as
+shop hosts, Nessus reports three separate plugins — `nessus:84502` HSTS Not Enforced,
+`nessus:85601` X-Frame-Options Not Set, `nessus:98033` CSP Not Set. nuclei reports all three as
 *matcher names on one* `http-missing-security-headers` finding, which Cerno
 merges into a single host:port row's plugin output. Open that finding on
 `203.0.113.80` to see both shapes side by side.

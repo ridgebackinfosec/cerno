@@ -29,7 +29,7 @@ The Cerno database tracks:
 - **Hosts, Ports & Services**: Normalized host/port data with cross-scan tracking, plus per-scan discovered services
 - **Sessions**: Review sessions (start/end; duration via SQL view), including the scans of a multi-scan session
 - **Tool Executions & Artifacts**: Commands run (TUI and MCP), their exit codes, and the files they produced
-- **Verification results**: Live-verified open ports, NSE script verdicts and NetExec flag snapshots ingested from tool runs
+- **Verification results**: Live-verified open ports, NSE script verdicts, nuclei match observations and NetExec flag snapshots ingested from tool runs
 - **Verdicts**: Append-only verification verdicts per finding, with links to the evidence that supports them
 - **Claude Assistant history**: Per-finding and scope-level chat turns
 
@@ -99,7 +99,7 @@ Cerno uses a **fully normalized database schema** following relational best prac
 
 ## Schema Overview
 
-The database consists of **26 tables** and **11 views**:
+The database consists of **27 tables** and **12 views**:
 
 ### Foundation Tables (Normalized Reference Data)
 
@@ -118,7 +118,7 @@ The database consists of **26 tables** and **11 views**:
 10. **hosts** - Normalized host data (cross-scan tracking)
 11. **ports** - Port metadata
 12. **finding_affected_hosts** - Host:port combinations per finding (normalized FKs)
-13. **host_services** - Services discovered per scan (from Nessus `svc_name`)
+13. **host_services** - Services discovered per scan (Nessus `svc_name`, or nuclei's URL scheme)
 
 ### Review & Execution Tracking
 
@@ -233,6 +233,7 @@ Artifact type definitions - enforces consistent artifact categorization.
 - `nmap_gnmap` - Nmap greppable output (.gnmap)
 - `nmap_nmap` - Nmap normal output (.nmap)
 - `netexec_txt` - NetExec text output (.txt)
+- `nuclei_json` - nuclei JSON export (.json)
 - `log` - Tool execution log (.log)
 
 **Foreign Keys**: Referenced by `artifacts.artifact_type_id`
@@ -331,8 +332,12 @@ source. Global: there is no `scan_id` column, so all scans share these rows.
 
 **Why `plugin_id` is TEXT (schema v5)**: nuclei identifies findings by template
 name, not number, so an `INTEGER PRIMARY KEY` (a SQLite rowid alias) could not
-store them at all. Nessus IDs deliberately stay unprefixed so every existing
-`plugin_id` key in `workflow_mappings.yaml` keeps working.
+store them at all. **Every** source is prefixed, Nessus included, so no
+source is the default and a bare token is not a valid finding ID anywhere:
+`parsing.plugin_source()` reports `unknown` rather than guessing, and
+`plugin_source_id()` raises instead of letting one reach the database. The
+`workflow_mappings.yaml` key was renamed `plugin_id` -> `finding_id` at the same
+time, and every value must carry its prefix.
 
 **Why `source_id` is stored even though it is derivable** from the `plugin_id`
 prefix: it gives `query.py` an indexed SQL predicate (`FindingQuery.source`) and
@@ -512,7 +517,7 @@ recorded as `tcp`, which is what nuclei's http/ssl/network templates use.
 | `host_id` | INTEGER | Foreign key to hosts |
 | `port_number` | INTEGER | Foreign key to ports |
 | `protocol` | TEXT | `tcp` (default) or `udp` |
-| `svc_name` | TEXT | Nessus service name (e.g. `www`, `cifs`, `ssh`) |
+| `svc_name` | TEXT | Nessus service name (e.g. `www`, `cifs`, `ssh`), or the scheme/type a nuclei match reported (`http`, `https`, `ssl`) |
 
 **Constraints**: `UNIQUE(scan_id, host_id, port_number, protocol)`
 
@@ -993,7 +998,7 @@ WHERE finding_id = 123;
 -- Severity labels come from the severity_levels lookup table
 SELECT plugin_id, plugin_name, severity_label, cvss3_score
 FROM v_plugins_with_severity
-WHERE plugin_id = 57608;
+WHERE plugin_id = 'nessus:57608';
 ```
 
 ---
@@ -1359,6 +1364,6 @@ Planned database features:
 
 ---
 
-**Last Updated**: 2026-10-27 (v2.6.0)
+**Last Updated**: 2026-11-04 (v3.1.1)
 **Maintained By**: Ridgeback InfoSec, LLC
 **Schema Version**: 5
