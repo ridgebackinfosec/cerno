@@ -136,10 +136,11 @@ cerno --help
 # Common commands
 cerno import nessus scan.nessus   # Import Nessus scan
 cerno import nuclei nuclei.json   # Import nuclei results (-je array or -jle/-jsonl)
-                                  #   --name <scan>, --min-severity 0-4
-cerno review                      # Start interactive review
+                                  #   --name <scan>; severity floor = nuclei_min_severity
+cerno review                      # Start interactive review (no flags: all config keys)
                                   #   At scan prompt, enter "1-3" or "1,3,5" to review multiple scans merged
-cerno scan list                   # List all scans (compact; --wide = all severities, --json = scripting)
+cerno check                       # External tool availability, then exit (was `review --check`)
+cerno scan list                   # List all scans (compact; scan_list_wide = all severities, --json = scripting)
 cerno scan delete <scan_name>     # Delete scan from database
 cerno scan compare <s1> <s2>      # Compare findings between two scans
 cerno scan history <host_ip>      # Show vulnerability timeline for a host
@@ -281,7 +282,7 @@ cerno_pkg/
   ├── constants.py         # Paths, review-state constants, NSE profiles, LIGHT_BG_COLOR_MAP
   ├── ansi.py              # CernoConsole (color_scheme remapping), err/warn/info/ok helpers,
   │                        # safe_text() / strip_unsafe_escapes() for untrusted scan text
-  ├── banner.py            # Promotional startup banner (`review -q` hides it)
+  ├── banner.py            # Promotional startup banner (`show_banner: false` hides it)
   ├── logging_setup.py     # Loguru setup with rotation; log_info/log_debug/log_error
   ├── skills/cerno-assistant.md  # Claude Assistant system prompt
   ├── demo/                # Packaged copy of the demo scans + NetExec workspace (`cerno demo`)
@@ -567,12 +568,17 @@ The user-facing reference is `docs/CONFIGURATION.md`, whose settings table is **
 - `log_path` - Log file location (default: `~/.cerno/cerno.log`)
 - `debug_logging` - Enable DEBUG level logging (default: `false`)
 - `no_color` - Disable ANSI color output (default: `false`)
+- `show_banner` - Show the startup banner in `cerno review` (default: `true`). Replaced `review -q/--quiet`
+- `scan_list_wide` - `cerno scan list` renders every severity column (default: `false`). Replaced `--wide`/`--details`. `--json` is unaffected: it short-circuits before any table is built
+- `tools_enabled` - Offer tool runs in the review TUI (default: `true`). Off hides `[T]`, refuses an explicit `t` in `fs.handle_finding_view()`, and skips the startup availability table. Replaced `review --no-tools`. **TUI-only**: the MCP execution gate is `mcp_allow_execution`, and honoring this key there too would let a display preference weaken an MCP policy
 - `color_scheme` - Terminal background the colors are tuned for: `light` (default) or `dark`. Light remaps every named color via `constants.LIGHT_BG_COLOR_MAP` in one place: `ansi.CernoConsole.get_style()` (all Rich string styles + Rich's built-in theme; also installed as Rich's global console so `Prompt`/`Progress` match) and `ansi.initialize_colors()` (raw ANSI `C.*` codes). Dark = classic named colors, unchanged. Keep using plain color names in new code; don't hardcode light-only variants. `config set` rejects values outside a field's `choices` metadata
 - `default_tool` - Pre-select tool in menu (e.g., `nmap`, `netexec`)
 - `default_netexec_protocol` - Default protocol for NetExec (e.g., `smb`, `ssh`); MCP `generate_netexec_cmd` / bare `"netexec"` batch strategy use it when `protocol` is omitted (else `smb`)
 - `nmap_default_profile` - Default NSE profile name; MCP `generate_nmap_cmd` uses its scripts when `nse_option` is omitted (`""` = none), and its UDP need when `udp` is omitted (`tools.find_nse_profile()`)
 - `nuclei_templates_path` / `nuclei_profile` / `nuclei_user_agent` / `nuclei_concurrency` - Shape the nuclei command suggested after an import (`tools.build_nuclei_cmd()`); all four are in `config.MCP_NOT_APPLICABLE_KEYS` since the MCP server prints no suggestions
 - `custom_workflows_path` - Path to custom workflows YAML file; merged over bundled workflows everywhere in the MCP via `workflow_mapper.build_workflow_mapper(config)` (also the default in `query.run_finding_query` / `workflow_prep.prepare_workflow`)
+- `custom_workflows_exclusive` - Load ONLY `custom_workflows_path`, skipping the bundled set (default: `false`). Replaced `review --custom-workflows-only`. Handled in `build_workflow_mapper()`, so it reaches the TUI, `cerno workflow list` and the MCP alike. Set without a path it warns and falls back to bundled — an empty mapper reads as a load failure rather than a config mistake
+- `nuclei_min_severity` - Severity floor for `cerno import nuclei` (default: `0` = keep all). Replaced `--min-severity`. Also the default for MCP `import_nuclei`, whose explicit `min_severity` arg still wins. Validated at use (0-4), not at load: a hand-edited config.yaml can hold anything
 - `claude_assistant_enabled` - Enable/disable Claude Assistant (default: `false`, opt-in). Pressing `[A]` while installed-but-disabled shows a data-path disclosure (`claude_assistant.CONSENT_DISCLOSURE`) and persists consent via `claude_assistant.ensure_enabled()`; `claude_assistant.claude_enabled(config)` is the single availability gate. `[A]` is hidden only when `claude` is not on PATH
 - `mcp_allow_execution` - Allow the `cerno mcp` server to execute tool commands via `execute_command` (default: `false`)
 - `mcp_allow_mutations` - Allow the `cerno mcp` server to mutate state (`set_review_state`, `add_note`, `import_nessus`, `import_nuclei`, `ingest_results`, `set_finding_verdict`) (default: `false`)
@@ -587,7 +593,7 @@ The user-facing reference is `docs/CONFIGURATION.md`, whose settings table is **
 - `mcp_enforce_scope` - Refuse `execute_command` / `start_execution` / `execute_batch` runs whose IP or CIDR targets fall outside the engagement scope (default: `true`). In scope = every host in imported scans plus any range in `mcp_scope_extra`; out-of-scope IP/CIDR literals (positional args, URL hosts, `-iL` file entries) are refused, while an unresolved bare hostname is allowed with a `scope_warnings` note. Only consulted when `mcp_allow_execution` is on; set `false` to disable
 - `mcp_scope_extra` - Additional in-scope CIDRs / IPs / hostnames beyond the imported scan hosts (default: empty), via `config.coerce_str_list()`. Ignored when `mcp_enforce_scope` is `false`
 
-**MCP config contract**: the MCP server honors every config key with precedence explicit tool arg > config > hardcoded default (`default_page_size` → default `limit` for `list_findings`/`query_findings`/`search_findings`, min 8, else 500), except the TUI-only keys in `config.MCP_NOT_APPLICABLE_KEYS` (`no_color`, `color_scheme`, `term_override`, `default_tool`, `claude_assistant_enabled`, `pivot_interface`, `pivot_http_port`, `top_ports_count`, `nuclei_templates_path`, `nuclei_profile`, `nuclei_user_agent`, `nuclei_concurrency`). `tests/test_mcp_config.py` fails when a new key is added without classifying it. Tests isolate `config.get_config_path()` to a temp file (autouse `conftest.reset_environment`), so the developer's real config never leaks in.
+**MCP config contract**: the MCP server honors every config key with precedence explicit tool arg > config > hardcoded default (`default_page_size` → default `limit` for `list_findings`/`query_findings`/`search_findings`, min 8, else 500), except the TUI-only keys in `config.MCP_NOT_APPLICABLE_KEYS` (`no_color`, `color_scheme`, `term_override`, `default_tool`, `claude_assistant_enabled`, `pivot_interface`, `pivot_http_port`, `top_ports_count`, `show_banner`, `scan_list_wide`, `tools_enabled`, `nuclei_templates_path`, `nuclei_profile`, `nuclei_user_agent`, `nuclei_concurrency`). `tests/test_mcp_config.py` fails when a new key is added without classifying it. Tests isolate `config.get_config_path()` to a temp file (autouse `conftest.reset_environment`), so the developer's real config never leaks in.
 
 **NSE profiles** (`constants.py:NSE_PROFILES`): Pre-configured nmap script sets (SMB, SSL, HTTP, etc.)
 
@@ -595,9 +601,17 @@ The user-facing reference is `docs/CONFIGURATION.md`, whose settings table is **
 
 `workflow_mappings.yaml`: Maps namespaced finding IDs → verification workflows (YAML format).
 
-**CLI options**:
-- `--custom-workflows PATH`: Supplement bundled workflows (custom overrides on conflict)
-- `--custom-workflows-only PATH`: Replace bundled workflows entirely
+**Config keys** (no CLI flags; `--custom-workflows[-only]` were removed):
+- `custom_workflows_path`: File to load. Unset = bundled only
+- `custom_workflows_exclusive`: `true` loads ONLY that file, skipping the bundled set
+
+Both are read in `workflow_mapper.build_workflow_mapper()` — the single loader
+for the review TUI, `cerno workflow list` and every MCP workflow tool, so they
+cannot diverge between interfaces. Exclusive-with-no-path warns and falls back
+to bundled rather than returning an empty mapper, which reads as a load failure.
+`cerno workflow list` used to build a bare `WorkflowMapper()` and take the file
+only through its own `-w`, which is why `custom_workflows_path` was silently
+ignored there.
 
 **Workflow features**:
 - Multi-finding workflows (comma-separated finding IDs, which may span sources)
@@ -792,7 +806,7 @@ sqlite3 ~/.cerno/cerno.db "PRAGMA user_version;"                   # Expected: 5
 
 1. Edit `cerno_pkg/workflow_mappings.yaml` (or create custom YAML)
 2. Follow schema: `version`, `workflows` list, each with `finding_id` (source-prefixed, e.g. `nessus:57608`; may list ids from several sources), `workflow_name`, `description`, `steps`, `references`; use canonical `<TARGET>`/`<PORT>`/`<USERNAME>`/`<PASSWORD>`/`<DOMAIN>`/`<INTERFACE>` placeholders (see `docs/CUSTOM_WORKFLOWS.md`)
-3. Test in TUI: `cerno review --custom-workflows <path>` → Press `[W]` on matching plugin
+3. Test in TUI: `cerno config set custom_workflows_path <path>`, then `cerno review` → Press `[W]` on matching plugin
 
 ### Debugging Database Issues
 

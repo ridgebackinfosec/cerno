@@ -274,7 +274,7 @@ def test_workflow_list_keeps_every_column_readable(capsys, monkeypatch):
 
     from cerno import workflow_list
 
-    workflow_list(custom_workflows=None)
+    workflow_list()
     out = capsys.readouterr().out
 
     assert "Finding ID(s)" in out and "Workflow Name" in out
@@ -286,3 +286,142 @@ def test_workflow_list_keeps_every_column_readable(capsys, monkeypatch):
     )
     # Several distinct workflow names must be visible, not just borders.
     assert "ICMP Timestamp" in out
+
+
+# ---------------------------------------------------------------------------
+# build_workflow_mapper: supplement vs exclusive mode
+#
+# These replace the removed `cerno review --custom-workflows[-only]` flags.
+# build_workflow_mapper() is the single loader, so each case here is also the
+# behavior of `cerno workflow list` and every MCP workflow tool.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def one_custom_workflow(tmp_path: Path) -> Path:
+    """A custom YAML holding exactly one workflow with a distinctive id."""
+    path = tmp_path / "custom.yaml"
+    path.write_text(
+        """version: "1.0"
+
+workflows:
+  - finding_id: "nessus:999001"
+    workflow_name: "Only Custom Workflow"
+    description: "Sole entry in the custom file"
+    steps:
+      - title: "Step"
+        commands:
+          - "echo custom"
+    references: []
+""",
+        encoding="utf-8",
+    )
+    return path
+
+
+@pytest.mark.unit
+def test_build_mapper_supplements_by_default(one_custom_workflow: Path):
+    """Default mode keeps bundled workflows and merges the custom file on top."""
+    from cerno_pkg.config import CernoConfig
+    from cerno_pkg.workflow_mapper import build_workflow_mapper
+
+    bundled_only = build_workflow_mapper(CernoConfig())
+    merged = build_workflow_mapper(
+        CernoConfig(custom_workflows_path=str(one_custom_workflow))
+    )
+
+    assert merged.count() == bundled_only.count() + 1
+    assert merged.get_workflow("nessus:999001") is not None
+    # A bundled workflow survives alongside it.
+    assert merged.get_workflow("nessus:10114") is not None
+
+
+@pytest.mark.unit
+def test_build_mapper_exclusive_skips_bundled(one_custom_workflow: Path):
+    """Exclusive mode loads ONLY the custom file."""
+    from cerno_pkg.config import CernoConfig
+    from cerno_pkg.workflow_mapper import build_workflow_mapper
+
+    mapper = build_workflow_mapper(
+        CernoConfig(
+            custom_workflows_path=str(one_custom_workflow),
+            custom_workflows_exclusive=True,
+        )
+    )
+
+    assert mapper.count() == 1
+    assert mapper.get_workflow("nessus:999001") is not None
+    assert mapper.get_workflow("nessus:10114") is None
+
+
+@pytest.mark.unit
+def test_build_mapper_exclusive_without_path_falls_back(capsys):
+    """Exclusive with no path warns and keeps the bundled set.
+
+    Returning an empty mapper would look like a load failure rather than a
+    config mistake, so the fallback is deliberate.
+    """
+    from cerno_pkg.config import CernoConfig
+    from cerno_pkg.workflow_mapper import build_workflow_mapper
+
+    bundled_only = build_workflow_mapper(CernoConfig())
+    capsys.readouterr()
+
+    mapper = build_workflow_mapper(CernoConfig(custom_workflows_exclusive=True))
+    captured = capsys.readouterr()
+
+    assert mapper.count() == bundled_only.count() > 0
+    assert "custom_workflows_exclusive" in captured.err + captured.out
+
+
+@pytest.mark.integration
+def test_workflow_list_honors_custom_workflows_path(capsys, one_custom_workflow: Path):
+    """`cerno workflow list` must read custom_workflows_path.
+
+    Regression: the command built a bare WorkflowMapper() and accepted the file
+    only through its own -w flag, so the config key was silently ignored here
+    while `cerno review` and every MCP workflow tool honoured it.
+    """
+    import yaml
+
+    from cerno import workflow_list
+    from cerno_pkg import config as config_mod
+
+    workflow_list()
+    baseline = capsys.readouterr().out
+    assert "Only Custom Workflow" not in baseline
+
+    config_mod.get_config_path().write_text(
+        yaml.safe_dump({"custom_workflows_path": str(one_custom_workflow)}),
+        encoding="utf-8",
+    )
+    workflow_list()
+    out = capsys.readouterr().out
+
+    assert "Only Custom Workflow" in out.replace("\n", " ")
+    assert str(one_custom_workflow) in out.replace("\n", "")
+
+
+@pytest.mark.integration
+def test_workflow_list_honors_exclusive_mode(capsys, one_custom_workflow: Path):
+    """Exclusive mode hides the bundled workflows from `workflow list` too."""
+    import yaml
+
+    from cerno import workflow_list
+    from cerno_pkg import config as config_mod
+
+    config_mod.get_config_path().write_text(
+        yaml.safe_dump(
+            {
+                "custom_workflows_path": str(one_custom_workflow),
+                "custom_workflows_exclusive": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    workflow_list()
+    out = capsys.readouterr().out
+
+    assert "Only Custom Workflow" in out.replace("\n", " ")
+    assert "Total workflows: 1" in out
+    assert "ICMP Timestamp" not in out

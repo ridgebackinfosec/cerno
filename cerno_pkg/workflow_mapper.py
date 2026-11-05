@@ -353,18 +353,28 @@ class WorkflowMapper:
 
 
 def build_workflow_mapper(config: Optional[CernoConfig] = None) -> WorkflowMapper:
-    """Build a mapper of bundled workflows supplemented by ``custom_workflows_path``.
+    """Build the workflow mapper described by the config keys.
 
-    Mirrors the CLI's supplement mode (``cerno review`` with the config key set):
-    bundled ``workflow_mappings.yaml`` first, then the custom file merged on top
-    (custom overrides on finding_id conflict). A missing or empty custom file
-    leaves the bundled set. Built fresh per call so edits to either YAML are seen.
+    The single place workflows are loaded, so the config keys below apply
+    identically to the review TUI, ``cerno workflow list`` and every MCP
+    workflow tool. Built fresh per call so edits to either YAML are seen.
+
+    Two modes, chosen by ``custom_workflows_exclusive``:
+
+    * **supplement** (default) -- bundled ``workflow_mappings.yaml`` first, then
+      ``custom_workflows_path`` merged on top (custom overrides on finding_id
+      conflict). A missing or empty custom file leaves the bundled set.
+    * **exclusive** -- only ``custom_workflows_path`` is loaded, for testing a
+      workflow in isolation. Set without a path it warns and falls back to
+      supplement mode: exclusive-with-no-file would otherwise return zero
+      workflows, which reads as a load failure rather than a config mistake.
 
     Mapper warnings are routed to stderr: this runs inside the MCP server, where
     stdout is the JSON-RPC channel.
 
     Args:
-        config: Config source for ``custom_workflows_path``; loaded when None.
+        config: Config source for ``custom_workflows_path`` and
+            ``custom_workflows_exclusive``; loaded when None.
 
     Returns:
         A populated :class:`WorkflowMapper`.
@@ -374,10 +384,29 @@ def build_workflow_mapper(config: Optional[CernoConfig] = None) -> WorkflowMappe
 
         config = load_config()
 
+    custom_path = config.custom_workflows_path
+    exclusive = config.custom_workflows_exclusive
+
     with contextlib.redirect_stdout(sys.stderr):
+        if exclusive and not custom_path:
+            warn(
+                "custom_workflows_exclusive is set but custom_workflows_path is "
+                "empty - falling back to the bundled workflows."
+            )
+            exclusive = False
+
+        if exclusive and custom_path:
+            custom = Path(custom_path).expanduser()
+            mapper = WorkflowMapper(yaml_path=custom)
+            log_debug(
+                f"workflows: {mapper.count()} total "
+                f"(exclusive, from {custom}; bundled skipped)"
+            )
+            return mapper
+
         mapper = WorkflowMapper()
-        if config.custom_workflows_path:
-            custom = Path(config.custom_workflows_path).expanduser()
+        if custom_path:
+            custom = Path(custom_path).expanduser()
             added = mapper.load_additional_workflows(custom)
             log_debug(
                 f"workflows: {mapper.count()} total ({added} custom from {custom})"

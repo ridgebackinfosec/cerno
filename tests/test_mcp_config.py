@@ -142,6 +142,36 @@ def test_get_workflow_uses_custom(custom_wf):
     assert mcp.tool_get_workflow("nessus:100", config=CernoConfig()) is None
 
 
+def test_get_workflow_exclusive_hides_bundled(custom_wf):
+    """custom_workflows_exclusive drops the bundled set for MCP callers too.
+
+    The key is read by build_workflow_mapper(), the one loader every MCP
+    workflow tool goes through, so honoring it here is not optional.
+    """
+    bundled_id = "nessus:10114"  # ICMP Timestamp, a bundled workflow
+
+    supplement = CernoConfig(custom_workflows_path=str(custom_wf))
+    assert mcp.tool_get_workflow("nessus:100", config=supplement) is not None
+    assert mcp.tool_get_workflow(bundled_id, config=supplement) is not None
+
+    exclusive = CernoConfig(
+        custom_workflows_path=str(custom_wf), custom_workflows_exclusive=True
+    )
+    assert mcp.tool_get_workflow("nessus:100", config=exclusive) is not None
+    assert mcp.tool_get_workflow(bundled_id, config=exclusive) is None
+
+
+def test_workflow_gaps_respect_exclusive_mode(seeded, custom_wf):
+    """In exclusive mode only the custom file can close a gap."""
+    cfg = CernoConfig(
+        custom_workflows_path=str(custom_wf), custom_workflows_exclusive=True
+    )
+    rows = mcp.tool_list_workflow_gaps(
+        scan_ids=[seeded["scan_id"]], config=cfg, conn=seeded["conn"]
+    )
+    assert [r["plugin_id"] for r in rows] == ["nessus:200"]
+
+
 def test_resource_and_prompt_use_custom_workflow(seeded, custom_wf):
     cfg = CernoConfig(custom_workflows_path=str(custom_wf))
     text = mcp.resource_finding_workflow(seeded["f1"], conn=seeded["conn"], config=cfg)
@@ -441,6 +471,76 @@ def test_contribution_hint_uses_custom_workflows(seeded, custom_wf, tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# nuclei_min_severity
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def captured_nuclei_import(tmp_path, monkeypatch):
+    """Capture the min_severity that reaches import_nuclei_file.
+
+    The adapter resolves config -> importer argument; that resolution is the
+    contract under test, so the importer itself is stubbed out rather than
+    standing up a database and real results file.
+    """
+    import cerno_pkg.nuclei_import as nuclei_import
+
+    results = tmp_path / "results.json"
+    results.write_text("[]", encoding="utf-8")
+    seen: dict = {}
+
+    class _Result:
+        scan_name = "stub"
+        plugins_exported = 0
+        total_hosts = 0
+        severities: dict = {}
+
+    def fake_import(path, scans_root, *, scan_name=None, min_severity=0):
+        seen["min_severity"] = min_severity
+        return _Result()
+
+    monkeypatch.setattr(nuclei_import, "import_nuclei_file", fake_import)
+    return results, seen
+
+
+def _set_config(**values) -> None:
+    """Persist a config the adapter will pick up via load_config()."""
+    from cerno_pkg import config as config_mod
+
+    config_mod.get_config_path().write_text(yaml.safe_dump(values), encoding="utf-8")
+
+
+def test_import_nuclei_defaults_min_severity_from_config(captured_nuclei_import):
+    """Omitted min_severity falls back to the config key, not to 0."""
+    results, seen = captured_nuclei_import
+    _set_config(nuclei_min_severity=3)
+
+    mcp.tool_import_nuclei(str(results), scan_name="cfg-gated")
+
+    assert seen["min_severity"] == 3
+
+
+def test_import_nuclei_explicit_arg_beats_config(captured_nuclei_import):
+    """An explicit min_severity wins over the config key (MCP precedence)."""
+    results, seen = captured_nuclei_import
+    _set_config(nuclei_min_severity=3)
+
+    mcp.tool_import_nuclei(str(results), scan_name="arg-wins", min_severity=0)
+
+    assert seen["min_severity"] == 0
+
+
+def test_import_nuclei_unset_config_keeps_everything(captured_nuclei_import):
+    """With no config key set the default is still keep-all."""
+    results, seen = captured_nuclei_import
+    _set_config()
+
+    mcp.tool_import_nuclei(str(results), scan_name="default")
+
+    assert seen["min_severity"] == 0
+
+
+# ---------------------------------------------------------------------------
 # Contract: every config key is either applied by the MCP or explicitly N/A
 # ---------------------------------------------------------------------------
 
@@ -453,6 +553,8 @@ MCP_APPLIED = {
     "default_netexec_protocol",
     "nmap_default_profile",
     "custom_workflows_path",
+    "custom_workflows_exclusive",
+    "nuclei_min_severity",
     "nxc_workspace_path",
     "nxc_enrichment_enabled",
     "mcp_allow_execution",

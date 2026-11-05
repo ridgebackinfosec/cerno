@@ -408,10 +408,15 @@ def _finding_detail(ctx: dict) -> None:
 
 
 def _scan_list(ctx: dict) -> None:
-    """`cerno scan list` -- the Source column at a glance."""
+    """`cerno scan list` -- the Source column at a glance.
+
+    Renders the compact table. Width is the ``scan_list_wide`` config key now
+    (the ``--wide`` flag was removed), and the default is compact, so the
+    example matches what a reader sees with an untouched config.
+    """
     import cerno
 
-    cerno.list_scans(wide=False, json_output=False)
+    cerno.list_scans(json_output=False)
 
 
 def _host_comparison(ctx: dict) -> None:

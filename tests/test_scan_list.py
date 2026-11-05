@@ -1,4 +1,10 @@
-"""Tests for `cerno scan list` output modes (compact / --wide / --json)."""
+"""Tests for `cerno scan list` output modes (compact / wide / --json).
+
+The wide view is driven by the ``scan_list_wide`` config key; the ``--wide`` /
+``--details`` flags were removed in favour of it. ``--json`` stays a flag: it
+is an output channel, not a preference, and it short-circuits before any table
+is built.
+"""
 
 import json
 import sqlite3
@@ -15,6 +21,17 @@ def _column_separators(table_output: str) -> int:
         if "┳" in line:
             return line.count("┳")
     return 0
+
+
+def _set_wide(enabled: bool) -> None:
+    """Write scan_list_wide into the test-isolated config file."""
+    import yaml
+
+    from cerno_pkg import config as config_mod
+
+    config_mod.get_config_path().write_text(
+        yaml.safe_dump({"scan_list_wide": enabled}), encoding="utf-8"
+    )
 
 
 def _init_schema(conn: sqlite3.Connection) -> None:
@@ -45,7 +62,7 @@ def seeded_db(tmp_path, monkeypatch):
 def test_scan_list_json_is_parseable(seeded_db, capsys):
     from cerno import list_scans
 
-    list_scans(wide=False, json_output=True)
+    list_scans(json_output=True)
     out = capsys.readouterr().out
     data = json.loads(out)
     assert isinstance(data, list) and data
@@ -58,7 +75,7 @@ def test_scan_list_json_is_parseable(seeded_db, capsys):
 def test_scan_list_compact_has_eight_columns(seeded_db, capsys):
     from cerno import list_scans
 
-    list_scans(wide=False, json_output=False)
+    list_scans(json_output=False)
     out = capsys.readouterr().out
     assert "engagement" in out
     assert "Done %" in out
@@ -70,7 +87,8 @@ def test_scan_list_compact_has_eight_columns(seeded_db, capsys):
 def test_scan_list_wide_has_more_columns_than_compact(seeded_db, capsys):
     from cerno import list_scans
 
-    list_scans(wide=True, json_output=False)
+    _set_wide(True)
+    list_scans(json_output=False)
     wide_out = capsys.readouterr().out
     assert "engagement" in wide_out
     # Wide table has 11 columns (10 separators) — the full per-severity breakdown.
@@ -86,7 +104,7 @@ def test_scan_list_shows_the_scanner_for_each_scan(seeded_db, capsys):
     """
     from cerno import list_scans
 
-    list_scans(wide=False, json_output=False)
+    list_scans(json_output=False)
     out = capsys.readouterr().out
     assert "Source" in out
     assert "nessus" in out
@@ -98,7 +116,7 @@ def test_scan_list_json_includes_source(seeded_db, capsys):
 
     from cerno import list_scans
 
-    list_scans(wide=False, json_output=True)
+    list_scans(json_output=True)
     rows = json.loads(capsys.readouterr().out)
     assert rows and all("source" in r for r in rows)
     assert rows[0]["source"] == "nessus"
@@ -135,7 +153,56 @@ def test_scan_list_host_column_counts_machines(vhost_db, capsys):
     """Three vhosts on one IP are one machine, not three."""
     from cerno import list_scans
 
-    list_scans(wide=False, json_output=True)
+    list_scans(json_output=True)
     data = json.loads(capsys.readouterr().out)
 
     assert data[0]["unique_hosts"] == 1
+
+
+@pytest.fixture
+def same_second_db(tmp_path, monkeypatch):
+    """Four unreviewed scans sharing one `created_at`, as `cerno demo` produces.
+
+    `created_at` is CURRENT_TIMESTAMP at second resolution and an import takes
+    milliseconds, so this is the ordinary case for a scripted import, not a
+    contrived one.
+    """
+    dbfile = tmp_path / "cerno.db"
+    conn = sqlite3.connect(str(dbfile))
+    _init_schema(conn)
+    for name in ("alpha", "bravo", "charlie", "delta"):
+        Scan(scan_name=name, export_root=str(tmp_path)).save(conn)
+    conn.execute("UPDATE scans SET created_at = '2026-01-01 00:00:00'")
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(database, "DATABASE_PATH", dbfile)
+    return dbfile
+
+
+@pytest.mark.integration
+def test_scan_list_order_is_deterministic_when_created_at_ties(same_second_db):
+    """Scans tied on both sort keys must still come back in a fixed order.
+
+    `ORDER BY last_reviewed_at DESC NULLS LAST, created_at DESC` leaves scans
+    imported in the same second tied on *both* keys, and SQLite's row order for
+    a full tie is unspecified -- it follows the query plan. `cerno scan list`
+    therefore reordered itself between invocations, and the generated
+    `scan-list.svg` doc example drifted intermittently on CI (ubuntu 3.12 failed
+    on a commit whose other eleven jobs passed). `scan_id DESC` breaks the tie.
+    """
+    from cerno_pkg.database import get_connection
+
+    conn = get_connection()
+    expected = [s["scan_name"] for s in Scan.get_all_with_stats(conn)]
+
+    # A full table scan and an index-driven plan can emit tied rows in
+    # different orders; re-running under both must not change the answer.
+    for pragma in ("ANALYZE", "REINDEX"):
+        conn.execute(pragma)
+        assert [
+            s["scan_name"] for s in Scan.get_all_with_stats(conn)
+        ] == expected, f"order changed after {pragma}"
+        assert [s.scan_name for s in Scan.get_all(conn)] == expected
+
+    # Newest first, which for a tie on created_at means highest scan_id.
+    assert expected == ["delta", "charlie", "bravo", "alpha"]

@@ -1417,7 +1417,6 @@ def run_tool_workflow(
     sev_dir: Path,
     hosts: list[str],
     ports_str: str,
-    args,  # types.SimpleNamespace
     use_sudo: bool,
 ) -> bool:
     """
@@ -1434,7 +1433,6 @@ def run_tool_workflow(
         sev_dir: Severity directory
         hosts: List of target hosts
         ports_str: Comma-separated ports
-        args: Command-line arguments namespace
         use_sudo: Whether sudo is available
 
     Returns:
@@ -1530,14 +1528,11 @@ def run_tool_workflow(
     from .ops import ProxyConfig
     from .config import load_config as _load_config_for_proxy
 
+    # Config is the only source: the per-session --proxy/--no-proxy overrides
+    # were removed in favour of the proxychains_enabled key.
     _initial_config = _load_config_for_proxy()
-    _proxy_enabled = _initial_config.proxychains_enabled
-    if getattr(args, "proxy", False):
-        _proxy_enabled = True
-    elif getattr(args, "no_proxy", False):
-        _proxy_enabled = False
     proxy_config = ProxyConfig(
-        enabled=_proxy_enabled,
+        enabled=_initial_config.proxychains_enabled,
         host=_initial_config.proxychains_host,
         port=_initial_config.proxychains_port,
         # Full proxychains4 output is useful when diagnosing a dead tunnel

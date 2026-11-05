@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import re
 import shutil
-import types
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, List, Any, TYPE_CHECKING
@@ -368,7 +367,6 @@ def handle_finding_view(
     sev_dir: Optional[Path] = None,
     hosts: Optional[List[str]] = None,
     ports_str: Optional[str] = None,
-    args: Any = None,
     use_sudo: bool = False,
     use_proxy: bool = False,
 ) -> Optional[str]:
@@ -390,7 +388,6 @@ def handle_finding_view(
         sev_dir: Severity directory for tool workflow
         hosts: List of target hosts for tool workflow
         ports_str: Comma-separated ports for tool workflow
-        args: CLI arguments for tool workflow
         use_sudo: Whether to use sudo for tools
         use_proxy: Whether to route tools through proxychains4
 
@@ -451,7 +448,7 @@ def handle_finding_view(
             has_claude=has_claude,
             claude_installed=claude_installed,
             use_proxy=use_proxy,
-            no_tools=getattr(args, "no_tools", False),
+            no_tools=not _cfg.tools_enabled,
         )
         try:
             action_choice = Prompt.ask("Choose action").strip().lower()
@@ -486,10 +483,13 @@ def handle_finding_view(
         if action_choice in ("t", "tool"):
             # Review-only mode: [T] is hidden from the footer, but refuse here
             # too so typing it explicitly cannot start a tool run.
-            if getattr(args, "no_tools", False):
-                warn("Tool prompts are disabled for this session (--no-tools).")
+            if not _cfg.tools_enabled:
+                warn(
+                    "Tool prompts are disabled (tools_enabled is false). "
+                    "Re-enable with: cerno config set tools_enabled true"
+                )
                 continue
-            if scan_dir is None or sev_dir is None or hosts is None or args is None:
+            if scan_dir is None or sev_dir is None or hosts is None:
                 warn("Tool execution not available in this context.")
                 continue
             if not plugin or not finding:
@@ -507,7 +507,6 @@ def handle_finding_view(
                     sev_dir,
                     hosts,
                     ports_str or "",
-                    args,
                     use_sudo,
                 )
             except SystemExit:
@@ -703,7 +702,6 @@ def process_single_finding(
     finding: "Finding",
     scan_dir: Path,
     sev_dir: Optional[Path],
-    args: types.SimpleNamespace,
     use_sudo: bool,
     in_progress_total: List[str],
     done_total: List[str],
@@ -720,7 +718,6 @@ def process_single_finding(
         finding: Finding database object (required)
         scan_dir: Scan directory
         sev_dir: Severity directory
-        args: Command-line arguments
         use_sudo: Whether sudo is available
         in_progress_total: List to track findings marked in progress
         done_total: List to track findings marked done
@@ -763,7 +760,6 @@ def process_single_finding(
         sev_dir=sev_dir,
         hosts=hosts,
         ports_str=ports_str,
-        args=args,
         use_sudo=use_sudo,
         use_proxy=use_proxy,
     )

@@ -722,16 +722,24 @@ def tool_compare_scans(
 def tool_import_nuclei(
     nuclei_path: str,
     scan_name: Optional[str] = None,
-    min_severity: int = 0,
+    min_severity: Optional[int] = None,
 ) -> dict:
     """Import a nuclei JSON/JSONL results file. Returns import statistics.
 
     Accepts either shape nuclei writes -- a single JSON array (``-je``) or
     newline-delimited records (``-jle``/``-jsonl``) -- detected from the file
     contents rather than its extension.
+
+    ``min_severity`` omitted falls back to the ``nuclei_min_severity`` config
+    key (default 0 = keep all), per the MCP precedence contract: explicit tool
+    arg > config > hardcoded default.
     """
+    from ..config import load_config
     from ..constants import SCANS_ROOT
     from ..nuclei_import import import_nuclei_file
+
+    if min_severity is None:
+        min_severity = load_config().nuclei_min_severity
 
     path = Path(nuclei_path).expanduser()
     if not path.exists():
