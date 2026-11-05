@@ -472,10 +472,14 @@ SELECT
     f.reviewed_at,
     f.reviewed_by,
     f.review_notes,
-    COUNT(DISTINCT fah.host_id) as host_count,
+    -- Scan targets, not machines: hosts.scan_target is what a tool is pointed
+    -- at, and virtual hosting puts several on one IP. host_id would key the
+    -- (ip, target) pair and double-count a machine known by both.
+    COUNT(DISTINCT h.scan_target) as host_count,
     COUNT(DISTINCT fah.port_number) as port_count
 FROM findings f
 LEFT JOIN finding_affected_hosts fah ON f.finding_id = fah.finding_id
+LEFT JOIN hosts h ON fah.host_id = h.host_id
 GROUP BY f.finding_id, f.scan_id, f.plugin_id, f.review_state,
          f.reviewed_at, f.reviewed_by, f.review_notes;
 
@@ -576,13 +580,15 @@ SELECT
     sl.severity_label,
     p.has_metasploit,
     p.cvss3_score,
-    COUNT(DISTINCT fah.host_id) as affected_hosts,
+    -- Scan targets, not machines (see v_finding_stats.host_count).
+    COUNT(DISTINCT h.scan_target) as affected_hosts,
     COUNT(DISTINCT fah.port_number) as affected_ports
 FROM findings f
 JOIN scans s ON f.scan_id = s.scan_id
 JOIN plugins p ON f.plugin_id = p.plugin_id
 JOIN severity_levels sl ON p.severity_int = sl.severity_int
 LEFT JOIN finding_affected_hosts fah ON f.finding_id = fah.finding_id
+LEFT JOIN hosts h ON fah.host_id = h.host_id
 GROUP BY f.scan_id, s.scan_name, s.created_at, f.plugin_id, p.plugin_name,
          p.severity_int, sl.severity_label, p.has_metasploit, p.cvss3_score;
 

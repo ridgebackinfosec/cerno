@@ -535,7 +535,7 @@ def browse_file_list(
         Returns:
             Tuple of (host_count, ports_string)
         """
-        from cerno_pkg.database import query_one, get_connection
+        from cerno_pkg.database import get_connection
 
         with get_connection() as conn:
             if is_multi_scan and all_instances:
@@ -549,16 +549,7 @@ def browse_file_list(
                     [finding.finding_id] if finding.finding_id is not None else []
                 )
 
-            if not all_fids:
-                return (0, "")
-
-            placeholders = ",".join("?" * len(all_fids))
-            row = query_one(
-                conn,
-                f"SELECT COUNT(DISTINCT host_id) FROM finding_affected_hosts WHERE finding_id IN ({placeholders})",
-                tuple(all_fids),
-            )
-            return (row[0] if row else 0, "")
+            return (Finding.count_targets(all_fids, conn), "")
 
     # Initialize multi-scan tracking variables (updated each loop iteration)
     all_instances: dict[str, list["Finding"]] = {}
@@ -611,7 +602,9 @@ def browse_file_list(
         # Unique CVE count across all filtered candidates
         unique_cve_count = len({cve for _, p in candidates if p.cves for cve in p.cves})
 
-        # Unique host count across all filtered candidates (single DB query)
+        # Scan-target count across all filtered candidates (single DB query).
+        # Targets, not machines: this labels the [V] host list, so it must equal
+        # the number of lines that list renders.
         if candidates:
             if is_multi_scan and all_instances:
                 all_fids = [
@@ -626,16 +619,10 @@ def browse_file_list(
                 ]
 
             if all_fids:
-                from cerno_pkg.database import query_one, get_connection
+                from cerno_pkg.database import get_connection
 
-                placeholders = ",".join("?" * len(all_fids))
                 with get_connection() as conn:
-                    row = query_one(
-                        conn,
-                        f"SELECT COUNT(DISTINCT host_id) FROM finding_affected_hosts WHERE finding_id IN ({placeholders})",
-                        tuple(all_fids),
-                    )
-                unique_host_count = row[0] if row else 0
+                    unique_host_count = Finding.count_targets(all_fids, conn)
             else:
                 unique_host_count = 0
         else:

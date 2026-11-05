@@ -381,6 +381,33 @@ Supports both IP-targeted (internal) and FQDN-targeted (external) scans:
 
 **Relationships**: Referenced by `finding_affected_hosts`, `host_services`, `verified_ports`, `nse_script_results` and `nxc_flag_observations` (`host_id`)
 
+#### Hosts: machines vs scan targets
+
+Counting hosts means picking one of two quantities. They are different numbers,
+and `host_id` is the right key for neither.
+
+| Quantity | Key | Meaning | Counted by |
+|---|---|---|---|
+| **Machine** | `hosts.ip_address` | A box on the network | Scan overview "Unique Hosts", `cerno scan list`, MCP `list_scans.unique_hosts` |
+| **Scan target** | `hosts.scan_target` | A name or address you point a tool at | Findings-list "Hosts" column, `[V] View hosts (N)`, `Finding.count_targets()`, `v_finding_stats.host_count`, `v_scan_plugin_summary.affected_hosts` |
+
+`host_id` keys the `(ip_address, scan_target)` **pair**, so counting it
+double-counts a machine recorded under both its IP and its hostname. It is
+correct for *listing* (`list_hosts` returns one row per pair, losing nothing),
+never for a headline count.
+
+Virtual hosting is why these cannot be collapsed into one number: one IP
+legitimately serves many hostnames, each a distinct target that must be scanned
+separately. So a target count above a machine count is expected, not a bug, and
+host lists must keep emitting `scan_target` strings — that is what
+`<TARGET>` substitution, the MCP target-line tools and clipboard payloads feed
+into tools.
+
+Classify an address by its **value** (`parsing.is_ipv4()` / `is_ipv6()`), never
+by `scan_target_type`: that column describes the target string, so a host
+reached by hostname is `fqdn` even when its resolved IP is a valid IPv4 or IPv6
+address.
+
 ---
 
 ### ports
@@ -770,7 +797,7 @@ Replaces `host_count` and `port_count` columns from `findings` table.
 
 **Columns**:
 - `finding_id`, `scan_id`, `plugin_id`, `review_state`, `reviewed_at`, `reviewed_by`, `review_notes`
-- `host_count` - COUNT(DISTINCT host_id) from finding_affected_hosts
+- `host_count` - COUNT(DISTINCT hosts.scan_target) — **scan targets**, not machines (see [Hosts: machines vs scan targets](#hosts-machines-vs-scan-targets))
 - `port_count` - COUNT(DISTINCT port_number) from finding_affected_hosts
 
 **Usage**:
@@ -881,7 +908,7 @@ Plugin presence per scan with affected host counts - used by `cerno scan compare
 - `plugin_id`, `plugin_name`, `severity_int`, `severity_label`
 - `has_metasploit` - Metasploit module availability
 - `cvss3_score` - CVSS v3 base score
-- `affected_hosts` - COUNT(DISTINCT host_id) for this plugin in this scan
+- `affected_hosts` - COUNT(DISTINCT hosts.scan_target) for this plugin in this scan — **scan targets**, not machines (see [Hosts: machines vs scan targets](#hosts-machines-vs-scan-targets))
 - `affected_ports` - COUNT(DISTINCT port_number) for this plugin in this scan
 
 **Usage**:

@@ -85,6 +85,15 @@ resources, and prompts Cerno exposes.
 
 ### Tools
 
+> **What counts as a host.** `list_scans`'s `unique_hosts` counts **machines**
+> (distinct resolved IP). `list_hosts` and `top_hosts` return one row per
+> **scan target** — per `(ip_address, scan_target)` pair — so `len()` of those
+> results is a target count, not a machine count, and one IP serving several
+> virtual hosts correctly appears as several rows. `get_finding_hosts` and the
+> `generate_*` target lists are likewise per-target, because a vhost is only
+> reachable by its name. See
+> [DATABASE.md](DATABASE.md#hosts-machines-vs-scan-targets).
+
 | Category | Tools | Gated by |
 | --- | --- | --- |
 | Read | `list_scans`, `list_findings`, `search_findings`, `query_findings`, `get_finding_detail`, `get_finding_hosts`, `list_hosts`, `top_hosts`, `list_services`, `get_web_targets`, `list_cves`, `find_affected_by_cve`, `host_history`, `compare_scans`, `get_workflow`, `list_workflow_gaps`, `check_tools`, `list_executions`, `list_artifacts`, `get_finding_artifacts`, `read_artifact`, `get_finding_verdict`, `get_notes`, `get_config`, `get_capabilities` | always available |
