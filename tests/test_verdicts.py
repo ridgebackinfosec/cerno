@@ -18,9 +18,11 @@ def _seed_finding(conn: sqlite3.Connection) -> int:
     conn.execute("INSERT INTO scans (scan_name, export_root) VALUES ('s', '/tmp')")
     sid = conn.execute("SELECT scan_id FROM scans").fetchone()["scan_id"]
     conn.execute(
-        "INSERT INTO plugins (plugin_id, plugin_name, severity_int) VALUES (100,'SMB',3)"
+        "INSERT INTO plugins (plugin_id, plugin_name, severity_int) VALUES ('nessus:100','SMB',3)"
     )
-    conn.execute("INSERT INTO findings (scan_id, plugin_id) VALUES (?,100)", (sid,))
+    conn.execute(
+        "INSERT INTO findings (scan_id, plugin_id) VALUES (?,'nessus:100')", (sid,)
+    )
     fid = conn.execute("SELECT finding_id FROM findings").fetchone()["finding_id"]
     conn.commit()
     return fid

@@ -76,6 +76,7 @@ EXPECTED_TOOLS = {
     "set_review_state",
     "add_note",  # mcp_allow_mutations
     "import_nessus",  # mcp_allow_mutations
+    "import_nuclei",  # mcp_allow_mutations
     "ingest_results",  # mcp_allow_mutations
     "set_finding_verdict",  # mcp_allow_mutations
     "reveal_credential",  # mcp_allow_cred_reveal
@@ -94,7 +95,7 @@ EXPECTED_PROMPTS = {"triage_finding", "exploit_plan", "triage_scope", "verify_fi
 
 # Advisory tool annotations (hints clients use to decide auto-approval). Tools not
 # listed here intentionally carry no annotations (export_workflow_contribution,
-# add_note, import_nessus, reveal_credential).
+# add_note, import_nessus, import_nuclei, reveal_credential).
 EXPECTED_READONLY_TOOLS = {
     "list_scans",
     "list_findings",
@@ -143,6 +144,7 @@ EXPECTED_UNANNOTATED_TOOLS = {
     "export_workflow_contribution",
     "add_note",
     "import_nessus",
+    "import_nuclei",
     "reveal_credential",
 }
 
@@ -157,43 +159,7 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA foreign_keys=OFF")
     conn.executescript(database.SCHEMA_SQL_TABLES)
     conn.execute("PRAGMA foreign_keys=ON")
-    conn.executemany(
-        "INSERT INTO severity_levels VALUES (?, ?, ?, ?)",
-        [
-            (4, "Critical", 4, "#8B0000"),
-            (3, "High", 3, "#FF4500"),
-            (2, "Medium", 2, "#FFA500"),
-            (1, "Low", 1, "#FFD700"),
-            (0, "Info", 0, "#4682B4"),
-        ],
-    )
-    conn.executemany(
-        "INSERT INTO artifact_types (type_name, file_extension, description) VALUES (?, ?, ?)",
-        [("nmap_xml", ".xml", "Nmap XML output"), ("log", ".log", "Tool log")],
-    )
-    conn.executemany(
-        "INSERT INTO verdict_types (label, description) VALUES (?, ?)",
-        [
-            ("confirmed", "true positive"),
-            ("false_positive", "false positive"),
-            ("unable", "unable to verify"),
-        ],
-    )
-    conn.executemany(
-        "INSERT INTO nse_verdicts (label) VALUES (?)",
-        [("VULNERABLE",), ("NOT_VULNERABLE",), ("LIKELY_VULNERABLE",), ("UNKNOWN",)],
-    )
-    conn.executemany(
-        "INSERT INTO port_states (label) VALUES (?)",
-        [
-            ("open",),
-            ("closed",),
-            ("filtered",),
-            ("open|filtered",),
-            ("closed|filtered",),
-            ("unfiltered",),
-        ],
-    )
+    database.seed_lookup_tables(conn)
     conn.executescript(database.SCHEMA_SQL_VIEWS)
     conn.commit()
 
@@ -208,14 +174,14 @@ def contract(tmp_path, monkeypatch):
     scan_id = Scan(scan_name="engagement", export_root=str(tmp_path)).save(conn)
     Scan(scan_name="baseline", export_root=str(tmp_path)).save(conn)
     Plugin(
-        plugin_id=100,
+        plugin_id="nessus:100",
         plugin_name="SMB Signing",
         severity_int=4,
         has_metasploit=True,
         cves=["CVE-2021-1"],
         metasploit_names=["ms17_010"],
     ).save(conn)
-    finding_id = Finding(scan_id=scan_id, plugin_id=100).save(conn)
+    finding_id = Finding(scan_id=scan_id, plugin_id="nessus:100").save(conn)
     host_id = Host.get_or_create("10.0.0.1", "10.0.0.1", "ipv4", conn=conn)
     Port.get_or_create(445, conn=conn)
     conn.execute(
@@ -268,7 +234,9 @@ def contract(tmp_path, monkeypatch):
         "server": srv,
         "scan_id": scan_id,
         "finding_id": finding_id,
-        "plugin_id": 100,
+        # plugins.plugin_id is TEXT and namespaced per source from schema v5 on,
+        # so the MCP surface takes it as a string.
+        "plugin_id": "100",
         "artifact_id": artifact_id,
         "execution_id": exec_id,
         "host_ip": "10.0.0.1",
@@ -402,7 +370,7 @@ def test_tools_callable_through_server(contract):
         "export_workflow_contribution": {"finding_id": fid},
     }
     # execute_command + the async job tools (start/get/cancel/list_jobs are
-    # subprocess/async) and import_nessus (needs a file) are covered by the
+    # subprocess/async) and import_nessus/import_nuclei (need a file) are covered by the
     # inventory test + test_mcp_server.py/test_jobs.py; exercising them here would
     # add platform/side-effect flakiness.
     for name, result in _client_call_tools(s, args).items():
@@ -554,8 +522,8 @@ def test_prompts_do_not_touch_default_db(tmp_path, monkeypatch, temp_db):
     monkeypatch.setattr(database, "DATABASE_PATH", empty)
 
     scan_id = Scan(scan_name="s", export_root="/tmp").save(temp_db)
-    Plugin(plugin_id=1, plugin_name="P", severity_int=4).save(temp_db)
-    fid = Finding(scan_id=scan_id, plugin_id=1).save(temp_db)
+    Plugin(plugin_id="nessus:1", plugin_name="P", severity_int=4).save(temp_db)
+    fid = Finding(scan_id=scan_id, plugin_id="nessus:1").save(temp_db)
     host_id = Host.get_or_create("10.0.0.1", "10.0.0.1", "ipv4", conn=temp_db)
     Port.get_or_create(445, conn=temp_db)
     temp_db.execute(
@@ -569,3 +537,191 @@ def test_prompts_do_not_touch_default_db(tmp_path, monkeypatch, temp_db):
     assert "P" in mcp.prompt_triage_finding(fid, conn=temp_db)
     assert "P" in mcp.prompt_exploit_plan(fid, conn=temp_db)
     assert "s" in mcp.prompt_triage_scope(scan_id, conn=temp_db)
+
+
+# ---------------------------------------------------------------------------
+# Async dispatch. The SDK decides sync-vs-async from the object it is handed,
+# so a sync wrapper around an `async def` tool makes it run on a worker thread
+# and return an un-awaited coroutine. The body never executes, and because
+# these tools are annotated `-> dict` there is no output model to reject it —
+# `pydantic_core.to_json(..., fallback=str)` stringifies the coroutine and the
+# client sees a *successful* "<coroutine object ...>" string.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_every_tool_is_registered_with_the_right_async_flag():
+    """Catches the whole class of bug, not just the three tools that hit it.
+
+    `functools.wraps` copies `__name__`/`__wrapped__` but does not make a
+    function a coroutine function, and the SDK's `is_async_callable` does not
+    unwrap — so a sync wrapper silently downgrades an async tool.
+    """
+    import inspect
+
+    srv = build_server(
+        CernoConfig(
+            mcp_allow_execution=True,
+            mcp_allow_mutations=True,
+            mcp_allow_batch=True,
+            mcp_allow_cred_reveal=True,
+        )
+    )
+    mismatched = {
+        name: (tool.is_async, inspect.iscoroutinefunction(inspect.unwrap(tool.fn)))
+        for name, tool in srv._tool_manager._tools.items()
+        if tool.is_async != inspect.iscoroutinefunction(inspect.unwrap(tool.fn))
+    }
+    assert not mismatched, (
+        "tools registered with the wrong async flag — the SDK will run these on "
+        f"a worker thread and return an un-awaited coroutine: {mismatched}"
+    )
+
+
+@pytest.mark.unit
+def test_visible_errors_preserves_coroutine_functions():
+    async def tool() -> dict:
+        return {"ok": True}
+
+    wrapped = mcp._visible_errors(tool)
+    import inspect
+
+    assert inspect.iscoroutinefunction(wrapped)
+    assert _run(wrapped()) == {"ok": True}
+
+
+@pytest.mark.unit
+def test_visible_errors_translates_valueerror_from_an_async_tool():
+    """The wrapper's own job, which it could not do for an async tool.
+
+    A ValueError raised inside the coroutine body never reached the sync
+    `except`, because the body did not run inside the `try`.
+    """
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    async def tool() -> dict:
+        raise ValueError("No finding with id 42")
+
+    wrapped = mcp._visible_errors(tool)
+    with pytest.raises(ToolError, match="No finding with id 42"):
+        _run(wrapped())
+
+
+@pytest.mark.unit
+def test_visible_errors_leaves_sync_tools_alone():
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    def ok() -> dict:
+        return {"ok": True}
+
+    def bad() -> dict:
+        raise ValueError("boom")
+
+    import inspect
+
+    assert not inspect.iscoroutinefunction(mcp._visible_errors(ok))
+    assert mcp._visible_errors(ok)() == {"ok": True}
+    with pytest.raises(ToolError, match="boom"):
+        mcp._visible_errors(bad)()
+
+
+@pytest.mark.integration
+def test_async_tool_round_trips_through_a_real_client():
+    """End-to-end through the SDK, with no subprocess or platform dependence.
+
+    This is the shape the live server failed at: the client received the
+    stringified coroutine as a successful text result.
+    """
+    from mcp.server.mcpserver import MCPServer
+
+    srv = MCPServer("async-probe")
+
+    async def probe() -> dict:
+        return {"ran": True}
+
+    # Register the *wrapped* function, exactly as build_server's shadowed
+    # registrar does (`deco(_visible_errors(fn))`). Wrapping after registration
+    # would leave is_async already computed from the original and miss the bug.
+    srv.tool()(mcp._visible_errors(probe))
+
+    (result,) = _client_call_tools(srv, {"probe": {}}).values()
+    detail = result.content[0].text if result.content else ""
+    assert not result.is_error, detail
+    assert (
+        "coroutine object" not in detail
+    ), f"the tool returned an un-awaited coroutine instead of running: {detail}"
+    assert "ran" in detail
+
+
+# ---------------------------------------------------------------------------
+# Ingest reporting. The SDK builds each tool's output schema from its TypedDict
+# and drops anything absent from it, so a field present only on the dataclass
+# reaches the text body and is silently stripped from structured_content -- the
+# typed path clients actually read. nuclei_matches shipped that way in 3.0.0.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_ingest_result_matches_ingest_summary():
+    """Every field IngestSummary reports must be declared on IngestResult.
+
+    This is the guard the original bug needed: a count that exists on the
+    dataclass but not the TypedDict is not an error anywhere, it just never
+    reaches the client.
+    """
+    import dataclasses
+    import typing
+
+    from cerno_pkg.ingest import IngestSummary
+
+    summary = IngestSummary(execution_id=1, tool_name="nuclei")
+    reported = set(summary.as_dict())
+    declared = set(typing.get_type_hints(mcp.IngestResult))
+
+    missing = reported - declared
+    assert not missing, (
+        f"IngestSummary.as_dict() reports {sorted(missing)}, which IngestResult "
+        "does not declare — the SDK will strip them from structured_content"
+    )
+    # Guard the dataclass side too, so the two cannot drift in either direction.
+    assert {f.name for f in dataclasses.fields(IngestSummary)} <= reported | {
+        "nse_verdicts"
+    }
+
+
+@pytest.mark.integration
+def test_nuclei_ingest_count_reaches_structured_content(contract, tmp_path):
+    """The symptom: 28 rows written, structured_content reporting all zeros."""
+    from pathlib import Path
+
+    import cerno_pkg.database as database
+    from cerno_pkg.models import Artifact, ArtifactType
+
+    fixture = Path(__file__).parent / "fixtures" / "nuclei" / "web_scan.json"
+
+    with database.get_connection() as c:
+        c.execute(
+            "INSERT INTO tool_executions (tool_name, command_text, finding_id) "
+            "VALUES ('nuclei', 'nuclei -jle out.jsonl', ?)",
+            (contract["finding_id"],),
+        )
+        eid = c.execute("SELECT MAX(execution_id) e FROM tool_executions").fetchone()[
+            "e"
+        ]
+        type_row = ArtifactType.get_by_name("nuclei_json", c)
+        assert type_row is not None
+        Artifact(
+            execution_id=eid,
+            artifact_path=str(fixture),
+            artifact_type_id=type_row.artifact_type_id,
+        ).save(c)
+        c.commit()
+
+    (result,) = _client_call_tools(
+        contract["server"], {"ingest_results": {"execution_id": eid}}
+    ).values()
+    assert not result.is_error, result.content[0].text if result.content else ""
+    structured = result.structured_content or {}
+    assert structured.get("nuclei_matches") == 28, (
+        "the ingest count did not survive the output schema: " f"{structured!r}"
+    )

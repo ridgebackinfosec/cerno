@@ -20,13 +20,22 @@ from .constants import COLOR_SCHEMES
 #: a local command are included. Deliberately excluded (opt in via config): shells and
 #: interpreters, GTFOBins-style escapes (find, awk, sed, xargs, tar, git, ssh, nc,
 #: socat, tcpdump, smbclient/rpcclient `!`), and active-attack or noisy tools
-#: (responder, ntlmrelayx.py, hping3, ffuf, gobuster, feroxbuster, nuclei).
+#: (responder, ntlmrelayx.py, hping3, ffuf, gobuster, feroxbuster).
+#:
+#: Note on ``nuclei``: matching is on the binary basename, so the caller chooses the
+#: arguments. nuclei runs ``code:``-protocol templates when passed ``-code`` (the
+#: bundled template set ships ~960 of them, signed), and can read local files via
+#: ``-l`` and write them via ``-o``/``-je``/``-me``. That is the same risk class as
+#: ``curl``/``wget`` above, which can also read and write local files — it is
+#: allowlisted on that basis, not because it is inert. The denylist and scope
+#: enforcement still apply.
 DEFAULT_MCP_EXEC_ALLOWLIST: tuple[str, ...] = (
     # Core tools
     "nmap",
     "nxc",
     "netexec",
     "msfconsole",
+    "nuclei",
     # HTTP fetch
     "curl",
     "wget",
@@ -217,6 +226,53 @@ class CernoConfig:
         },
     )
     """Path to custom workflows YAML."""
+
+    nuclei_templates_path: str = field(
+        default="~/nuclei-templates",
+        metadata={
+            "section": "Tools & Workflows",
+            "kind": "path",
+            "help": "nuclei templates directory (-ud)",
+        },
+    )
+    """Templates directory passed to nuclei as ``-ud``.
+
+    Used only to build the suggested command printed after an import; Cerno
+    never reads the directory itself."""
+
+    nuclei_profile: Optional[str] = field(
+        default="~/nuclei-templates/profiles/pentest.yml",
+        metadata={
+            "section": "Tools & Workflows",
+            "kind": "path",
+            "help": "nuclei profile YAML (-profile)",
+            "placeholder": "(none)",
+        },
+    )
+    """Profile passed to nuclei as ``-profile``. Empty or unset omits the flag."""
+
+    nuclei_user_agent: str = field(
+        default=(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) "
+            "Gecko/20100101 Firefox/132.0"
+        ),
+        metadata={
+            "section": "Tools & Workflows",
+            "kind": "str",
+            "help": "User-Agent nuclei sends (-H)",
+        },
+    )
+    """User-Agent header for the suggested nuclei command."""
+
+    nuclei_concurrency: int = field(
+        default=10,
+        metadata={
+            "section": "Tools & Workflows",
+            "kind": "int",
+            "help": "nuclei template concurrency (-c)",
+        },
+    )
+    """Template concurrency passed to nuclei as ``-c``."""
 
     # Logging
     debug_logging: bool = field(
@@ -504,6 +560,12 @@ MCP_NOT_APPLICABLE_KEYS: frozenset[str] = frozenset(
         "pivot_interface",
         "pivot_http_port",
         "top_ports_count",
+        # These only shape the nuclei command suggested after a CLI import;
+        # the MCP server prints no suggestions.
+        "nuclei_templates_path",
+        "nuclei_profile",
+        "nuclei_user_agent",
+        "nuclei_concurrency",
     }
 )
 

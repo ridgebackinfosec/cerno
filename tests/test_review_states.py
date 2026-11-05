@@ -28,8 +28,8 @@ def _seed_finding(conn, state="unreviewed") -> Finding:
     """Insert one scan + plugin + finding in the given review state."""
     scan_id = Scan(scan_name="s1", export_root="/tmp").save(conn)
     assert scan_id is not None
-    Plugin(plugin_id=1001, plugin_name="Test", severity_int=3).save(conn)
-    finding = Finding(scan_id=scan_id, plugin_id=1001, review_state=state)
+    Plugin(plugin_id="nessus:1001", plugin_name="Test", severity_int=3).save(conn)
+    finding = Finding(scan_id=scan_id, plugin_id="nessus:1001", review_state=state)
     finding.save(conn)
     return finding
 
@@ -86,12 +86,13 @@ class TestReviewStateCheckConstraint:
 
     def test_import_default_is_unreviewed(self, temp_db):
         scan_id = Scan(scan_name="s", export_root="/tmp").save(temp_db)
-        Plugin(plugin_id=7, plugin_name="p", severity_int=1).save(temp_db)
+        Plugin(plugin_id="nessus:7", plugin_name="p", severity_int=1).save(temp_db)
         temp_db.execute(
-            "INSERT INTO findings (scan_id, plugin_id) VALUES (?, 7)", (scan_id,)
+            "INSERT INTO findings (scan_id, plugin_id) VALUES (?, 'nessus:7')",
+            (scan_id,),
         )
         row = temp_db.execute(
-            "SELECT review_state FROM findings WHERE plugin_id = 7"
+            "SELECT review_state FROM findings WHERE plugin_id = 'nessus:7'"
         ).fetchone()
         assert row[0] == "unreviewed"
 
@@ -200,10 +201,10 @@ class TestCountByScanSeverity:
         scan_id = Scan(scan_name="s", export_root="/tmp").save(temp_db)
         assert scan_id is not None
         for pid, state in (
-            (1, "unreviewed"),
-            (2, "in_progress"),
-            (3, "done"),
-            (4, "done"),
+            ("nessus:1", "unreviewed"),
+            ("nessus:2", "in_progress"),
+            ("nessus:3", "done"),
+            ("nessus:4", "done"),
         ):
             Plugin(plugin_id=pid, plugin_name=f"p{pid}", severity_int=3).save(temp_db)
             Finding(scan_id=scan_id, plugin_id=pid, review_state=state).save(temp_db)
@@ -224,9 +225,13 @@ class TestCountByScanSeverity:
         a = Scan(scan_name="a", export_root="/tmp").save(temp_db)
         b = Scan(scan_name="b", export_root="/tmp").save(temp_db)
         assert a is not None and b is not None
-        Plugin(plugin_id=1, plugin_name="p1", severity_int=3).save(temp_db)
-        Finding(scan_id=a, plugin_id=1, review_state="unreviewed").save(temp_db)
-        Finding(scan_id=b, plugin_id=1, review_state="in_progress").save(temp_db)
+        Plugin(plugin_id="nessus:1", plugin_name="p1", severity_int=3).save(temp_db)
+        Finding(scan_id=a, plugin_id="nessus:1", review_state="unreviewed").save(
+            temp_db
+        )
+        Finding(scan_id=b, plugin_id="nessus:1", review_state="in_progress").save(
+            temp_db
+        )
         counts = Finding.count_by_scan_severity(
             a, "3_High", conn=temp_db, scan_ids=[a, b]
         )
@@ -282,16 +287,16 @@ class TestFilterFindingCandidates:
     def _records():
         return [
             (
-                Finding(plugin_id=1, review_state="unreviewed"),
-                Plugin(plugin_id=1, plugin_name="SSL Weak Cipher"),
+                Finding(plugin_id="nessus:1", review_state="unreviewed"),
+                Plugin(plugin_id="nessus:1", plugin_name="SSL Weak Cipher"),
             ),
             (
-                Finding(plugin_id=2, review_state="in_progress"),
-                Plugin(plugin_id=2, plugin_name="SSL Self-Signed"),
+                Finding(plugin_id="nessus:2", review_state="in_progress"),
+                Plugin(plugin_id="nessus:2", plugin_name="SSL Self-Signed"),
             ),
             (
-                Finding(plugin_id=3, review_state="in_progress"),
-                Plugin(plugin_id=3, plugin_name="SMB Signing"),
+                Finding(plugin_id="nessus:3", review_state="in_progress"),
+                Plugin(plugin_id="nessus:3", plugin_name="SMB Signing"),
             ),
         ]
 
@@ -304,30 +309,34 @@ class TestFilterFindingCandidates:
 
         assert self._ids(
             filter_finding_candidates(self._records(), "", None, None)
-        ) == [1, 2, 3]
+        ) == ["nessus:1", "nessus:2", "nessus:3"]
 
     def test_in_progress_only(self):
         from cerno_pkg.tui import filter_finding_candidates
 
         result = filter_finding_candidates(self._records(), "", None, "in_progress")
-        assert self._ids(result) == [2, 3]
+        assert self._ids(result) == ["nessus:2", "nessus:3"]
 
     def test_combines_with_name_filter(self):
         from cerno_pkg.tui import filter_finding_candidates
 
         result = filter_finding_candidates(self._records(), "ssl", None, "in_progress")
-        assert self._ids(result) == [2]
+        assert self._ids(result) == ["nessus:2"]
 
     def test_combines_with_group_filter(self):
         from cerno_pkg.tui import filter_finding_candidates
 
-        group = (1, {"Plugin 3: SMB Signing", "Plugin 1: SSL Weak Cipher"}, "desc")
+        group = (
+            1,
+            {"Finding nessus:3: SMB Signing", "Finding nessus:1: SSL Weak Cipher"},
+            "desc",
+        )
         assert self._ids(
             filter_finding_candidates(self._records(), "", group, None)
-        ) == [1, 3]
+        ) == ["nessus:1", "nessus:3"]
         assert self._ids(
             filter_finding_candidates(self._records(), "", group, "in_progress")
-        ) == [3]
+        ) == ["nessus:3"]
 
 
 @pytest.mark.integration

@@ -35,10 +35,10 @@ def _seed_nmap_execution(
     conn.execute("INSERT INTO scans (scan_name, export_root) VALUES ('s', '/tmp')")
     scan_id = conn.execute("SELECT scan_id FROM scans").fetchone()["scan_id"]
     conn.execute(
-        "INSERT INTO plugins (plugin_id, plugin_name, severity_int) VALUES (100, 'SMB', 3)"
+        "INSERT INTO plugins (plugin_id, plugin_name, severity_int) VALUES ('nessus:100', 'SMB', 3)"
     )
     conn.execute(
-        "INSERT INTO findings (scan_id, plugin_id) VALUES (?, 100)", (scan_id,)
+        "INSERT INTO findings (scan_id, plugin_id) VALUES (?, 'nessus:100')", (scan_id,)
     )
     finding_id = conn.execute("SELECT finding_id FROM findings").fetchone()[
         "finding_id"
@@ -95,10 +95,10 @@ class TestIngestNmap:
         )
         sid = temp_db.execute("SELECT scan_id FROM scans").fetchone()["scan_id"]
         temp_db.execute(
-            "INSERT INTO plugins (plugin_id, plugin_name, severity_int) VALUES (1,'P',1)"
+            "INSERT INTO plugins (plugin_id, plugin_name, severity_int) VALUES ('nessus:1','P',1)"
         )
         temp_db.execute(
-            "INSERT INTO findings (scan_id, plugin_id) VALUES (?,1)", (sid,)
+            "INSERT INTO findings (scan_id, plugin_id) VALUES (?,'nessus:1')", (sid,)
         )
         fid = temp_db.execute("SELECT finding_id FROM findings").fetchone()[
             "finding_id"
@@ -266,3 +266,355 @@ class TestIngestEdgeCases:
         temp_db.commit()
         summary = ingest.ingest_execution(eid, conn=temp_db)
         assert "no ingester" in (summary.skipped_reason or "")
+
+
+NUCLEI_FIXTURES = Path(__file__).parent / "fixtures" / "nuclei"
+
+
+def _seed_nuclei_execution(
+    conn: sqlite3.Connection,
+    json_name: str,
+    *,
+    tool_name: str = "nuclei",
+    command_text: str = "nuclei -l t.txt -jle out.jsonl",
+    artifact_type: str = "nuclei_json",
+) -> int:
+    """Seed a scan/plugin/finding + nuclei execution with a nuclei_json artifact."""
+    conn.execute("INSERT INTO scans (scan_name, export_root) VALUES ('s', '/tmp')")
+    scan_id = conn.execute("SELECT scan_id FROM scans").fetchone()["scan_id"]
+    conn.execute(
+        "INSERT INTO plugins (plugin_id, plugin_name, severity_int) "
+        "VALUES ('nessus:100', 'HTTP', 2)"
+    )
+    conn.execute(
+        "INSERT INTO findings (scan_id, plugin_id) VALUES (?, 'nessus:100')", (scan_id,)
+    )
+    finding_id = conn.execute("SELECT finding_id FROM findings").fetchone()[
+        "finding_id"
+    ]
+    conn.execute(
+        "INSERT INTO tool_executions (tool_name, command_text, finding_id) "
+        "VALUES (?, ?, ?)",
+        (tool_name, command_text, finding_id),
+    )
+    execution_id = conn.execute("SELECT execution_id FROM tool_executions").fetchone()[
+        "execution_id"
+    ]
+    type_row = ArtifactType.get_by_name(artifact_type, conn)
+    assert type_row is not None, f"{artifact_type} must be a seeded artifact type"
+    Artifact(
+        execution_id=execution_id,
+        artifact_path=str(NUCLEI_FIXTURES / json_name),
+        artifact_type_id=type_row.artifact_type_id,
+    ).save(conn)
+    conn.commit()
+    return execution_id
+
+
+def _observations(conn: sqlite3.Connection, execution_id: int) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM nuclei_match_observations WHERE execution_id = ? "
+        "ORDER BY observation_id",
+        (execution_id,),
+    ).fetchall()
+
+
+@pytest.mark.integration
+class TestIngestNuclei:
+    """A nuclei run's matches land as evidence, not as new findings."""
+
+    def test_ingests_matches_from_the_json_artifact(
+        self, temp_db: sqlite3.Connection
+    ) -> None:
+        eid = _seed_nuclei_execution(temp_db, "web_scan.json")
+        summary = ingest.ingest_execution(eid, conn=temp_db)
+        assert summary.skipped_reason is None
+        assert summary.nuclei_matches == 28  # every match in the fixture
+        rows = _observations(temp_db, eid)
+        assert len(rows) == 28
+        assert all(r["template_ref"] for r in rows)
+        # Severity comes from the template, resolved against severity_levels.
+        assert all(0 <= r["severity_int"] <= 4 for r in rows)
+
+    def test_keeps_matches_that_differ_only_by_extracted_results(
+        self, temp_db: sqlite3.Connection
+    ) -> None:
+        """Both matcher_name and extracted must be part of the identity key.
+
+        http-missing-security-headers reports several matches on one host:port
+        differing only by matcher_name; tls-version carries no matcher name at
+        all and differs only by extracted-results. Keying on either alone
+        silently collapses rows and loses evidence -- which is exactly what
+        happened before `extracted` joined the key.
+        """
+        eid = _seed_nuclei_execution(temp_db, "web_scan.json")
+        ingest.ingest_execution(eid, conn=temp_db)
+
+        tls = temp_db.execute(
+            "SELECT matcher_name, extracted FROM nuclei_match_observations "
+            "WHERE template_ref = 'tls-version' AND execution_id = ?",
+            (eid,),
+        ).fetchall()
+        assert len(tls) > 1, "tls-version's multiple matches must all survive"
+        assert all(r["matcher_name"] is None for r in tls)
+        assert len({r["extracted"] for r in tls}) == len(tls)
+
+    def test_creates_no_findings(self, temp_db: sqlite3.Connection) -> None:
+        """Ingest is evidence; `cerno import nuclei` is what creates findings."""
+        eid = _seed_nuclei_execution(temp_db, "web_scan.json")
+        before = temp_db.execute("SELECT COUNT(*) FROM findings").fetchone()[0]
+        ingest.ingest_execution(eid, conn=temp_db)
+        after = temp_db.execute("SELECT COUNT(*) FROM findings").fetchone()[0]
+        assert after == before
+
+    def test_reingest_is_idempotent(self, temp_db: sqlite3.Connection) -> None:
+        eid = _seed_nuclei_execution(temp_db, "web_scan.json")
+        first = ingest.ingest_execution(eid, conn=temp_db)
+        ids_first = [r["observation_id"] for r in _observations(temp_db, eid)]
+        second = ingest.ingest_execution(eid, conn=temp_db)
+        ids_second = [r["observation_id"] for r in _observations(temp_db, eid)]
+        assert second.nuclei_matches == first.nuclei_matches
+        # Rows are reconciled in place, so primary keys survive a re-ingest.
+        assert ids_second == ids_first
+
+    def test_jsonl_shape_agrees_with_array(self, temp_db: sqlite3.Connection) -> None:
+        eid = _seed_nuclei_execution(temp_db, "web_scan.jsonl")
+        summary = ingest.ingest_execution(eid, conn=temp_db)
+        assert summary.nuclei_matches == 28
+
+    def test_dispatches_on_the_binary_not_the_tool_name(
+        self, temp_db: sqlite3.Connection
+    ) -> None:
+        """MCP logs every run as tool_name='mcp'; the binary is in command_text."""
+        eid = _seed_nuclei_execution(
+            temp_db,
+            "web_scan.json",
+            tool_name="mcp",
+            command_text="proxychains4 nuclei -l t.txt -jle out.jsonl",
+        )
+        summary = ingest.ingest_execution(eid, conn=temp_db)
+        assert summary.skipped_reason is None
+        assert summary.nuclei_matches == 28
+
+    def test_missing_artifact_is_skipped_not_raised(
+        self, temp_db: sqlite3.Connection
+    ) -> None:
+        eid = _seed_nuclei_execution(temp_db, "web_scan.json", artifact_type="log")
+        summary = ingest.ingest_execution(eid, conn=temp_db)
+        assert summary.nuclei_matches == 0
+        assert "nuclei_json" in (summary.skipped_reason or "")
+
+    def test_empty_output_is_skipped_not_raised(
+        self, temp_db: sqlite3.Connection
+    ) -> None:
+        eid = _seed_nuclei_execution(temp_db, "empty.jsonl")
+        summary = ingest.ingest_execution(eid, conn=temp_db)
+        assert summary.nuclei_matches == 0
+        assert summary.skipped_reason is not None
+
+    def test_malformed_output_is_skipped_not_raised(
+        self, temp_db: sqlite3.Connection
+    ) -> None:
+        """parse_nuclei_file never raises, so a truncated run must not either."""
+        eid = _seed_nuclei_execution(temp_db, "malformed.json")
+        summary = ingest.ingest_execution(eid, conn=temp_db)
+        assert summary.nuclei_matches >= 0  # no exception is the assertion
+
+    def test_view_resolves_the_severity_label(
+        self, temp_db: sqlite3.Connection
+    ) -> None:
+        eid = _seed_nuclei_execution(temp_db, "web_scan.json")
+        ingest.ingest_execution(eid, conn=temp_db)
+        row = temp_db.execute(
+            "SELECT severity_label, ip_address FROM v_nuclei_observations LIMIT 1"
+        ).fetchone()
+        assert row is not None and row["severity_label"]
+        assert row["ip_address"]
+
+    def test_observations_cascade_with_the_execution(
+        self, temp_db: sqlite3.Connection
+    ) -> None:
+        eid = _seed_nuclei_execution(temp_db, "web_scan.json")
+        ingest.ingest_execution(eid, conn=temp_db)
+        temp_db.execute("DELETE FROM tool_executions WHERE execution_id = ?", (eid,))
+        temp_db.commit()
+        assert _observations(temp_db, eid) == []
+
+
+@pytest.mark.integration
+class TestTuiRunArtifactsIngest:
+    """The TUI's run loop must register what ingest_execution needs.
+
+    Artifact registration used to be gated on `selected_tool.name == "nmap"`,
+    so a `[T]` nuclei run logged an execution with no artifact and
+    ingest_results reported "no nuclei_json artifact registered". These tests
+    pin that the two halves agree on the output path.
+    """
+
+    def _seed_execution(self, conn: sqlite3.Connection, tool_name: str) -> int:
+        conn.execute("INSERT INTO scans (scan_name, export_root) VALUES ('s', '/tmp')")
+        scan_id = conn.execute("SELECT scan_id FROM scans").fetchone()["scan_id"]
+        conn.execute(
+            "INSERT INTO plugins (plugin_id, plugin_name, severity_int) "
+            "VALUES ('nessus:100', 'HTTP', 2)"
+        )
+        conn.execute(
+            "INSERT INTO findings (scan_id, plugin_id) VALUES (?, 'nessus:100')",
+            (scan_id,),
+        )
+        finding_id = conn.execute("SELECT finding_id FROM findings").fetchone()[
+            "finding_id"
+        ]
+        conn.execute(
+            "INSERT INTO tool_executions (tool_name, command_text, finding_id) "
+            "VALUES (?, 'x', ?)",
+            (tool_name, finding_id),
+        )
+        conn.commit()
+        return conn.execute(
+            "SELECT MAX(execution_id) e FROM tool_executions"
+        ).fetchone()["e"]
+
+    def test_nuclei_run_registers_its_json(
+        self, temp_db: sqlite3.Connection, tmp_path
+    ) -> None:
+        from cerno_pkg.ops import log_artifacts_for_run
+        from cerno_pkg.tools import nuclei_scan_output
+
+        eid = self._seed_execution(temp_db, "nuclei")
+        oabase = tmp_path / "run"
+        # The command builder and the artifact logger must agree on this path.
+        Path(nuclei_scan_output(oabase)).write_text(
+            (NUCLEI_FIXTURES / "web_scan.jsonl").read_text(), encoding="utf-8"
+        )
+
+        ids = log_artifacts_for_run("nuclei", eid, oabase, conn=temp_db)
+        assert len(ids) == 1
+        row = temp_db.execute(
+            "SELECT t.type_name FROM artifacts a "
+            "JOIN artifact_types t ON a.artifact_type_id = t.artifact_type_id "
+            "WHERE a.execution_id = ?",
+            (eid,),
+        ).fetchone()
+        assert row["type_name"] == "nuclei_json"
+
+    def test_registered_run_then_ingests(
+        self, temp_db: sqlite3.Connection, tmp_path
+    ) -> None:
+        """The whole point: register the way the TUI does, then ingest."""
+        from cerno_pkg.ops import log_artifacts_for_run
+        from cerno_pkg.tools import nuclei_scan_output
+
+        eid = self._seed_execution(temp_db, "nuclei")
+        oabase = tmp_path / "run"
+        Path(nuclei_scan_output(oabase)).write_text(
+            (NUCLEI_FIXTURES / "web_scan.jsonl").read_text(), encoding="utf-8"
+        )
+        log_artifacts_for_run("nuclei", eid, oabase, conn=temp_db)
+
+        summary = ingest.ingest_execution(eid, conn=temp_db)
+        assert summary.skipped_reason is None
+        assert summary.nuclei_matches == 28
+
+    def test_missing_output_is_not_an_error(
+        self, temp_db: sqlite3.Connection, tmp_path
+    ) -> None:
+        """A nuclei run that matched nothing writes no file."""
+        from cerno_pkg.ops import log_artifacts_for_run
+
+        eid = self._seed_execution(temp_db, "nuclei")
+        assert (
+            log_artifacts_for_run("nuclei", eid, tmp_path / "run", conn=temp_db) == []
+        )
+
+    def test_tool_with_no_artifacts_is_a_noop(
+        self, temp_db: sqlite3.Connection, tmp_path
+    ) -> None:
+        from cerno_pkg.ops import log_artifacts_for_run
+
+        eid = self._seed_execution(temp_db, "metasploit")
+        for tool in ("metasploit", "Custom command", ""):
+            assert (
+                log_artifacts_for_run(tool, eid, tmp_path / "run", conn=temp_db) == []
+            )
+
+    def test_nmap_still_registers_its_triple(
+        self, temp_db: sqlite3.Connection, tmp_path
+    ) -> None:
+        from cerno_pkg.ops import log_artifacts_for_run
+
+        eid = self._seed_execution(temp_db, "nmap")
+        oabase = tmp_path / "run"
+        for ext in (".xml", ".nmap", ".gnmap"):
+            Path(str(oabase) + ext).write_text("x", encoding="utf-8")
+        assert len(log_artifacts_for_run("nmap", eid, oabase, conn=temp_db)) == 3
+
+
+@pytest.mark.integration
+class TestNucleiEvidenceIsReadable:
+    """The evidence must be reachable, not merely stored.
+
+    `nuclei_match_observations` was write-only for two releases: the ingester
+    filled it and nothing read it back, so an operator could ingest matches and
+    have no way to see them short of SQL.
+    """
+
+    def _ingested(self, temp_db: sqlite3.Connection) -> tuple[int, int]:
+        eid = _seed_nuclei_execution(temp_db, "web_scan.json")
+        ingest.ingest_execution(eid, conn=temp_db)
+        fid = temp_db.execute(
+            "SELECT finding_id FROM tool_executions WHERE execution_id = ?", (eid,)
+        ).fetchone()["finding_id"]
+        return eid, fid
+
+    def test_model_reads_by_execution(self, temp_db: sqlite3.Connection) -> None:
+        from cerno_pkg.models import NucleiMatchObservation
+
+        eid, _ = self._ingested(temp_db)
+        rows = NucleiMatchObservation.get_by_execution(eid, temp_db)
+        assert len(rows) == 28
+        assert all(r.template_ref for r in rows)
+        assert all(0 <= r.severity_int <= 4 for r in rows)
+
+    def test_model_reads_by_finding(self, temp_db: sqlite3.Connection) -> None:
+        """Evidence is attributed through the execution's finding_id."""
+        from cerno_pkg.models import NucleiMatchObservation
+
+        _, fid = self._ingested(temp_db)
+        assert len(NucleiMatchObservation.get_by_finding(fid, temp_db)) == 28
+
+    def test_verified_stats_counts_matches(self, temp_db: sqlite3.Connection) -> None:
+        _, fid = self._ingested(temp_db)
+        row = temp_db.execute(
+            "SELECT * FROM v_finding_verified_stats WHERE finding_id = ?", (fid,)
+        ).fetchone()
+        assert row is not None and row["nuclei_match_count"] == 28
+
+    def test_finding_results_resource_lists_matches(
+        self, temp_db: sqlite3.Connection
+    ) -> None:
+        import json
+
+        from cerno_pkg.mcp_server import server as mcp
+
+        _, fid = self._ingested(temp_db)
+        payload = json.loads(mcp.resource_finding_results(fid, conn=temp_db))
+        assert len(payload["nuclei_matches"]) == 28
+        first = payload["nuclei_matches"][0]
+        # The view resolves these; a bare table query would not.
+        assert first["host"] and first["severity_label"] and first["template_ref"]
+
+    def test_suggested_verdict_is_unaffected_by_nuclei(
+        self, temp_db: sqlite3.Connection
+    ) -> None:
+        """Deliberate: nuclei severity does not separate detection from vuln.
+
+        Its `info` tier holds both `tech-detect` and
+        `http-missing-security-headers`, so no severity floor distinguishes
+        fingerprinting from a finding. The count is reported instead, and the
+        operator judges.
+        """
+        from cerno_pkg.mcp_server import server as mcp
+
+        _, fid = self._ingested(temp_db)
+        assert mcp._suggested_verdict(fid, temp_db) is None

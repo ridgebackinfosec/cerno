@@ -23,9 +23,11 @@ forgiving of partial/failed/empty runs — nothing to parse yields a summary wit
 
 from __future__ import annotations
 
+import json
 import shlex
 import sqlite3
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
 
 from . import exec_chain, nxc_db
@@ -40,10 +42,12 @@ from .models import (
     PortState,
 )
 from .nmap_parse import parse_nmap_xml
+from .nuclei_parse import parse_nuclei_file
 from .parsing import detect_host_type
 
 _NMAP_TOOLS = {"nmap"}
 _NXC_TOOLS = {"nxc", "netexec"}
+_NUCLEI_TOOLS = {"nuclei"}
 
 
 def _resolve_effective_tool(command_text: Optional[str]) -> Optional[str]:
@@ -80,6 +84,7 @@ class IngestSummary:
     verified_ports: int = 0
     nse_results: int = 0
     nxc_flags: int = 0
+    nuclei_matches: int = 0
     nse_verdicts: dict[str, int] = field(default_factory=dict)
     skipped_reason: Optional[str] = None
 
@@ -90,6 +95,7 @@ class IngestSummary:
             "verified_ports": self.verified_ports,
             "nse_results": self.nse_results,
             "nxc_flags": self.nxc_flags,
+            "nuclei_matches": self.nuclei_matches,
             "nse_verdicts": dict(self.nse_verdicts),
             "skipped_reason": self.skipped_reason,
         }
@@ -347,6 +353,100 @@ def _ingest_nxc(
     )
 
 
+def _ingest_nuclei(
+    execution_id: int, conn: sqlite3.Connection, summary: IngestSummary
+) -> None:
+    """Record a nuclei run's matches as evidence for the finding it ran against.
+
+    Deliberately **not** an import: these rows back a verdict on an existing
+    finding and are tied to the execution that produced them, the same shape as
+    nmap's NSE results. Templates that deserve to be findings in their own
+    right go through ``cerno import nuclei``, which creates ``findings`` rows.
+
+    Reuses :func:`nuclei_parse.parse_nuclei_file`, so the JSON is read exactly
+    as the importer reads it -- including the never-raises contract, so a run
+    killed mid-scan still ingests whatever it flushed.
+    """
+    artifacts = Artifact.get_by_execution(execution_id, conn)
+    json_type = ArtifactType.get_by_name("nuclei_json", conn)
+    json_type_id = json_type.artifact_type_id if json_type else None
+    json_artifact = next(
+        (
+            a
+            for a in artifacts
+            if a.artifact_type_id == json_type_id and json_type_id is not None
+        ),
+        None,
+    )
+    if json_artifact is None:
+        summary.skipped_reason = "no nuclei_json artifact registered for this execution"
+        return
+
+    parsed = parse_nuclei_file(Path(json_artifact.artifact_path))
+    if not parsed.templates:
+        summary.skipped_reason = "nuclei output contained no matches"
+        return
+
+    host_id_cache: dict[str, int] = {}
+
+    def host_id_for(address: str) -> int:
+        if address not in host_id_cache:
+            host_id_cache[address] = _resolve_host_id(address, conn)
+        return host_id_cache[address]
+
+    rows: list[dict] = []
+    for template in parsed.templates:
+        for match in template.matches:
+            if match.port is not None:
+                Port.get_or_create(match.port, conn=conn)
+            rows.append(
+                {
+                    "execution_id": execution_id,
+                    "host_id": host_id_for(match.effective_ip),
+                    "port_number": match.port,
+                    "template_ref": template.template_id,
+                    "matcher_name": match.matcher_name,
+                    "template_name": template.template_name,
+                    "severity_int": template.severity_int,
+                    "matched_at": match.matched_at,
+                    "template_url": template.template_url,
+                    "extracted": (
+                        json.dumps(match.extracted_results)
+                        if match.extracted_results
+                        else None
+                    ),
+                }
+            )
+
+    kept = _reconcile_execution_rows(
+        conn,
+        table="nuclei_match_observations",
+        pk_col="observation_id",
+        execution_id=execution_id,
+        # matcher_name and extracted are BOTH part of the key, and both are
+        # often NULL -- which is exactly why the reconcile matches keys in
+        # Python rather than via a UNIQUE index. Keying on either alone loses
+        # evidence: http-missing-security-headers reports several matches on
+        # one host:port differing only by matcher_name, while tls-version
+        # carries no matcher name at all and differs only by extracted.
+        key_cols=(
+            "host_id",
+            "port_number",
+            "template_ref",
+            "matcher_name",
+            "extracted",
+        ),
+        mutable_cols=(
+            "template_name",
+            "severity_int",
+            "matched_at",
+            "template_url",
+        ),
+        rows=rows,
+    )
+    summary.nuclei_matches = len(kept)
+
+
 def ingest_execution(
     execution_id: int, *, conn: Optional[sqlite3.Connection] = None
 ) -> IngestSummary:
@@ -379,7 +479,11 @@ def ingest_execution(
         # Dispatch on the real target binary, not the free-text tool_name label:
         # MCP runs default to tool_name="mcp" ("mcp-batch" for batch), so the actual tool
         # must be resolved from command_text (unwrapping sudo/proxychains4/etc.).
-        effective = tool_name if tool_name in (_NMAP_TOOLS | _NXC_TOOLS) else None
+        effective = (
+            tool_name
+            if tool_name in (_NMAP_TOOLS | _NXC_TOOLS | _NUCLEI_TOOLS)
+            else None
+        )
         if effective is None:
             effective = _resolve_effective_tool(row["command_text"])
 
@@ -387,6 +491,8 @@ def ingest_execution(
             _ingest_nmap(execution_id, c, summary)
         elif effective in _NXC_TOOLS:
             _ingest_nxc(execution_id, finding_id, c, summary)
+        elif effective in _NUCLEI_TOOLS:
+            _ingest_nuclei(execution_id, c, summary)
         else:
             summary.skipped_reason = f"no ingester for tool '{tool_name}'"
 

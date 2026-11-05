@@ -23,13 +23,13 @@ Cerno uses an **integrated SQLite database** with a fully normalized schema for 
 
 The Cerno database tracks:
 
-- **Scans**: Nessus export metadata (scan name, export root, .nessus file hash)
+- **Scans**: Imported scan metadata (scan name, export root, source file hash) — a `.nessus` export or a nuclei results file
 - **Plugins**: Vulnerability definitions (plugin ID, name, severity, CVSS scores, CVEs, Metasploit modules)
 - **Findings**: Individual vulnerability findings per scan (review state, append-only review notes)
 - **Hosts, Ports & Services**: Normalized host/port data with cross-scan tracking, plus per-scan discovered services
 - **Sessions**: Review sessions (start/end; duration via SQL view), including the scans of a multi-scan session
 - **Tool Executions & Artifacts**: Commands run (TUI and MCP), their exit codes, and the files they produced
-- **Verification results**: Live-verified open ports, NSE script verdicts and NetExec flag snapshots ingested from tool runs
+- **Verification results**: Live-verified open ports, NSE script verdicts, nuclei match observations and NetExec flag snapshots ingested from tool runs
 - **Verdicts**: Append-only verification verdicts per finding, with links to the evidence that supports them
 - **Claude Assistant history**: Per-finding and scope-level chat turns
 
@@ -45,7 +45,7 @@ The database is global across all scans, enabling cross-scan queries and histori
 
 **Directory**: `~/.cerno/` is created automatically on first use.
 
-**Schema Version**: 4, stored in `PRAGMA user_version`. There is no migration system: an older database is rejected at startup with `SchemaVersionError`, and you re-import your scans into a fresh one.
+**Schema Version**: 5, stored in `PRAGMA user_version`. There is no migration system: an older database is rejected at startup with `SchemaVersionError`, and you re-import your scans into a fresh one.
 
 ---
 
@@ -57,6 +57,7 @@ Cerno uses a **fully normalized database schema** following relational best prac
 
 1. **Normalized Lookup Tables**
    - `severity_levels` - Centralized severity reference data
+   - `finding_sources` - Which scanner produced a plugin row (nessus, nuclei)
    - `artifact_types` - Standardized artifact type definitions
    - `verdict_types`, `nse_verdicts`, `port_states` - Verification lookup values
    - `hosts` - Deduplicated host data across scans
@@ -78,7 +79,8 @@ Cerno uses a **fully normalized database schema** following relational best prac
    - `v_http_services` - HTTP/HTTPS services per scan
    - `v_finding_current_verdict` - Latest verification verdict per finding
    - `v_nse_results_with_verdict` - NSE results with their verdict label
-   - `v_finding_verified_stats` - Verified port / NSE result counts per finding
+   - `v_nuclei_observations` - nuclei matches with their severity label and host IP
+   - `v_finding_verified_stats` - Verified port / NSE result / nuclei match counts per finding
 
 4. **Foreign Key Constraints Throughout**
    - All relationships enforced at database level
@@ -97,7 +99,7 @@ Cerno uses a **fully normalized database schema** following relational best prac
 
 ## Schema Overview
 
-The database consists of **25 tables** and **11 views**:
+The database consists of **27 tables** and **12 views**:
 
 ### Foundation Tables (Normalized Reference Data)
 
@@ -111,12 +113,12 @@ The database consists of **25 tables** and **11 views**:
 ### Core Tables
 
 7. **scans** - Top-level scan tracking
-8. **plugins** - Plugin metadata (Nessus plugin ID, severity, CVEs)
+8. **plugins** - Finding-type metadata per source (source-namespaced finding ID, severity, CVEs)
 9. **findings** - Vulnerability findings per scan (review state, notes)
 10. **hosts** - Normalized host data (cross-scan tracking)
 11. **ports** - Port metadata
 12. **finding_affected_hosts** - Host:port combinations per finding (normalized FKs)
-13. **host_services** - Services discovered per scan (from Nessus `svc_name`)
+13. **host_services** - Services discovered per scan (Nessus `svc_name`, or nuclei's URL scheme)
 
 ### Review & Execution Tracking
 
@@ -130,14 +132,15 @@ The database consists of **25 tables** and **11 views**:
 
 19. **verified_ports** - Open ports confirmed by an ingested nmap run
 20. **nse_script_results** - NSE script output and vuln verdicts from an ingested nmap run
-21. **nxc_flag_observations** - NetExec host-flag snapshot from an ingested nxc run
-22. **finding_verdicts** - Append-only verification verdicts per finding
-23. **verdict_evidence** - Evidence linked to a verdict
+21. **nuclei_match_observations** - nuclei matches from an ingested nuclei run
+22. **nxc_flag_observations** - NetExec host-flag snapshot from an ingested nxc run
+23. **finding_verdicts** - Append-only verification verdicts per finding
+24. **verdict_evidence** - Evidence linked to a verdict
 
 ### Claude Assistant
 
-24. **claude_conversations** - Per-finding chat history
-25. **claude_aggregate_conversations** - Scope-level chat history
+25. **claude_conversations** - Per-finding chat history
+26. **claude_aggregate_conversations** - Scope-level chat history
 
 ### SQL Views (Computed Statistics)
 
@@ -151,6 +154,7 @@ The database consists of **25 tables** and **11 views**:
 - **v_http_services** - HTTP/HTTPS services per scan
 - **v_finding_current_verdict** - Latest verdict per finding
 - **v_nse_results_with_verdict** - NSE results with verdict labels
+- **v_nuclei_observations** - nuclei match observations with severity labels and host IPs
 - **v_finding_verified_stats** - Verified-fact counts per finding
 
 ---
@@ -160,7 +164,7 @@ The database consists of **25 tables** and **11 views**:
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="images/diagrams/05-er-reference-dark.png">
-    <img alt="Entity relationship diagram of Cerno's lookup tables beside the tables that consume them: severity_levels to plugins, artifact_types to artifacts, verdict_types to finding_verdicts, nse_verdicts to nse_script_results, port_states to verified_ports, plus the two Claude Assistant conversation tables" src="images/diagrams/05-er-reference-light.png" width="100%">
+    <img alt="Entity relationship diagram of Cerno's lookup tables beside the tables that consume them: severity_levels to plugins and nuclei_match_observations, artifact_types to artifacts, verdict_types to finding_verdicts, nse_verdicts to nse_script_results, port_states to verified_ports, plus the two Claude Assistant conversation tables" src="images/diagrams/05-er-reference-light.png" width="100%">
   </picture>
 </p>
 
@@ -190,6 +194,28 @@ Normalized severity reference data - enforces valid severity values.
 
 ---
 
+### finding_sources
+
+Scan sources - which scanner produced a `plugins` row.
+
+| Column | Type | Description |
+|---|---|---|
+| `source_id` | INTEGER | Primary key |
+| `source_name` | TEXT | Unique source name |
+
+**Pre-populated Data**:
+```text
+(1, 'nessus')
+(2, 'nuclei')
+```
+
+**Foreign Keys**: Referenced by `plugins.source_id`
+
+**Note**: Seeded by `database.seed_lookup_tables()`, the single source of truth
+shared by `initialize_database()` and the test fixtures.
+
+---
+
 ### artifact_types
 
 Artifact type definitions - enforces consistent artifact categorization.
@@ -207,6 +233,7 @@ Artifact type definitions - enforces consistent artifact categorization.
 - `nmap_gnmap` - Nmap greppable output (.gnmap)
 - `nmap_nmap` - Nmap normal output (.nmap)
 - `netexec_txt` - NetExec text output (.txt)
+- `nuclei_json` - nuclei JSON export (.json)
 - `log` - Tool execution log (.log)
 
 **Foreign Keys**: Referenced by `artifacts.artifact_type_id`
@@ -248,7 +275,7 @@ primary key and a unique `label`; `verdict_types` also has a `description`.
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="images/diagrams/03-er-core-dark.png">
-    <img alt="Entity relationship diagram of Cerno's core tables: scans cascade to findings and sessions, plugins are shared across scans, findings cascade to finding_affected_hosts which references the normalized hosts and ports tables, and session_scans joins sessions to scans for multi-scan review" src="images/diagrams/03-er-core-light.png" width="100%">
+    <img alt="Entity relationship diagram of Cerno's core tables: scans cascade to findings and sessions, plugins are shared across scans and keyed to a finding_sources lookup row, findings cascade to finding_affected_hosts which references the normalized hosts and ports tables, and session_scans joins sessions to scans for multi-scan review" src="images/diagrams/03-er-core-light.png" width="100%">
   </picture>
 </p>
 
@@ -256,14 +283,15 @@ primary key and a unique `label`; `verdict_types` also has a `description`.
 
 ### scans
 
-Top-level scan tracking - one row per Nessus export.
+Top-level scan tracking - one row per imported scan file (a `.nessus` export,
+or a nuclei `-je`/`-jle` results file).
 
 | Column | Type | Description |
 |---|---|---|
 | `scan_id` | INTEGER | Primary key (auto-increment) |
 | `scan_name` | TEXT | Unique scan name |
-| `nessus_file_path` | TEXT | Original .nessus file path |
-| `nessus_file_hash` | TEXT | SHA256 of .nessus file for change detection |
+| `source_file_path` | TEXT | Original scan file path (`.nessus`, or nuclei `.json`/`.jsonl`) |
+| `source_file_hash` | TEXT | SHA256 of the source file, for change detection |
 | `export_root` | TEXT | Root directory recorded at import (no files are written there) |
 | `created_at` | TIMESTAMP | Scan creation time |
 | `last_reviewed_at` | TIMESTAMP | Last review session timestamp |
@@ -274,29 +302,52 @@ Top-level scan tracking - one row per Nessus export.
 
 ### plugins
 
-Plugin metadata - one row per Nessus plugin ID.
+Finding-type metadata - one row per finding type, across every scan and every
+source. Global: there is no `scan_id` column, so all scans share these rows.
 
 | Column | Type | Description |
 |---|---|---|
-| `plugin_id` | INTEGER | Primary key - Nessus plugin ID (e.g., 57608) |
-| `plugin_name` | TEXT | Plugin name |
+| `plugin_id` | TEXT | Primary key - namespaced per source, with no default source: `'nessus:57608'`, `'nuclei:apache-detect'`. A bare number is not a valid id |
+| `source_id` | INTEGER | Foreign key to `finding_sources` (default 1 = nessus) |
+| `plugin_name` | TEXT | Plugin name (nuclei: `info.name`) |
 | `severity_int` | INTEGER | 0=Info, 1=Low, 2=Medium, 3=High, 4=Critical |
 | `has_metasploit` | BOOLEAN | Metasploit module availability |
 | `cvss3_score` | REAL | CVSS v3 base score |
 | `cvss2_score` | REAL | CVSS v2 base score (fallback) |
 | `metasploit_names` | TEXT | JSON array of Metasploit module names |
 | `cves` | TEXT | JSON array of CVE IDs |
-| `plugin_url` | TEXT | Tenable plugin URL |
+| `plugin_url` | TEXT | Details page captured at import. Nessus: the Tenable plugin page. nuclei: the template's source in the nuclei-templates repo, built from the result's `template` path, falling back to the public template viewer when that path is absent or unusable. See `nuclei_parse.resolve_template_url()` and `constants.PLUGIN_URL_TEMPLATES` |
 | `metadata_fetched_at` | TIMESTAMP | When metadata was last fetched |
 
 **Note**: The `severity_label` is accessed via the `v_plugins_with_severity` view or by JOINing with `severity_levels`.
 
-**Foreign Keys**: `severity_int` → `severity_levels.severity_int`
+**Foreign Keys**:
+- `severity_int` → `severity_levels.severity_int`
+- `source_id` → `finding_sources.source_id`
 
 **Constraints**:
 - `CHECK(severity_int BETWEEN 0 AND 4)`
 
 **Note**: "plugin" is internal terminology. User-facing commands use "findings".
+
+**Why `plugin_id` is TEXT (schema v5)**: nuclei identifies findings by template
+name, not number, so an `INTEGER PRIMARY KEY` (a SQLite rowid alias) could not
+store them at all. **Every** source is prefixed, Nessus included, so no
+source is the default and a bare token is not a valid finding ID anywhere:
+`parsing.plugin_source()` reports `unknown` rather than guessing, and
+`plugin_source_id()` raises instead of letting one reach the database. The
+`workflow_mappings.yaml` key was renamed `plugin_id` -> `finding_id` at the same
+time, and every value must carry its prefix.
+
+**Why `source_id` is stored even though it is derivable** from the `plugin_id`
+prefix: it gives `query.py` an indexed SQL predicate (`FindingQuery.source`) and
+real referential integrity. The alternative — a `LIKE 'nuclei:%'` scan on every
+source-filtered query — is a table scan that no index can serve. The two are kept
+consistent by `Plugin.save()`, which derives `source_id` from the id on write.
+
+**Sorting**: because the column is TEXT, a plain `ORDER BY plugin_id` is
+lexicographic (`'9'` after `'10114'`). Use `database.plugin_id_order_sql()`,
+which casts first so numeric Nessus IDs keep numeric order.
 
 **Relationships**: One plugin has many `findings` (across different scans)
 
@@ -313,7 +364,7 @@ Supports both IP-targeted (internal) and FQDN-targeted (external) scans:
 | Column | Type | Description |
 |---|---|---|
 | `host_id` | INTEGER | Primary key |
-| `ip_address` | TEXT | Resolved IP address (from Nessus host-ip tag) |
+| `ip_address` | TEXT | Resolved IP address (Nessus `host-ip` tag; nuclei `ip`, falling back to the target itself for dns templates, which report none) |
 | `scan_target` | TEXT | What was scanned (IP or FQDN from ReportHost@name) |
 | `scan_target_type` | TEXT | 'ipv4', 'ipv6', or 'fqdn' |
 | `netbios_name` | TEXT | NetBIOS/computer name (from Nessus netbios-name tag) |
@@ -359,7 +410,7 @@ Finding records - one row per plugin per scan.
 |---|---|---|
 | `finding_id` | INTEGER | Primary key |
 | `scan_id` | INTEGER | Foreign key to scans |
-| `plugin_id` | INTEGER | Foreign key to plugins |
+| `plugin_id` | TEXT | Foreign key to plugins (namespaced; see `plugins`) |
 | `review_state` | TEXT NOT NULL | 'unreviewed' (default), 'in_progress', 'done'. Transitions (unreviewed → in_progress → done → unreviewed) are enforced in the app layer by `Finding.transition_review_state()` |
 | `reviewed_at` | TIMESTAMP | Timestamp of the last review-state change |
 | `reviewed_by` | TEXT | User tracking (future feature) |
@@ -389,7 +440,7 @@ Host:port combinations per finding using normalized foreign keys.
 | `finding_id` | INTEGER | Foreign key to findings |
 | `host_id` | INTEGER | Foreign key to normalized hosts table |
 | `port_number` | INTEGER | Foreign key to ports table |
-| `plugin_output` | TEXT | Plugin output from Nessus scanner |
+| `plugin_output` | TEXT | Per-host evidence. Nessus: the scanner's `plugin_output`. nuclei: every match on this host:port merged into one block — `matched-at`, `matcher-name`, `extracted-results`, then de-duplicated `curl` reproduction commands (see `nuclei_parse.format_plugin_output()`) |
 
 **Note**: This table uses foreign keys to normalized `hosts` and `ports` tables rather than storing host addresses and port numbers directly. The host type (`ipv4`, `ipv6`, `fqdn`) is stored in the `hosts` table.
 
@@ -441,8 +492,23 @@ restores the same set.
 
 ### host_services
 
-Services discovered per scan, from the Nessus ReportItem `svc_name`/`protocol`
-attributes at import. Feeds `v_http_services` and MCP `list_services`/`get_web_targets`.
+Services discovered per scan. Feeds `v_http_services` and MCP
+`list_services`/`get_web_targets`.
+
+**Both importers populate it.** Nessus takes `svc_name`/`protocol` straight
+from the ReportItem attributes. nuclei reports a URL rather than a service
+name, so the importer derives the service from the scheme in `matched-at`
+(`http://x/robots.txt` → `http`), which `v_http_services` already accepts as a
+literal token. A record with no scheme — an `ssl` template's `matched-at` is a
+bare `host:port` — falls back to the record's `type`, deliberately *not* mapped
+to http/https, since an ssl template firing on 3389 is not a web service; the
+view's port-based arm still classifies 443 correctly.
+
+This matters because a nuclei-only scan is a first-class case: a web-app
+engagement may import nothing else, and without these rows `v_http_services`,
+`get_web_targets`, `list_services`, `FindingQuery.service` and the
+`cerno://scan/{id}/hosts` resource would all be empty for it. Protocol is
+recorded as `tcp`, which is what nuclei's http/ssl/network templates use.
 
 | Column | Type | Description |
 |---|---|---|
@@ -451,7 +517,7 @@ attributes at import. Feeds `v_http_services` and MCP `list_services`/`get_web_t
 | `host_id` | INTEGER | Foreign key to hosts |
 | `port_number` | INTEGER | Foreign key to ports |
 | `protocol` | TEXT | `tcp` (default) or `udp` |
-| `svc_name` | TEXT | Nessus service name (e.g. `www`, `cifs`, `ssh`) |
+| `svc_name` | TEXT | Nessus service name (e.g. `www`, `cifs`, `ssh`), or the scheme/type a nuclei match reported (`http`, `https`, `ssl`) |
 
 **Constraints**: `UNIQUE(scan_id, host_id, port_number, protocol)`
 
@@ -542,7 +608,7 @@ automatically after MCP runs when mutations are enabled.
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="images/diagrams/04-er-verification-dark.png">
-    <img alt="Entity relationship diagram of Cerno's verification tables: tool_executions cascade to verified_ports, nse_script_results and nxc_flag_observations, findings cascade to the append-only finding_verdicts history, and verdict_evidence links a verdict back to the execution, artifact or NSE result that backs it" src="images/diagrams/04-er-verification-light.png" width="100%">
+    <img alt="Entity relationship diagram of Cerno's verification tables: tool_executions cascade to verified_ports, nse_script_results, nuclei_match_observations and nxc_flag_observations, findings cascade to the append-only finding_verdicts history, and verdict_evidence links a verdict back to the execution, artifact or NSE result that backs it" src="images/diagrams/04-er-verification-light.png" width="100%">
   </picture>
 </p>
 
@@ -581,6 +647,38 @@ NSE script output and vuln verdicts from an ingested nmap run.
 | `created_at` | TIMESTAMP | Ingest time |
 
 **Constraints**: `UNIQUE(execution_id, host_id, port_number, script_id)`
+
+### nuclei_match_observations
+
+nuclei matches from an ingested nuclei run. **Evidence, not findings**: these
+rows back a verdict on an existing finding and are tied to the execution that
+produced them, the same shape as `nse_script_results`. Templates that deserve
+to be findings in their own right go through `cerno import nuclei`, which
+creates `findings` rows.
+
+| Column | Type | Description |
+|---|---|---|
+| `observation_id` | INTEGER | Primary key |
+| `execution_id` | INTEGER | Foreign key to tool_executions (CASCADE DELETE) |
+| `host_id` | INTEGER | Foreign key to hosts |
+| `port_number` | INTEGER | Foreign key to ports (NULL where nuclei reported none, e.g. dns templates) |
+| `template_ref` | TEXT | Bare nuclei template id (not namespaced; this is not a `plugins` key) |
+| `template_name` | TEXT | `info.name` |
+| `severity_int` | INTEGER | Foreign key to severity_levels |
+| `matched_at` | TEXT | nuclei's `matched-at` (URL or host:port) |
+| `matcher_name` | TEXT | Matcher that fired (often NULL) |
+| `template_url` | TEXT | Template source URL |
+| `extracted` | TEXT | JSON array of `extracted-results` (often NULL) |
+| `created_at` | TIMESTAMP | Ingest time |
+
+**No UNIQUE constraint.** Identity is `(execution_id, host_id, port_number,
+template_ref, matcher_name, extracted)` and the last three are frequently NULL,
+which SQLite treats as distinct in a UNIQUE index — so re-ingest reconciles in
+Python via `ingest._reconcile_execution_rows` instead, preserving primary keys.
+Both `matcher_name` *and* `extracted` are needed: `http-missing-security-headers`
+reports several matches on one host:port differing only by matcher name, while
+`tls-version` carries no matcher name and differs only by extracted results.
+Keying on either alone silently loses evidence.
 
 ### nxc_flag_observations
 
@@ -714,6 +812,12 @@ Replaces `severity_label` column from `plugins` table - JOINs with `severity_lev
 - `severity_label` - From severity_levels table
 - `color_hint` - From severity_levels table
 - `has_metasploit`, `cvss3_score`, `cvss2_score`, `cves`, `metasploit_names`, `plugin_url`, `metadata_fetched_at`
+- `source_id` - From the plugins table, so `FindingQuery.source` can filter on an indexed column
+
+**Note**: This is an INNER JOIN on `severity_levels`, so a plugin whose
+`severity_int` has no lookup row disappears from every query that uses the
+view rather than raising. Any new source must map its severities into 0-4
+(nuclei's `unknown` and `""` both floor to 0 — see `nuclei_parse.SEVERITY_BY_LABEL`).
 
 **Usage**:
 ```sql
@@ -863,7 +967,9 @@ The latest `finding_verdicts` row per finding, joined to `verdict_types`.
 
 Per-finding counts of verified facts, joined through `tool_executions.finding_id`.
 
-**Columns**: `finding_id`, `verified_port_count`, `nse_result_count`, `vulnerable_count` (NSE results with verdict `VULNERABLE`)
+**Columns**: `finding_id`, `verified_port_count`, `nse_result_count`, `vulnerable_count` (NSE results with verdict `VULNERABLE`), `nuclei_match_count`
+
+Note `nuclei_match_count` counts matches, not vulnerabilities: nuclei's severity does not separate fingerprinting from a finding (its `info` tier holds both `tech-detect` and `http-missing-security-headers`), so there is no nuclei equivalent of `vulnerable_count` and nuclei evidence deliberately does not feed `suggested_verdict`.
 
 ```sql
 -- Findings with at least one VULNERABLE NSE result, and their current verdict
@@ -894,7 +1000,7 @@ WHERE finding_id = 123;
 -- Severity labels come from the severity_levels lookup table
 SELECT plugin_id, plugin_name, severity_label, cvss3_score
 FROM v_plugins_with_severity
-WHERE plugin_id = 57608;
+WHERE plugin_id = 'nessus:57608';
 ```
 
 ---
@@ -1121,7 +1227,7 @@ Full schema available in [`../schema.sql`](../schema.sql), a reference copy of `
 The database is initialized automatically on first use. Schema creation is handled by `cerno_pkg/database.py:initialize_database()`.
 
 **Key Points**:
-- Schema version: 4, stored in `PRAGMA user_version` (no migration system; an older database raises `SchemaVersionError` at startup and must be deleted and scans re-imported)
+- Schema version: 5, stored in `PRAGMA user_version` (no migration system; an older database raises `SchemaVersionError` at startup and must be deleted and scans re-imported)
 - All tables created with `CREATE TABLE IF NOT EXISTS` for idempotency
 - Lookup tables pre-populated automatically (`severity_levels`, `artifact_types`, `verdict_types`, `nse_verdicts`, `port_states`)
 - Views created after tables
@@ -1260,6 +1366,6 @@ Planned database features:
 
 ---
 
-**Last Updated**: 2026-10-27 (v2.6.0)
+**Last Updated**: 2026-11-04 (v3.1.1)
 **Maintained By**: Ridgeback InfoSec, LLC
-**Schema Version**: 4
+**Schema Version**: 5

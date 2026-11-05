@@ -25,6 +25,8 @@ from rich.prompt import Prompt
 
 from .ansi import header, info, ok, warn
 from .constants import (
+    NUCLEI_RESPONSE_SIZE_READ,
+    NUCLEI_RESPONSE_SIZE_SAVE,
     NETEXEC_PROTOCOLS,
     NSE_PROFILES,
 )
@@ -520,6 +522,160 @@ def credential_placeholder(ref: str) -> str:
     return f"@cred:{ref}@"
 
 
+#: Filenames the suggested nuclei command writes into a scan's directory.
+#:
+#: ``cerno import nuclei`` reads the ``json`` one, so these must stay stable:
+#: the suggestion and the importer are two halves of the same loop.
+NUCLEI_OUTPUT_NAMES: dict[str, str] = {
+    "json": "nuclei.json",
+    "text": "nuclei.txt",
+    "markdown": "markdown",
+}
+
+
+def build_nuclei_cmd(
+    urls_file: Path,
+    output_dir: Path,
+    *,
+    config: Optional["CernoConfig"] = None,
+) -> str:
+    """Build the nuclei command suggested after an import.
+
+    Every output path lands inside ``output_dir`` (the scan's directory) so the
+    operator can run the command and then hand the JSON straight back to
+    ``cerno import nuclei`` without retyping a path.
+
+    ``-je`` is used rather than ``-jle`` to match the artifact set operators
+    expect alongside ``-o``/``-me``; note that ``-je`` buffers results in
+    memory and writes once at exit, so an interrupted scan produces no file.
+    ``-jle`` streams and the importer accepts either shape.
+
+    Args:
+        urls_file: Target list to scan (``-l``), normally ``http_urls.txt``.
+        output_dir: Scan directory that receives the JSON, text and markdown
+            reports.
+        config: Configuration supplying the templates path, profile,
+            User-Agent and concurrency. Loaded if omitted.
+
+    Returns:
+        The command as a single shell-ready string.
+    """
+    if config is None:
+        from .config import load_config
+
+        config = load_config()
+    cfg = config
+
+    templates = str(Path(cfg.nuclei_templates_path).expanduser())
+    parts = [
+        "nuclei",
+        f"-l {urls_file}",
+        f"-ud {templates}",
+        "-duc",
+    ]
+
+    profile = (cfg.nuclei_profile or "").strip()
+    if profile:
+        parts.insert(2, f"-profile {Path(profile).expanduser()}")
+
+    parts += [
+        f"-je {output_dir / NUCLEI_OUTPUT_NAMES['json']}",
+        f"-o {output_dir / NUCLEI_OUTPUT_NAMES['text']}",
+        f"-me {output_dir / NUCLEI_OUTPUT_NAMES['markdown']}",
+        f"-H 'User-Agent: {cfg.nuclei_user_agent}'",
+        f"-rsr {NUCLEI_RESPONSE_SIZE_READ}",
+        f"-rss {NUCLEI_RESPONSE_SIZE_SAVE}",
+        f"-c {cfg.nuclei_concurrency}",
+        "-ts",
+        "-stats",
+    ]
+    return " ".join(parts)
+
+
+def build_nuclei_scan_cmd(
+    targets_file: Path,
+    oabase: Path,
+    *,
+    tags: str = "",
+    config: Optional["CernoConfig"] = None,
+    use_proxy: bool = False,
+) -> list[str]:
+    """Build a targeted nuclei run against one finding's hosts.
+
+    Distinct from :func:`build_nuclei_cmd`, which builds the broad post-import
+    *suggestion* as a shell string from a URL file. This one returns an argv
+    list for Cerno to execute against the current finding's targets, and its
+    JSON output is registered as an artifact so
+    :func:`ingest.ingest_execution` can read the matches back.
+
+    ``-jle`` (streaming JSONL) rather than ``-je`` here: a run cancelled from
+    the TUI still leaves an ingestible file, whereas ``-je`` buffers and writes
+    once at exit. ``nuclei_parse`` accepts either shape.
+
+    Args:
+        targets_file: Target list for ``-l`` (host:port or URL per line).
+        oabase: Output base path; the JSON lands at ``<oabase>.nuclei.jsonl``.
+        tags: Optional ``-tags`` filter. Empty means the configured profile.
+        config: Supplies templates path, profile, User-Agent, concurrency.
+        use_proxy: Route through proxychains4.
+
+    Returns:
+        argv list ready for subprocess execution.
+    """
+    if config is None:
+        from .config import load_config
+
+        config = load_config()
+    cfg = config
+
+    cmd: list[str] = []
+    if use_proxy:
+        cmd.append("proxychains4")
+
+    cmd += [
+        "nuclei",
+        "-l",
+        str(targets_file),
+        "-ud",
+        str(Path(cfg.nuclei_templates_path).expanduser()),
+        "-duc",
+        "-jle",
+        nuclei_scan_output(oabase),
+    ]
+
+    # A tag filter and a profile are alternatives: a profile already pins a
+    # template set, so passing both would silently narrow it further.
+    tags = (tags or "").strip()
+    if tags:
+        cmd += ["-tags", tags]
+    else:
+        profile = (cfg.nuclei_profile or "").strip()
+        if profile:
+            cmd += ["-profile", str(Path(profile).expanduser())]
+
+    cmd += [
+        "-H",
+        f"User-Agent: {cfg.nuclei_user_agent}",
+        "-rsr",
+        str(NUCLEI_RESPONSE_SIZE_READ),
+        "-rss",
+        str(NUCLEI_RESPONSE_SIZE_SAVE),
+        "-c",
+        str(cfg.nuclei_concurrency),
+        "-stats",
+    ]
+    return cmd
+
+
+def nuclei_scan_output(oabase: Path) -> str:
+    """Path of the JSON artifact a Cerno-run nuclei scan writes.
+
+    One definition shared by the command builder, the artifact registration and
+    the ingester, which must agree on it or a run's results become unreadable.
+    """
+    return f"{oabase}.nuclei.jsonl"
+
+
 def build_netexec_cmd(
     exec_bin: str,
     protocol: str,
@@ -754,7 +910,10 @@ def custom_command_help(placeholder_mapping: dict[str, str]) -> None:
     print()
     info("Examples:")
     info("  httpx -l {TCP_IPS} -silent -o {OABASE}.urls.txt")
-    info("  nuclei -l {OABASE}.urls.txt -o {OABASE}.nuclei.txt")
+    # -je (JSON), not -o (plain text): `cerno import nuclei` reads the JSON,
+    # and parse_nuclei_file rejects text output, so -o teaches a command
+    # whose results cannot be imported.
+    info("  nuclei -l {OABASE}.urls.txt -je {OABASE}.nuclei.json")
     info("  cat {TCP_IPS} | xargs -I{} sh -c 'echo {}; nmap -Pn -p {PORTS} {}'")
 
 
@@ -1109,6 +1268,67 @@ def build_nmap_workflow(ctx: "ToolContext") -> Optional["CommandResult"]:
     )
 
 
+def build_nuclei_workflow(ctx: "ToolContext") -> Optional["CommandResult"]:
+    """Build a nuclei command for the current finding through prompts.
+
+    Targets the finding's own host:port list, so the run is scoped to what this
+    finding affects rather than the whole scan. The JSON output is registered
+    as a ``nuclei_json`` artifact, which is what lets ``ingest_results`` read
+    the matches back as verdict evidence.
+
+    Args:
+        ctx: Unified tool context containing all parameters
+
+    Returns:
+        CommandResult with command details, or None if interrupted
+    """
+    from rich.prompt import Prompt
+
+    from .ansi import info, warn, C
+    from .config import load_config
+    from .ops import ensure_cmd
+    from .tool_context import CommandResult
+
+    if not ensure_cmd("nuclei"):
+        info("Skipping run; returning to tool menu.")
+        return None
+
+    config = load_config()
+
+    info(f"{C.BOLD}nuclei target list:{C.RESET} {ctx.tcp_sockets}")
+    profile = (config.nuclei_profile or "").strip()
+    if profile:
+        info(f"Configured profile: {profile}")
+        info("Leave the tag filter empty to use it.")
+    else:
+        warn("No nuclei_profile configured — a tag filter is recommended.")
+
+    try:
+        tags = Prompt.ask(
+            "Template tags (comma-separated, e.g. cve,exposure) or [Enter] for profile",
+            default="",
+        ).strip()
+    except (KeyboardInterrupt, EOFError):
+        return None
+
+    if ctx.use_proxy:
+        warn("[!] Proxy mode: nuclei traffic will route through proxychains4")
+
+    cmd = build_nuclei_scan_cmd(
+        ctx.tcp_sockets,
+        ctx.oabase,
+        tags=tags,
+        config=config,
+        use_proxy=ctx.use_proxy,
+    )
+    output = nuclei_scan_output(ctx.oabase)
+    return CommandResult(
+        command=cmd,
+        display_command=cmd,
+        artifact_note=f"Results file:  {output}  (nuclei -jle)",
+    )
+
+
 def build_netexec_workflow(ctx: "ToolContext") -> Optional["CommandResult"]:
     """
     Build netexec command through interactive prompts.
@@ -1231,7 +1451,7 @@ def run_tool_workflow(
     from .ops import (
         run_command_with_progress,
         log_tool_execution,
-        log_artifacts_for_nmap,
+        log_artifacts_for_run,
     )
     from .tool_registry import get_tool
     from .tool_context import ToolContext
@@ -1296,10 +1516,10 @@ def run_tool_workflow(
 
     tool_used = False
 
-    # Get plugin details directly from Plugin object
-    from .constants import PLUGIN_DETAILS_BASE
-
-    plugin_url = f"{PLUGIN_DETAILS_BASE}{plugin.plugin_id}"
+    # Get plugin details directly from Plugin object. Use the source-aware
+    # details URL (and the one captured at import) rather than assuming every
+    # plugin id is a Nessus one -- a Tenable link for a nuclei finding is dead.
+    plugin_url = plugin.details_url or ""
     plugin_id = str(plugin.plugin_id)
 
     # Create synthetic path for ToolContext and logging (matches original chosen parameter)
@@ -1358,7 +1578,7 @@ def run_tool_workflow(
 
             if not plugin_id:
                 warn(
-                    "No plugin ID for this finding; cannot look up Metasploit modules."
+                    "No finding ID for this finding; cannot look up Metasploit modules."
                 )
                 continue
 
@@ -1367,7 +1587,7 @@ def run_tool_workflow(
                 header("Metasploit Module Information")
 
                 with get_connection() as conn:
-                    plugin_obj = Plugin.get_by_id(int(plugin_id), conn=conn)
+                    plugin_obj = Plugin.get_by_id(plugin_id, conn=conn)
 
                 if not plugin_obj or not plugin_obj.metasploit_names:
                     warn("No Metasploit modules associated with this finding.")
@@ -1641,9 +1861,12 @@ def run_tool_workflow(
                     finding_id=finding.finding_id,
                 )
 
-                # Track artifacts (nmap outputs, etc.)
-                if execution_id and selected_tool.name == "nmap":
-                    log_artifacts_for_nmap(execution_id, oabase)
+                # Register this run's output files so ingest_execution can
+                # read them back. Dispatch lives in log_artifacts_for_run, so
+                # a new tool needs no branch here; a tool that writes nothing
+                # registerable returns an empty list.
+                if execution_id:
+                    log_artifacts_for_run(selected_tool.name, execution_id, oabase)
 
             except KeyboardInterrupt:
                 warn("\nRun interrupted — returning to tool menu.")

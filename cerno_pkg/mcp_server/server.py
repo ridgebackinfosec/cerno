@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import functools
+import inspect
 import json
 import re
 import sqlite3
@@ -72,7 +73,7 @@ class ScanInfo(TypedDict, total=False):
 class FindingSummary(TypedDict, total=False):
     finding_id: int
     scan_id: int
-    plugin_id: int
+    plugin_id: str
     review_state: str
     plugin_name: str
     severity_int: int
@@ -94,6 +95,7 @@ class FindingDetail(FindingSummary, total=False):
     verified_port_count: int
     nse_result_count: int
     vulnerable_count: int
+    nuclei_match_count: int
 
 
 class FindingSearchResult(FindingSummary, total=False):
@@ -151,7 +153,7 @@ class ArtifactInfo(TypedDict, total=False):
 class CveAffected(TypedDict, total=False):
     finding_id: int
     scan_id: int
-    plugin_id: int
+    plugin_id: str
     plugin_name: str
     severity_int: int
     hosts: list[str]
@@ -218,11 +220,17 @@ class CveEntry(TypedDict, total=False):
 
 
 class IngestResult(TypedDict, total=False):
+    # Must stay in step with ingest.IngestSummary.as_dict(): the SDK builds this
+    # tool's output schema from these fields and drops anything absent from it,
+    # so a field present only on the dataclass reaches the text body and is
+    # silently stripped from structured_content. Guarded by
+    # tests/test_mcp_contract.py::test_ingest_result_matches_ingest_summary.
     execution_id: int
     tool_name: str
     verified_ports: int
     nse_results: int
     nxc_flags: int
+    nuclei_matches: int
     nse_verdicts: dict
     skipped_reason: Optional[str]
 
@@ -255,7 +263,7 @@ class VerdictResult(TypedDict, total=False):
 
 class WorkflowCandidateResult(TypedDict):
     finding_id: int
-    plugin_id: int
+    plugin_id: str
     available: bool
     reason: Optional[str]
     verdict: Optional[str]
@@ -271,7 +279,7 @@ class WorkflowCandidateResult(TypedDict):
 class WorkflowExportResult(TypedDict):
     path: str
     reason: str
-    plugin_id: int
+    plugin_id: str
     submission_instructions: str
 
 
@@ -476,6 +484,7 @@ def tool_query_findings(
     service: Optional[str] = None,
     host: Optional[str] = None,
     plugin_name: Optional[str] = None,
+    source: Optional[str] = None,
     has_metasploit: Optional[bool] = None,
     has_workflow: Optional[bool] = None,
     merged: bool = False,
@@ -509,6 +518,7 @@ def tool_query_findings(
         service=service,
         host=host,
         plugin_name=plugin_name,
+        source=source,
         has_metasploit=has_metasploit,
         has_workflow=has_workflow,
         merged=merged,
@@ -685,7 +695,12 @@ def tool_compare_scans(
     min_severity: int = 0,
     conn: Optional[sqlite3.Connection] = None,
 ) -> Optional[dict]:
-    """Compare two scans by name; returns new/resolved/persistent findings and hosts."""
+    """Compare two scans by name; returns new/resolved/persistent findings and hosts.
+
+    Raises ``MixedSourceComparisonError`` (a ``ValueError``, so it reaches the
+    client as a tool error) when the two scans come from different sources --
+    their plugin ids share no namespace, so the comparison would be meaningless.
+    """
     from ..cross_scan import compare_scans, get_scan_by_name
 
     with _db(conn) as c:
@@ -704,8 +719,39 @@ def tool_compare_scans(
     return dataclasses.asdict(result) if result is not None else None
 
 
+def tool_import_nuclei(
+    nuclei_path: str,
+    scan_name: Optional[str] = None,
+    min_severity: int = 0,
+) -> dict:
+    """Import a nuclei JSON/JSONL results file. Returns import statistics.
+
+    Accepts either shape nuclei writes -- a single JSON array (``-je``) or
+    newline-delimited records (``-jle``/``-jsonl``) -- detected from the file
+    contents rather than its extension.
+    """
+    from ..constants import SCANS_ROOT
+    from ..nuclei_import import import_nuclei_file
+
+    path = Path(nuclei_path).expanduser()
+    if not path.exists():
+        raise ValueError(f"No such file: {nuclei_path}")
+    if not 0 <= min_severity <= 4:
+        raise ValueError("min_severity must be between 0 and 4")
+
+    result = import_nuclei_file(
+        path, SCANS_ROOT, scan_name=scan_name, min_severity=min_severity
+    )
+    return {
+        "scan_name": result.scan_name,
+        "plugins_exported": result.plugins_exported,
+        "total_hosts": result.total_hosts,
+        "severities": result.severities,
+    }
+
+
 def tool_get_workflow(
-    plugin_id: int, config: Optional[CernoConfig] = None
+    plugin_id: str, config: Optional[CernoConfig] = None
 ) -> Optional[dict]:
     """Return the verification workflow mapped to a plugin, or None if none exists.
 
@@ -774,6 +820,11 @@ def tool_get_finding_detail(
         "verified_port_count": stats["verified_port_count"],
         "nse_result_count": stats["nse_result_count"],
         "vulnerable_count": stats["vulnerable_count"],
+        # Reported but deliberately NOT fed into suggested_verdict: nuclei's
+        # severity does not separate fingerprinting from vulnerability (its
+        # `info` tier holds both tech-detect and http-missing-security-headers),
+        # so a count the operator can see beats a suggestion they may trust.
+        "nuclei_match_count": stats["nuclei_match_count"],
     }
 
 
@@ -787,11 +838,17 @@ def _finding_verified_stats(finding_id: int, conn: sqlite3.Connection) -> dict:
         (finding_id,),
     )
     if row is None:
-        return {"verified_port_count": 0, "nse_result_count": 0, "vulnerable_count": 0}
+        return {
+            "verified_port_count": 0,
+            "nse_result_count": 0,
+            "vulnerable_count": 0,
+            "nuclei_match_count": 0,
+        }
     return {
         "verified_port_count": row["verified_port_count"],
         "nse_result_count": row["nse_result_count"],
         "vulnerable_count": row["vulnerable_count"],
+        "nuclei_match_count": row["nuclei_match_count"],
     }
 
 
@@ -980,6 +1037,7 @@ def _workflow_candidate_hint(
 
 def tool_get_workflow_candidate(
     finding_id: int,
+    also_covers: Optional[list[str]] = None,
     config: Optional[CernoConfig] = None,
     conn: Optional[sqlite3.Connection] = None,
 ) -> dict:
@@ -991,20 +1049,31 @@ def tool_get_workflow_candidate(
     ``leak_warnings`` must be empty and the verdict confirmed/false_positive for
     ``exportable``. ``excluded`` lists runs dropped because they still held
     engagement data after sanitizing.
+
+    ``also_covers`` adds further namespaced finding ids to the entry key, for a
+    finding the operator has verified reports the same issue from another
+    source (e.g. a Nessus plugin alongside a nuclei template). The finding's own
+    id always stays in the key.
     """
     from ..models import Finding, FindingVerdict
-    from ..workflow_contrib import CONTRIBUTABLE_VERDICTS, scan_candidate
+    from ..workflow_contrib import (
+        CONTRIBUTABLE_VERDICTS,
+        merge_also_covers,
+        scan_candidate,
+    )
 
     cfg = config or load_config()
     with _db(conn) as c:
         finding = Finding.get_by_id(finding_id, c)
         if finding is None:
             raise ValueError(f"No finding with id {finding_id}")
-        assessment, ctx, _ = _contribution_assessment(finding, c, cfg)
+        assessment, ctx, mapper = _contribution_assessment(finding, c, cfg)
         current = FindingVerdict.get_current(finding_id, c)
 
     verdict = current.verdict_label if current is not None else None
     candidate = assessment.candidate
+    if candidate is not None and also_covers:
+        merge_also_covers(candidate, also_covers, mapper)
     leaks = scan_candidate(candidate, ctx) if candidate is not None else []
     return {
         "finding_id": finding_id,
@@ -1036,6 +1105,7 @@ def _contribution_dir(config: CernoConfig) -> Path:
 def tool_export_workflow_contribution(
     finding_id: int,
     workflow: Optional[dict] = None,
+    also_covers: Optional[list[str]] = None,
     config: Optional[CernoConfig] = None,
     conn: Optional[sqlite3.Connection] = None,
 ) -> dict:
@@ -1046,6 +1116,9 @@ def tool_export_workflow_contribution(
     [{title, commands, notes}], references; plugin_id is always the finding's).
     Refuses unless the current verdict is confirmed/false_positive, and refuses
     (writing nothing) when the fail-closed leak scan finds any engagement data.
+
+    ``also_covers`` co-maps further namespaced finding ids onto the entry, so
+    one workflow serves findings that different scanners report separately.
     """
     import contextlib
     import sys
@@ -1056,6 +1129,7 @@ def tool_export_workflow_contribution(
         CONTRIBUTABLE_VERDICTS,
         SUBMISSION_INSTRUCTIONS,
         candidate_from_override,
+        merge_also_covers,
         scan_candidate,
         to_yaml_fragment,
     )
@@ -1087,6 +1161,8 @@ def tool_export_workflow_contribution(
                 "already covers what was run (or no attributed successful runs exist). "
                 "Pass an edited `workflow` to contribute one manually."
             )
+        if also_covers:
+            merge_also_covers(candidate, also_covers, mapper)
 
     hits = scan_candidate(candidate, ctx)
     if hits:
@@ -1099,7 +1175,11 @@ def tool_export_workflow_contribution(
     text = to_yaml_fragment(candidate)
     out_dir = _contribution_dir(cfg)
     out_dir.mkdir(parents=True, exist_ok=True)
-    stem = f"{finding.plugin_id}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    # The namespace separator is a path/drive separator on Windows and awkward
+    # everywhere else, so the id is flattened for the filename only; the
+    # fragment itself still carries the real namespaced id.
+    safe_id = str(finding.plugin_id).replace(":", "-")
+    stem = f"{safe_id}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
     path: Optional[Path] = None
     for n in range(100):
         attempt = out_dir / (f"{stem}.yaml" if n == 0 else f"{stem}-{n}.yaml")
@@ -1727,6 +1807,7 @@ def _batch_query(
     service: Optional[str],
     host: Optional[str],
     plugin_name: Optional[str],
+    source: Optional[str],
     has_metasploit: Optional[bool],
     has_workflow: Optional[bool],
     limit: int,
@@ -1745,6 +1826,7 @@ def _batch_query(
         service=service,
         host=host,
         plugin_name=plugin_name,
+        source=source,
         has_metasploit=has_metasploit,
         has_workflow=has_workflow,
         limit=limit,
@@ -1764,6 +1846,7 @@ def tool_plan_batch(
     service: Optional[str] = None,
     host: Optional[str] = None,
     plugin_name: Optional[str] = None,
+    source: Optional[str] = None,
     has_metasploit: Optional[bool] = None,
     has_workflow: Optional[bool] = None,
     limit: int = 500,
@@ -1793,6 +1876,7 @@ def tool_plan_batch(
         service=service,
         host=host,
         plugin_name=plugin_name,
+        source=source,
         has_metasploit=has_metasploit,
         has_workflow=has_workflow,
         limit=limit,
@@ -2069,6 +2153,22 @@ def _parse_log_flag(command: Sequence[Any]) -> Optional[str]:
     return _flag_value(command, "--log")
 
 
+def _parse_nuclei_json_flag(command: Sequence[Any]) -> Optional[str]:
+    """Return the nuclei JSON export path from an argv list, or None.
+
+    Both shapes are accepted because both are importable and operators use
+    both: ``-jle``/``-jsonl-export`` streams JSONL (survives a cancelled run)
+    and ``-je``/``-json-export`` writes one array at exit. Registering the file
+    as a ``nuclei_json`` artifact is what lets ``ingest_results`` read the
+    matches back.
+    """
+    for flag in ("-jle", "-jsonl-export", "-je", "-json-export"):
+        value = _flag_value(command, flag)
+        if value:
+            return value
+    return None
+
+
 #: Matches a credential placeholder token ``@cred:<ref>@`` emitted by generation.
 _CRED_PLACEHOLDER_RE = re.compile(r"@cred:([^@]+)@")
 
@@ -2309,6 +2409,11 @@ def _run_and_record(
                 if (p := Path(str(oabase) + ext)).exists()
             ):
                 log_artifacts_for_nmap(execution_id, oabase, conn=c)
+        # nuclei's JSON export → 'nuclei_json', the artifact _ingest_nuclei reads.
+        nuclei_json = _parse_nuclei_json_flag(command)
+        if nuclei_json and execution_id is not None and Path(nuclei_json).exists():
+            if _scrub_file_secrets(Path(nuclei_json), secrets):
+                log_artifact(execution_id, Path(nuclei_json), "nuclei_json", conn=c)
         # Generic single-file outputs (e.g. netexec --log) → 'log' artifact type.
         # nxc writes the resolved -H/-p into this file, so scrub before registering.
         log_file = _parse_log_flag(command)
@@ -2692,7 +2797,11 @@ def resource_finding_verdict(
 def resource_finding_results(
     finding_id: int, conn: Optional[sqlite3.Connection] = None
 ) -> str:
-    """`cerno://finding/{finding_id}/results` — JSON live-verified ports + NSE verdicts."""
+    """`cerno://finding/{finding_id}/results` — JSON evidence for a finding.
+
+    Everything ingested from runs attributed to this finding: live-verified
+    ports, NSE script verdicts, and nuclei template matches.
+    """
     from ..database import query_all
 
     with _db(conn) as c:
@@ -2724,10 +2833,27 @@ def resource_finding_results(
             """,
             (finding_id,),
         )
+        matches = query_all(
+            c,
+            """
+            SELECT nmo.ip_address AS host, nmo.port_number, nmo.template_ref,
+                   nmo.template_name, nmo.severity_label, nmo.matcher_name,
+                   nmo.matched_at, nmo.extracted, nmo.execution_id
+            FROM v_nuclei_observations nmo
+            JOIN tool_executions te ON nmo.execution_id = te.execution_id
+            WHERE te.finding_id = ?
+            ORDER BY nmo.ip_address, nmo.template_ref
+            """,
+            (finding_id,),
+        )
     payload = {
         "finding_id": finding_id,
         "verified_ports": [dict(r) for r in ports],
         "nse_results": [dict(r) for r in scripts],
+        # Evidence, not findings: a match corroborates (or fails to) the finding
+        # the run was attributed to. `cerno import nuclei` is what creates
+        # findings of their own.
+        "nuclei_matches": [dict(r) for r in matches],
     }
     return json.dumps(payload, indent=2)
 
@@ -3005,7 +3131,8 @@ def build_server_instructions(cfg: CernoConfig) -> str:
     """
     mutate = cfg.mcp_allow_mutations
     lines = [
-        "Cerno exposes a Nessus review database and verification tooling. Follow "
+        "Cerno exposes a vulnerability review database (findings imported "
+        "from Nessus and nuclei) and verification tooling. Follow "
         "this procedure when verifying findings:",
         "",
         "1. Call get_capabilities first to see which actions are enabled.",
@@ -3052,6 +3179,46 @@ _IDEMPOTENT_ANN = ToolAnnotations(idempotent_hint=True)
 _DESTRUCTIVE_ANN = ToolAnnotations(destructive_hint=True, open_world_hint=True)
 
 
+def _translate_value_errors(
+    fn: Callable[..., Any], error_cls: type[Exception]
+) -> Callable[..., Any]:
+    """Re-raise an adapter's deliberate ``ValueError`` as an SDK error type.
+
+    **Must preserve coroutine-ness.** The SDK decides sync-vs-async from the
+    object it is handed (``mcp.shared._callable_inspection.is_async_callable``,
+    which is ``inspect.iscoroutinefunction`` and does *not* unwrap), and
+    ``functools.wraps`` copies ``__name__``/``__wrapped__`` without making a
+    plain function a coroutine function. A single sync wrapper would therefore
+    register every ``async def`` tool as sync: the SDK runs it on a worker
+    thread, the wrapper calls the coroutine function and returns the coroutine
+    object unawaited, and the body never executes. Because the async tools are
+    annotated ``-> dict`` there is no output model to reject that, so
+    ``pydantic_core.to_json(..., fallback=str)`` stringifies it and the client
+    receives a *successful* ``"<coroutine object ...>"`` string. Hence the two
+    branches below.
+    """
+
+    if inspect.iscoroutinefunction(fn):
+
+        @functools.wraps(fn)
+        async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+            try:
+                return await fn(*args, **kwargs)
+            except ValueError as exc:
+                raise error_cls(str(exc)) from exc
+
+        return async_wrapper
+
+    @functools.wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return fn(*args, **kwargs)
+        except ValueError as exc:
+            raise error_cls(str(exc)) from exc
+
+    return wrapper
+
+
 def _visible_errors(fn: Callable[..., Any]) -> Callable[..., Any]:
     """Re-raise an adapter's deliberate ``ValueError`` as the SDK's ``ToolError``.
 
@@ -3062,28 +3229,17 @@ def _visible_errors(fn: Callable[..., Any]) -> Callable[..., Any]:
     (mcp 1.x FastMCP surfaced all exception messages; this restores that.) Only
     ``ValueError`` is translated, so genuine crashes still mask their internals.
     """
-
-    @functools.wraps(fn)
-    def wrapper(*args: Any, **kwargs: Any) -> Any:
-        try:
-            return fn(*args, **kwargs)
-        except ValueError as exc:
-            raise ToolError(str(exc)) from exc
-
-    return wrapper
+    return _translate_value_errors(fn, ToolError)
 
 
 def _visible_resource_errors(fn: Callable[..., Any]) -> Callable[..., Any]:
-    """Resource-path twin of :func:`_visible_errors` (raises ``ResourceError``)."""
+    """Resource-path twin of :func:`_visible_errors` (raises ``ResourceError``).
 
-    @functools.wraps(fn)
-    def wrapper(*args: Any, **kwargs: Any) -> Any:
-        try:
-            return fn(*args, **kwargs)
-        except ValueError as exc:
-            raise ResourceError(str(exc)) from exc
-
-    return wrapper
+    Every resource is sync today, but this goes through the same async-aware
+    helper: the defect was the asymmetry between wrapper and wrapped, not the
+    particular call list.
+    """
+    return _translate_value_errors(fn, ResourceError)
 
 
 def build_server(config: Optional[CernoConfig] = None) -> Any:
@@ -3188,6 +3344,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         service: Optional[str] = None,
         host: Optional[str] = None,
         plugin_name: Optional[str] = None,
+        source: Optional[str] = None,
         has_metasploit: Optional[bool] = None,
         has_workflow: Optional[bool] = None,
         merged: bool = False,
@@ -3198,7 +3355,8 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
 
         All predicates optional. scan_ids=None spans all scans. verdict is
         confirmed/false_positive/unable or "none" (no verdict yet). cve is an exact
-        CVE id (case-insensitive). has_workflow consults the workflow mapper. Each
+        CVE id (case-insensitive). source is the scan source ("nessus" or
+        "nuclei"). has_workflow consults the workflow mapper. Each
         row carries scan_name and has_workflow. merged dedups by plugin across scans.
         limit defaults to the configured default_page_size (min 8) when set, else
         500; use offset to page past it.
@@ -3216,6 +3374,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
                 service=service,
                 host=host,
                 plugin_name=plugin_name,
+                source=source,
                 has_metasploit=has_metasploit,
                 has_workflow=has_workflow,
                 merged=merged,
@@ -3248,8 +3407,12 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         return tool_compare_scans(scan1_name, scan2_name, min_severity=min_severity)
 
     @mcp.tool(annotations=_READONLY_ANN)
-    def get_workflow(plugin_id: int) -> Optional[dict]:
-        """Get the verification workflow mapped to a plugin, if any."""
+    def get_workflow(plugin_id: str) -> Optional[dict]:
+        """Get the verification workflow mapped to a plugin, if any.
+
+        ``plugin_id`` is the namespaced id: a bare Nessus plugin id
+        ("57608") or a prefixed nuclei template id ("nuclei:apache-detect").
+        """
         return tool_get_workflow(plugin_id, config=cfg)
 
     @mcp.tool(annotations=_READONLY_ANN)
@@ -3298,34 +3461,43 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         return cast("VerdictResult", tool_get_finding_verdict(finding_id, config=cfg))
 
     @mcp.tool(annotations=_READONLY_ANN)
-    def get_workflow_candidate(finding_id: int) -> WorkflowCandidateResult:
+    def get_workflow_candidate(
+        finding_id: int, also_covers: Optional[list[str]] = None
+    ) -> WorkflowCandidateResult:
         """Draft a workflow contribution from the commands run against a finding.
 
         reason "new" = plugin has no mapped workflow; "enhanced" = non-baseline
         commands absent from the mapped one; available=false = nothing new.
         Hosts/ports/creds are templated (<TARGET>/<PORT>/<USERNAME>/<PASSWORD>/
         <DOMAIN>). Review/edit per review_hints, then export_workflow_contribution.
+        `also_covers` co-maps other namespaced ids you have verified report the
+        same issue (e.g. ["nessus:84502"] on a nuclei finding).
         """
         return cast(
             "WorkflowCandidateResult",
-            tool_get_workflow_candidate(finding_id, config=cfg),
+            tool_get_workflow_candidate(finding_id, also_covers, config=cfg),
         )
 
     @mcp.tool()
     def export_workflow_contribution(
-        finding_id: int, workflow: Optional[dict] = None
+        finding_id: int,
+        workflow: Optional[dict] = None,
+        also_covers: Optional[list[str]] = None,
     ) -> WorkflowExportResult:
         """Export a sanitized, PR-ready workflow YAML file (local file only).
 
         Uses the draft, or `workflow` (edited entry: workflow_name, description,
         steps [{title, commands, notes}], references). Requires a confirmed/
         false_positive verdict; refuses and writes nothing if the leak scan finds
-        real IPs/hostnames/paths. Returns the path + PR-against-develop steps.
+        real IPs/hostnames/paths. `also_covers` co-maps other namespaced finding
+        ids onto the entry. Returns the path + PR-against-develop steps.
         Never submits anything.
         """
         return cast(
             "WorkflowExportResult",
-            tool_export_workflow_contribution(finding_id, workflow, config=cfg),
+            tool_export_workflow_contribution(
+                finding_id, workflow, also_covers, config=cfg
+            ),
         )
 
     @mcp.tool(annotations=_READONLY_ANN)
@@ -3505,6 +3677,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         service: Optional[str] = None,
         host: Optional[str] = None,
         plugin_name: Optional[str] = None,
+        source: Optional[str] = None,
         has_metasploit: Optional[bool] = None,
         has_workflow: Optional[bool] = None,
         limit: int = 500,
@@ -3515,7 +3688,8 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
 
         strategy is "nmap", "netexec:<proto>" (bare "netexec" = configured default
         protocol, else smb), "msf", or "workflow". Predicates are
-        the same AND-combined set as query_findings. Each item reports the generated
+        the same AND-combined set as query_findings (including source, to batch
+        over one scanner's findings only). Each item reports the generated
         command and whether it is executable-via-execute_command or manual; already-
         resolved findings are skipped when skip_done. Review this, then execute_batch.
         """
@@ -3531,6 +3705,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
             service=service,
             host=host,
             plugin_name=plugin_name,
+            source=source,
             has_metasploit=has_metasploit,
             has_workflow=has_workflow,
             limit=limit,
@@ -3747,6 +3922,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
             service: Optional[str] = None,
             host: Optional[str] = None,
             plugin_name: Optional[str] = None,
+            source: Optional[str] = None,
             has_metasploit: Optional[bool] = None,
             has_workflow: Optional[bool] = None,
             limit: int = 500,
@@ -3777,6 +3953,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
                 service=service,
                 host=host,
                 plugin_name=plugin_name,
+                source=source,
                 has_metasploit=has_metasploit,
                 has_workflow=has_workflow,
                 limit=limit,
@@ -3816,6 +3993,22 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         def import_nessus(nessus_path: str) -> dict:
             """Import a .nessus file into the database."""
             return tool_import_nessus(nessus_path)
+
+        @mcp.tool()
+        def import_nuclei(
+            nuclei_path: str,
+            scan_name: Optional[str] = None,
+            min_severity: int = 0,
+        ) -> dict:
+            """Import a nuclei JSON (-je) or JSONL (-jle/-jsonl) results file.
+
+            scan_name defaults to the file's stem, since nuclei output carries no
+            scan name of its own. min_severity (0-4) drops findings below that
+            severity; a typical nuclei run is dominated by Info results.
+            """
+            return tool_import_nuclei(
+                nuclei_path, scan_name=scan_name, min_severity=min_severity
+            )
 
         @mcp.tool(annotations=_IDEMPOTENT_ANN)
         def ingest_results(execution_id: int) -> IngestResult:
@@ -3857,8 +4050,9 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
 
     else:
         log_info(
-            "mcp: set_review_state/add_note/import_nessus/ingest_results/"
-            "set_finding_verdict not registered (mcp_allow_mutations=false)"
+            "mcp: set_review_state/add_note/import_nessus/import_nuclei/"
+            "ingest_results/set_finding_verdict not registered "
+            "(mcp_allow_mutations=false)"
         )
 
     # --- Credential reveal (gated separately; strictly more sensitive) ---

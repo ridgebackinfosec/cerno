@@ -7,8 +7,11 @@ output, or inject a clickable hyperlink into the operator's terminal.
 
 Raw ESC bytes cannot reach us through ``.nessus`` (a literal ``\\x1b`` is an
 invalid XML character, so the parser rejects the file), but they can arrive via
-CLI arguments, the NetExec workspace DB and tool output -- hence the message
-helper tests below.
+CLI arguments, the NetExec workspace DB, tool output -- and, since the nuclei
+importer landed, through scan data itself: JSON escapes ESC legally as
+``\\u001b``, and nuclei's ``extracted-results`` is copied verbatim out of
+response bodies. Hence the message helper tests below and
+``TestNucleiEscapesAreNeutralizedAtRender``.
 """
 
 import io
@@ -143,8 +146,8 @@ class TestFindingPreviewHostilePluginName:
 
     @staticmethod
     def _preview(name: str, capsys) -> str:
-        plugin = Plugin(plugin_id=90001, plugin_name=name, severity_int=3)
-        finding = Finding(finding_id=1, scan_id=1, plugin_id=90001)
+        plugin = Plugin(plugin_id="nessus:90001", plugin_name=name, severity_int=3)
+        finding = Finding(finding_id=1, scan_id=1, plugin_id="nessus:90001")
         finding.get_hosts_and_ports = lambda *a, **k: ([], "")  # type: ignore[method-assign]
         render.display_finding_preview(plugin, finding, None, None)  # type: ignore[arg-type]
         return capsys.readouterr().out
@@ -202,8 +205,8 @@ class TestTableRenderersHostileNames:
     @pytest.mark.parametrize("name,token", HOSTILE_CASES)
     def test_finding_list_table(self, monkeypatch, name, token):
         """The main findings list — this is the one that crashed."""
-        plugin = Plugin(plugin_id=99001, plugin_name=name, severity_int=4)
-        finding = Finding(finding_id=1, scan_id=1, plugin_id=99001)
+        plugin = Plugin(plugin_id="nessus:99001", plugin_name=name, severity_int=4)
+        finding = Finding(finding_id=1, scan_id=1, plugin_id="nessus:99001")
 
         out = _capture(
             monkeypatch,
@@ -317,11 +320,11 @@ class TestOverlapGroupTableHostileNames:
         scan_id = conn.execute("SELECT scan_id FROM scans").fetchone()["scan_id"]
         conn.execute(
             "INSERT INTO plugins (plugin_id, plugin_name, severity_int) VALUES (?,?,4)",
-            (100, hostile_name),
+            ("nessus:100", hostile_name),
         )
         conn.execute(
             "INSERT INTO plugins (plugin_id, plugin_name, severity_int) "
-            "VALUES (101,'Covered Finding',3)"
+            "VALUES ('nessus:101','Covered Finding',3)"
         )
         for ip in ("10.0.0.1", "10.0.0.2"):
             # scan_target / scan_target_type are NOT NULL; OR IGNORE would
@@ -334,7 +337,10 @@ class TestOverlapGroupTableHostileNames:
         conn.execute("INSERT OR IGNORE INTO ports (port_number) VALUES (445)")
 
         findings = []
-        for plugin_id, ips in ((100, ("10.0.0.1", "10.0.0.2")), (101, ("10.0.0.1",))):
+        for plugin_id, ips in (
+            ("nessus:100", ("10.0.0.1", "10.0.0.2")),
+            ("nessus:101", ("10.0.0.1",)),
+        ):
             conn.execute(
                 "INSERT INTO findings (scan_id, plugin_id) VALUES (?,?)",
                 (scan_id, plugin_id),
@@ -362,12 +368,16 @@ class TestOverlapGroupTableHostileNames:
         fids = self._seed_superset(temp_db, name)
         pairs = [
             (
-                Finding(finding_id=fids[0], scan_id=1, plugin_id=100),
-                Plugin(plugin_id=100, plugin_name=name, severity_int=4),
+                Finding(finding_id=fids[0], scan_id=1, plugin_id="nessus:100"),
+                Plugin(plugin_id="nessus:100", plugin_name=name, severity_int=4),
             ),
             (
-                Finding(finding_id=fids[1], scan_id=1, plugin_id=101),
-                Plugin(plugin_id=101, plugin_name="Covered Finding", severity_int=3),
+                Finding(finding_id=fids[1], scan_id=1, plugin_id="nessus:101"),
+                Plugin(
+                    plugin_id="nessus:101",
+                    plugin_name="Covered Finding",
+                    severity_int=3,
+                ),
             ),
         ]
 
@@ -446,3 +456,67 @@ class TestChooseFromListHostileItems:
         )
 
         assert token in out, f"{token!r} was swallowed by markup parsing"
+
+
+# A nuclei template name / extraction carrying terminal escapes and Rich markup.
+# Unlike .nessus, JSON can legally transport these (as \u001b), so scan data is
+# now itself an ESC-bearing channel.
+NUCLEI_ESC_NAME = "Missing \x1b[31mHeader\x1b[0m [/] Detection"
+NUCLEI_ESC_EXTRACTION = "body said \x1b]0;pwned\x07 \x1b[1;32mOK\x1b[0m"
+
+
+@pytest.mark.unit
+class TestNucleiEscapesAreNeutralizedAtRender:
+    """The importer stores escapes verbatim; rendering must neutralize them."""
+
+    def test_safe_text_strips_every_escape_from_a_template_name(self) -> None:
+        out = safe_text(NUCLEI_ESC_NAME)
+        assert "\x1b" not in out
+        # The markup is escaped rather than parsed, so no text is lost.
+        assert "Header" in out and "Detection" in out
+
+    def test_safe_text_strips_escapes_from_an_extraction(self) -> None:
+        out = safe_text(NUCLEI_ESC_EXTRACTION)
+        assert "\x1b" not in out
+        assert "\x07" not in out
+        assert "OK" in out
+
+    def test_unbalanced_markup_in_a_template_name_does_not_crash_render(self) -> None:
+        plugin = Plugin(
+            plugin_id="nuclei:esc-template",
+            plugin_name=NUCLEI_ESC_NAME,
+            severity_int=1,
+        )
+        finding = Finding(finding_id=1, scan_id=1, plugin_id="nuclei:esc-template")
+        finding.get_hosts_and_ports = lambda *a, **k: ([], "")  # type: ignore[method-assign]
+        render.display_finding_preview(plugin, finding, None, None)  # type: ignore[arg-type]
+
+    def test_merged_plugin_output_with_escapes_renders(self) -> None:
+        """format_plugin_output is stored raw, so the renderer must cope."""
+        from cerno_pkg.nuclei_parse import ParsedNucleiMatch, format_plugin_output
+
+        text = format_plugin_output(
+            [
+                ParsedNucleiMatch(
+                    host="h.example.com",
+                    ip=None,
+                    port=443,
+                    matched_at="https://h.example.com/",
+                    matcher_name=None,
+                    extracted_results=[NUCLEI_ESC_EXTRACTION],
+                    result_type="http",
+                )
+            ]
+        )
+        assert "\x1b" in text  # stored verbatim
+        assert "\x1b" not in safe_text(text)  # neutralized for display
+
+    def test_nuclei_plugin_id_is_not_markup_parsed(self, capsys) -> None:
+        """A template id with brackets must not restyle or vanish from the panel."""
+        hostile = "nuclei:[bold]weird[/bold]-template"
+        plugin = Plugin(plugin_id=hostile, plugin_name="Weird", severity_int=0)
+        finding = Finding(finding_id=1, scan_id=1, plugin_id=hostile)
+        finding.get_hosts_and_ports = lambda *a, **k: ([], "")  # type: ignore[method-assign]
+        render.display_finding_preview(plugin, finding, None, None)  # type: ignore[arg-type]
+        out = capsys.readouterr().out
+        assert "[bold]weird[/bold]" in out

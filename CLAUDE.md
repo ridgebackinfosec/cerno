@@ -4,7 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Shorthand Commands
 
-- **bcp** — bump the version, commit, and push to the current branch
+- **bcp** — regenerate the docs, bump the version, commit, and push to the current branch, in that order:
+  1. `python scripts/generate_doc_examples.py` — refreshes the TUI examples embedded in `README.md` and `docs/`. Re-run `./scripts/render_diagrams.sh` if any `docs/diagrams/*.mmd` changed.
+  2. Run the suite. `tests/test_doc_examples.py` fails if a committed example no longer matches what the renderers produce, and `tests/test_docs_consistency.py` fails if a documented count (tables, views, seeded rows, workflows, MCP tools, schema version) has drifted from the code.
+  3. Bump `pyproject.toml` and move `[Unreleased]` into the dated section.
+  4. Commit and push.
+
+  A dirty working tree after step 1 means the docs were about to ship stale — commit the regenerated output with the change. This exists because the README screenshots sat stale for eight months; the generated examples replace them precisely so this cannot recur.
+
+**Never hand-edit anything between `<!-- BEGIN GENERATED: name -->` and `<!-- END GENERATED: name -->`** — the generator overwrites it. The prose and captions around those markers are hand-owned and safe.
 
 ## General Development Principles
 
@@ -57,7 +65,7 @@ Follow Python best practices (PEP 8, type hints, docstrings, SOLID, DRY, paramet
 
 ### Schema Management
 - Database uses normalized structure created on initialization
-- Schema version tracked in `database.py:SCHEMA_VERSION` (current: 4), written to `PRAGMA user_version`; `initialize_database()` raises `SchemaVersionError` for older DBs (CLI prints re-import instructions to stderr)
+- Schema version tracked in `database.py:SCHEMA_VERSION` (current: 5), written to `PRAGMA user_version`; `initialize_database()` raises `SchemaVersionError` for older DBs (CLI prints re-import instructions to stderr)
 - Future schema changes will include migration system when needed
 - Always test schema changes with fresh database before release
 
@@ -83,9 +91,9 @@ Before implementing any schema change, verify:
 
 ## Project Overview
 
-**Cerno** is a Python CLI tool for reviewing Nessus vulnerability scan findings and orchestrating security tools (nmap, NetExec, Metasploit). It features a Rich-based TUI for interactive review, SQLite-backed persistence, and session state tracking.
+**Cerno** is a Python CLI tool for reviewing vulnerability findings from multiple scanners and orchestrating security tools (nmap, NetExec, nuclei, Metasploit). Findings are imported from Nessus `.nessus` exports and nuclei JSON/JSONL results, and both share one review loop. It features a Rich-based TUI for interactive review, SQLite-backed persistence, and session state tracking.
 
-**Core workflow**: Import `.nessus` files → Review findings in TUI → Run security tools → Track progress in database
+**Core workflow**: Import `.nessus` files and/or nuclei results → Review findings in TUI → Run security tools → Track progress in database
 
 **Target Python**: 3.11+ (3.8+ may work but not the target)
 
@@ -99,7 +107,7 @@ packages = ["cerno_pkg", "cerno_pkg.mcp_server"]
 py-modules = ["cerno"]
 
 [tool.setuptools.package-data]
-cerno_pkg = ["*.yaml", "skills/*.md", "demo/*.nessus", "demo/nxc-workspace/*"]
+cerno_pkg = ["*.yaml", "skills/*.md", "demo/*.nessus", "demo/*.json", "demo/nxc-workspace/*"]
 ```
 
 When adding a new `cerno_pkg/<subpkg>/` directory with `__init__.py`, add it to the `packages` list. Non-Python files shipped with the package (YAML, the assistant skill prompt, demo data) must match a `package-data` glob.
@@ -127,6 +135,8 @@ cerno --help
 
 # Common commands
 cerno import nessus scan.nessus   # Import Nessus scan
+cerno import nuclei nuclei.json   # Import nuclei results (-je array or -jle/-jsonl)
+                                  #   --name <scan>, --min-severity 0-4
 cerno review                      # Start interactive review
                                   #   At scan prompt, enter "1-3" or "1,3,5" to review multiple scans merged
 cerno scan list                   # List all scans (compact; --wide = all severities, --json = scripting)
@@ -162,7 +172,7 @@ pytest tests/test_parsing.py::TestSplitHostPort::test_ipv4_with_port
 pytest --durations=10
 ```
 
-**Coverage goals**: 85% overall, 90%+ for critical modules (database.py, models.py, parsing.py, nessus_import.py)
+**Coverage goals**: 85% overall, 90%+ for critical modules (database.py, models.py, parsing.py, nessus_import.py, nuclei_parse.py, nuclei_import.py)
 
 ### Linting & Formatting
 
@@ -194,7 +204,7 @@ pyright cerno_pkg/tui.py
 Cerno uses a **fully normalized database architecture** with SQLite as the source of truth:
 
 - **Location**: `~/.cerno/cerno.db` (global, cross-scan)
-- **Schema version**: Tracked in `database.py:SCHEMA_VERSION` (current: 4; v2/v3 renamed review states — shipped in 1.7.0 as a minor bump by explicit user decision; v4 added the execution→data loop tables/views — major bump, forces re-import)
+- **Schema version**: Tracked in `database.py:SCHEMA_VERSION` (current: 5; v2/v3 renamed review states — shipped in 1.7.0 as a minor bump by explicit user decision; v4 added the execution→data loop tables/views — major bump, forces re-import; v5 widened `plugins.plugin_id` to TEXT + added `plugins.source_id`/`finding_sources` for multi-source findings — major bump, forces re-import)
 - **Schema approach**: Normalized structure created on initialization
 - Import writes **no** per-plugin `.txt` files; all data lives in the database
 
@@ -219,6 +229,10 @@ cerno_pkg/
   │                        # ClaudeConversationTurn / ClaudeAggregateConversationTurn
   │                        # Single-scan: Finding.get_by_scan_with_plugin(); multi-scan: get_by_scan_ids_merged()
   ├── nessus_import.py     # .nessus XML parsing and database import (DB only; no files written)
+  ├── nuclei_parse.py      # Pure nuclei JSON/JSONL parser (array -je + JSONL -jle; no DB)
+  │                        # Sniffs shape, filters matcher-status=false, maps severity, merges nothing
+  ├── nuclei_import.py     # import_nuclei_file(): namespaces template ids as 'nuclei:<id>' and
+  │                        # merges colliding host:port matches into one plugin_output row
   ├── cross_scan.py        # `cerno scan compare` / `scan history` data (v_scan_plugin_summary, v_host_scan_findings)
   ├── parsing.py           # Host:port parsing: parse_hosts_ports(), split_host_port()
   ├── analysis.py          # Identical host:port groups ([H]) and superset/overlap analysis ([O])
@@ -226,7 +240,8 @@ cerno_pkg/
   │                        # shared by MCP query_findings, list_workflow_gaps and batch
   ├── nmap_parse.py        # Pure nmap XML parser (open ports + NSE vuln verdicts; no DB)
   ├── ingest.py            # ingest_execution(): run output -> verified_ports / nse_script_results /
-  │                        # nxc_flag_observations; idempotent per execution_id (rows reconciled in place)
+  │                        # nuclei_match_observations / nxc_flag_observations;
+  │                        # idempotent per execution_id (rows reconciled in place)
   ├── nxc_db.py            # Read-only NetExec workspace access (creds as refs, shares, flags); get_nxc_manager()
   ├── creds.py             # Audited credential reveal shared by `cerno creds` and MCP reveal_credential
   ├── exec_chain.py        # Wrapper unwrapping (sudo/env/timeout/proxychains4…), allow/deny glob matching,
@@ -252,10 +267,12 @@ cerno_pkg/
   ├── onboarding.py        # First-run guided tour, post-scan-selection tips
   ├── tool_context.py      # ToolContext / CommandResult (workflow builder I/O); ReviewContext (exported, unused)
   ├── tool_registry.py     # Tool dataclass + TOOL_REGISTRY helpers
-  ├── tool_definitions.py  # register_all_tools(): nmap, netexec, metasploit, custom command
+  ├── tool_definitions.py  # register_all_tools(): nmap, netexec, nuclei, metasploit, custom command
   ├── tools.py             # Command builders (build_*_cmd), workflow builders (build_*_workflow),
   │                        # run_tool_workflow() dispatch, NSE profiles, remote scan mode
   ├── ops.py               # Command execution, sudo/proxychains4 handling, logging runs, remote-scan HTTPS server
+  │                        # log_artifacts_for_run(): per-tool output registration (nmap -oA triple,
+  │                        # nuclei JSON) so ingest_execution can find a TUI run's output
   ├── render.py            # Rich rendering: tables, menus, pagers, finding display, Claude panel
   ├── tui.py               # Findings-list action handling, severity selection, multi-line Claude input
   ├── fs.py                # Finding view (handle_finding_view), host views, move_review_state(), page size
@@ -268,6 +285,8 @@ cerno_pkg/
   ├── logging_setup.py     # Loguru setup with rotation; log_info/log_debug/log_error
   ├── skills/cerno-assistant.md  # Claude Assistant system prompt
   ├── demo/                # Packaged copy of the demo scans + NetExec workspace (`cerno demo`)
+  │                        #   2 .nessus + 2 nuclei .json; kept byte-identical to docs/demo/
+  │                        #   (regenerate the nuclei pair: scripts/create_demo_nuclei_results.py)
   └── _version.py          # Version resolution (importlib.metadata → pyproject.toml)
 ```
 
@@ -279,7 +298,7 @@ cerno_pkg/
 
 ### Core Data Flow
 
-1. **Import**: `.nessus` XML → `nessus_import.py` → SQLite (`scans`, `plugins`, `findings`, `finding_affected_hosts`)
+1. **Import**: `.nessus` XML → `nessus_import.py` → SQLite (`scans`, `plugins`, `findings`, `finding_affected_hosts`); nuclei JSON/JSONL → `nuclei_parse.py` → `nuclei_import.py` → the same tables
 2. **Review**: `Finding.get_by_scan_with_plugin()` → `(Finding, Plugin)` tuples → `render.py` tables → User actions → Update `review_state` column
 3. **Tools**: TUI menu → Pass `Plugin`/`Finding` objects → `tools.py` → Execute command → `tool_executions` + `artifacts` tables
 4. **Session**: Auto-save to `sessions` table (start time, duration, statistics)
@@ -301,8 +320,8 @@ cerno_pkg/
 
 `tool_registry.py` defines the `Tool` dataclass (`id`, `name`, `description`,
 `workflow_builder`, `command_builder`, `requires`, `menu_order`, `options`);
-`tool_definitions.py:register_all_tools()` registers nmap, netexec, metasploit and
-the custom command. `tools.py:run_tool_workflow()` builds one `ToolContext` and calls
+`tool_definitions.py:register_all_tools()` registers nmap, netexec, nuclei,
+metasploit and the custom command. `tools.py:run_tool_workflow()` builds one `ToolContext` and calls
 `tool.workflow_builder(ctx)`, which returns a `CommandResult`, so adding a tool needs
 no dispatch changes. See `docs/TOOL_SYSTEM_GUIDE.md`.
 
@@ -310,6 +329,7 @@ no dispatch changes. See `docs/TOOL_SYSTEM_GUIDE.md`.
 
 **Foundation Tables**:
 - `severity_levels`: Normalized severity reference data (0-4, labels, colors)
+- `finding_sources`: Which scanner produced a plugin row (`nessus`=1, `nuclei`=2); seeded by `database.seed_lookup_tables()`, the single source shared with the test fixtures
 - `artifact_types`: Artifact type definitions
 - `hosts`: Normalized host data across ALL scans (enables cross-scan tracking)
 - `ports`: Port metadata
@@ -317,14 +337,17 @@ no dispatch changes. See `docs/TOOL_SYSTEM_GUIDE.md`.
 
 **Core Tables**:
 - `scans`: Top-level scan metadata (scan_name, export_root, .nessus hash)
-- `plugins`: Plugin metadata (plugin_id, severity_int, CVSS, CVEs, Metasploit modules)
+- `plugins`: Finding-type metadata, global across scans (plugin_id **TEXT**, source_id, severity_int, CVSS, CVEs, Metasploit modules)
+  - `plugin_id` is namespaced for **every** source, Nessus included: `'nessus:57608'`, `'nuclei:apache-detect'`. No source is the default, so a bare token is not a valid plugin id anywhere. Helpers live in `parsing.py`: `plugin_source()` (returns `SOURCE_UNKNOWN`, never a guess, for an unprefixed id), `plugin_source_id()` (**raises** on one — the write-side guard), `plugin_ref()` (strips the prefix; this is what a details URL takes), `plugin_details_url()`
+  - `source_id` duplicates what the prefix implies; that is deliberate, so `FindingQuery.source` is an indexed SQL predicate rather than a `LIKE 'nuclei:%'` scan. `Plugin.save()` keeps them consistent
+  - TEXT means `ORDER BY plugin_id` is lexicographic — use `database.plugin_id_order_sql()`, which sorts by prefix then by the **ref cast to an integer**. Casting the whole column is not equivalent: every namespaced id casts to 0, silently degrading to a text sort that puts `nessus:10114` before `nessus:9`
   - Note: `severity_label` accessed via `severity_levels` table JOIN
 - `findings`: Findings per scan (scan_id + plugin_id, review_state)
   - Note: `host_count`, `port_count` computed via `v_finding_stats` view
 - `finding_affected_hosts`: Host:port combinations (finding_id, host_id FK, port_number FK, plugin_output)
   - Uses foreign keys to normalized `hosts` and `ports` tables
 - `host_services`: Per-scan service discovery (scan_id, host_id, port_number, protocol, svc_name)
-  - Populated from Nessus ReportItem `svc_name`/`protocol` attributes during import
+  - Both importers populate it: Nessus from ReportItem `svc_name`/`protocol`; nuclei from the scheme in `matched-at` (so a nuclei-only scan still reports web services)
   - Uses foreign keys to `scans`, `hosts`, and `ports` tables
 - `sessions`: Review session tracking (start time, end time)
   - Note: Statistics computed via `v_session_stats` view
@@ -344,6 +367,7 @@ no dispatch changes. See `docs/TOOL_SYSTEM_GUIDE.md`.
 - `verdict_types` / `nse_verdicts` / `port_states`: lookup tables (seeded in init)
 - `verified_ports`: live-verified open ports from a tool run (FK `execution_id`→tool_executions CASCADE; idempotent per execution)
 - `nse_script_results`: NSE script results + vuln verdicts (FK `execution_id` CASCADE; `port_number` NULL = host script)
+- `nuclei_match_observations`: nuclei matches from an ingested nuclei run (FK `execution_id`→tool_executions CASCADE). **Evidence, not findings** — `cerno import nuclei` is what creates `findings` rows. No UNIQUE constraint: identity is `(execution_id, host_id, port_number, template_ref, matcher_name, extracted)` and the last three are often NULL, so re-ingest reconciles in Python. Both `matcher_name` and `extracted` are in the key because `http-missing-security-headers` differs only by the former and `tls-version` only by the latter
 - `nxc_flag_observations`: point-in-time nxc security-flag snapshot (FK `execution_id` CASCADE); creds/shares stay live-read via `nxc_db.py` (not duplicated)
 - `finding_verdicts`: append-only verification verdict history (FK `finding_id`→findings CASCADE); current = latest `created_at`, ties broken by highest `verdict_id`
 - `verdict_evidence`: evidence backing a verdict (FK `verdict_id` CASCADE; `execution_id`/`artifact_id`/`nse_result_id` SET NULL)
@@ -359,7 +383,10 @@ no dispatch changes. See `docs/TOOL_SYSTEM_GUIDE.md`.
 - `v_http_services`: HTTP/HTTPS services per scan (identifies web services by svc_name heuristics)
 - `v_finding_current_verdict`: latest verification verdict per finding (joined to `verdict_types`)
 - `v_nse_results_with_verdict`: `nse_script_results` with resolved verdict label
+- `v_nuclei_observations`: `nuclei_match_observations` with resolved severity label and host IP
 - `v_finding_verified_stats`: per-finding verified_port/nse_result/vulnerable counts (via `tool_executions.finding_id`)
+
+**Views are recreated on every `initialize_database()`** (dropped then created), because `CREATE VIEW IF NOT EXISTS` does *not* replace an existing view — without the drop a changed definition reaches a fresh database and silently never reaches an upgraded one, the symptom being a missing column rather than an error. So a **view** change needs no schema version bump; a **table** change still does.
 
 **Schema changes**: Update `database.py:SCHEMA_SQL_TABLES` and `SCHEMA_SQL_VIEWS`, then mirror the change in `schema.sql` (`tests/test_database.py` fails if its tables/views/indexes differ) and `docs/DATABASE.md`. Test with fresh database before release.
 
@@ -517,6 +544,8 @@ Only after user confirms the changelog content:
 
 **Configuration** (`~/.cerno/config.yaml`): All user preferences managed via config file. Auto-created with defaults on first run. All configuration values are set through this file only.
 
+The user-facing reference is `docs/CONFIGURATION.md`, whose settings table is **generated** from `config.build_config_rows()` — the same source `cerno config show` renders from. Adding a config key therefore needs no doc edit there, but the per-key notes below carry implementation detail the user docs deliberately omit, so keep them current by hand.
+
 **CLI commands**:
 - `cerno config show` - Display all configuration settings with current values
 - `cerno config set <key> <value>` - Change a configuration value
@@ -539,13 +568,14 @@ Only after user confirms the changelog content:
 - `default_tool` - Pre-select tool in menu (e.g., `nmap`, `netexec`)
 - `default_netexec_protocol` - Default protocol for NetExec (e.g., `smb`, `ssh`); MCP `generate_netexec_cmd` / bare `"netexec"` batch strategy use it when `protocol` is omitted (else `smb`)
 - `nmap_default_profile` - Default NSE profile name; MCP `generate_nmap_cmd` uses its scripts when `nse_option` is omitted (`""` = none), and its UDP need when `udp` is omitted (`tools.find_nse_profile()`)
+- `nuclei_templates_path` / `nuclei_profile` / `nuclei_user_agent` / `nuclei_concurrency` - Shape the nuclei command suggested after an import (`tools.build_nuclei_cmd()`); all four are in `config.MCP_NOT_APPLICABLE_KEYS` since the MCP server prints no suggestions
 - `custom_workflows_path` - Path to custom workflows YAML file; merged over bundled workflows everywhere in the MCP via `workflow_mapper.build_workflow_mapper(config)` (also the default in `query.run_finding_query` / `workflow_prep.prepare_workflow`)
 - `claude_assistant_enabled` - Enable/disable Claude Assistant (default: `false`, opt-in). Pressing `[A]` while installed-but-disabled shows a data-path disclosure (`claude_assistant.CONSENT_DISCLOSURE`) and persists consent via `claude_assistant.ensure_enabled()`; `claude_assistant.claude_enabled(config)` is the single availability gate. `[A]` is hidden only when `claude` is not on PATH
 - `mcp_allow_execution` - Allow the `cerno mcp` server to execute tool commands via `execute_command` (default: `false`)
-- `mcp_allow_mutations` - Allow the `cerno mcp` server to mutate state (`set_review_state`, `add_note`, `import_nessus`, `ingest_results`, `set_finding_verdict`) (default: `false`)
+- `mcp_allow_mutations` - Allow the `cerno mcp` server to mutate state (`set_review_state`, `add_note`, `import_nessus`, `import_nuclei`, `ingest_results`, `set_finding_verdict`) (default: `false`)
 - `mcp_allow_cred_injection` - Allow `execute_command` to resolve `@cred:<ref>@` placeholders to real NetExec secrets server-side at run time (default: `false`). Independent of `mcp_allow_execution`; the resolved secret is never logged, returned, or written to an artifact (masked in `command_text`, scrubbed from stdout/stderr **and from registered `--log`/`-oA` artifact files**)
 - `mcp_allow_cred_reveal` - Allow the MCP `reveal_credential` tool to return a credential's **cleartext** secret to the caller (default: `false`). Strictly more sensitive than injection (reveal hands the secret back), gated independently — injection being on does NOT enable reveal. The local `cerno creds reveal <ref>` CLI works regardless of this flag; every reveal is audited to `tool_executions` (`tool_name='cred_reveal'`, ref only, never the value)
-- `mcp_exec_allowlist` - Glob patterns for the binaries the MCP `execute_command` tool may run, matched on the basename of the target binary after unwrapping `sudo`/`proxychains4` (default: `config.DEFAULT_MCP_EXEC_ALLOWLIST` = `nmap, nxc, netexec, msfconsole` plus low-impact recon utilities: `curl, wget, dig, host, nslookup, whois, ping, traceroute, ssh-audit, sslscan, testssl*, whatweb, showmount, rpcinfo, snmpwalk, onesixtyone`; binaries with built-in command escapes such as `find`/`ssh`/`nc`/`smbclient` are deliberately excluded). `*` = any binary not denied; **empty list = deny all**. Only consulted when `mcp_allow_execution` is on. Set via CSV: `cerno config set mcp_exec_allowlist "nmap,nxc"`
+- `mcp_exec_allowlist` - Glob patterns for the binaries the MCP `execute_command` tool may run, matched on the basename of the target binary after unwrapping `sudo`/`proxychains4` (default: `config.DEFAULT_MCP_EXEC_ALLOWLIST` = `nmap, nxc, netexec, msfconsole, nuclei` plus low-impact recon utilities: `curl, wget, dig, host, nslookup, whois, ping, traceroute, ssh-audit, sslscan, testssl*, whatweb, showmount, rpcinfo, snmpwalk, onesixtyone`; binaries with built-in command escapes such as `find`/`ssh`/`nc`/`smbclient` are deliberately excluded; `nuclei` is allowlisted despite running `code:` templates under `-code` and reading/writing local files via `-l`/`-o`, on the basis that this is the same risk class as the allowlisted `curl`/`wget`). `*` = any binary not denied; **empty list = deny all**. Only consulted when `mcp_allow_execution` is on. Set via CSV: `cerno config set mcp_exec_allowlist "nmap,nxc"`
 - `mcp_exec_denylist` - Glob patterns for binaries `execute_command` may never run, checked against every binary in the chain including wrappers; always wins over the allowlist (default: `config.DEFAULT_MCP_EXEC_DENYLIST`, destructive commands like `rm, dd, mkfs*`). A guardrail, not a security boundary. Both list keys go through `config.coerce_str_list()` on load and `config set`, so YAML scalars and CSV strings become lists
 - `mcp_allow_batch` - Allow the MCP `execute_batch` tool to RUN the generated command for every finding matched by a query (default: `false`). `plan_batch` (the reviewable dry run) is always available; `execute_batch` is registered only when BOTH `mcp_allow_execution` and `mcp_allow_batch` are on, and every command still passes `_check_exec_policy`, the cred gate, and the per-command timeout — this flag only authorizes the fan-out across a query
 - `mcp_batch_concurrency` - Max commands `execute_batch` runs concurrently (default: `3`; config value and per-call `concurrency` arg clamped to [1, 8] by `batch._batch_cap()`; lower to `1` through a single SOCKS pivot, since nmap/nxc are already internally parallel). Implemented via a shared `asyncio.Semaphore` gate awaited in the event loop by `JobRegistry.start()`, so queued jobs hold no executor threads
@@ -554,22 +584,22 @@ Only after user confirms the changelog content:
 - `mcp_enforce_scope` - Refuse `execute_command` / `start_execution` / `execute_batch` runs whose IP or CIDR targets fall outside the engagement scope (default: `true`). In scope = every host in imported scans plus any range in `mcp_scope_extra`; out-of-scope IP/CIDR literals (positional args, URL hosts, `-iL` file entries) are refused, while an unresolved bare hostname is allowed with a `scope_warnings` note. Only consulted when `mcp_allow_execution` is on; set `false` to disable
 - `mcp_scope_extra` - Additional in-scope CIDRs / IPs / hostnames beyond the imported scan hosts (default: empty), via `config.coerce_str_list()`. Ignored when `mcp_enforce_scope` is `false`
 
-**MCP config contract**: the MCP server honors every config key with precedence explicit tool arg > config > hardcoded default (`default_page_size` → default `limit` for `list_findings`/`query_findings`/`search_findings`, min 8, else 500), except the TUI-only keys in `config.MCP_NOT_APPLICABLE_KEYS` (`no_color`, `color_scheme`, `term_override`, `default_tool`, `claude_assistant_enabled`, `pivot_interface`, `pivot_http_port`, `top_ports_count`). `tests/test_mcp_config.py` fails when a new key is added without classifying it. Tests isolate `config.get_config_path()` to a temp file (autouse `conftest.reset_environment`), so the developer's real config never leaks in.
+**MCP config contract**: the MCP server honors every config key with precedence explicit tool arg > config > hardcoded default (`default_page_size` → default `limit` for `list_findings`/`query_findings`/`search_findings`, min 8, else 500), except the TUI-only keys in `config.MCP_NOT_APPLICABLE_KEYS` (`no_color`, `color_scheme`, `term_override`, `default_tool`, `claude_assistant_enabled`, `pivot_interface`, `pivot_http_port`, `top_ports_count`, `nuclei_templates_path`, `nuclei_profile`, `nuclei_user_agent`, `nuclei_concurrency`). `tests/test_mcp_config.py` fails when a new key is added without classifying it. Tests isolate `config.get_config_path()` to a temp file (autouse `conftest.reset_environment`), so the developer's real config never leaks in.
 
 **NSE profiles** (`constants.py:NSE_PROFILES`): Pre-configured nmap script sets (SMB, SSL, HTTP, etc.)
 
 ### Workflow Mappings
 
-`workflow_mappings.yaml`: Maps plugin IDs → verification workflows (YAML format).
+`workflow_mappings.yaml`: Maps namespaced finding IDs → verification workflows (YAML format).
 
 **CLI options**:
 - `--custom-workflows PATH`: Supplement bundled workflows (custom overrides on conflict)
 - `--custom-workflows-only PATH`: Replace bundled workflows entirely
 
 **Workflow features**:
-- Multi-plugin workflows (comma-separated plugin IDs)
+- Multi-finding workflows (comma-separated finding IDs, which may span sources)
 - Display-only (commands, notes, references)
-- Press `[W]` in TUI to view workflow for current plugin
+- Press `[W]` in TUI to view the workflow for the current finding
 
 ### Logging
 
@@ -738,11 +768,12 @@ sqlite3 ~/.cerno/cerno.db ".schema"
 
 # Check foundation tables populated
 sqlite3 ~/.cerno/cerno.db "SELECT COUNT(*) FROM severity_levels;"  # Expected: 5
-sqlite3 ~/.cerno/cerno.db "SELECT COUNT(*) FROM artifact_types;"   # Expected: 5
+sqlite3 ~/.cerno/cerno.db "SELECT COUNT(*) FROM artifact_types;"   # Expected: 6
 sqlite3 ~/.cerno/cerno.db "SELECT COUNT(*) FROM verdict_types;"    # Expected: 3
 sqlite3 ~/.cerno/cerno.db "SELECT COUNT(*) FROM nse_verdicts;"     # Expected: 4
 sqlite3 ~/.cerno/cerno.db "SELECT COUNT(*) FROM port_states;"      # Expected: 6
-sqlite3 ~/.cerno/cerno.db "PRAGMA user_version;"                   # Expected: 4
+sqlite3 ~/.cerno/cerno.db "SELECT COUNT(*) FROM finding_sources;"  # Expected: 2
+sqlite3 ~/.cerno/cerno.db "PRAGMA user_version;"                   # Expected: 5
 ```
 
 ### Adding a New Tool
@@ -751,12 +782,13 @@ sqlite3 ~/.cerno/cerno.db "PRAGMA user_version;"                   # Expected: 4
 2. Write a workflow builder `build_<tool>_workflow(ctx: ToolContext) -> Optional[CommandResult]` in `tools.py` (prompts, then calls the command builder)
 3. Register a `Tool(...)` in `tool_definitions.py:register_all_tools()`
 4. Add tool-specific constants to `constants.py` if needed
-5. Test in TUI: `cerno review` → Run tool → Verify command generation (see `docs/ADDING_TOOLS_QUICKSTART.md`)
+5. **If the tool writes an ingestible output file**, teach `ops.log_artifacts_for_run()` about it — the TUI run loop calls that helper for every run, and without an entry the tool logs a `tool_executions` row with no artifact, so `ingest_results` has nothing to read
+6. Test in TUI: `cerno review` → Run tool → Verify command generation (see `docs/ADDING_TOOLS_QUICKSTART.md`)
 
 ### Updating Workflow Mappings
 
 1. Edit `cerno_pkg/workflow_mappings.yaml` (or create custom YAML)
-2. Follow schema: `version`, `workflows` list, each with `plugin_id`, `workflow_name`, `description`, `steps`, `references`; use canonical `<TARGET>`/`<PORT>`/`<USERNAME>`/`<PASSWORD>`/`<DOMAIN>`/`<INTERFACE>` placeholders (see `docs/CUSTOM_WORKFLOWS.md`)
+2. Follow schema: `version`, `workflows` list, each with `finding_id` (source-prefixed, e.g. `nessus:57608`; may list ids from several sources), `workflow_name`, `description`, `steps`, `references`; use canonical `<TARGET>`/`<PORT>`/`<USERNAME>`/`<PASSWORD>`/`<DOMAIN>`/`<INTERFACE>` placeholders (see `docs/CUSTOM_WORKFLOWS.md`)
 3. Test in TUI: `cerno review --custom-workflows <path>` → Press `[W]` on matching plugin
 
 ### Debugging Database Issues

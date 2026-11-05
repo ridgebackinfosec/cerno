@@ -18,7 +18,12 @@ from .constants import (
     REVIEW_STATE_UNREVIEWED,
     REVIEW_TRANSITIONS,
 )
-from .database import db_transaction, query_all, query_one
+from .database import db_transaction, plugin_id_order_sql, query_all, query_one
+from .parsing import (
+    plugin_details_url,
+    plugin_source,
+    plugin_source_id,
+)
 from .logging_setup import log_error, log_info
 
 # ========== Helper Functions ==========
@@ -42,8 +47,8 @@ class Scan:
 
     scan_id: Optional[int] = None
     scan_name: str = ""
-    nessus_file_path: Optional[str] = None
-    nessus_file_hash: Optional[str] = None
+    source_file_path: Optional[str] = None
+    source_file_hash: Optional[str] = None
     export_root: str = ""
     created_at: Optional[str] = None
     last_reviewed_at: Optional[str] = None
@@ -61,8 +66,8 @@ class Scan:
         return cls(
             scan_id=row["scan_id"],
             scan_name=row["scan_name"],
-            nessus_file_path=row["nessus_file_path"],
-            nessus_file_hash=row["nessus_file_hash"],
+            source_file_path=row["source_file_path"],
+            source_file_hash=row["source_file_hash"],
             export_root=row["export_root"],
             created_at=row["created_at"],
             last_reviewed_at=row["last_reviewed_at"],
@@ -82,13 +87,13 @@ class Scan:
                 # Insert new scan
                 cursor = c.execute(
                     """
-                    INSERT INTO scans (scan_name, nessus_file_path, nessus_file_hash, export_root)
+                    INSERT INTO scans (scan_name, source_file_path, source_file_hash, export_root)
                     VALUES (?, ?, ?, ?)
                     """,
                     (
                         self.scan_name,
-                        self.nessus_file_path,
-                        self.nessus_file_hash,
+                        self.source_file_path,
+                        self.source_file_hash,
                         self.export_root,
                     ),
                 )
@@ -99,14 +104,14 @@ class Scan:
                 c.execute(
                     """
                     UPDATE scans
-                    SET scan_name=?, nessus_file_path=?, nessus_file_hash=?,
+                    SET scan_name=?, source_file_path=?, source_file_hash=?,
                         export_root=?, last_reviewed_at=?
                     WHERE scan_id=?
                     """,
                     (
                         self.scan_name,
-                        self.nessus_file_path,
-                        self.nessus_file_hash,
+                        self.source_file_path,
+                        self.source_file_hash,
                         self.export_root,
                         self.last_reviewed_at,
                         self.scan_id,
@@ -202,7 +207,19 @@ class Scan:
                     SUM(CASE WHEN p.severity_int = 2 THEN 1 ELSE 0 END) as medium_count,
                     SUM(CASE WHEN p.severity_int = 1 THEN 1 ELSE 0 END) as low_count,
                     SUM(CASE WHEN p.severity_int = 0 THEN 1 ELSE 0 END) as info_count,
-                    SUM(CASE WHEN f.review_state = 'done' THEN 1 ELSE 0 END) as done_count
+                    SUM(CASE WHEN f.review_state = 'done' THEN 1 ELSE 0 END) as done_count,
+                    -- Which scanner produced this scan's findings. GROUP_CONCAT
+                    -- over DISTINCT source names so a (currently unreachable)
+                    -- mixed-source scan reports both rather than one at random,
+                    -- and an empty scan reports NULL rather than a wrong guess.
+                    (SELECT GROUP_CONCAT(src) FROM (
+                        SELECT DISTINCT fs.source_name AS src
+                        FROM findings f3
+                        JOIN plugins p3 ON f3.plugin_id = p3.plugin_id
+                        JOIN finding_sources fs ON p3.source_id = fs.source_id
+                        WHERE f3.scan_id = s.scan_id
+                        ORDER BY fs.source_name
+                     )) as source
                 FROM scans s
                 LEFT JOIN findings f ON s.scan_id = f.scan_id
                 LEFT JOIN plugins p ON f.plugin_id = p.plugin_id
@@ -251,13 +268,18 @@ class Scan:
 
 @dataclass
 class Plugin:
-    """Represents a Nessus plugin (finding type).
+    """Represents one finding type from a scan source (a "plugin").
 
     NOTE: "plugin" is internal terminology. User-facing commands use "findings".
     The severity_label is fetched from the v_plugins_with_severity view, not stored in plugins table.
+
+    ``plugin_id`` is TEXT and namespaced per source from schema v5 on: a Nessus
+    plugin id stays bare (``'57608'``), a nuclei template id is prefixed
+    (``'nuclei:apache-detect'``). Use :attr:`source` rather than inspecting the
+    prefix at call sites.
     """
 
-    plugin_id: int
+    plugin_id: str
     plugin_name: str = ""
     severity_int: int = 0
     severity_label: str = (
@@ -305,7 +327,7 @@ class Plugin:
             metadata_fetched_at=row["metadata_fetched_at"],
         )
 
-    def save(self, conn: Optional[sqlite3.Connection] = None) -> Optional[int]:
+    def save(self, conn: Optional[sqlite3.Connection] = None) -> Optional[str]:
         """Insert or update plugin in database (upsert).
 
         Args:
@@ -323,13 +345,14 @@ class Plugin:
             c.execute(
                 """
                 INSERT OR REPLACE INTO plugins (
-                    plugin_id, plugin_name, severity_int,
+                    plugin_id, source_id, plugin_name, severity_int,
                     has_metasploit, cvss3_score, cvss2_score, metasploit_names, cves,
                     plugin_url, metadata_fetched_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    self.plugin_id,
+                    str(self.plugin_id),
+                    plugin_source_id(self.plugin_id),
                     self.plugin_name,
                     self.severity_int,
                     self.has_metasploit,
@@ -344,9 +367,32 @@ class Plugin:
 
         return self.plugin_id
 
+    def __post_init__(self) -> None:
+        # plugins.plugin_id is TEXT (schema v5). Normalizing here means a caller
+        # that passes the integer 57608 and a row read back as '57608' compare
+        # equal, hash alike and key the same dict -- the alternative is an
+        # int/str split that only shows up at a comparison far from the cause.
+        self.plugin_id = str(self.plugin_id)
+
+    @property
+    def source(self) -> str:
+        """Name of the source this plugin came from (``nessus``, ``nuclei``).
+
+        Derived from the ``plugin_id`` namespace rather than read back from
+        ``plugins.source_id``; the stored column exists so SQL can filter on
+        source with an index, and the two are kept consistent by
+        :meth:`save`.
+        """
+        return plugin_source(self.plugin_id)
+
+    @property
+    def details_url(self) -> Optional[str]:
+        """Best known details page, or None when the source has no template."""
+        return plugin_details_url(self.plugin_id, self.plugin_url)
+
     @classmethod
     def get_by_id(
-        cls, plugin_id: int, conn: Optional[sqlite3.Connection] = None
+        cls, plugin_id: str, conn: Optional[sqlite3.Connection] = None
     ) -> Optional[Plugin]:
         """Retrieve plugin by ID.
 
@@ -395,7 +441,7 @@ class Finding:
 
     finding_id: Optional[int] = None
     scan_id: int = 0
-    plugin_id: int = 0
+    plugin_id: str = ""
     review_state: str = REVIEW_STATE_UNREVIEWED  # 'unreviewed', 'in_progress', 'done'
     reviewed_at: Optional[str] = None
     reviewed_by: Optional[str] = None
@@ -404,6 +450,10 @@ class Finding:
     # Set by get_by_scan_ids_merged() (and query.py merged results) so all host/port
     # queries cover every selected scan.
     extra_finding_ids: list[int] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        # See Plugin.__post_init__: findings.plugin_id is TEXT from v5 on.
+        self.plugin_id = str(self.plugin_id)
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> Finding:
@@ -585,7 +635,7 @@ class Finding:
         review_state: Optional[str] = None,
         plugin_name_filter: Optional[str] = None,
         has_metasploit: Optional[bool] = None,
-        plugin_ids: Optional[list[int]] = None,
+        plugin_ids: Optional[list[str]] = None,
         conn: Optional[sqlite3.Connection] = None,
     ) -> list[tuple[Finding, Plugin]]:
         """Retrieve findings with plugin info for a scan.
@@ -659,7 +709,7 @@ class Finding:
                 params.extend(plugin_ids)
 
             # Order by plugin_id for consistent results
-            query += " ORDER BY p.plugin_id ASC"
+            query += f" ORDER BY {plugin_id_order_sql('p.plugin_id')}"
 
             rows = query_all(c, query, tuple(params))
 
@@ -707,9 +757,9 @@ class Finding:
         severity_dir: Optional[str] = None,
         severity_dirs: Optional[list[str]] = None,
         has_metasploit: Optional[bool] = None,
-        plugin_ids: Optional[list[int]] = None,
+        plugin_ids: Optional[list[str]] = None,
         conn: Optional[sqlite3.Connection] = None,
-    ) -> tuple[list[tuple["Finding", "Plugin"]], dict[int, list["Finding"]]]:
+    ) -> tuple[list[tuple["Finding", "Plugin"]], dict[str, list["Finding"]]]:
         """Retrieve findings across multiple scans, merged and deduplicated by plugin_id.
 
         Queries findings for all provided scan IDs and groups results by plugin_id.
@@ -791,13 +841,13 @@ class Finding:
                 params.extend(plugin_ids)
 
             # Order by plugin_id then scan_id so grouping logic finds lowest scan_id first
-            query += " ORDER BY p.plugin_id ASC, f.scan_id ASC"
+            query += f" ORDER BY {plugin_id_order_sql('p.plugin_id')}, f.scan_id ASC"
 
             rows = query_all(c, query, tuple(params))
 
             # Group rows by plugin_id; track all Finding instances and one Plugin per plugin_id
-            all_instances: dict[int, list[Finding]] = {}
-            plugin_map: dict[int, Plugin] = {}
+            all_instances: dict[str, list[Finding]] = {}
+            plugin_map: dict[str, Plugin] = {}
 
             for row in rows:
                 finding = cls(
@@ -852,7 +902,7 @@ class Finding:
         cls,
         scan_id: int,
         severity_dir: str,
-        plugin_ids: Optional[list[int]] = None,
+        plugin_ids: Optional[list[str]] = None,
         conn: Optional[sqlite3.Connection] = None,
         *,
         scan_ids: Optional[list[int]] = None,
@@ -967,7 +1017,7 @@ class Finding:
         scan_id: int,
         conn: Optional[sqlite3.Connection] = None,
         *,
-        plugin_ids: Optional[list[int]] = None,
+        plugin_ids: Optional[list[str]] = None,
         scan_ids: Optional[list[int]] = None,
     ) -> list[str]:
         """Get distinct severity directories for a scan, sorted by severity level.
@@ -1973,7 +2023,7 @@ class Host:
         conn: Optional[sqlite3.Connection] = None,
         *,
         scan_ids: Optional[list[int]] = None,
-    ) -> list[int]:
+    ) -> list[str]:
         """Get plugin IDs for findings affecting a specific host in one or more scans.
 
         Args:
@@ -1986,6 +2036,8 @@ class Host:
         Returns:
             List of distinct plugin_id values for findings affecting this host
         """
+        order = plugin_id_order_sql("f.plugin_id")
+
         if scan_ids and len(scan_ids) > 1:
             scan_clause = f"f.scan_id IN ({','.join('?' * len(scan_ids))})"
             params: list[Any] = list(scan_ids)
@@ -2006,7 +2058,7 @@ class Host:
             JOIN findings f ON fah.finding_id = f.finding_id
             JOIN hosts h ON fah.host_id = h.host_id
             WHERE {scan_clause} AND {host_clause}
-            ORDER BY f.plugin_id ASC
+            ORDER BY {order}
         """
         with db_transaction(conn) as c:
             rows = query_all(c, query, tuple(params))
@@ -2562,6 +2614,79 @@ class NseScriptResult:
                 c,
                 "SELECT * FROM nse_script_results WHERE execution_id = ?",
                 (execution_id,),
+            )
+            return [cls.from_row(r) for r in rows]
+
+
+@dataclass
+class NucleiMatchObservation:
+    """One nuclei template match from a tool run (provenance = execution_id).
+
+    Evidence, not a finding: `cerno import nuclei` is what creates `findings`
+    rows. `port_number` is None where nuclei reported no usable port (a dns
+    template, say), and both `matcher_name` and `extracted` are frequently
+    None -- which is why `ingest` reconciles these rows in Python rather than
+    relying on a UNIQUE index, where SQLite treats NULLs as distinct.
+    """
+
+    observation_id: Optional[int] = None
+    execution_id: int = 0
+    host_id: int = 0
+    port_number: Optional[int] = None
+    template_ref: str = ""
+    template_name: Optional[str] = None
+    severity_int: int = 0
+    matched_at: Optional[str] = None
+    matcher_name: Optional[str] = None
+    template_url: Optional[str] = None
+    extracted: Optional[str] = None
+    created_at: Optional[str] = None
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> NucleiMatchObservation:
+        return cls(
+            observation_id=row["observation_id"],
+            execution_id=row["execution_id"],
+            host_id=row["host_id"],
+            port_number=row["port_number"],
+            template_ref=row["template_ref"],
+            template_name=row["template_name"],
+            severity_int=row["severity_int"],
+            matched_at=row["matched_at"],
+            matcher_name=row["matcher_name"],
+            template_url=row["template_url"],
+            extracted=row["extracted"],
+            created_at=row["created_at"],
+        )
+
+    @classmethod
+    def get_by_execution(
+        cls, execution_id: int, conn: Optional[sqlite3.Connection] = None
+    ) -> list[NucleiMatchObservation]:
+        with db_transaction(conn) as c:
+            rows = query_all(
+                c,
+                "SELECT * FROM nuclei_match_observations WHERE execution_id = ? "
+                "ORDER BY observation_id",
+                (execution_id,),
+            )
+            return [cls.from_row(r) for r in rows]
+
+    @classmethod
+    def get_by_finding(
+        cls, finding_id: int, conn: Optional[sqlite3.Connection] = None
+    ) -> list[NucleiMatchObservation]:
+        """Every match from any execution attributed to this finding."""
+        with db_transaction(conn) as c:
+            rows = query_all(
+                c,
+                """
+                SELECT nmo.* FROM nuclei_match_observations nmo
+                JOIN tool_executions te ON nmo.execution_id = te.execution_id
+                WHERE te.finding_id = ?
+                ORDER BY nmo.observation_id
+                """,
+                (finding_id,),
             )
             return [cls.from_row(r) for r in rows]
 

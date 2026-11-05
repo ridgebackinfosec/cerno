@@ -279,11 +279,15 @@ def strip_unsafe_escapes(text: str) -> str:
 
     The trade-off is deliberate: an attacker-influenced string reaching these
     helpers can still change *colors*, which is cosmetic, but can no longer
-    retitle the terminal, move the cursor or plant a hyperlink. Note that
-    ``.nessus`` data cannot carry an ESC byte at all (it is invalid XML), so
-    the residual surface is tool output, NetExec values and file names. Values
-    interpolated into Rich *markup* get no such carve-out -- see
-    :func:`safe_text`.
+    retitle the terminal, move the cursor or plant a hyperlink.
+
+    The residual surface is wider than it used to be. ``.nessus`` data cannot
+    carry an ESC byte at all (it is invalid XML), but JSON can escape one as
+    ``\u001b`` -- and nuclei's ``extracted-results`` is lifted verbatim from
+    response bodies, so a hostile page controls that text. Together with tool
+    output, NetExec values and file names, that is what can still recolor
+    output here. Values interpolated into Rich *markup* get no such carve-out
+    -- see :func:`safe_text`, which strips every escape.
 
     Args:
         text: Text that may contain terminal escape sequences

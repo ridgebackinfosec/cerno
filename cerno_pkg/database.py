@@ -10,6 +10,7 @@ Database location: ~/.cerno/cerno.db (global, cross-scan queries)
 from __future__ import annotations
 
 import hashlib
+import re
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
@@ -37,7 +38,7 @@ DATABASE_PATH = get_database_path()
 
 # ========== Schema ==========
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 """Schema version, stored in ``PRAGMA user_version``.
 
 Note: Database is created directly in normalized structure.
@@ -57,6 +58,10 @@ History:
      verdict_types / nse_verdicts / port_states lookup tables, and the
      v_finding_current_verdict / v_finding_verified_stats /
      v_nse_results_with_verdict views
+- 5: Multi-source findings: ``plugins.plugin_id`` widened to TEXT and
+     namespaced per source ('57608' for Nessus, 'nuclei:apache-detect' for
+     nuclei), ``plugins.source_id`` + the ``finding_sources`` lookup table
+     added, and ``findings.plugin_id`` widened to match
 
 Schema features:
 - Normalized host and port tables (cross-scan tracking)
@@ -82,8 +87,8 @@ SCHEMA_SQL_TABLES = """
 CREATE TABLE IF NOT EXISTS scans (
     scan_id INTEGER PRIMARY KEY AUTOINCREMENT,
     scan_name TEXT NOT NULL UNIQUE,
-    nessus_file_path TEXT,
-    nessus_file_hash TEXT,
+    source_file_path TEXT,
+    source_file_hash TEXT,
     export_root TEXT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     last_reviewed_at TIMESTAMP
@@ -92,7 +97,8 @@ CREATE TABLE IF NOT EXISTS scans (
 CREATE INDEX IF NOT EXISTS idx_scans_name ON scans(scan_name);
 
 CREATE TABLE IF NOT EXISTS plugins (
-    plugin_id INTEGER PRIMARY KEY,
+    plugin_id TEXT PRIMARY KEY,
+    source_id INTEGER NOT NULL DEFAULT 1,
     plugin_name TEXT NOT NULL,
     severity_int INTEGER NOT NULL,
     has_metasploit BOOLEAN DEFAULT 0,
@@ -103,16 +109,18 @@ CREATE TABLE IF NOT EXISTS plugins (
     plugin_url TEXT,
     metadata_fetched_at TIMESTAMP,
     CONSTRAINT severity_range CHECK (severity_int BETWEEN 0 AND 4),
-    FOREIGN KEY (severity_int) REFERENCES severity_levels(severity_int)
+    FOREIGN KEY (severity_int) REFERENCES severity_levels(severity_int),
+    FOREIGN KEY (source_id) REFERENCES finding_sources(source_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_plugins_severity ON plugins(severity_int);
 CREATE INDEX IF NOT EXISTS idx_plugins_metasploit ON plugins(has_metasploit);
+CREATE INDEX IF NOT EXISTS idx_plugins_source ON plugins(source_id);
 
 CREATE TABLE IF NOT EXISTS findings (
     finding_id INTEGER PRIMARY KEY AUTOINCREMENT,
     scan_id INTEGER NOT NULL,
-    plugin_id INTEGER NOT NULL,
+    plugin_id TEXT NOT NULL,
     review_state TEXT NOT NULL DEFAULT 'unreviewed',
     reviewed_at TIMESTAMP,
     reviewed_by TEXT,
@@ -215,6 +223,17 @@ CREATE TABLE IF NOT EXISTS workflow_executions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_workflow_executions_finding ON workflow_executions(finding_id);
+
+-- Finding sources lookup table (which scanner produced a plugin row)
+-- plugins.plugin_id is namespaced per source ('57608' for Nessus,
+-- 'nuclei:apache-detect' for nuclei), so source_id is strictly derivable from
+-- that prefix. It is stored anyway, deliberately: it gives query.py an indexed
+-- SQL predicate and real referential integrity, where the alternative is a
+-- LIKE 'nuclei:%' scan on every source-filtered query. See docs/DATABASE.md.
+CREATE TABLE IF NOT EXISTS finding_sources (
+    source_id INTEGER PRIMARY KEY,
+    source_name TEXT NOT NULL UNIQUE
+);
 
 -- Severity levels lookup table (normalized reference data)
 CREATE TABLE IF NOT EXISTS severity_levels (
@@ -392,6 +411,35 @@ CREATE INDEX IF NOT EXISTS idx_nse_results_execution ON nse_script_results(execu
 CREATE INDEX IF NOT EXISTS idx_nse_results_host ON nse_script_results(host_id);
 CREATE INDEX IF NOT EXISTS idx_nse_results_verdict ON nse_script_results(nse_verdict_id);
 
+-- nuclei matches observed during a Cerno-run nuclei execution.
+--
+-- Evidence, not findings: these rows back a verdict on an existing finding and
+-- are tied to the execution that produced them, exactly as nmap's NSE results
+-- are. Templates that should become findings in their own right go through
+-- `cerno import nuclei` instead.
+CREATE TABLE IF NOT EXISTS nuclei_match_observations (
+    observation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    execution_id   INTEGER NOT NULL,
+    host_id        INTEGER NOT NULL,
+    port_number    INTEGER,
+    template_ref   TEXT NOT NULL,
+    template_name  TEXT,
+    severity_int   INTEGER NOT NULL,
+    matched_at     TEXT,
+    matcher_name   TEXT,
+    template_url   TEXT,
+    extracted      TEXT,
+    created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (execution_id) REFERENCES tool_executions(execution_id) ON DELETE CASCADE,
+    FOREIGN KEY (host_id) REFERENCES hosts(host_id),
+    FOREIGN KEY (port_number) REFERENCES ports(port_number),
+    FOREIGN KEY (severity_int) REFERENCES severity_levels(severity_int)
+);
+
+CREATE INDEX IF NOT EXISTS idx_nuclei_obs_execution ON nuclei_match_observations(execution_id);
+CREATE INDEX IF NOT EXISTS idx_nuclei_obs_host ON nuclei_match_observations(host_id);
+CREATE INDEX IF NOT EXISTS idx_nuclei_obs_template ON nuclei_match_observations(template_ref);
+
 -- Point-in-time snapshot of nxc security flags (provenance = execution_id).
 -- Credentials and shares are NOT duplicated here; they stay live-read via nxc_db.
 CREATE TABLE IF NOT EXISTS nxc_flag_observations (
@@ -497,7 +545,8 @@ SELECT
     p.cves,
     p.metasploit_names,
     p.plugin_url,
-    p.metadata_fetched_at
+    p.metadata_fetched_at,
+    p.source_id
 FROM plugins p
 JOIN severity_levels sl ON p.severity_int = sl.severity_int;
 
@@ -654,17 +703,39 @@ SELECT
 FROM nse_script_results nsr
 LEFT JOIN nse_verdicts nv ON nsr.nse_verdict_id = nv.nse_verdict_id;
 
+CREATE VIEW IF NOT EXISTS v_nuclei_observations AS
+SELECT
+    nmo.observation_id,
+    nmo.execution_id,
+    nmo.host_id,
+    h.ip_address,
+    nmo.port_number,
+    nmo.template_ref,
+    nmo.template_name,
+    nmo.severity_int,
+    sl.severity_label,
+    nmo.matched_at,
+    nmo.matcher_name,
+    nmo.template_url,
+    nmo.extracted,
+    nmo.created_at
+FROM nuclei_match_observations nmo
+JOIN hosts h ON nmo.host_id = h.host_id
+LEFT JOIN severity_levels sl ON nmo.severity_int = sl.severity_int;
+
 -- Live-verified fact counts per finding (via the execution's finding_id)
 CREATE VIEW IF NOT EXISTS v_finding_verified_stats AS
 SELECT
     te.finding_id,
     COUNT(DISTINCT vp.verified_port_id) AS verified_port_count,
     COUNT(DISTINCT nsr.nse_result_id) AS nse_result_count,
-    COUNT(DISTINCT CASE WHEN nv.label = 'VULNERABLE' THEN nsr.nse_result_id END) AS vulnerable_count
+    COUNT(DISTINCT CASE WHEN nv.label = 'VULNERABLE' THEN nsr.nse_result_id END) AS vulnerable_count,
+    COUNT(DISTINCT nmo.observation_id) AS nuclei_match_count
 FROM tool_executions te
 LEFT JOIN verified_ports vp ON vp.execution_id = te.execution_id
 LEFT JOIN nse_script_results nsr ON nsr.execution_id = te.execution_id
 LEFT JOIN nse_verdicts nv ON nsr.nse_verdict_id = nv.nse_verdict_id
+LEFT JOIN nuclei_match_observations nmo ON nmo.execution_id = te.execution_id
 WHERE te.finding_id IS NOT NULL
 GROUP BY te.finding_id;
 """
@@ -763,8 +834,124 @@ def _check_schema_version(conn: sqlite3.Connection, db_path: Path) -> None:
             f"Database schema at {db_path} is version {db_version}, but this "
             f"version of Cerno requires schema version {SCHEMA_VERSION}. "
             f"Back up and delete {db_path}, then re-import your scans "
-            f"with 'cerno import nessus <file>'."
+            f"with 'cerno import nessus <file>' / 'cerno import nuclei <file>'."
         )
+
+
+#: Reference rows for every lookup table, as ``(sql, rows)`` pairs.
+#:
+#: Single source of truth: :func:`seed_lookup_tables` is called both by
+#: :func:`initialize_database` and by the ``temp_db`` test fixture, so a new
+#: lookup table cannot be seeded in production but forgotten in tests.
+LOOKUP_SEEDS: tuple[tuple[str, list[tuple]], ...] = (
+    (
+        "INSERT OR IGNORE INTO severity_levels VALUES (?, ?, ?, ?)",
+        [
+            (4, "Critical", 4, "#8B0000"),
+            (3, "High", 3, "#FF4500"),
+            (2, "Medium", 2, "#FFA500"),
+            (1, "Low", 1, "#FFD700"),
+            (0, "Info", 0, "#4682B4"),
+        ],
+    ),
+    # Import sources (plugins.plugin_id is namespaced per source)
+    (
+        "INSERT OR IGNORE INTO finding_sources (source_id, source_name) VALUES (?, ?)",
+        [(1, "nessus"), (2, "nuclei")],
+    ),
+    (
+        "INSERT OR IGNORE INTO artifact_types "
+        "(type_name, file_extension, description) VALUES (?, ?, ?)",
+        [
+            ("nmap_xml", ".xml", "Nmap XML output"),
+            ("nmap_gnmap", ".gnmap", "Nmap greppable output"),
+            ("nmap_nmap", ".nmap", "Nmap normal output"),
+            ("netexec_txt", ".txt", "NetExec text output"),
+            ("nuclei_json", ".json", "nuclei JSON export (-je)"),
+            ("log", ".log", "Tool execution log"),
+        ],
+    ),
+    # Verification verdict types (truth, distinct from review_state)
+    (
+        "INSERT OR IGNORE INTO verdict_types (label, description) VALUES (?, ?)",
+        [
+            ("confirmed", "Finding verified as a true positive"),
+            ("false_positive", "Finding verified as a false positive"),
+            ("unable", "Unable to verify the finding"),
+        ],
+    ),
+    # NSE vuln-script verdict classifications
+    (
+        "INSERT OR IGNORE INTO nse_verdicts (label) VALUES (?)",
+        [
+            ("VULNERABLE",),
+            ("NOT_VULNERABLE",),
+            ("LIKELY_VULNERABLE",),
+            ("UNKNOWN",),
+        ],
+    ),
+    # Nmap port states
+    (
+        "INSERT OR IGNORE INTO port_states (label) VALUES (?)",
+        [
+            ("open",),
+            ("closed",),
+            ("filtered",),
+            ("open|filtered",),
+            ("closed|filtered",),
+            ("unfiltered",),
+        ],
+    ),
+)
+
+
+def plugin_id_order_sql(column: str) -> str:
+    """``ORDER BY`` fragment that sorts a namespaced ``plugin_id`` sensibly.
+
+    ``plugins.plugin_id`` is TEXT and every id is namespaced
+    (``'nessus:57608'``, ``'nuclei:apache-detect'``), so sorting it directly is
+    lexicographic and ``'nessus:9'`` would land after ``'nessus:10114'``.
+
+    Sort by the prefix first, so a source's findings stay together, then by the
+    *reference* cast to an integer, which restores numeric order for sources
+    that number their findings. A non-numeric reference casts to 0 and falls
+    back to the textual tiebreaker, which is the right order for nuclei's
+    template names.
+
+    Casting the whole column (the pre-namespacing form) is **not** equivalent:
+    every namespaced id casts to 0, collapsing the numeric term entirely and
+    silently degrading to a lexicographic sort.
+
+    Args:
+        column: Qualified column name. An internal constant, never user input.
+    """
+    ref = f"substr({column}, instr({column}, ':') + 1)"
+    return (
+        f"substr({column}, 1, instr({column}, ':')) ASC, "
+        f"CAST({ref} AS INTEGER) ASC, "
+        f"{column} ASC"
+    )
+
+
+def seed_lookup_tables(conn: sqlite3.Connection) -> None:
+    """Populate every lookup table with its reference rows.
+
+    Idempotent (``INSERT OR IGNORE``), so it is safe to re-run against an
+    existing database.
+    """
+    for sql, rows in LOOKUP_SEEDS:
+        conn.executemany(sql, rows)
+
+
+def _view_names(views_sql: str) -> list[str]:
+    """Every view name declared in a schema script.
+
+    Only views Cerno declares are dropped on init -- a view someone created by
+    hand in their own database is left alone.
+    """
+    return re.findall(
+        r"CREATE VIEW(?:\s+IF NOT EXISTS)?\s+(\w+)", views_sql, re.IGNORECASE
+    )
 
 
 def initialize_database(database_path: Optional[Path] = None) -> bool:
@@ -794,64 +981,17 @@ def initialize_database(database_path: Optional[Path] = None) -> bool:
             # Create all tables
             conn.executescript(SCHEMA_SQL_TABLES)
 
-            # Populate foundation tables (INSERT OR IGNORE for idempotency)
-            conn.executemany(
-                "INSERT OR IGNORE INTO severity_levels VALUES (?, ?, ?, ?)",
-                [
-                    (4, "Critical", 4, "#8B0000"),
-                    (3, "High", 3, "#FF4500"),
-                    (2, "Medium", 2, "#FFA500"),
-                    (1, "Low", 1, "#FFD700"),
-                    (0, "Info", 0, "#4682B4"),
-                ],
-            )
+            # Populate foundation / lookup tables
+            seed_lookup_tables(conn)
 
-            conn.executemany(
-                "INSERT OR IGNORE INTO artifact_types (type_name, file_extension, description) VALUES (?, ?, ?)",
-                [
-                    ("nmap_xml", ".xml", "Nmap XML output"),
-                    ("nmap_gnmap", ".gnmap", "Nmap greppable output"),
-                    ("nmap_nmap", ".nmap", "Nmap normal output"),
-                    ("netexec_txt", ".txt", "NetExec text output"),
-                    ("log", ".log", "Tool execution log"),
-                ],
-            )
-
-            # Verification verdict types (truth, distinct from review_state)
-            conn.executemany(
-                "INSERT OR IGNORE INTO verdict_types (label, description) VALUES (?, ?)",
-                [
-                    ("confirmed", "Finding verified as a true positive"),
-                    ("false_positive", "Finding verified as a false positive"),
-                    ("unable", "Unable to verify the finding"),
-                ],
-            )
-
-            # NSE vuln-script verdict classifications
-            conn.executemany(
-                "INSERT OR IGNORE INTO nse_verdicts (label) VALUES (?)",
-                [
-                    ("VULNERABLE",),
-                    ("NOT_VULNERABLE",),
-                    ("LIKELY_VULNERABLE",),
-                    ("UNKNOWN",),
-                ],
-            )
-
-            # Nmap port states
-            conn.executemany(
-                "INSERT OR IGNORE INTO port_states (label) VALUES (?)",
-                [
-                    ("open",),
-                    ("closed",),
-                    ("filtered",),
-                    ("open|filtered",),
-                    ("closed|filtered",),
-                    ("unfiltered",),
-                ],
-            )
-
-            # Create views
+            # Recreate views. CREATE VIEW IF NOT EXISTS does *not* update an
+            # existing view, so without the drop a changed definition reaches a
+            # fresh database and silently never reaches an upgraded one -- the
+            # failure being a missing column rather than an error. Views hold no
+            # data, so dropping and recreating them is free and keeps every
+            # definition current without a schema version bump.
+            for view_name in _view_names(SCHEMA_SQL_VIEWS):
+                conn.execute(f"DROP VIEW IF EXISTS {view_name}")
             conn.executescript(SCHEMA_SQL_VIEWS)
 
             conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")

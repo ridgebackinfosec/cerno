@@ -86,7 +86,7 @@ class PreparedStep:
 @dataclass
 class PreparedWorkflow:
     finding_id: int
-    plugin_id: int
+    plugin_id: str
     workflow_name: str
     description: str
     steps: list[PreparedStep]

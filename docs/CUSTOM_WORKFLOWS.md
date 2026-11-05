@@ -21,7 +21,7 @@
 
 ### What are Custom Workflows?
 
-Custom workflows are plugin-specific verification procedures that guide security professionals through the process of validating and exploiting vulnerabilities discovered in Nessus scans. Each workflow provides:
+Custom workflows are finding-specific verification procedures that guide security professionals through the process of validating and exploiting vulnerabilities discovered in Nessus scans. Each workflow provides:
 
 - **Structured verification steps** with specific commands and tools
 - **Contextual notes** explaining what to look for and why
@@ -83,7 +83,7 @@ Create a file called `my_workflows.yaml`:
 version: "1.0"
 
 workflows:
-  - plugin_id: "10863"
+  - finding_id: "nessus:10863"
     workflow_name: "SSL Certificate Expiry Check"
     description: "Verify SSL certificate expiration dates and validity periods"
     steps:
@@ -108,7 +108,7 @@ Save this file and run:
 cerno review --custom-workflows my_workflows.yaml
 ```
 
-When you review plugin 10863, press **[W]** to see your custom workflow.
+When you review finding `nessus:10863`, press **[W]** to see your custom workflow.
 
 ---
 
@@ -120,7 +120,8 @@ When you review plugin 10863, press **[W]** to see your custom workflow.
 version: "1.0"  # Recommended: Schema version (currently always "1.0")
 
 workflows:      # Required: List of workflow definitions
-  - plugin_id: "12345"           # Required: Plugin ID(s) - string, can be comma-separated
+  - finding_id: "nessus:12345"   # Required: Finding ID(s) - string, can be comma-separated
+                                 #   Nessus: "nessus:<plugin-id>". nuclei: "nuclei:<template-id>"
     workflow_name: "Workflow Name"  # Recommended: Human-readable workflow name
     description: "Brief description"  # Recommended: What this workflow verifies
 
@@ -138,13 +139,37 @@ workflows:      # Required: List of workflow definitions
 
 ### Field Details
 
-The loader only enforces `workflows` and `plugin_id`: an entry without a `plugin_id` is skipped, and every other field falls back to an empty value. Fill in the recommended fields anyway, since an empty workflow isn't much use.
+The loader only enforces `workflows` and `finding_id`, and it enforces them strictly: an entry is skipped (with a warning naming the file and the workflow) if it has no `finding_id`, if it still uses the removed `plugin_id` key, or if any id in the value lacks a source prefix. Every other field falls back to an empty value. Fill in the recommended fields anyway, since an empty workflow isn't much use.
+
+#### Mapping a workflow to a nuclei template
+
+`finding_id` is the finding's ID as stored in the database, and those IDs are
+namespaced per scan source for **every** source — there is no default. A Nessus
+plugin is `nessus:57608`; a nuclei template is `nuclei:<template-id>`. A bare
+number matches nothing and the entry is skipped:
+
+```yaml
+workflows:
+  - finding_id: "nuclei:http-missing-security-headers"
+    workflow_name: "Verify Missing Security Headers"
+    description: "Confirm which security headers are absent and assess impact"
+    steps:
+      - title: "Re-check the headers directly"
+        commands:
+          - "curl -sSI <TARGET>"
+        notes: "Compare against the matcher names in the finding's plugin output."
+    references:
+      - "https://github.com/projectdiscovery/nuclei-templates/blob/main/http/misconfiguration/http-missing-security-headers.yaml"
+```
+
+The template ID is shown as "Nuclei Template ID" in the finding panel, and is
+the `template-id` field in nuclei's JSON output.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `version` | string | Recommended | Schema version (currently "1.0") |
 | `workflows` | list | Yes | List of workflow definitions |
-| `plugin_id` | string | Yes | Nessus plugin ID (can be comma-separated for multi-plugin workflows) |
+| `finding_id` | string | Yes | Finding ID(s) to map, comma-separated for one workflow covering several findings. Every id must carry its source prefix: `"nessus:57608"`, `"nuclei:apache-detect"`. A bare number is rejected — see below |
 | `workflow_name` | string | Recommended | Human-readable workflow name (shown in the TUI and `cerno workflow list`) |
 | `description` | string | Recommended | Brief description of what the workflow verifies |
 | `steps` | list | Recommended | List of verification steps |
@@ -158,7 +183,7 @@ The loader only enforces `workflows` and `plugin_id`: an entry without a `plugin
 - **Strings**: Use quotes for strings containing special characters or colons
 - **Lists**: Use YAML list syntax with `-` prefix
 - **Empty lists**: Use `[]` for steps without commands (display-only)
-- **Plugin IDs**: Always strings (quoted), even though they look numeric
+- **Finding IDs**: Always strings (quoted) — they contain a `:` source separator, and a multi-finding value contains commas
 - **URLs**: Standard HTTP/HTTPS URLs in reference list
 
 ---
@@ -169,13 +194,15 @@ The loader only enforces `workflows` and `plugin_id`: an entry without a `plugin
 
 Some verification procedures apply to multiple related plugins. Instead of duplicating workflows, you can map a single workflow to multiple plugin IDs.
 
-### Comma-Separated Plugin IDs
+### Comma-Separated Finding IDs
 
-Use comma-separated plugin IDs in the `plugin_id` field:
+Use comma-separated finding IDs in the `finding_id` field. They may come from
+different scanners, which is how one workflow serves the same issue found by
+two tools:
 
 ```yaml
 workflows:
-  - plugin_id: "20007,104743,157288"
+  - finding_id: "nessus:20007,nessus:104743,nessus:157288"
     workflow_name: "Deprecated SSL/TLS Encryption"
     description: "Deprecated encryption protocol versions should be removed from support unless absolutely necessary."
     steps:
@@ -190,12 +217,62 @@ workflows:
       - "https://www.tenable.com/plugins/nessus/157288"
 ```
 
-### How Multi-Plugin Workflows Work
+#### One workflow across two scanners
 
-- The workflow is registered internally for **each individual plugin ID**
-- Pressing **[W]** on any of the related plugins shows the **same workflow**
-- The workflow's `plugin_id` field preserves the original comma-separated string
-- Include all relevant plugin URLs in the `references` section
+Because the ids are namespaced, a single entry can cover the same issue as
+reported by different tools. This is the bundled mapping for missing HSTS,
+which Nessus splits across two plugins and nuclei reports as one template:
+
+```yaml
+workflows:
+  - finding_id: "nessus:142960,nessus:84502,nuclei:http-missing-security-headers"
+    workflow_name: "HSTS Missing From HTTPS Server (RFC 6797)"
+    description: "Confirm whether HTTPS responses carry a Strict-Transport-Security header with an adequate max-age."
+    steps:
+      - title: "Check the HTTPS response for a Strict-Transport-Security header"
+        commands:
+          - "curl -sk --max-time 15 -D - https://<TARGET>:<PORT>/ | grep -i '^strict-transport-security'"
+        notes: "No output = no HSTS header = confirmed."
+    references:
+      - "https://www.tenable.com/plugins/nessus/142960"
+      - "https://github.com/projectdiscovery/nuclei-templates/blob/main/http/misconfiguration/http-missing-security-headers.yaml"
+```
+
+Pressing **[W]** on the Nessus finding or on the nuclei finding shows the same
+workflow, so a finding corroborated by two scanners is verified once.
+
+You don't have to write that key by hand. When you verify a finding in the
+field and contribute the workflow back, pass `also_covers` to the MCP
+`get_workflow_candidate` / `export_workflow_contribution` tools:
+
+```
+get_workflow_candidate(finding_id=42, also_covers=["nessus:84502"])
+  -> finding_id: "nuclei:http-missing-security-headers,nessus:84502"
+```
+
+The finding's own id always stays first, ids need their source prefix (a bare
+`84502` is rejected), and an id another entry already covers is flagged in
+`review_hints` rather than silently shadowing it. See
+[MCP.md → Workflow contributions](MCP.md#workflow-contributions).
+
+#### Findings that deliberately have no workflow
+
+Some nuclei templates are pure fingerprinting — `tech-detect`,
+`apache-detect`, `tomcat-detect`, `nginx-version`, `robots-txt`,
+`ssl-dns-names`. They report what software is present, not a condition to
+confirm or refute, so there is nothing for a verification workflow to do and
+they are intentionally unmapped. `list_workflow_gaps` will keep listing them;
+that is correct output, not a backlog. Map a detection template only when
+confirming it needs real work — ruling out a catch-all host that answers every
+path, say, which is what the bundled `nessus:298485` (Oracle EBS) entry does.
+
+### How Multi-Finding Workflows Work
+
+- The workflow is registered internally for **each individual finding ID**
+- Pressing **[W]** on any of the related findings shows the **same workflow**
+- The workflow's `finding_id` field preserves the original comma-separated string
+- The ids may span sources; mixing `nessus:` and `nuclei:` in one entry is supported
+- Include all relevant reference URLs in the `references` section
 
 ### When to Use Multi-Plugin Workflows
 
@@ -355,7 +432,7 @@ When a plugin ID exists in both bundled and custom workflows:
 
 1. **Custom workflow wins** - The entire workflow is replaced (not merged)
 2. **Workflow name uniqueness** - Internally tracked by `workflow_name` to avoid duplicates
-3. **Multi-plugin workflows** - Each plugin ID in a comma-separated list is registered separately
+3. **Multi-finding workflows** - Each finding ID in a comma-separated list is registered separately, and the list may span sources
 
 ---
 
@@ -373,13 +450,13 @@ version: "1.0"
 workflows:
   # ===== SSL/TLS Vulnerabilities =====
 
-  - plugin_id: "20007,104743,157288"
+  - finding_id: "nessus:20007,nessus:104743,nessus:157288"
     workflow_name: "Deprecated SSL/TLS Encryption"
     # ... workflow details ...
 
   # ===== SMB Vulnerabilities =====
 
-  - plugin_id: "57608"
+  - finding_id: "nessus:57608"
     workflow_name: "SMB Signing Not Required"
     # ... workflow details ...
 ```
@@ -460,7 +537,7 @@ Basic workflow for verifying SNMP default community strings:
 version: "1.0"
 
 workflows:
-  - plugin_id: "41028"
+  - finding_id: "nessus:41028"
     workflow_name: "SNMP Default Community Strings"
     description: "Default SNMP community string usage could allow for configuration read through SNMP queries and possibly a full SNMP MIB tree walk."
 
@@ -488,7 +565,7 @@ Single workflow mapped to multiple related plugins:
 version: "1.0"
 
 workflows:
-  - plugin_id: "20007,104743,157288"
+  - finding_id: "nessus:20007,nessus:104743,nessus:157288"
     workflow_name: "Deprecated SSL/TLS Encryption"
     description: "Deprecated encryption protocol versions should be removed from support unless absolutely necessary."
 
@@ -512,7 +589,7 @@ Using multiple placeholders for flexible command generation:
 version: "1.0"
 
 workflows:
-  - plugin_id: "40984"
+  - finding_id: "nessus:40984"
     workflow_name: "Investigate Browsable Web Directories"
     description: "Check for any filenames and content with confidential data."
 
@@ -540,7 +617,7 @@ Workflow providing guidance without executable commands:
 version: "1.0"
 
 workflows:
-  - plugin_id: "42263"
+  - finding_id: "nessus:42263"
     workflow_name: "Unencrypted Telnet Server"
     description: "The primary risk posed by unencrypted network protocols is that an attacker can eavesdrop on communication and extract any information in it, such as confidential data and credentials."
 
@@ -572,7 +649,7 @@ Comprehensive workflow with multiple tools and detailed notes:
 version: "1.0"
 
 workflows:
-  - plugin_id: "57608"
+  - finding_id: "nessus:57608"
     workflow_name: "SMB Signing Not Required"
     description: "Remote SMB server does not enforce message signing"
 
@@ -642,15 +719,20 @@ steps:
       - "command"
 ```
 
-3. **Missing `plugin_id`**: entries without one are skipped silently:
+3. **Missing or unprefixed `finding_id`**: the entry is skipped, with a warning naming the file and the workflow:
 
 ```yaml
-# ❌ Wrong - no plugin_id, entry is ignored
+# ❌ Wrong - no finding_id, entry is ignored
 - workflow_name: "SMB Signing"
   steps: []
 
+# ❌ Wrong - bare id with no source prefix, entry is ignored
+- finding_id: "57608"
+  workflow_name: "SMB Signing"
+  steps: []
+
 # ✅ Correct
-- plugin_id: "57608"
+- finding_id: "nessus:57608"
   workflow_name: "SMB Signing"
   steps: []
 ```
@@ -663,15 +745,15 @@ python -c "import yaml; yaml.safe_load(open('my_workflows.yaml'))"
 
 ### Workflow Not Appearing in TUI
 
-**Symptom**: Press **[W]** but see "No workflow available for this plugin"
+**Symptom**: Press **[W]** but see "No workflow available for this finding."
 
 **Possible causes**:
 
-1. **Plugin ID mismatch** - Check that your `plugin_id` matches exactly:
+1. **Finding ID mismatch** - Check that your `finding_id` matches exactly, prefix included:
 
 ```bash
 # Find the plugin ID for a finding
-cerno review  # Navigate to finding, check displayed plugin ID
+cerno review  # Navigate to finding, check the displayed finding ID
 ```
 
 2. **Workflow file not loaded** - Pass the `--custom-workflows` flag, or set `custom_workflows_path`:
@@ -750,7 +832,7 @@ chmod 644 my_workflows.yaml
 |---------|---------|-----|
 | **Tab characters** | "found character '\\t'" | Use spaces only (2-space indentation) |
 | **Missing dash for list items** | "expected a single document" | Add `-` before each list item |
-| **Unquoted plugin IDs with commas** | Parsed as separate values | Quote plugin_id: `"20007,104743"` |
+| **Unquoted finding IDs with commas** | Parsed as separate values | Quote finding_id: `"nessus:20007,nessus:104743"` |
 | **Windows line endings (\\r\\n)** | Parsing errors | Convert to Unix (\\n) with `dos2unix` |
 | **Missing colon after key** | "mapping values not allowed" | Ensure `key: value` format |
 
@@ -772,7 +854,7 @@ cerno workflow list --custom-workflows my_workflows.yaml
 
 Output shows:
 
-- Plugin ID(s)
+- Finding ID(s)
 - Workflow name
 - Description
 
@@ -809,7 +891,7 @@ workflows:
   # SSL/TLS VULNERABILITIES
   # =============================================================================
 
-  - plugin_id: "20007,104743,157288"
+  - finding_id: "nessus:20007,nessus:104743,nessus:157288"
     workflow_name: "Deprecated SSL/TLS Encryption"
     # ...
 
@@ -817,7 +899,7 @@ workflows:
   # SMB VULNERABILITIES
   # =============================================================================
 
-  - plugin_id: "57608"
+  - finding_id: "nessus:57608"
     workflow_name: "SMB Signing Not Required"
     # ...
 
@@ -825,7 +907,7 @@ workflows:
   # WEB APPLICATION VULNERABILITIES
   # =============================================================================
 
-  - plugin_id: "40984"
+  - finding_id: "nessus:40984"
     workflow_name: "Investigate Browsable Web Directories"
     # ...
 ```
@@ -877,7 +959,7 @@ git push --tags
 
 ## Additional Resources
 
-- **Bundled workflows**: See `cerno_pkg/workflow_mappings.yaml` for 9 complete examples
+- **Bundled workflows**: See `cerno_pkg/workflow_mappings.yaml` for 15 complete examples
 - **Configuration guide**: Run `cerno config show` to see all available settings
 - **Main documentation**: See [README.md](../README.md) for general Cerno usage
 - **Tool system guide**: See [TOOL_SYSTEM_GUIDE.md](TOOL_SYSTEM_GUIDE.md) for tool integration details
@@ -914,4 +996,4 @@ Found an issue or want to improve this guide? Contributions welcome:
 
 ---
 
-**Last Updated**: 2026-10-27
+**Last Updated**: 2026-11-04

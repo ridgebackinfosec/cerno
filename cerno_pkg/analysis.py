@@ -30,6 +30,7 @@ from .parsing import (
     build_item_set,
     normalize_combos,
 )
+from .fs import finding_label
 from .render import render_compare_tables
 from .ansi import get_console
 
@@ -173,13 +174,11 @@ def compare_filtered(
                     combos[host].add(port)
                     had_explicit = True
 
-            # Create display identifier from plugin info (not filename)
-            if pf.plugin_id in plugins_map:
-                plugin = plugins_map[pf.plugin_id]
-                display_name = f"Plugin {plugin.plugin_id}: {plugin.plugin_name}"
-            else:
-                # Fallback if plugin info not available
-                display_name = f"Plugin {pf.plugin_id}"
+            # Display identifier from plugin info (not filename). These
+            # strings ARE the group identity: they are returned as the groups
+            # and matched back by tui.filter_finding_candidates, so the format
+            # must come from the one shared helper.
+            display_name = finding_label(pf, plugins_map.get(pf.plugin_id))
 
             parsed.append((display_name, hosts, ports_set, combos, had_explicit))
             progress.advance(task)
@@ -332,13 +331,11 @@ def analyze_inclusions(
                     combos[host].add(port)
                     had_explicit = True
 
-            # Create display identifier from plugin info (not filename)
-            if pf.plugin_id in plugins_map:
-                plugin = plugins_map[pf.plugin_id]
-                display_name = f"Plugin {plugin.plugin_id}: {plugin.plugin_name}"
-            else:
-                # Fallback if plugin info not available
-                display_name = f"Plugin {pf.plugin_id}"
+            # Display identifier from plugin info (not filename). These
+            # strings ARE the group identity: they are returned as the groups
+            # and matched back by tui.filter_finding_candidates, so the format
+            # must come from the one shared helper.
+            display_name = finding_label(pf, plugins_map.get(pf.plugin_id))
 
             parsed.append((display_name, hosts, ports_set, combos, had_explicit))
             item_sets[display_name] = build_item_set(

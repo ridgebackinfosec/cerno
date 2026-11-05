@@ -7,7 +7,8 @@ lists, generate/execute security-tool commands, and mutate review state.
 The server surface is gated by two config flags (both default ``False``):
 
 - ``mcp_allow_execution``  - enables the ``execute_command`` tool.
-- ``mcp_allow_mutations``  - enables ``set_review_state`` and ``import_nessus``.
+- ``mcp_allow_mutations``  - enables ``set_review_state``, ``import_nessus`` and
+  ``import_nuclei``.
 
 Read and command-generation tools are always available.
 """

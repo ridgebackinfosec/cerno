@@ -5,11 +5,16 @@ erDiagram
     scans {
         INTEGER scan_id PK
         TEXT scan_name UK
-        TEXT nessus_file_hash
+        TEXT source_file_hash
         TIMESTAMP created_at
     }
+    finding_sources {
+        INTEGER source_id PK "1=nessus, 2=nuclei"
+        TEXT source_name UK
+    }
     plugins {
-        INTEGER plugin_id PK
+        TEXT plugin_id PK "'nessus:57608' | 'nuclei:apache-detect'"
+        INTEGER source_id FK
         TEXT plugin_name
         INTEGER severity_int FK
         BOOLEAN has_metasploit
@@ -19,7 +24,7 @@ erDiagram
     findings {
         INTEGER finding_id PK
         INTEGER scan_id FK
-        INTEGER plugin_id FK
+        TEXT plugin_id FK
         TEXT review_state "unreviewed|in_progress|done"
         TEXT review_notes
     }
@@ -63,6 +68,7 @@ erDiagram
 
     scans   ||--o{ findings               : "CASCADE"
     plugins ||--o{ findings               : "shared across scans"
+    finding_sources ||--o{ plugins        : "lookup"
     findings ||--o{ finding_affected_hosts : "CASCADE"
     hosts   ||--o{ finding_affected_hosts : "normalized"
     ports   ||--o{ finding_affected_hosts : "normalized"

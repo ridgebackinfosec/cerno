@@ -22,7 +22,7 @@ class TestScanModel:
         """Test saving a new scan."""
         scan = Scan(
             scan_name="test_scan",
-            nessus_file_path="/tmp/test.nessus",
+            source_file_path="/tmp/test.nessus",
             export_root="/tmp/exports",
         )
 
@@ -36,7 +36,7 @@ class TestScanModel:
         # Create scan
         scan = Scan(
             scan_name="test_scan",
-            nessus_file_path="/tmp/test.nessus",
+            source_file_path="/tmp/test.nessus",
             export_root="/tmp/exports",
         )
         scan.save(temp_db)
@@ -46,7 +46,7 @@ class TestScanModel:
 
         assert retrieved is not None
         assert retrieved.scan_name == "test_scan"
-        assert retrieved.nessus_file_path == "/tmp/test.nessus"
+        assert retrieved.source_file_path == "/tmp/test.nessus"
 
     def test_scan_get_by_name_nonexistent(self, temp_db):
         """Test retrieving nonexistent scan returns None."""
@@ -119,13 +119,13 @@ class TestScanModel:
 
         # Update
         scan.scan_id = scan_id
-        scan.nessus_file_hash = "abc123"
+        scan.source_file_hash = "abc123"
         scan.save(temp_db)
 
         # Retrieve and verify
         retrieved = Scan.get_by_id(scan_id, temp_db)
         assert retrieved is not None
-        assert retrieved.nessus_file_hash == "abc123"
+        assert retrieved.source_file_hash == "abc123"
 
     def test_scan_unique_constraint(self, temp_db):
         """Test that scan names must be unique."""
@@ -144,33 +144,38 @@ class TestPluginModel:
     def test_plugin_save_creates_record(self, temp_db):
         """Test saving a new plugin."""
         plugin = Plugin(
-            plugin_id=12345, plugin_name="Test Plugin", severity_int=2, cvss3_score=5.3
+            plugin_id="nessus:12345",
+            plugin_name="Test Plugin",
+            severity_int=2,
+            cvss3_score=5.3,
         )
 
         plugin.save(temp_db)
 
         # Verify saved
         cursor = temp_db.execute(
-            "SELECT plugin_name FROM plugins WHERE plugin_id = ?", (12345,)
+            "SELECT plugin_name FROM plugins WHERE plugin_id = ?", ("nessus:12345",)
         )
         result = cursor.fetchone()
         assert result["plugin_name"] == "Test Plugin"
 
     def test_plugin_get_by_id(self, temp_db):
         """Test retrieving plugin by ID."""
-        plugin = Plugin(plugin_id=12345, plugin_name="Test Plugin", severity_int=2)
+        plugin = Plugin(
+            plugin_id="nessus:12345", plugin_name="Test Plugin", severity_int=2
+        )
         plugin.save(temp_db)
 
-        retrieved = Plugin.get_by_id(12345, temp_db)
+        retrieved = Plugin.get_by_id("nessus:12345", temp_db)
 
         assert retrieved is not None
-        assert retrieved.plugin_id == 12345
+        assert retrieved.plugin_id == "nessus:12345"
         assert retrieved.plugin_name == "Test Plugin"
 
     def test_plugin_cve_list_serialization(self, temp_db):
         """Test CVE list is serialized to JSON."""
         plugin = Plugin(
-            plugin_id=12345,
+            plugin_id="nessus:12345",
             plugin_name="Test Plugin",
             severity_int=2,
             cves=["CVE-2024-0001", "CVE-2024-0002"],
@@ -179,7 +184,7 @@ class TestPluginModel:
 
         # Check stored as JSON
         cursor = temp_db.execute(
-            "SELECT cves FROM plugins WHERE plugin_id = ?", (12345,)
+            "SELECT cves FROM plugins WHERE plugin_id = ?", ("nessus:12345",)
         )
         result = cursor.fetchone()
         cves = json.loads(result["cves"])
@@ -187,14 +192,16 @@ class TestPluginModel:
 
     def test_plugin_update_with_cves(self, temp_db):
         """Test updating plugin with CVE list."""
-        plugin = Plugin(plugin_id=12345, plugin_name="Test Plugin", severity_int=2)
+        plugin = Plugin(
+            plugin_id="nessus:12345", plugin_name="Test Plugin", severity_int=2
+        )
         plugin.save(temp_db)
 
         # Update with CVEs
         plugin.cves = ["CVE-2024-0001"]
         plugin.save(temp_db)
 
-        retrieved = Plugin.get_by_id(12345, temp_db)
+        retrieved = Plugin.get_by_id("nessus:12345", temp_db)
         assert retrieved is not None
         assert retrieved.cves == ["CVE-2024-0001"]
 
@@ -209,11 +216,11 @@ class TestFindingModel:
         scan_id = scan.save(temp_db)
         assert scan_id is not None
 
-        plugin = Plugin(plugin_id=12345, plugin_name="Test", severity_int=2)
+        plugin = Plugin(plugin_id="nessus:12345", plugin_name="Test", severity_int=2)
         plugin.save(temp_db)
 
         # Create plugin file (host_count computed by view, not stored)
-        pf = Finding(scan_id=scan_id, plugin_id=12345)
+        pf = Finding(scan_id=scan_id, plugin_id="nessus:12345")
 
         finding_id = pf.save(temp_db)
 
@@ -234,10 +241,12 @@ class TestFindingModel:
         scan = Scan(scan_name="test_scan", export_root="/tmp")
         scan_id = scan.save(temp_db)
         assert scan_id is not None
-        plugin = Plugin(plugin_id=12345, plugin_name="Test", severity_int=2)
+        plugin = Plugin(plugin_id="nessus:12345", plugin_name="Test", severity_int=2)
         plugin.save(temp_db)
 
-        pf = Finding(scan_id=scan_id, plugin_id=12345, review_state="unreviewed")
+        pf = Finding(
+            scan_id=scan_id, plugin_id="nessus:12345", review_state="unreviewed"
+        )
         finding_id = pf.save(temp_db)
         assert finding_id is not None
 
@@ -256,12 +265,12 @@ class TestFindingModel:
         scan = Scan(scan_name="test_scan", export_root="/tmp")
         scan_id = scan.save(temp_db)
         assert scan_id is not None
-        plugin = Plugin(plugin_id=12345, plugin_name="Test", severity_int=2)
+        plugin = Plugin(plugin_id="nessus:12345", plugin_name="Test", severity_int=2)
         plugin.save(temp_db)
 
         pf = Finding(
             scan_id=scan_id,
-            plugin_id=12345,
+            plugin_id="nessus:12345",
         )
         finding_id = pf.save(temp_db)
         assert finding_id is not None
@@ -290,38 +299,46 @@ class TestFindingModel:
         assert scan_id is not None
 
         # Create plugins with different severities
-        plugin1 = Plugin(plugin_id=1001, plugin_name="Critical Plugin", severity_int=4)
+        plugin1 = Plugin(
+            plugin_id="nessus:1001", plugin_name="Critical Plugin", severity_int=4
+        )
         plugin1.save(temp_db)
-        plugin2 = Plugin(plugin_id=1002, plugin_name="High Plugin", severity_int=3)
+        plugin2 = Plugin(
+            plugin_id="nessus:1002", plugin_name="High Plugin", severity_int=3
+        )
         plugin2.save(temp_db)
-        plugin3 = Plugin(plugin_id=1003, plugin_name="Medium Plugin", severity_int=2)
+        plugin3 = Plugin(
+            plugin_id="nessus:1003", plugin_name="Medium Plugin", severity_int=2
+        )
         plugin3.save(temp_db)
-        plugin4 = Plugin(plugin_id=1004, plugin_name="Info Plugin", severity_int=0)
+        plugin4 = Plugin(
+            plugin_id="nessus:1004", plugin_name="Info Plugin", severity_int=0
+        )
         plugin4.save(temp_db)
 
         # Create plugin files with severity directories
         assert isinstance(scan_id, int)
         pf1 = Finding(
             scan_id=scan_id,
-            plugin_id=1001,
+            plugin_id="nessus:1001",
         )
         pf1.save(temp_db)
 
         pf2 = Finding(
             scan_id=scan_id,
-            plugin_id=1002,
+            plugin_id="nessus:1002",
         )
         pf2.save(temp_db)
 
         pf3 = Finding(
             scan_id=scan_id,
-            plugin_id=1003,
+            plugin_id="nessus:1003",
         )
         pf3.save(temp_db)
 
         pf4 = Finding(
             scan_id=scan_id,
-            plugin_id=1004,
+            plugin_id="nessus:1004",
         )
         pf4.save(temp_db)
 
@@ -343,19 +360,21 @@ class TestFindingModel:
         assert isinstance(scan_id, int)
 
         # Create plugin
-        plugin = Plugin(plugin_id=1001, plugin_name="High Plugin", severity_int=3)
+        plugin = Plugin(
+            plugin_id="nessus:1001", plugin_name="High Plugin", severity_int=3
+        )
         plugin.save(temp_db)
 
         # Create multiple plugin files with same severity
         pf1 = Finding(
             scan_id=scan_id,
-            plugin_id=1001,
+            plugin_id="nessus:1001",
         )
         pf1.save(temp_db)
 
         pf2 = Finding(
             scan_id=scan_id,
-            plugin_id=1001,
+            plugin_id="nessus:1001",
         )
         pf2.save(temp_db)
 
@@ -372,12 +391,12 @@ class TestFindingModel:
         scan_id = scan.save(temp_db)
         assert scan_id is not None
         assert isinstance(scan_id, int)
-        plugin = Plugin(plugin_id=12345, plugin_name="Test", severity_int=2)
+        plugin = Plugin(plugin_id="nessus:12345", plugin_name="Test", severity_int=2)
         plugin.save(temp_db)
 
         pf = Finding(
             scan_id=scan_id,
-            plugin_id=12345,
+            plugin_id="nessus:12345",
         )
         finding_id = pf.save(temp_db)
         pf.finding_id = finding_id
@@ -395,10 +414,10 @@ class TestFindingModel:
         scan_id = scan.save(temp_db)
         assert scan_id is not None
         assert isinstance(scan_id, int)
-        plugin = Plugin(plugin_id=12345, plugin_name="Test", severity_int=2)
+        plugin = Plugin(plugin_id="nessus:12345", plugin_name="Test", severity_int=2)
         plugin.save(temp_db)
 
-        pf = Finding(scan_id=scan_id, plugin_id=12345)
+        pf = Finding(scan_id=scan_id, plugin_id="nessus:12345")
         finding_id = pf.save(temp_db)
         pf.finding_id = finding_id
 
@@ -467,12 +486,12 @@ class TestFindingModel:
         scan_id = scan.save(temp_db)
         assert scan_id is not None
         assert isinstance(scan_id, int)
-        plugin = Plugin(plugin_id=12345, plugin_name="Test", severity_int=2)
+        plugin = Plugin(plugin_id="nessus:12345", plugin_name="Test", severity_int=2)
         plugin.save(temp_db)
 
         pf = Finding(
             scan_id=scan_id,
-            plugin_id=12345,
+            plugin_id="nessus:12345",
         )
         finding_id = pf.save(temp_db)
         pf.finding_id = finding_id
@@ -516,12 +535,12 @@ class TestFindingModel:
         scan_id = scan.save(temp_db)
         assert scan_id is not None
         assert isinstance(scan_id, int)
-        plugin = Plugin(plugin_id=12345, plugin_name="Test", severity_int=2)
+        plugin = Plugin(plugin_id="nessus:12345", plugin_name="Test", severity_int=2)
         plugin.save(temp_db)
 
         pf = Finding(
             scan_id=scan_id,
-            plugin_id=12345,
+            plugin_id="nessus:12345",
         )
         finding_id = pf.save(temp_db)
         pf.finding_id = finding_id
@@ -538,12 +557,12 @@ class TestFindingModel:
         scan_id = scan.save(temp_db)
         assert scan_id is not None
         assert isinstance(scan_id, int)
-        plugin = Plugin(plugin_id=12345, plugin_name="Test", severity_int=2)
+        plugin = Plugin(plugin_id="nessus:12345", plugin_name="Test", severity_int=2)
         plugin.save(temp_db)
 
         pf = Finding(
             scan_id=scan_id,
-            plugin_id=12345,
+            plugin_id="nessus:12345",
         )
         finding_id = pf.save(temp_db)
         pf.finding_id = finding_id
@@ -599,12 +618,12 @@ class TestFindingModel:
         scan_id = scan.save(temp_db)
         assert scan_id is not None
         assert isinstance(scan_id, int)
-        plugin = Plugin(plugin_id=12345, plugin_name="Test", severity_int=2)
+        plugin = Plugin(plugin_id="nessus:12345", plugin_name="Test", severity_int=2)
         plugin.save(temp_db)
 
         pf = Finding(
             scan_id=scan_id,
-            plugin_id=12345,
+            plugin_id="nessus:12345",
         )
         finding_id = pf.save(temp_db)
         pf.finding_id = finding_id
@@ -635,12 +654,12 @@ class TestFindingModel:
         scan_id = scan.save(temp_db)
         assert scan_id is not None
         assert isinstance(scan_id, int)
-        plugin = Plugin(plugin_id=12345, plugin_name="Test", severity_int=2)
+        plugin = Plugin(plugin_id="nessus:12345", plugin_name="Test", severity_int=2)
         plugin.save(temp_db)
 
         pf = Finding(
             scan_id=scan_id,
-            plugin_id=12345,
+            plugin_id="nessus:12345",
         )
         finding_id = pf.save(temp_db)
         pf.finding_id = finding_id
@@ -879,12 +898,12 @@ class TestModelRelationships:
         assert scan_id is not None
         assert isinstance(scan_id, int)
 
-        plugin = Plugin(plugin_id=12345, plugin_name="Test", severity_int=2)
+        plugin = Plugin(plugin_id="nessus:12345", plugin_name="Test", severity_int=2)
         plugin.save(temp_db)
 
         pf = Finding(
             scan_id=scan_id,
-            plugin_id=12345,
+            plugin_id="nessus:12345",
         )
         pf.save(temp_db)
 

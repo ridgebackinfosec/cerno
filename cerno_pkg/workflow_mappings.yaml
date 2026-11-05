@@ -1,17 +1,19 @@
 # Cerno Workflow Mappings
 #
-# Maps Nessus plugin IDs to verification workflow steps.
+# Maps namespaced finding IDs to verification workflow steps.
 # These workflows are display-only and provide structured guidance
 # for verifying specific vulnerabilities.
 #
 # Format:
-#   plugin_id: Single ID ("57608") or comma-separated ("57608,10079,12345")
+#   finding_id: Single ID ("nessus:57608") or comma-separated
+#               ("nessus:57608,nessus:10079,nuclei:apache-detect"). Every id
+#               carries its source prefix; a bare number does not load.
 #   workflow_name: Human-readable name for the workflow
 #   description: Brief description of what is being verified
 #   steps: List of verification steps with commands and notes
 #   references: List of reference URLs
 # 
-  # - plugin_id: ""
+  # - finding_id: ""
   #   workflow_name: ""
   #   description: ""
   #   steps:
@@ -26,7 +28,7 @@
 version: "1.0"
 
 workflows:
-  - plugin_id: "40984"
+  - finding_id: "nessus:40984"
     workflow_name: "Investigate Browsable Web Directories"
     description: "Check for any filenames and content with confidential data."
     steps:
@@ -42,7 +44,7 @@ workflows:
       - "https://www.tenable.com/plugins/nessus/40984"
       - "https://www.blackhillsinfosec.com/rooting-for-secrets-with-trufflehog/"
 
-  - plugin_id: "10759"
+  - finding_id: "nessus:10759"
     workflow_name: "Web Server HTTP Header Internal IP Disclosure"
     description: "Occurs when a web server includes internal IP addresses in HTTP response headers, unintentionally exposing internal network details that can aid attackers in mapping or targeting internal infrastructure."
     steps:
@@ -59,8 +61,8 @@ workflows:
     references:
       - "https://www.tenable.com/plugins/nessus/10759"
 
-  # SMB Signing Not Required (Plugin 57608)
-  - plugin_id: "57608"
+  # SMB Signing Not Required (nessus:57608)
+  - finding_id: "nessus:57608"
     workflow_name: "SMB Signing Not Required"
     description: "Remote SMB server does not enforce message signing"
     steps:
@@ -86,23 +88,42 @@ workflows:
       - "https://www.tenable.com/plugins/nessus/57608"
       - "https://attack.mitre.org/techniques/T1557/001/"
 
-  - plugin_id: "10114"
+  - finding_id: "nessus:10114"
     workflow_name: "ICMP Timestamp Request Remote Date Disclosure"
     description: "Occurs when a system responds to ICMP timestamp requests with its local time, allowing remote attackers to infer the device’s timezone, system clock, and potentially aiding in reconnaissance or timing attacks."
     steps:
       - title: "Check request and response types"
         commands:
-          - "hping3 <TARGET> --icmp --icmp-ts -V"
-        notes: "You're looking to see if the ICMP timestamp request was coded as message type 13 and the subsequent timestamp response was coded as message type 14"
+          - "sudo hping3 <TARGET> --icmp --icmp-ts -V -c 3"
+        notes: "You're looking to see if the ICMP timestamp request was coded as message type 13 and the subsequent timestamp response was coded as message type 14. Confirmed = 'ICMP timestamp: Originate=... Receive=... Transmit=...' lines in the replies. External network tests: run from a clean external source (e.g. a cloud VPS) rather than a corporate or VPN egress, because middleboxes on the tester's own path can drop or answer ICMP and give a false negative. Internal network tests: running from the implant or testing machine on the internal network is normally fine, since there is no tester-side egress in the path. No reply from one source is 'unable', not false positive - retest from another source or from the scanner's IP."
 
-      - title: "Now convert an hping3's IMCP timestamp response into human readable time using https://github.com/DefensiveOrigins/icmp-timestamp."
+      - title: "Convert the hping3 ICMP timestamp response into human readable time using https://github.com/DefensiveOrigins/icmp-timestamp."
         commands:
-          - "bash icmp-timestamp.sh -O <Originate timestamp> -R <Recieve timestamp> -T <Transmit timestamp>"
+          - "bash icmp-timestamp.sh -O <Originate timestamp> -R <Receive timestamp> -T <Transmit timestamp>"
+        notes: "The values are milliseconds since midnight UTC (RFC 792), so Receive/1000 gives seconds into the UTC day (e.g. 43200000 = 12:00:00.000 UTC). Receive minus Originate, compared with RTT/2, shows the remote clock offset: about RTT/2 means the clock is synchronized with yours; a large or constant offset means clock skew or a non-UTC clock. A high bit set or wildly wrong values mean the device does not report standard time; it still discloses a timestamp. Note: the script's 'RTT' line is Transmit minus Originate (timestamp arithmetic, which includes any clock offset), not the network round-trip time - use hping3's 'rtt=' value for the real RTT."
+
+      - title: "Query and decode in one step with timecheck (multi-host, CSV output)"
+        commands:
+          - "pipx install git+https://github.com/DefensiveOrigins/icmp-timestamp"
+          - "sudo bash -c \"$(command -v timecheck) --verbose --csv icmp-timestamp.csv <(echo <TARGET>)\""
+        notes: "timecheck sends ICMP Timestamp requests and reports each host's remote UTC time and NTP-style offset vs your clock. STATUS OK/HIGH with a REMOTE TIME = confirmed (the host disclosed its clock); a failed host = no reply, so treat it as 'unable' and retest per step 1. --verbose shows raw T1-T4 values for the report. Why the wrapper: $(command -v timecheck) resolves the full path before sudo, because pipx installs to the user's ~/.local/bin, which is not on sudo's secure_path. bash -c keeps the <(echo ...) substitution inside the root shell, because sudo closes inherited file descriptors. For many hosts: sudo \"$(command -v timecheck)\" --verbose --csv icmp-timestamp.csv hosts.txt (one IP per line). As root, plain 'timecheck hosts.txt' works. Its RTT includes tool overhead and can read higher than hping3's rtt=. Needs raw-socket privileges (root/sudo)."
+
+      - title: "Check that the reply comes from the target, not a middlebox"
+        commands:
+          - "ping -c 3 -W 2 <TARGET>"
+        notes: "Compare the echo-reply TTL with the timestamp-reply TTL from step 1. Similar TTLs (e.g. both near 255-n or both near 128-n) mean the same device answered both. A big mismatch, or an echo TTL of exactly 64/128/255 from a host many hops away, suggests something on your own path (NAT, VPN, firewall) is answering or filtering ICMP. In that case trust the run from a clean source - on an external test, a cloud VPS; on an internal test this mismatch is rare, but if it happens, check for a host firewall or segmentation device between the implant and the target."
+
+      - title: "Fallback without hping3"
+        commands:
+          - "sudo nmap -sn -PP -n --reason --packet-trace <TARGET>"
+        notes: "-PP sends ICMP timestamp requests only. 'Host is up, received timestamp-reply' = confirmed; it does not print the timestamp values, so use hping3 (step 1) or timecheck --verbose (step 3) for report evidence."
+
     references:
       - "https://www.tenable.com/plugins/nessus/10114"
       - "https://github.com/DefensiveOrigins/icmp-timestamp"
+      - "https://datatracker.ietf.org/doc/html/rfc792"
 
-  - plugin_id: "41028"
+  - finding_id: "nessus:41028"
     workflow_name: "SNMP Default Community Strings"
     description: "Default SNMP community string usage could allow for configuration read through SNMP queries and possibly a full SNMP MIB tree walk."
     steps:
@@ -126,14 +147,14 @@ workflows:
       - "https://github.com/trailofbits/onesixtyone"
       - "https://github.com/net-snmp/net-snmp"
 
-  - plugin_id: "20007,26928,31705,42873,65821,78479,81606,83738,83875,89058,104743,157288"
+  - finding_id: "nessus:20007,nessus:26928,nessus:31705,nessus:42873,nessus:65821,nessus:78479,nessus:81606,nessus:83738,nessus:83875,nessus:89058,nessus:104743,nessus:157288"
     workflow_name: "Weak SSL/TLS Configurations"
     description: "Weak or deprecated SSL/TLS configurations — including outdated protocol versions, weak/anonymous/export cipher suites, and exploitable vulnerabilities — should be remediated."
     steps:
       - title: "Enumerate the supported encryption protocol versions and cipher suites."
         commands:
           - "sudo nmap -A --script=ssl-enum-ciphers,ssl-cert,ssl-date <TARGET>"
-        notes: "SSLv2, SSLv3, TLSv1.0, and TLSv1.1 are deprecated and should be disabled. Weak/medium-strength, anonymous, and EXPORT cipher suites must be removed. Check for specific vulnerabilities: POODLE (plugin 78479) exploits SSLv3 CBC padding; FREAK (65821, 83875) and Logjam (81606, 83738, 89058) exploit weak EXPORT key exchange. Prefer TLSv1.2+ with strong cipher suites only."
+        notes: "SSLv2, SSLv3, TLSv1.0, and TLSv1.1 are deprecated and should be disabled. Weak/medium-strength, anonymous, and EXPORT cipher suites must be removed. Check for specific vulnerabilities: POODLE (nessus:78479) exploits SSLv3 CBC padding; FREAK (nessus:65821, nessus:83875) and Logjam (nessus:81606, nessus:83738, nessus:89058) exploit weak EXPORT key exchange. Prefer TLSv1.2+ with strong cipher suites only."
 
     references:
       - "https://www.tenable.com/plugins/nessus/20007"
@@ -150,7 +171,7 @@ workflows:
       - "https://www.tenable.com/plugins/nessus/157288"
       - "https://www.blackhillsinfosec.com/testing-tls-and-certificates/"
 
-  - plugin_id: "42263"
+  - finding_id: "nessus:42263"
     workflow_name: "Unencrypted Telnet Server"
     description: "The primary risk posed by unencrypted network protocols is that an attacker can eavesdrop on communication and extract any information in it, such as confidential data and credentials."
     steps:
@@ -170,7 +191,7 @@ workflows:
     references:
       - "https://www.tenable.com/plugins/nessus/42263"
 
-  - plugin_id: "187315"
+  - finding_id: "nessus:187315"
     workflow_name: "Terrapin Weakness"
     description: "SSH vulnerability that could permit MITM style attacks"
     steps:
@@ -191,7 +212,7 @@ workflows:
       - "https://nvd.nist.gov/vuln/detail/CVE-2023-48795"
       - "https://terrapin-attack.com/"
 
-  - plugin_id: "90317,70658,153953,71049"
+  - finding_id: "nessus:90317,nessus:70658,nessus:153953,nessus:71049"
     workflow_name: "SSH Service Verification"
     description: "SSH service is accepting weak ciphers, key exchange algorithms, or MAC algorithms, and/or accepts password authentication. These misconfigurations can expose the service to brute force, MITM, or cryptographic downgrade attacks."
     steps:
@@ -224,3 +245,104 @@ workflows:
       - "https://www.tenable.com/plugins/nessus/71049"
       - "https://github.com/jtesta/ssh-audit"
       - "https://attack.mitre.org/techniques/T1110/001/"
+
+  - finding_id: "nessus:35297,nessus:91263"
+    workflow_name: "SSL Service Requests Client Certificate"
+    description: "Confirm the server sends a TLS CertificateRequest and determine whether a client certificate is optional or required."
+    steps:
+      - title: "Watch the TLS handshake for a CertificateRequest"
+        commands:
+          - "curl -skv -I https://<TARGET>:<PORT>/"
+        notes: "In the verbose handshake output look for 'TLS handshake, Request CERT (13)'. Present = the server requests a client certificate (confirms this plugin). curl sends an empty Certificate (11) in reply. If the handshake then completes and an HTTP response comes back, the certificate is OPTIONAL - so plugin 91263 'Service Requires Client Certificate' on the same port is a false positive. If the handshake aborts with an alert (e.g. 'certificate required' / handshake failure) right after the empty certificate, it is REQUIRED."
+
+      - title: "Confirm with openssl (works on any TLS service, incl. non-HTTP and TLS 1.3)"
+        commands:
+          - "echo | openssl s_client -connect <TARGET>:<PORT> -servername <TARGET>"
+        notes: "Use this when the service is not HTTPS (e.g. SMTPS, LDAPS, IMAPS) or curl output is ambiguous. The echo closes stdin so s_client exits after the handshake. Look for 'Acceptable client certificate CA names' (followed by the CA list) - present = the server requested a client certificate; 'No client certificate CA names sent' = no request. s_client sends no certificate: if it still prints the server certificate and 'Verify return code' and stays connected, the certificate is OPTIONAL; if it ends with an alert such as 'certificate required' (TLS 1.3, alert 116) or 'handshake failure' (TLS 1.2, alert 40), it is REQUIRED. On TLS 1.3 the required-cert alert can arrive after the handshake summary, so read to the end of the output. Add -tls1_2 or -tls1_3 to test each version separately."
+
+    references:
+      - "https://www.tenable.com/plugins/nessus/35297"
+      - "https://www.tenable.com/plugins/nessus/91263"
+
+  - finding_id: "nessus:56984"
+    workflow_name: "SSL / TLS Versions Supported"
+    description: "Enumerate which SSL/TLS protocol versions the service accepts and flag any legacy versions (SSLv2/SSLv3/TLS 1.0/TLS 1.1)."
+    steps:
+      - title: "Enumerate supported protocol versions"
+        commands:
+          - "sslscan --no-colour <TARGET>:<PORT>"
+        notes: "Read the 'SSL/TLS Protocols' block. Any of SSLv2, SSLv3, TLSv1.0 or TLSv1.1 showing 'enabled' is a reportable legacy-protocol issue (see the deprecated-protocol plugins). TLSv1.2/TLSv1.3 only = informational. Note whether TLSv1.3 is missing - worth mentioning, not a vuln on its own. The same output also covers cipher suites, key-exchange groups and the leaf certificate, so one run serves the related TLS inventory plugins."
+
+    references:
+      - "https://www.tenable.com/plugins/nessus/56984"
+
+  - finding_id: "nessus:95631"
+    workflow_name: "SSL Certificate Signed Using Weak Hashing Algorithm (Known CA)"
+    description: "Determine whether the weak (SHA-1/MD5) signature is on a certificate clients actually validate (leaf or intermediate) or only on a self-signed trust anchor."
+    steps:
+      - title: "Dump the full certificate chain the server sends"
+        commands:
+          - "sslscan --no-colour --show-certificates <TARGET>:<PORT>"
+        notes: "For each certificate block, compare 'Signature Algorithm' with Subject/Issuer. Reportable: a leaf or intermediate (Subject != Issuer) signed with sha1WithRSA/md5. False positive: the only weak signature is on a self-signed root (Subject == Issuer, e.g. GlobalSign Root CA) - clients trust roots directly and never validate their self-signature. Also check whether the flagged root is still sent at all; CDNs (e.g. Cloudflare) rotate chains, and a cross-signed intermediate re-issued with SHA-256 replaces the old SHA-1 root."
+
+    references:
+      - "https://www.tenable.com/plugins/nessus/95631"
+
+  - finding_id: "nessus:142960,nessus:84502,nuclei:http-missing-security-headers"
+    workflow_name: "HSTS Missing From HTTPS Server (RFC 6797)"
+    description: "Confirm whether HTTPS responses carry a Strict-Transport-Security header with an adequate max-age."
+    steps:
+      - title: "Check the HTTPS response for a Strict-Transport-Security header"
+        commands:
+          - "curl -sk --max-time 15 -D - https://<TARGET>:<PORT>/ | grep -i '^strict-transport-security'"
+        notes: "No output = no HSTS header = confirmed. Also flag a header with max-age below 31536000 (1 year) or max-age=0. A header present with max-age >= 31536000 = false positive. Use a GET (as above) rather than -I, since some servers only add HSTS to GET responses. Check every HTTPS port Nessus listed - CDN alternate ports (2053/2083/2087/2096/8443) can behave differently from 443. An error or 404 response without HSTS still counts: browsers honour HSTS on any response sent over HTTPS. Reached from a nuclei finding: http-missing-security-headers fires on several headers at once, so read its matcher names first - this workflow only settles the strict-transport-security one, and a matcher naming a different header is a separate finding."
+
+    references:
+      - "https://www.tenable.com/plugins/nessus/142960"
+      - "https://www.tenable.com/plugins/nessus/84502"
+      - "https://github.com/projectdiscovery/nuclei-templates/blob/main/http/misconfiguration/http-missing-security-headers.yaml"
+      - "https://datatracker.ietf.org/doc/html/rfc6797"
+
+  - finding_id: "nessus:298485"
+    workflow_name: "Oracle E-Business Suite Detection"
+    description: "Confirm Oracle EBS is really exposed, ruling out catch-all / soft-404 sites that answer every path the same way."
+    steps:
+      - title: "Compare EBS login paths against a random baseline path"
+        commands:
+          - "curl -skI --max-time 15 https://<TARGET>/OA_HTML/AppsLocalLogin.jsp"
+          - "curl -skI --max-time 15 https://<TARGET>/OA_HTML/AppsLogin"
+          - "curl -skI --max-time 15 https://<TARGET>/cerno-nonexistent-8f3a1c.jsp"
+        notes: "Compare status code, Location and Content-Length. If the EBS paths return the same status/redirect/size as the random .jsp baseline, the site has a catch-all handler (common on WordPress/CDN sites) and the detection is a false positive. A real EBS instance usually redirects AppsLogin to an OA_HTML or SSO login page and sets Oracle session cookies (e.g. JSESSIONID, a cookie named after the database SID)."
+
+      - title: "Check the page body for Oracle EBS markers"
+        commands:
+          - "curl -skL --max-time 20 https://<TARGET>/OA_HTML/AppsLocalLogin.jsp | grep -iE \"E-Business|Oracle Applications|OA_HTML|AppsLocalLogin\""
+        notes: "Confirmed: the login page contains Oracle EBS branding or references to OA_HTML/OA_MEDIA resources. No matches, together with a baseline-identical response, means a false positive. If confirmed, record the EBS version from the page or headers and check it against current Oracle CPU advisories."
+
+    references:
+      - "https://www.tenable.com/plugins/nessus/298485"
+
+  - finding_id: "nessus:304671"
+    workflow_name: "nginx 1.3.0 < 1.28.2 / 1.29.x < 1.29.5 SSL Upstream Injection"
+    description: "Version-based check: confirm the nginx version disclosed by the service falls in the affected range for CVE-2026-1642."
+    steps:
+      - title: "Fingerprint the nginx version with nmap"
+        commands:
+          - "nmap -Pn -sV -p <PORT> --script http-server-header,ssl-cert <TARGET>"
+        notes: "Read the VERSION column and http-server-header output. Affected: nginx 1.3.0 through 1.28.1, and 1.29.0 through 1.29.4. Fixed: 1.28.2+ or 1.29.5+. ssl-cert confirms you hit the intended virtual host."
+
+      - title: "Confirm the Server header directly"
+        commands:
+          - "curl -skI --max-time 15 -A \"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0\" https://<TARGET>:<PORT>/"
+        notes: "Look for 'Server: nginx/<version>'. Confirmed = version in the affected range. If the header is just 'nginx' (server_tokens off) or a CDN/proxy name (e.g. 'cloudflare'), the version cannot be confirmed remotely - mark unable, not false positive, and ask the client for the installed version. Distro packages may backport fixes without changing the version string; note this caveat in the report. This is a version check only - Nessus does not test exploitability."
+
+      - title: "Check whether the version's release branch is still supported (endoflife.date)"
+        commands:
+          - "curl -s https://endoflife.date/api/nginx/<MAJOR.MINOR>.json"
+          - "curl -s https://endoflife.date/api/nginx.json"
+        notes: "Replace <MAJOR.MINOR> with the branch from steps 1-2 (e.g. 1.26 for 1.26.3). 'eol' is the date the branch stopped receiving fixes, or false if it is still supported; 'latest' is the last release on that branch. An 'eol' date in the past means the whole branch is unsupported: report it as Unsupported Software rather than Unpatched Software, and cite https://endoflife.date/nginx. The second command lists every branch, so you can see which ones are currently supported. Recommend upgrading to a supported branch, not just the plugin's fixed version - the fixed versions Nessus names can sit on branches that have since reached end of life."
+
+    references:
+      - "https://www.tenable.com/plugins/nessus/304671"
+      - "https://nvd.nist.gov/vuln/detail/CVE-2026-1642"
+      - "https://endoflife.date/nginx"

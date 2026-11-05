@@ -57,6 +57,7 @@ __all__ = [
     "log_tool_execution",
     "log_artifact",
     "log_artifacts_for_nmap",
+    "log_artifacts_for_run",
     # Parsing module
     "is_ipv6",
     "is_ipv4",
@@ -237,6 +238,7 @@ from .ops import (
     log_tool_execution,
     log_artifact,
     log_artifacts_for_nmap,
+    log_artifacts_for_run,
 )
 from .parsing import (
     is_ipv6,

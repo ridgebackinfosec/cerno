@@ -34,11 +34,27 @@ if TYPE_CHECKING:
 _console_global = get_console()
 
 
-def _display_name(finding, plugin=None) -> str:
-    """Return a 'Plugin <id>: <name>' label for status messages."""
+def finding_label(finding, plugin=None) -> str:
+    """Return a ``Finding <id>: <name>`` label for a finding.
+
+    **This is a contract, not just a label.** `[H]` Compare and `[O]`
+    Overlapping return *lists of these strings* as their groups, and
+    ``tui.filter_finding_candidates`` re-derives the label from the ``Plugin``
+    row and tests set membership against them. Two independent producers of the
+    same literal format therefore have to agree exactly: change one and the
+    group filter silently matches zero findings, with the
+    ``[ACTIVE FILTER] Group #N`` footer still showing and no error anywhere.
+
+    Every one of those sites calls this function, so the format is defined
+    once. Do not inline it again.
+
+    Note the no-plugin fallback omits the name, which the membership test can
+    never produce -- unreachable in practice, since the callers always pass
+    both halves.
+    """
     if plugin:
-        return f"Plugin {plugin.plugin_id}: {plugin.plugin_name}"
-    return f"Plugin {finding.plugin_id}"
+        return f"Finding {plugin.plugin_id}: {plugin.plugin_name}"
+    return f"Finding {finding.plugin_id}"
 
 
 def move_review_state(
@@ -79,7 +95,7 @@ def move_review_state(
         return None
 
     if not quiet:
-        ok(f"{moved}: {_display_name(finding, plugin)}")
+        ok(f"{moved}: {finding_label(finding, plugin)}")
     return target
 
 
@@ -281,7 +297,7 @@ def write_work_files(
 
 def display_workflow(workflow: "Workflow") -> None:
     """
-    Display a verification workflow for plugin(s).
+    Display a verification workflow for one or more findings.
 
     Args:
         workflow: Workflow object to display
@@ -292,7 +308,7 @@ def display_workflow(workflow: "Workflow") -> None:
 
     # Header
     header(f"Verification Workflow: {workflow.workflow_name}")
-    info(f"Plugin ID(s): {workflow.plugin_id}")
+    info(f"Finding ID(s): {workflow.finding_id}")
     info(f"Description: {workflow.description}")
     _console_global.print()
 
@@ -474,7 +490,7 @@ def handle_finding_view(
                 warn("Tool execution not available in this context.")
                 continue
             if not plugin or not finding:
-                warn("Plugin/Finding information not available for tool execution.")
+                warn("Finding information not available for tool execution.")
                 continue
 
             # Run tool workflow with database objects. Guard against any deeper
@@ -522,7 +538,7 @@ def handle_finding_view(
                     continue
                 has_claude = True
             if finding is None or plugin is None:
-                warn("Finding/Plugin information not available for Claude Assistant.")
+                warn("Finding information not available for Claude Assistant.")
                 continue
             # Deferred import to avoid circular dependency (cerno.py imports fs.py)
             try:
@@ -550,7 +566,7 @@ def handle_finding_view(
         # Handle workflow option
         if action_choice in ("w", "workflow"):
             if not plugin:
-                warn("Plugin information not available.")
+                warn("Finding information not available.")
                 continue
             if not has_workflow or workflow_mapper is None:
                 warn("No workflow available for this finding.")
@@ -569,17 +585,13 @@ def handle_finding_view(
                 header("CVE Information")
 
                 if plugin and plugin.cves:
-                    info(
-                        f"Found {len(plugin.cves)} CVE(s) for plugin {plugin.plugin_id}:"
-                    )
+                    info(f"Found {len(plugin.cves)} CVE(s) for {plugin.plugin_id}:")
                     for cve in plugin.cves:
                         info(f"{cve}")
                 elif plugin:
-                    warn(
-                        f"No CVEs associated with this finding (plugin {plugin.plugin_id})."
-                    )
+                    warn(f"No CVEs associated with this finding ({plugin.plugin_id}).")
                 else:
-                    warn("Plugin information not available.")
+                    warn("Finding information not available.")
             except Exception as exc:
                 warn(f"Failed to retrieve CVE information: {exc}")
 
@@ -606,7 +618,7 @@ def handle_finding_view(
             if details_text:
                 menu_pager(details_text)
             else:
-                warn("No plugin output available for this finding.")
+                warn("No output recorded for this finding.")
 
             continue
 
@@ -720,7 +732,7 @@ def process_single_finding(
     hosts, ports_str = finding.get_hosts_and_ports()
 
     # Construct display name from plugin metadata
-    display_name = f"Plugin {plugin.plugin_id}: {plugin.plugin_name}"
+    display_name = finding_label(finding, plugin)
 
     if not hosts:
         info(

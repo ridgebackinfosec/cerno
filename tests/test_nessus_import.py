@@ -614,15 +614,15 @@ class TestNessusImportDatabaseIntegration:
                 "SELECT plugin_id, cves FROM plugins WHERE cves IS NOT NULL"
             ).fetchall()
         }
-        assert 20007 in cve_plugins
-        assert "CVE-2014-3566" in cve_plugins[20007]
-        assert 42263 in cve_plugins
-        assert "CVE-1999-0619" in cve_plugins[42263]
+        assert "nessus:20007" in cve_plugins
+        assert "CVE-2014-3566" in cve_plugins["nessus:20007"]
+        assert "nessus:42263" in cve_plugins
+        assert "CVE-1999-0619" in cve_plugins["nessus:42263"]
 
         telnet_plugin = temp_db.execute("""
             SELECT has_metasploit, metasploit_names
             FROM plugins
-            WHERE plugin_id = 42263
+            WHERE plugin_id = 'nessus:42263'
             """).fetchone()
         assert telnet_plugin is not None
         assert telnet_plugin["has_metasploit"] == 1
@@ -635,7 +635,7 @@ class TestNessusImportDatabaseIntegration:
             SELECT COUNT(*) AS count
             FROM finding_affected_hosts fah
             JOIN findings f ON f.finding_id = fah.finding_id
-            WHERE f.plugin_id = 20007
+            WHERE f.plugin_id = 'nessus:20007'
             """).fetchone()["count"]
         assert ssl_hosts == 8
 
@@ -643,7 +643,7 @@ class TestNessusImportDatabaseIntegration:
             SELECT fah.plugin_output
             FROM finding_affected_hosts fah
             JOIN findings f ON f.finding_id = fah.finding_id
-            WHERE f.plugin_id = 41028
+            WHERE f.plugin_id = 'nessus:41028'
             """).fetchone()
         assert output_row is not None
         assert "Community string accepted: public" in output_row["plugin_output"]
@@ -836,7 +836,7 @@ class TestCVEAndMetasploitExtraction:
         )
 
         # Plugin 65821 should have 2 CVEs
-        plugin = Plugin.get_by_id(65821, conn=temp_db)
+        plugin = Plugin.get_by_id("nessus:65821", conn=temp_db)
 
         assert plugin is not None, "Plugin 65821 should exist"
         assert plugin.cves is not None, "CVEs should be populated"
@@ -862,7 +862,7 @@ class TestCVEAndMetasploitExtraction:
         )
 
         # Plugin 10043 should have 1 Metasploit module
-        plugin_10043 = Plugin.get_by_id(10043, conn=temp_db)
+        plugin_10043 = Plugin.get_by_id("nessus:10043", conn=temp_db)
 
         assert plugin_10043 is not None, "Plugin 10043 should exist"
         assert plugin_10043.has_metasploit is True
@@ -871,7 +871,7 @@ class TestCVEAndMetasploitExtraction:
         assert len(plugin_10043.metasploit_names) == 1
 
         # Plugin 42873 should have 2 Metasploit modules
-        plugin_42873 = Plugin.get_by_id(42873, conn=temp_db)
+        plugin_42873 = Plugin.get_by_id("nessus:42873", conn=temp_db)
 
         assert plugin_42873 is not None, "Plugin 42873 should exist"
         assert plugin_42873.has_metasploit is True
@@ -898,7 +898,7 @@ class TestCVEAndMetasploitExtraction:
         )
 
         # Plugin 42873 has no CVEs in our fixture
-        plugin = Plugin.get_by_id(42873, conn=temp_db)
+        plugin = Plugin.get_by_id("nessus:42873", conn=temp_db)
 
         assert plugin is not None, "Plugin 42873 should exist"
         assert plugin.cves is None, "Plugin without CVEs should have None"
@@ -915,7 +915,7 @@ class TestCVEAndMetasploitExtraction:
         )
 
         # Plugin 65821 has no Metasploit names (has_metasploit=false)
-        plugin = Plugin.get_by_id(65821, conn=temp_db)
+        plugin = Plugin.get_by_id("nessus:65821", conn=temp_db)
 
         assert plugin is not None, "Plugin 65821 should exist"
         assert plugin.has_metasploit is False
@@ -934,25 +934,25 @@ class TestCVEAndMetasploitExtraction:
         import_nessus_file(nessus_with_cves_and_msf, temp_dir, use_database=True)
 
         # Manually modify CVEs and Metasploit names to simulate stale data
-        plugin = Plugin.get_by_id(65821, conn=temp_db)
+        plugin = Plugin.get_by_id("nessus:65821", conn=temp_db)
         assert plugin is not None
         plugin.cves = ["CVE-STALE-DATA"]
         plugin.save(conn=temp_db)
         temp_db.commit()
 
         # Verify stale data was saved
-        plugin_check = Plugin.get_by_id(65821, conn=temp_db)
+        plugin_check = Plugin.get_by_id("nessus:65821", conn=temp_db)
         assert plugin_check is not None
         assert plugin_check.cves == ["CVE-STALE-DATA"], "Stale data should be saved"
 
-        plugin_10043 = Plugin.get_by_id(10043, conn=temp_db)
+        plugin_10043 = Plugin.get_by_id("nessus:10043", conn=temp_db)
         assert plugin_10043 is not None
         plugin_10043.metasploit_names = ["STALE_MODULE"]
         plugin_10043.save(conn=temp_db)
         temp_db.commit()
 
         # Verify stale data was saved
-        plugin_check_10043 = Plugin.get_by_id(10043, conn=temp_db)
+        plugin_check_10043 = Plugin.get_by_id("nessus:10043", conn=temp_db)
         assert plugin_check_10043 is not None
         assert plugin_check_10043.metasploit_names == [
             "STALE_MODULE"
@@ -962,7 +962,7 @@ class TestCVEAndMetasploitExtraction:
         import_nessus_file(nessus_with_cves_and_msf, temp_dir, use_database=True)
 
         # CVEs should be refreshed from XML (overwriting stale data)
-        plugin = Plugin.get_by_id(65821, conn=temp_db)
+        plugin = Plugin.get_by_id("nessus:65821", conn=temp_db)
         assert plugin is not None
         assert plugin.cves is not None
         assert plugin.cves == ["CVE-2013-2566", "CVE-2015-2808"]
@@ -970,7 +970,7 @@ class TestCVEAndMetasploitExtraction:
         assert plugin.metadata_fetched_at is None  # No web scraping
 
         # Metasploit names should be refreshed from XML
-        plugin_10043 = Plugin.get_by_id(10043, conn=temp_db)
+        plugin_10043 = Plugin.get_by_id("nessus:10043", conn=temp_db)
         assert plugin_10043 is not None
         assert plugin_10043.metasploit_names is not None
         assert plugin_10043.metasploit_names == ["Chargen Probe Utility"]

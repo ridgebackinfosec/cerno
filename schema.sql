@@ -1,5 +1,5 @@
 -- ============================================================================
--- CERNO DATABASE SCHEMA (schema version 4)
+-- CERNO DATABASE SCHEMA (schema version 5)
 -- ============================================================================
 -- Reference copy of the SQLite schema. The authoritative DDL is
 -- cerno_pkg/database.py (SCHEMA_SQL_TABLES + SCHEMA_SQL_VIEWS);
@@ -7,7 +7,7 @@
 -- views and indexes.
 --
 -- Database location: ~/.cerno/cerno.db (global, cross-scan queries)
--- Schema version: 4, stored in PRAGMA user_version. Older databases
+-- Schema version: 5, stored in PRAGMA user_version. Older databases
 --   are rejected with SchemaVersionError (no migration system; re-import).
 -- Column-by-column documentation: docs/DATABASE.md
 -- ============================================================================
@@ -16,8 +16,8 @@
 CREATE TABLE IF NOT EXISTS scans (
     scan_id INTEGER PRIMARY KEY AUTOINCREMENT,
     scan_name TEXT NOT NULL UNIQUE,
-    nessus_file_path TEXT,                  -- Original .nessus file path
-    nessus_file_hash TEXT,                  -- SHA256 of .nessus file for change detection
+    source_file_path TEXT,                  -- Original scan file (.nessus, nuclei .json/.jsonl)
+    source_file_hash TEXT,                  -- SHA256 of the source file, for change detection
     export_root TEXT NOT NULL,              -- Root directory recorded at import (no files are written)
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     last_reviewed_at TIMESTAMP
@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS scans (
 CREATE INDEX IF NOT EXISTS idx_scans_name ON scans(scan_name);
 
 CREATE TABLE IF NOT EXISTS plugins (
-    plugin_id INTEGER PRIMARY KEY,          -- Nessus plugin ID (e.g., 57608)
+    plugin_id TEXT PRIMARY KEY,             -- 'nessus:57608' | 'nuclei:apache-detect'
+    source_id INTEGER NOT NULL DEFAULT 1,   -- FK -> finding_sources (1 = nessus)
     plugin_name TEXT NOT NULL,
     severity_int INTEGER NOT NULL,          -- 0=Info, 1=Low, 2=Medium, 3=High, 4=Critical
     has_metasploit BOOLEAN DEFAULT 0,
@@ -34,19 +35,21 @@ CREATE TABLE IF NOT EXISTS plugins (
     cvss2_score REAL,                       -- CVSS v2 base score (fallback)
     metasploit_names TEXT,                  -- JSON: ["Chargen Probe Utility", "Another Module"]
     cves TEXT,                              -- JSON: ["CVE-2023-1234", "CVE-2023-5678"]
-    plugin_url TEXT,                        -- https://www.tenable.com/plugins/nessus/{plugin_id}
+    plugin_url TEXT,                        -- source-specific details page (see constants.PLUGIN_URL_TEMPLATES)
     metadata_fetched_at TIMESTAMP,
     CONSTRAINT severity_range CHECK (severity_int BETWEEN 0 AND 4),
-    FOREIGN KEY (severity_int) REFERENCES severity_levels(severity_int)
+    FOREIGN KEY (severity_int) REFERENCES severity_levels(severity_int),
+    FOREIGN KEY (source_id) REFERENCES finding_sources(source_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_plugins_severity ON plugins(severity_int);
 CREATE INDEX IF NOT EXISTS idx_plugins_metasploit ON plugins(has_metasploit);
+CREATE INDEX IF NOT EXISTS idx_plugins_source ON plugins(source_id);
 
 CREATE TABLE IF NOT EXISTS findings (
     finding_id INTEGER PRIMARY KEY AUTOINCREMENT,
     scan_id INTEGER NOT NULL,
-    plugin_id INTEGER NOT NULL,
+    plugin_id TEXT NOT NULL,
     review_state TEXT NOT NULL DEFAULT 'unreviewed',
     reviewed_at TIMESTAMP,
     reviewed_by TEXT,
@@ -149,6 +152,15 @@ CREATE TABLE IF NOT EXISTS workflow_executions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_workflow_executions_finding ON workflow_executions(finding_id);
+
+-- Finding sources lookup table (which scanner produced a plugin row)
+-- Pre-populated with:
+-- (1, 'nessus')
+-- (2, 'nuclei')
+CREATE TABLE IF NOT EXISTS finding_sources (
+    source_id INTEGER PRIMARY KEY,
+    source_name TEXT NOT NULL UNIQUE
+);
 
 -- Severity levels lookup table (normalized reference data)
 -- Severity levels lookup table (normalized reference data)
@@ -349,6 +361,35 @@ CREATE INDEX IF NOT EXISTS idx_nse_results_execution ON nse_script_results(execu
 CREATE INDEX IF NOT EXISTS idx_nse_results_host ON nse_script_results(host_id);
 CREATE INDEX IF NOT EXISTS idx_nse_results_verdict ON nse_script_results(nse_verdict_id);
 
+-- nuclei matches observed during a Cerno-run nuclei execution.
+--
+-- Evidence, not findings: these rows back a verdict on an existing finding and
+-- are tied to the execution that produced them, exactly as nmap's NSE results
+-- are. Templates that should become findings in their own right go through
+-- `cerno import nuclei` instead.
+CREATE TABLE IF NOT EXISTS nuclei_match_observations (
+    observation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    execution_id   INTEGER NOT NULL,
+    host_id        INTEGER NOT NULL,
+    port_number    INTEGER,
+    template_ref   TEXT NOT NULL,
+    template_name  TEXT,
+    severity_int   INTEGER NOT NULL,
+    matched_at     TEXT,
+    matcher_name   TEXT,
+    template_url   TEXT,
+    extracted      TEXT,
+    created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (execution_id) REFERENCES tool_executions(execution_id) ON DELETE CASCADE,
+    FOREIGN KEY (host_id) REFERENCES hosts(host_id),
+    FOREIGN KEY (port_number) REFERENCES ports(port_number),
+    FOREIGN KEY (severity_int) REFERENCES severity_levels(severity_int)
+);
+
+CREATE INDEX IF NOT EXISTS idx_nuclei_obs_execution ON nuclei_match_observations(execution_id);
+CREATE INDEX IF NOT EXISTS idx_nuclei_obs_host ON nuclei_match_observations(host_id);
+CREATE INDEX IF NOT EXISTS idx_nuclei_obs_template ON nuclei_match_observations(template_ref);
+
 -- Point-in-time snapshot of nxc security flags (provenance = execution_id).
 -- Credentials and shares are NOT duplicated here; they stay live-read via nxc_db.
 CREATE TABLE IF NOT EXISTS nxc_flag_observations (
@@ -474,7 +515,8 @@ SELECT
     p.cves,
     p.metasploit_names,
     p.plugin_url,
-    p.metadata_fetched_at
+    p.metadata_fetched_at,
+    p.source_id
 FROM plugins p
 JOIN severity_levels sl ON p.severity_int = sl.severity_int;
 
@@ -638,17 +680,39 @@ SELECT
 FROM nse_script_results nsr
 LEFT JOIN nse_verdicts nv ON nsr.nse_verdict_id = nv.nse_verdict_id;
 
+CREATE VIEW IF NOT EXISTS v_nuclei_observations AS
+SELECT
+    nmo.observation_id,
+    nmo.execution_id,
+    nmo.host_id,
+    h.ip_address,
+    nmo.port_number,
+    nmo.template_ref,
+    nmo.template_name,
+    nmo.severity_int,
+    sl.severity_label,
+    nmo.matched_at,
+    nmo.matcher_name,
+    nmo.template_url,
+    nmo.extracted,
+    nmo.created_at
+FROM nuclei_match_observations nmo
+JOIN hosts h ON nmo.host_id = h.host_id
+LEFT JOIN severity_levels sl ON nmo.severity_int = sl.severity_int;
+
 -- Live-verified fact counts per finding (via the execution's finding_id)
 CREATE VIEW IF NOT EXISTS v_finding_verified_stats AS
 SELECT
     te.finding_id,
     COUNT(DISTINCT vp.verified_port_id) AS verified_port_count,
     COUNT(DISTINCT nsr.nse_result_id) AS nse_result_count,
-    COUNT(DISTINCT CASE WHEN nv.label = 'VULNERABLE' THEN nsr.nse_result_id END) AS vulnerable_count
+    COUNT(DISTINCT CASE WHEN nv.label = 'VULNERABLE' THEN nsr.nse_result_id END) AS vulnerable_count,
+    COUNT(DISTINCT nmo.observation_id) AS nuclei_match_count
 FROM tool_executions te
 LEFT JOIN verified_ports vp ON vp.execution_id = te.execution_id
 LEFT JOIN nse_script_results nsr ON nsr.execution_id = te.execution_id
 LEFT JOIN nse_verdicts nv ON nsr.nse_verdict_id = nv.nse_verdict_id
+LEFT JOIN nuclei_match_observations nmo ON nmo.execution_id = te.execution_id
 WHERE te.finding_id IS NOT NULL
 GROUP BY te.finding_id;
 

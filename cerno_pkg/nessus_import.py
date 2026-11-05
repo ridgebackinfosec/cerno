@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Dict, Optional, Set, Tuple
 
 from .ansi import err, info
+from .constants import PLUGIN_DETAILS_BASE, PLUGIN_ID_PREFIXES, SOURCE_NESSUS
 from .logging_setup import log_error, log_info, log_timing
 
 # Severity labels for integer severity levels (0-4)
@@ -605,8 +606,8 @@ def _write_to_database(
 
             scan = Scan(
                 scan_name=scan_name,
-                nessus_file_path=str(nessus_file.resolve()),
-                nessus_file_hash=nessus_hash,
+                source_file_path=str(nessus_file.resolve()),
+                source_file_hash=nessus_hash,
                 export_root=str(base_scan_dir.parent),
                 created_at=now_iso(),
             )
@@ -760,7 +761,11 @@ def _write_to_database(
             # ========== Step 5: Insert plugins and finding rows ==========
             total_plugins = len(plugins)
             for idx, (plugin_id_str, meta) in enumerate(plugins.items(), 1):
-                plugin_id = int(plugin_id_str)
+                # plugins.plugin_id is TEXT and namespaced for every source, so
+                # the bare number from the .nessus file is prefixed here. The
+                # Tenable URL below keeps using the bare value: that is the
+                # source-native reference, which is what Tenable publishes.
+                plugin_id = f"{PLUGIN_ID_PREFIXES[SOURCE_NESSUS]}{plugin_id_str}"
 
                 # Show progress every 10 plugins or at milestones
                 if idx % 10 == 0 or idx == total_plugins:
@@ -776,7 +781,7 @@ def _write_to_database(
                     cvss2_score=meta.get("cvss2"),
                     metasploit_names=meta.get("msf_names"),
                     cves=meta.get("cves"),
-                    plugin_url=f"https://www.tenable.com/plugins/nessus/{plugin_id}",
+                    plugin_url=f"{PLUGIN_DETAILS_BASE}{plugin_id_str}",
                 )
                 plugin.save(conn)
 

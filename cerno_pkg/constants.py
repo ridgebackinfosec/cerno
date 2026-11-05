@@ -139,6 +139,89 @@ VERDICT_ICONS: dict[str, str] = {
 PLUGIN_DETAILS_BASE: str = "https://www.tenable.com/plugins/nessus/"
 """Base URL for Tenable plugin detail pages."""
 
+NUCLEI_TEMPLATE_URL_BASE: str = "https://cloud.projectdiscovery.io/public/"
+"""Base URL for the public nuclei template viewer.
+
+Keyed on the bare template id, so it works without knowing the template's path.
+Used as the fallback when a result carries no usable ``template`` path.
+"""
+
+NUCLEI_TEMPLATE_REPO_BASE: str = (
+    "https://github.com/projectdiscovery/nuclei-templates/blob/main/"
+)
+"""Base URL for a template's source in the nuclei-templates repository.
+
+Preferred over :data:`NUCLEI_TEMPLATE_URL_BASE` because it shows the operator
+the matcher logic that actually fired. It needs the result's ``template`` path
+(e.g. ``http/cves/2021/CVE-2021-44228.yaml``), which cannot be derived from a
+template id, hence the two bases. ``blob/`` is GitHub's canonical form for a
+file; ``tree/`` also resolves but redirects here.
+"""
+
+NUCLEI_RESPONSE_SIZE_READ: int = 10_485_760
+"""``-rsr``: max response bytes nuclei reads (10 MiB)."""
+
+NUCLEI_RESPONSE_SIZE_SAVE: int = 1_048_576
+"""``-rss``: max response bytes nuclei stores in its output (1 MiB).
+
+Cerno's importer discards ``request``/``response`` entirely, so this only
+bounds the size of the ``-je``/``-me`` artifacts the operator keeps.
+"""
+
+
+# ========== Finding sources (multi-source plugin identity) ==========
+SOURCE_NESSUS: str = "nessus"
+SOURCE_NUCLEI: str = "nuclei"
+
+SOURCE_UNKNOWN: str = "unknown"
+"""Source of an id carrying no recognised namespace prefix.
+
+Deliberately *not* a valid source: it has no ``finding_sources`` row and no
+``SOURCE_IDS`` entry, so :func:`parsing.plugin_source_id` raises on it and
+nothing can be written to the database under it. Read paths treat it as "no
+known source" and render a finding without a details link rather than
+fabricating one.
+"""
+
+SOURCE_IDS: dict[str, int] = {SOURCE_NESSUS: 1, SOURCE_NUCLEI: 2}
+"""``finding_sources.source_id`` per source name.
+
+Mirrors the ``finding_sources`` rows in ``database.LOOKUP_SEEDS``.
+"""
+
+PLUGIN_ID_PREFIXES: dict[str, str] = {
+    SOURCE_NESSUS: "nessus:",
+    SOURCE_NUCLEI: "nuclei:",
+}
+"""Namespace prefix applied to ``plugins.plugin_id`` per source.
+
+*Every* source is namespaced, Nessus included (``'nessus:57608'``). No source
+is the default, so a bare token is not a valid plugin id anywhere: it has no
+source, and :func:`parsing.plugin_source` reports :data:`SOURCE_UNKNOWN` for
+it rather than guessing.
+
+The uniformity is what makes a new source cheap — it needs a prefix here and a
+``finding_sources`` row, and nothing else has to learn about it. It also keeps
+the global ``plugins`` table collision-free: a nuclei template literally named
+``57608`` cannot occupy the same key as Nessus plugin 57608.
+"""
+
+PLUGIN_ID_LABELS: dict[str, str] = {
+    SOURCE_NESSUS: "Nessus Plugin ID",
+    SOURCE_NUCLEI: "Nuclei Template ID",
+}
+"""Label for the identifier row in the finding panel, per source."""
+
+PLUGIN_URL_TEMPLATES: dict[str, str] = {
+    SOURCE_NESSUS: PLUGIN_DETAILS_BASE + "{ref}",
+    SOURCE_NUCLEI: NUCLEI_TEMPLATE_URL_BASE + "{ref}",
+}
+"""Details-page template per source, keyed on the source-native ``{ref}``.
+
+A source absent from this map has no known details page, and callers must
+render no link rather than fabricate one.
+"""
+
 
 # ========== NetExec protocol support ==========
 NETEXEC_PROTOCOLS: list[str] = [

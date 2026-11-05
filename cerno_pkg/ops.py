@@ -29,7 +29,7 @@ from rich.progress import (
 
 from .ansi import C, err, get_console
 from .constants import PROCESS_TERMINATE_TIMEOUT
-from .logging_setup import log_error, log_info, log_timing
+from .logging_setup import log_debug, log_error, log_info, log_timing
 
 if TYPE_CHECKING:
     # Imported lazily inside start_ips_server() at runtime; needed here only so
@@ -888,6 +888,56 @@ def _log_artifact_impl(
     except Exception as e:
         log_error(f"Failed to log artifact to database (impl): {e}")
         return None
+
+
+def log_artifacts_for_run(
+    tool_name: str,
+    execution_id: int,
+    oabase: Path,
+    metadata: Optional[dict] = None,
+    conn: Optional[sqlite3.Connection] = None,
+) -> list[int]:
+    """Register whatever output files a finished tool run produced.
+
+    One place that knows which tool writes what, so the TUI's run loop does not
+    grow a branch per tool and ``ingest_execution`` can always find the file it
+    needs. A tool with no registerable output (metasploit, a custom command)
+    returns an empty list rather than raising.
+
+    The MCP server deliberately does **not** use this: there the command comes
+    from the caller and need not use Cerno's ``oabase``, so it parses the real
+    output flag out of the argv and scrubs resolved secrets before registering.
+    Here Cerno built the command itself, so deriving the path is exact.
+
+    Args:
+        tool_name: Registry tool name (``Tool.name``), e.g. "nmap"/"nuclei".
+        execution_id: The ``tool_executions`` row the artifacts belong to.
+        oabase: Output base path the command was built with.
+        metadata: Optional metadata stored on each artifact.
+        conn: Optional connection.
+
+    Returns:
+        List of artifact IDs created (empty when the tool writes none).
+    """
+    name = (tool_name or "").strip().lower()
+
+    if name == "nmap":
+        return log_artifacts_for_nmap(execution_id, oabase, metadata, conn=conn)
+
+    if name == "nuclei":
+        from .tools import nuclei_scan_output
+
+        path = Path(nuclei_scan_output(oabase))
+        if not path.exists():
+            # A run that matched nothing writes no file; that is not an error.
+            log_debug(f"No nuclei output at {path}; nothing to register")
+            return []
+        artifact_id = log_artifact(
+            execution_id, path, "nuclei_json", metadata, conn=conn
+        )
+        return [artifact_id] if artifact_id else []
+
+    return []
 
 
 def log_artifacts_for_nmap(

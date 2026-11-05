@@ -222,13 +222,13 @@ class TestLogToolExecution:
         scan_id = scan.save(temp_db)
         assert scan_id is not None
 
-        plugin = Plugin(plugin_id=12345, plugin_name="Test", severity_int=2)
+        plugin = Plugin(plugin_id="nessus:12345", plugin_name="Test", severity_int=2)
         plugin.save(temp_db)
 
         file_path = temp_dir / "test_plugin.txt"
         file_path.write_text("192.168.1.1:80\n")
 
-        pf = Finding(scan_id=scan_id, plugin_id=12345)
+        pf = Finding(scan_id=scan_id, plugin_id="nessus:12345")
         pf.save(temp_db)
 
         # Log execution

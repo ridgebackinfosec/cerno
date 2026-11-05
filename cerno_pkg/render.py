@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
-from typing import Any, List, Optional, Sequence, Tuple, Union, TYPE_CHECKING
+from typing import Any, List, Literal, Optional, Sequence, Tuple, Union, TYPE_CHECKING
 
 from rich import box
 from rich.console import RenderableType, Group
@@ -20,10 +20,18 @@ from rich.text import Text
 from contextlib import contextmanager
 import time
 
-from .ansi import info, warn, header, get_console, safe_text, style_if_enabled
+from .ansi import (
+    get_console,
+    get_terminal_width,
+    header,
+    info,
+    safe_text,
+    style_if_enabled,
+    warn,
+)
 from .config import load_config
 from .constants import (
-    PLUGIN_DETAILS_BASE,
+    PLUGIN_ID_LABELS,
     REVIEW_MOVE_LABELS,
     REVIEW_STATE_DONE,
     REVIEW_STATE_ICONS,
@@ -37,12 +45,12 @@ from .constants import (
     VERDICT_LABELS,
     VERDICT_STYLES,
 )
-from .fs import default_page_size, pretty_severity_label
+from .fs import default_page_size, finding_label, pretty_severity_label
 from .logging_setup import log_timing, log_debug
 
 if TYPE_CHECKING:
     from .models import Finding, Plugin
-    from .cross_scan import ScanComparisonResult, HostVulnerabilityHistory
+    from .cross_scan import ScanComparisonResult, HostVulnerabilityHistory, ScanSnapshot
 
 _console_global = get_console()
 
@@ -355,7 +363,7 @@ def render_empty_state(context: str, filter_text: str = "") -> None:
         warn("\nNo findings in this scan.")
         info("")
         info("This could mean:")
-        info("  • The .nessus file contained no vulnerability findings")
+        info("  • The imported file contained no findings")
         info("  • Import process encountered issues")
         info("")
 
@@ -472,7 +480,7 @@ def render_scan_context_header(scan: Any, scan_id: int) -> None:
 
     # Build header text
     scan_name = scan.scan_name or "Unknown"
-    nessus_file = scan.nessus_file_path or "unknown.nessus"
+    nessus_file = scan.source_file_path or "unknown"
 
     if term_width >= 120:
         # Wide terminal: single line
@@ -533,7 +541,7 @@ def render_severity_table(
     msf_summary: Optional[tuple[int, int, int, int]] = None,
     workflow_summary: Optional[tuple[int, int, int, int]] = None,
     scan_id: Optional[int] = None,
-    plugin_ids: Optional[list[int]] = None,
+    plugin_ids: Optional[list[str]] = None,
     scan_ids: Optional[list[int]] = None,
 ) -> None:
     """Render a table of severity levels with review progress percentages.
@@ -634,13 +642,33 @@ def _review_state_cell(review_state: Optional[str]) -> Text:
     )
 
 
+#: Header for the findings-list identifier column.
+FINDING_ID_HEADER = "Finding ID"
+
+#: Widest the identifier column may grow.
+#:
+#: Fits "nuclei:http-missing-security-headers" (36 characters) without letting a
+#: pathological id squeeze the Name column off the row.
+FINDING_ID_COLUMN_CAP = 38
+
+#: Width the Name column keeps even when ids are long.
+#:
+#: A 36-character id and a readable name do not both fit in 80 columns, so on a
+#: narrow terminal the id ellipsizes rather than reducing Name to a few letters
+#: per line. On a wide terminal both fit and nothing is cropped.
+MIN_NAME_COLUMN_WIDTH = 24
+
+#: Width consumed by the fixed columns (#, Severity, Hosts, Status) plus padding.
+_FIXED_COLUMNS_WIDTH = 34
+
+
 def render_finding_list_table(
     display: list[tuple[Any, Any]],
     sort_mode: str,
     get_counts_for: Any,
     row_offset: int = 0,
     show_severity: bool = False,
-    scan_labels: Optional[dict[int, str]] = None,
+    scan_labels: Optional[dict[str, str]] = None,
     chat_history_finding_ids: frozenset[int] = frozenset(),
 ) -> None:
     """Render a paginated file list table with plugin info from database.
@@ -660,10 +688,38 @@ def render_finding_list_table(
     """
     show_ai_column = bool(chat_history_finding_ids)
 
+    # Size the id column to this page's widest id. A fixed cap truncated every
+    # namespaced id ("nuclei:http-missing-security-headers" became
+    # "nuclei:ht…"), while a permanently wide column would steal space from
+    # Name on Nessus-only scans, where ids are five or six digits.
+    page_ids = [str(plugin.plugin_id) for _finding, plugin in display]
+    reserved = (
+        _FIXED_COLUMNS_WIDTH
+        + (11 if scan_labels is not None else 0)
+        + (5 if show_ai_column else 0)
+    )
+    # Measure against the console this table is actually printed to, not the
+    # process's terminal: they differ under `menu_pager`, capture and tests.
+    id_budget = _console_global.width - reserved - MIN_NAME_COLUMN_WIDTH
+    id_width = max(
+        min(
+            max((len(pid) for pid in page_ids), default=0),
+            FINDING_ID_COLUMN_CAP,
+            id_budget,
+        ),
+        len(FINDING_ID_HEADER),  # else max_width would truncate the header
+    )
+    # Right-justification reads well for numeric ids and badly for text ones.
+    id_justify: Literal["left", "right"] = (
+        "left" if any(not pid.isdigit() for pid in page_ids) else "right"
+    )
+
     table = Table(title=None, box=box.SIMPLE, show_lines=False, pad_edge=False)
     table.add_column("#", justify="right", no_wrap=True, max_width=5)
     table.add_column("Severity", justify="left", no_wrap=True, max_width=10)
-    table.add_column("Plugin ID", justify="right", no_wrap=True, max_width=10)
+    table.add_column(
+        FINDING_ID_HEADER, justify=id_justify, no_wrap=True, max_width=id_width
+    )
     table.add_column("Name", overflow="fold")
     # Always show host count column
     table.add_column("Hosts", justify="right", no_wrap=True, max_width=8)
@@ -684,11 +740,12 @@ def render_finding_list_table(
 
         # Get severity from plugin metadata
         from .nessus_import import severity_label_from_int
-        from .ansi import get_terminal_width
 
         label = severity_label_from_int(plugin.severity_int)
 
-        # Adaptive severity labels based on terminal width
+        # Adaptive severity labels based on terminal width. get_terminal_width
+        # is imported at module scope; re-importing it here would make the name
+        # local to this whole function and break its use above.
         term_width = get_terminal_width()
 
         if term_width >= 120:
@@ -718,7 +775,14 @@ def render_finding_list_table(
 
         # Text, not str: plugin_name is scan-derived and Rich markup-parses any
         # bare string handed to a cell, so brackets in it must not be tags.
-        row_data = [str(row_number), sev_colored, plugin_id_str, Text(plugin_name)]
+        # Both the id and the name are scan-derived: Rich markup-parses any
+        # bare str it is handed, so neither may be passed as one.
+        row_data = [
+            str(row_number),
+            sev_colored,
+            Text(plugin_id_str),
+            Text(plugin_name),
+        ]
 
         # Always retrieve and show host count from database
         host_count, _ports_str = get_counts_for(plugin_file)
@@ -841,7 +905,7 @@ def render_compare_tables(
 #: Display label per findings-list sort mode ([S] cycles severity → plugin_id → name → hosts).
 _SORT_LABELS = {
     "severity": "Severity",
-    "plugin_id": "Plugin ID",
+    "plugin_id": FINDING_ID_HEADER,
     "hosts": "Hosts",
     "name": "Name",
 }
@@ -1352,7 +1416,7 @@ def show_actions_help(
         key_text(
             "S",
             f"Sort: {_SORT_LABELS.get(sort_mode, 'Severity')} - "
-            "Cycle severity → plugin ID → name → host count",
+            "Cycle severity → finding ID → name → host count",
         ),
     )
     table.add_row(
@@ -1397,7 +1461,7 @@ def show_reviewed_help() -> None:
     table.add_row(
         "Move", f"Press [M] to {REVIEW_MOVE_LABELS[REVIEW_STATE_UNREVIEWED].lower()}"
     )
-    table.add_row("Filter", "Press [F] to filter by plugin name")
+    table.add_row("Filter", "Press [F] to filter by finding name")
     table.add_row("", "")
     table.add_row(
         "Note",
@@ -1502,7 +1566,7 @@ def render_responsive_action_menu(
 def count_severity_findings(
     directory: Path,
     scan_id: int,
-    plugin_ids: Optional[list[int]] = None,
+    plugin_ids: Optional[list[str]] = None,
     scan_ids: Optional[list[int]] = None,
 ) -> tuple[int, int, int, int]:
     """Count findings in a severity directory by review state.
@@ -1669,7 +1733,7 @@ def file_raw_paged_text(finding: "Finding", plugin: "Plugin") -> str:
     Returns:
         Formatted string with file info and content
     """
-    display_name = f"Plugin {plugin.plugin_id}: {plugin.plugin_name}"
+    display_name = finding_label(None, plugin)
 
     # Get content from database
     content = file_raw_payload_text(finding)
@@ -1751,7 +1815,7 @@ def grouped_paged_text(finding: "Finding", plugin: "Plugin") -> str:
         Formatted string with header and grouped content
     """
     body = grouped_payload_text(finding)
-    display_name = f"Plugin {plugin.plugin_id}: {plugin.plugin_name}"
+    display_name = finding_label(None, plugin)
     return f"Grouped view: {display_name}\n{body}"
 
 
@@ -1782,7 +1846,7 @@ def hosts_only_paged_text(finding: "Finding", plugin: "Plugin") -> str:
         Formatted string with header and host list
     """
     body = hosts_only_payload_text(finding)
-    display_name = f"Plugin {plugin.plugin_id}: {plugin.plugin_name}"
+    display_name = finding_label(None, plugin)
     return f"Hosts-only view: {display_name}\n{body}"
 
 
@@ -1902,7 +1966,7 @@ def build_plugin_output_details(finding: "Finding", plugin: "Plugin") -> Optiona
 
     # Build formatted output
     lines = []
-    lines.append(f"Finding Details: {plugin.plugin_name} (Plugin {plugin.plugin_id})")
+    lines.append(f"Finding Details: {plugin.plugin_name} ({plugin.plugin_id})")
     lines.append("=" * 80)
     lines.append(f"Severity: {plugin.severity_label}")
     lines.append(f"Total hosts with output: {len(outputs_with_data)}")
@@ -1950,8 +2014,10 @@ def display_finding_preview(
     # Check for Metasploit module from plugin metadata
     is_msf = plugin.has_metasploit
 
-    # Nessus Plugin ID
-    content.append("Nessus Plugin ID: ", style=style_if_enabled("cyan"))
+    # Source-aware identifier row ("Nessus Plugin ID" / "Nuclei Template ID").
+    # Text.append never parses markup, so the id needs no escaping here.
+    id_label = PLUGIN_ID_LABELS.get(plugin.source, FINDING_ID_HEADER)
+    content.append(f"{id_label}: ", style=style_if_enabled("cyan"))
     content.append(f"{plugin.plugin_id}\n", style=style_if_enabled("yellow"))
 
     # Severity
@@ -1963,13 +2029,16 @@ def display_finding_preview(
     )
     content.append(f"{sev_label}\n", style=severity_style(sev_label))
 
-    # Plugin Details (Tenable URL). Display drops "www." to save space; the OSC 8
-    # link target keeps the full URL. The link is applied even when colors are off.
-    plugin_url = plugin.plugin_url or f"{PLUGIN_DETAILS_BASE}{plugin.plugin_id}"
-    display_url = plugin_url.replace("://www.", "://", 1)
-    content.append("Plugin Details: ", style=style_if_enabled("cyan"))
-    link_style = f"{style_if_enabled('blue underline')} link {plugin_url}".strip()
-    content.append(f"{display_url}\n", style=link_style)
+    # Finding details page. Display drops "www." to save space; the OSC 8 link
+    # target keeps the full URL. The link is applied even when colors are off.
+    # The row is omitted entirely when the source has no known details page,
+    # rather than fabricating a Tenable link for a non-Nessus finding.
+    plugin_url = plugin.details_url
+    if plugin_url:
+        display_url = plugin_url.replace("://www.", "://", 1)
+        content.append("Finding Details: ", style=style_if_enabled("cyan"))
+        link_style = f"{style_if_enabled('blue underline')} link {plugin_url}".strip()
+        content.append(f"{display_url}\n", style=link_style)
 
     # Verification verdict (read-only; truth, distinct from review status).
     # Only shown once a verdict has been recorded. Best-effort: a verdict-lookup
@@ -1992,8 +2061,14 @@ def display_finding_preview(
             style=style_if_enabled(VERDICT_STYLES.get(verdict.verdict_label, "")),
         )
 
-    # Get port distribution from database
-    port_distribution = finding.get_port_distribution()
+    # Get port distribution from database. Best-effort for the same reason as
+    # the verdict lookup above: an unavailable or incomplete database must
+    # degrade this panel to the counts we already hold, not crash the review.
+    try:
+        port_distribution = finding.get_port_distribution()
+    except Exception as exc:  # pragma: no cover - defensive
+        log_debug(f"Port distribution lookup failed for finding: {exc}")
+        port_distribution = {}
 
     # Unique hosts with port summary
     content.append("Unique hosts: ", style=style_if_enabled("cyan"))
@@ -2410,7 +2485,7 @@ def display_nxc_per_host_detail(hosts: List[str]) -> None:
 # ===================================================================
 
 
-def bulk_extract_cves_for_plugins(plugins: List[tuple[int, str]]) -> None:
+def bulk_extract_cves_for_plugins(plugins: List[tuple[str, str]]) -> None:
     """
     Display CVEs for multiple plugins from database (read-only, no web scraping).
 
@@ -2443,7 +2518,7 @@ def bulk_extract_cves_for_plugins(plugins: List[tuple[int, str]]) -> None:
     # Report failures if any
     if failed_count > 0:
         warn(
-            f"CVE extraction failed for {failed_count} plugin(s). Check logs for details."
+            f"CVE extraction failed for {failed_count} finding(s). Check logs for details."
         )
 
     # Display results
@@ -2478,7 +2553,7 @@ def bulk_extract_cves_for_findings(files: List[Path]) -> None:
                 continue
 
             try:
-                plugin = Plugin.get_by_id(int(plugin_id), conn=conn)
+                plugin = Plugin.get_by_id(plugin_id, conn=conn)
                 if plugin and plugin.cves:
                     results[file_path.name] = plugin.cves
             except Exception as e:
@@ -2739,8 +2814,8 @@ def _render_findings_change_table(
         box=box.ROUNDED,
     )
     table.add_column("Severity", width=10)
-    table.add_column("Plugin Name", no_wrap=False)
-    table.add_column("Plugin ID", justify="right")
+    table.add_column("Finding Name", no_wrap=False)
+    table.add_column(FINDING_ID_HEADER, justify="right")
     table.add_column("Hosts", justify="right")
 
     for finding in findings:
@@ -2807,6 +2882,7 @@ def render_host_history(history: "HostVulnerabilityHistory") -> None:
         box=box.ROUNDED,
     )
     table.add_column("Scan Name", style=style_if_enabled("yellow"))
+    table.add_column("Source", style=style_if_enabled("magenta"))
     table.add_column("Date", style=style_if_enabled("dim"))
     table.add_column("Total", justify="right")
     table.add_column("Critical", justify="right", style=style_if_enabled("red bold"))
@@ -2816,22 +2892,33 @@ def render_host_history(history: "HostVulnerabilityHistory") -> None:
     table.add_column("Info", justify="right", style=style_if_enabled("dim"))
     table.add_column("Trend", justify="center")
 
-    prev_finding_count = None
+    # A trend across two different scanners is meaningless: a 30-finding Nessus
+    # scan followed by a 3-finding nuclei scan is not 27 findings remediated.
+    # Only compare consecutive scans from the same source, and say so instead
+    # of printing a number the operator would read as progress.
+    sources = {scan.source for scan in history.scans}
+    single_source = len(sources) == 1
+
+    prev: Optional[ScanSnapshot] = None
     for scan in history.scans:
         # Calculate trend indicator
         trend = ""
-        if prev_finding_count is not None:
-            diff = scan.finding_count - prev_finding_count
-            if diff > 0:
-                trend = f"[red]+{diff}[/red]"
-            elif diff < 0:
-                trend = f"[green]{diff}[/green]"
+        if prev is not None:
+            if prev.source != scan.source:
+                trend = "[dim]n/a[/dim]"
             else:
-                trend = "[dim]=[/dim]"
-        prev_finding_count = scan.finding_count
+                diff = scan.finding_count - prev.finding_count
+                if diff > 0:
+                    trend = f"[red]+{diff}[/red]"
+                elif diff < 0:
+                    trend = f"[green]{diff}[/green]"
+                else:
+                    trend = "[dim]=[/dim]"
+        prev = scan
 
         table.add_row(
             Text(scan.scan_name),  # Text: scan-derived
+            Text(scan.source),
             format_date(scan.scan_date),
             str(scan.finding_count),
             str(scan.critical_count) if scan.critical_count else "-",
@@ -2846,15 +2933,28 @@ def render_host_history(history: "HostVulnerabilityHistory") -> None:
 
     # Summary
     _console_global.print()
-    if history.scan_count >= 2:
+    if history.scan_count >= 2 and not single_source:
+        info(
+            "Overall trend: not shown - this host's scans come from different "
+            f"sources ({', '.join(sorted(sources))}), which count different "
+            "things. Compare scans from one source."
+        )
+    elif history.scan_count >= 2:
         first = history.scans[0]
         last = history.scans[-1]
         total_change = last.finding_count - first.finding_count
+        # _console_global.print, not info(): info() does not parse Rich markup,
+        # so these lines used to print their own "[red]...[/red]" tags verbatim.
+        # The content here is numbers and fixed text, never scan-derived.
         if total_change > 0:
-            info(f"Overall trend: [red]+{total_change} findings[/red] since first scan")
+            _console_global.print(
+                f"Overall trend: [red]+{total_change} findings[/red] since first scan"
+            )
         elif total_change < 0:
-            info(
+            _console_global.print(
                 f"Overall trend: [green]{total_change} findings[/green] since first scan"
             )
         else:
-            info("Overall trend: [yellow]No change[/yellow] in finding count")
+            _console_global.print(
+                "Overall trend: [yellow]No change[/yellow] in finding count"
+            )

@@ -7,16 +7,18 @@ config:
 ---
 flowchart LR
     nessus["<b>.nessus exports</b><br/>one or many"]
+    nuclei["<b>nuclei results</b><br/>-je JSON / -jle JSONL"]
     db[("<b>cerno.db</b><br/>findings · review state<br/>sessions · executions · verdicts")]
     tui["<b>Interactive TUI</b><br/>triage by severity, host,<br/>exploitability · CVEs · host:port"]
-    tools["<b>nmap · NetExec</b><br/><b>Metasploit · custom</b><br/>run against the finding's<br/>exact hosts and ports"]
+    tools["<b>nmap · NetExec · nuclei</b><br/><b>Metasploit · custom</b><br/>run against the finding's<br/>exact hosts and ports"]
     mcpc["<b>MCP client</b><br/>Claude CLI, etc."]
     claude["<b>Claude Assistant</b>"]
 
     nessus -->|"cerno import nessus"| db
+    nuclei -->|"cerno import nuclei"| db
     db -->|"cerno review"| tui
     tui -->|"one keypress"| tools
-    tools -->|"artifacts, then ingest:<br/>verified ports · NSE verdicts · nxc flags"| db
+    tools -->|"artifacts, then ingest:<br/>verified ports · NSE verdicts<br/>nuclei matches · nxc flags"| db
     tui -.->|"[R] verdict"| db
     db <-.->|"cerno mcp"| mcpc
     tui <-.->|"[A]"| claude
@@ -28,6 +30,7 @@ flowchart LR
     classDef ai fill:#8250df,stroke:#6035ad,color:#ffffff
 
     class nessus source
+    class nuclei source
     class db store
     class tui human
     class tools external

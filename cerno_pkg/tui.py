@@ -32,6 +32,7 @@ class SeveritySelection:
 
 
 from .ansi import warn, info, ok, header, get_console, colorize_severity_label
+from .fs import finding_label
 from .render import print_action_menu, show_actions_help, show_reviewed_help
 from .constants import (
     REVIEW_MOVE_LABELS,
@@ -289,10 +290,7 @@ def filter_finding_candidates(
         (pf, p)
         for (pf, p) in records
         if needle in p.plugin_name.lower()
-        and (
-            group_filter is None
-            or f"Plugin {p.plugin_id}: {p.plugin_name}" in group_filter[1]
-        )
+        and (group_filter is None or finding_label(pf, p) in group_filter[1])
         and (status_filter is None or pf.review_state == status_filter)
     ]
 
@@ -403,7 +401,7 @@ def handle_finding_list_actions(
 
         sort_label = {
             "severity": "Severity ↓",
-            "plugin_id": "Plugin ID ↑",
+            "plugin_id": "Finding ID ↑",
             "hosts": "Host count ↓",
             "name": "Name A↑Z",
         }.get(sort_mode, "Severity ↓")
@@ -432,7 +430,7 @@ def handle_finding_list_actions(
         done_style = REVIEW_STATE_STYLES[REVIEW_STATE_DONE]
         done_icon = REVIEW_STATE_ICONS[REVIEW_STATE_DONE]
         for idx, (finding, plugin) in enumerate(filtered_reviewed, 1):
-            display_name = f"Plugin {plugin.plugin_id}: {plugin.plugin_name}"
+            display_name = finding_label(finding, plugin)
             if sev_map:  # MSF mode with severity labels (deprecated)
                 # Get severity label from plugin metadata
                 sev_label = plugin.severity_label or f"Severity {plugin.severity_int}"

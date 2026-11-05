@@ -95,6 +95,26 @@ _NXC_BASELINE_VALUE_FLAGS = frozenset(set(_NXC_VALUE_SUBST) | {"--gen-relay-list
 _NXC_BASELINE_FLAGS = frozenset({"--shares", "--local-auth"})
 _RELAY_LIST_NAME = "relay_targets.txt"
 
+_NUCLEI_BINARIES = frozenset({"nuclei"})
+#: Result files, the analogue of ``_NMAP_OUTPUT_FLAGS``. Kept separate because
+#: the two tools' short flags are unrelated namespaces (nuclei ``-o`` is a plain
+#: text report; nmap ``-oN``).
+_NUCLEI_OUTPUT_FLAGS = frozenset({"-je", "-jle", "-o", "-me", "-se", "-sresp"})
+#: Operator-machine config, not part of the check: the template directory and
+#: the profile both point into the runner's own nuclei install, so a contributed
+#: workflow is more portable without them -- the runner's own config supplies
+#: them. ``-t``/``-w`` are deliberately absent: they name *which* check ran,
+#: which is the valuable part, so they are kept and left to the leak scan.
+_NUCLEI_DROP_WITH_VALUE = frozenset({"-ud", "-updatedir", "-profile"})
+#: Target-list flags, whose file becomes a single ``-u <TARGET>``.
+_NUCLEI_TARGET_LIST_FLAGS = frozenset({"-l", "-list"})
+#: Header flags. Dropped rather than kept because ``command_text`` is
+#: space-joined argv (see ``_split``), so a header value containing spaces --
+#: which the configured ``nuclei_user_agent`` always does -- cannot be
+#: reconstructed, and keeping it would emit a broken, unquoted command. The
+#: value is operator config in the same class as ``-ud``.
+_NUCLEI_HEADER_FLAGS = frozenset({"-H", "-header"})
+
 #: Identifiers this short, or this generic, are never treated as engagement data
 #: (a scan called "smb" must not make every ``nxc smb`` command a "leak").
 _MIN_IDENTIFIER_LEN = 3
@@ -202,8 +222,12 @@ class Candidate:
     """A drafted (or operator-edited) workflow entry ready for review/export."""
 
     finding_id: int
-    plugin_id: int
-    yaml_plugin_id: str  # the entry's plugin_id (keeps a multi-ID entry intact)
+    plugin_id: str
+    # The entry's YAML ``finding_id`` value, kept verbatim so a multi-id
+    # entry stays intact. Named for the DB column it comes from, matching
+    # Finding's convention (finding_id = row id, plugin_id = namespaced id);
+    # the YAML key it is written under is "finding_id".
+    yaml_plugin_id: str
     reason: str  # "new" | "enhanced"
     workflow_name: str
     description: str
@@ -218,7 +242,7 @@ class Candidate:
     def to_entry(self) -> dict:
         """The ``workflows[]`` entry, in workflow_mappings.yaml key order."""
         return {
-            "plugin_id": self.yaml_plugin_id,
+            "finding_id": self.yaml_plugin_id,
             "workflow_name": self.workflow_name,
             "description": self.description,
             "steps": [
@@ -343,6 +367,7 @@ def genericize_command(
     binary = Path(argv[0]).name
     is_nmap = binary == "nmap"
     is_nxc = binary in _NXC_BINARIES
+    is_nuclei = binary in _NUCLEI_BINARIES
 
     out: list[str] = [binary]
     i = 1
@@ -392,6 +417,26 @@ def genericize_command(
             if i == 2 and not tok.startswith("-") and _looks_like_file(tok):
                 out.append(_TARGET)  # positional target file after the protocol
                 i += 1
+                continue
+        if is_nuclei:
+            if tok in _NUCLEI_OUTPUT_FLAGS or tok in _NUCLEI_DROP_WITH_VALUE:
+                i += 2
+                continue
+            if tok in _NUCLEI_TARGET_LIST_FLAGS and nxt is not None:
+                # The run's target *file* becomes a single target. Not a bare
+                # positional like nmap's -iL: nuclei takes no positional
+                # target, and workflow_prep fills <TARGET> with a host, so the
+                # portable form is -u (one command per host, since nuclei is
+                # not in its _MULTI_TARGET_BINARIES).
+                out += ["-u", _TARGET]
+                i += 2
+                continue
+            if tok in _NUCLEI_HEADER_FLAGS:
+                # Consume the whole value: a space-joined header spans several
+                # tokens, so skip to the next flag rather than one token.
+                i += 1
+                while i < len(argv) and not argv[i].startswith("-"):
+                    i += 1
                 continue
         out.append(tok)
         i += 1
@@ -520,7 +565,7 @@ def scan_candidate(candidate: Candidate, ctx: LeakContext) -> list[str]:
             )
         )
 
-    check("plugin_id", candidate.yaml_plugin_id)
+    check("finding_id", candidate.yaml_plugin_id)
     check("workflow_name", candidate.workflow_name, usernames=False)
     check("description", candidate.description, usernames=False)
     for i, step in enumerate(candidate.steps):
@@ -734,7 +779,7 @@ def assess_candidate(
             source_ids.append(execution.execution_id)
 
     plugin = Plugin.get_by_id(finding.plugin_id, conn)
-    plugin_name = plugin.plugin_name if plugin else f"Plugin {finding.plugin_id}"
+    plugin_name = plugin.plugin_name if plugin else f"Finding {finding.plugin_id}"
     existing = mapper.get_workflow(str(finding.plugin_id))
 
     if existing is None:
@@ -823,7 +868,7 @@ def assess_candidate(
         Candidate(
             finding_id=finding.finding_id,
             plugin_id=finding.plugin_id,
-            yaml_plugin_id=existing.plugin_id,
+            yaml_plugin_id=existing.finding_id,
             reason="enhanced",
             workflow_name=existing.workflow_name,
             description=existing.description,
@@ -847,6 +892,85 @@ def build_candidate(
 ) -> Optional[Candidate]:
     """The drafted candidate for a finding, or None (nothing new to contribute)."""
     return assess_candidate(finding, conn, mapper, ctx).candidate
+
+
+def merge_also_covers(
+    candidate: Candidate,
+    also_covers: Sequence[str],
+    mapper: WorkflowMapper,
+) -> Candidate:
+    """Add further finding ids to ``candidate``'s entry key, in place.
+
+    For the operator who verified in the field that two sources report the same
+    issue -- typically a nuclei template and the equivalent Nessus plugin. One
+    co-mapped entry then answers ``[W]`` on either finding, instead of two
+    near-duplicate entries.
+
+    Merges rather than replaces: the candidate's own id always stays, and stays
+    first, so this cannot be used to retarget a contribution at an unrelated
+    finding. Ids are de-duplicated with order preserved.
+
+    Every id must carry its source prefix; a bare ``84502`` is rejected by
+    :func:`parsing.plugin_source_id`, the same write-side guard the importers
+    use. An id another entry already claims is accepted but flagged: the
+    mapper resolves ids through a dict, so two entries claiming one id would
+    silently shadow one of them, and which one wins is load order.
+
+    Args:
+        candidate: Draft to amend (mutated and returned).
+        also_covers: Extra namespaced finding ids.
+        mapper: Workflows to check for an id another entry already owns.
+
+    Returns:
+        The same candidate, for chaining.
+
+    Raises:
+        ValueError: An id is unprefixed or names an unknown source. The
+            candidate is left untouched -- validation happens before any edit.
+    """
+    from .parsing import plugin_source_id
+
+    if not also_covers:
+        return candidate
+
+    for pid in also_covers:
+        if not isinstance(pid, str) or not pid.strip():
+            raise ValueError("also_covers entries must be non-empty strings")
+        try:
+            plugin_source_id(pid.strip())
+        except ValueError as exc:
+            raise ValueError(
+                f"also_covers id {pid!r} is not usable: {exc}. Every id needs its "
+                "source prefix, e.g. 'nessus:84502' or 'nuclei:tls-version'."
+            ) from exc
+
+    existing = [p for p in candidate.yaml_plugin_id.split(",") if p]
+    added: list[str] = []
+    for pid in (p.strip() for p in also_covers):
+        if pid in existing or pid in added:
+            continue
+        added.append(pid)
+    if not added:
+        return candidate
+
+    candidate.yaml_plugin_id = ",".join(existing + added)
+
+    for pid in added:
+        owner = mapper.get_workflow(pid)
+        if owner is not None and owner.finding_id != candidate.yaml_plugin_id:
+            candidate.review_hints.append(
+                f"{pid} is already covered by the workflow "
+                f"{owner.workflow_name!r}; in the PR, either fold this "
+                "contribution into that entry or drop the id, so two entries do "
+                "not claim one finding."
+            )
+    candidate.review_hints.append(
+        "State in the PR why "
+        + ", ".join(repr(p) for p in added)
+        + f" and {candidate.plugin_id!r} are the same issue. Co-mapping makes "
+        "one workflow serve every listed finding, so the claim belongs in review."
+    )
+    return candidate
 
 
 def _require_str(value: object, name: str, *, allow_empty: bool = True) -> str:
@@ -873,7 +997,7 @@ def candidate_from_override(
     """Build a candidate from an operator/Claude-edited workflow dict.
 
     Validates the shape (``workflow_name``, ``description``, ``steps`` [{title,
-    commands, notes}], ``references``); the plugin_id is never taken from the
+    commands, notes}], ``references``); the finding_id is never taken from the
     override. Commands not copied verbatim from the existing workflow are
     genericized again, so pasting a real command is sanitized. Free text (names,
     titles, notes) is NOT rewritten — it must pass the leak scan as written.
@@ -915,7 +1039,7 @@ def candidate_from_override(
     if base is not None:
         yaml_plugin_id, reason = base.yaml_plugin_id, base.reason
     elif existing is not None:
-        yaml_plugin_id, reason = existing.plugin_id, "enhanced"
+        yaml_plugin_id, reason = existing.finding_id, "enhanced"
     else:
         yaml_plugin_id, reason = str(finding.plugin_id), "new"
 
@@ -949,7 +1073,7 @@ def to_yaml_fragment(candidate: Candidate) -> str:
     via ``WorkflowMapper.load_additional_workflows`` / ``--custom-workflows``.
     """
     header = [
-        f"# Cerno workflow contribution: plugin {candidate.yaml_plugin_id} ({candidate.reason})",
+        f"# Cerno workflow contribution: finding {candidate.yaml_plugin_id} ({candidate.reason})",
         "# Drafted by Cerno from a verified finding's execution trail. Hosts, ports and",
         "# credentials are replaced with <TARGET>/<PORT>/<USERNAME>/<PASSWORD>/<DOMAIN>.",
         "# REVIEW BEFORE SUBMITTING. To contribute:",

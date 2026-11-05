@@ -93,20 +93,32 @@ resources, and prompts Cerno exposes.
 | Contribute | `get_workflow_candidate` (draft a sanitized workflow from the commands run against a finding), `export_workflow_contribution` (write it as a local, PR-ready YAML file; never submits). See [Workflow contributions](#workflow-contributions) | always available |
 | Execute | `execute_command` (runs a command, captures output, logs it; reports progress). Target binary must match `mcp_exec_allowlist` and no binary in the chain may match `mcp_exec_denylist` (common wrappers such as `sudo`/`env`/`timeout` are unwrapped); `timeout` clamped to [1, 3600]s; optional `finding_id` attributes the run (then surfaced by `get_finding_artifacts`, verdict evidence and [workflow contributions](#workflow-contributions); always pass it when verifying a finding). For an nmap command (`-oA` present) it registers the output files as artifacts and records `host_count`/`ports` even when no hosts are up, and refuses to overwrite an existing run's `-oA` output (use a fresh `generate_nmap_cmd` path). `start_execution`, `get_execution_status`, `cancel_execution`, `list_jobs`: the same run as a background job. See [Jobs and batch](#jobs-and-batch) | `mcp_allow_execution` |
 | Batch | `execute_batch` (runs every runnable command from a `plan_batch` query) | `mcp_allow_execution` **and** `mcp_allow_batch` |
-| Mutate | `set_review_state` (`unreviewed` → `in_progress` → `done` → `unreviewed`; other changes rejected), `add_note` (append-only), `set_finding_verdict`, `ingest_results`, `import_nessus` | `mcp_allow_mutations` |
+| Mutate | `set_review_state` (`unreviewed` → `in_progress` → `done` → `unreviewed`; other changes rejected), `add_note` (append-only), `set_finding_verdict`, `ingest_results`, `import_nessus`, `import_nuclei` | `mcp_allow_mutations` |
 | Reveal | `reveal_credential` (returns a credential's **cleartext** secret; audited) | `mcp_allow_cred_reveal` |
 
 Notes:
 
-- `list_findings` takes `merged` (dedup multi-scan results by plugin, matching
+- `list_findings` takes `merged` (dedup multi-scan results by finding, matching
   the TUI), `limit`, and `offset` for paging.
 - `query_findings` AND-combines optional predicates: `scan_ids` (omit for all
   scans), `severity_int`/`severity_min`, `review_state`, `verdict`
   (`confirmed`/`false_positive`/`unable`/`none`), `cve` (exact id), `port`,
-  `service`, `host`, `plugin_name`, `has_metasploit`, `has_workflow`, plus
-  `merged`/`limit`/`offset`. `plan_batch`/`execute_batch` take the same predicates.
+  `service`, `host`, `plugin_name`, `source` (`nessus`/`nuclei`),
+  `has_metasploit`, `has_workflow`, plus `merged`/`limit`/`offset`.
+  `plan_batch`/`execute_batch` take the same predicates.
 - `list_workflow_gaps(scan_ids, severity_min)` lists findings with **no** mapped
   workflow, worst first (the complement of `query_findings(has_workflow=True)`).
+- `import_nuclei(nuclei_path, scan_name=None, min_severity=0)` ingests a nuclei
+  results file. Either shape works — a JSON array (`-je`) or newline-delimited
+  records (`-jle`/`-jsonl`) — detected from the contents, not the extension.
+  `scan_name` defaults to the file stem, since nuclei output carries no scan name.
+  One finding is created per template; a template that matched the same host:port
+  several times keeps every match's evidence in that host's plugin output.
+  `get_workflow` takes the finding id as a **string**, because every id is
+  source-namespaced (`"nessus:57608"`, `"nuclei:apache-detect"`). A bare number
+  matches nothing.
+- `compare_scans` refuses two scans from different sources: their finding ids share
+  no namespace, so every finding would be reported as both new and resolved.
 - `generate_nmap_cmd` takes `nse_option` as NSE script names or categories,
   comma-separated (e.g. `smb-security-mode,smb2-security-mode` or `vuln`); a
   `--script=` prefix is optional and is added for you. Other nmap flags are rejected.
@@ -154,7 +166,9 @@ default:
 
 These keys are TUI-only and intentionally ignored by the server:
 `no_color`, `color_scheme`, `term_override`, `default_tool`, `claude_assistant_enabled`,
-`pivot_interface`, `pivot_http_port`, `top_ports_count`
+`pivot_interface`, `pivot_http_port`, `top_ports_count`,
+`nuclei_templates_path`, `nuclei_profile`, `nuclei_user_agent`,
+`nuclei_concurrency`
 (`config.MCP_NOT_APPLICABLE_KEYS`).
 Config is read when the server starts, so reconnect after changing it. Edits to
 the custom workflow YAML file itself are picked up on the next call.
@@ -168,9 +182,9 @@ resources:
 - `cerno://scan/{id}/hosts` — discovered `host:port` lines
 - `cerno://scan/{id}/cves` — unique CVEs mapped to plugins (JSON)
 - `cerno://finding/{id}/output` — raw per-host plugin output
-- `cerno://finding/{id}/workflow` — verification workflow for the finding's plugin
+- `cerno://finding/{id}/workflow` — verification workflow for the finding
 - `cerno://finding/{id}/verdict` — current verification verdict, history and evidence (JSON)
-- `cerno://finding/{id}/results` — live-verified open ports and NSE verdicts ingested from runs (JSON)
+- `cerno://finding/{id}/results` — evidence ingested from runs attributed to this finding: live-verified open ports, NSE verdicts and nuclei template matches (JSON)
 - `cerno://config` — all current (read-only) config settings
 - `cerno://host/{ip}/nxc` — NetExec enrichment for a host
 
@@ -184,7 +198,7 @@ One-click templates in clients that render MCP prompts:
   mapped workflow, run attributed commands, ingest, record a verdict, move the
   review state, offer a workflow contribution)
 - `triage_scope` — report brief across one or more scans (comma-separated
-  `scan_ids`, e.g. `1,3`; merged and deduplicated by plugin), optionally one severity
+  `scan_ids`, e.g. `1,3`; merged and deduplicated by finding), optionally one severity
 
 Both finding prompts tell the client to pass `finding_id` on every execution and
 to offer `get_workflow_candidate` when a verdict reports a candidate.
@@ -198,7 +212,7 @@ box. Enable only the capabilities you want:
 
 ```bash
 cerno config set mcp_allow_execution true        # execute_command + background jobs
-cerno config set mcp_allow_mutations true        # set_review_state, add_note, set_finding_verdict, ingest_results, import_nessus
+cerno config set mcp_allow_mutations true        # set_review_state, add_note, set_finding_verdict, ingest_results, import_nessus, import_nuclei
 cerno config set mcp_allow_batch true            # execute_batch (also needs mcp_allow_execution)
 cerno config set mcp_allow_cred_injection true   # resolve @cred:<ref>@ placeholders at run time
 cerno config set mcp_allow_cred_reveal true      # reveal_credential (returns cleartext)
@@ -209,7 +223,7 @@ cerno config set mcp_exec_denylist "rm,dd,sh"    # binaries execute_command may 
 | Flag | Unlocks |
 | --- | --- |
 | `mcp_allow_execution` | `execute_command`, `start_execution`, `get_execution_status`, `cancel_execution`, `list_jobs` |
-| `mcp_allow_mutations` | `set_review_state`, `add_note`, `set_finding_verdict`, `ingest_results`, `import_nessus` (importing writes scans/findings, so it counts as a mutation). With execution also on, runs are auto-ingested best-effort |
+| `mcp_allow_mutations` | `set_review_state`, `add_note`, `set_finding_verdict`, `ingest_results`, `import_nessus`, `import_nuclei` (importing writes scans/findings, so it counts as a mutation). With execution also on, runs are auto-ingested best-effort |
 | `mcp_allow_batch` | `execute_batch`, only when `mcp_allow_execution` is also on. It authorizes the fan-out across a query; every command still passes the exec policy, the credential gate and the per-command timeout |
 | `mcp_allow_cred_injection` | `execute_command`/`start_execution`/`execute_batch` may resolve `@cred:<ref>@` placeholders to real secrets server-side. Independent of execution |
 | `mcp_allow_cred_reveal` | `reveal_credential`. Strictly more sensitive than injection, and gated separately: injection being on does **not** enable reveal |
@@ -235,7 +249,7 @@ cerno config set mcp_exec_denylist "rm,dd,sh"    # binaries execute_command may 
   3. The target (last binary) must match `mcp_exec_allowlist`. Wrappers need no
      entry. `"*"` permits anything not denied, and **an empty list denies
      everything**. The default is the core tools plus low-impact recon utilities:
-     - core: `nmap, nxc, netexec, msfconsole`
+     - core: `nmap, nxc, netexec, msfconsole, nuclei`
      - HTTP fetch: `curl, wget`
      - DNS / registry: `dig, host, nslookup, whois`
      - reachability: `ping, traceroute`
@@ -247,7 +261,7 @@ cerno config set mcp_exec_denylist "rm,dd,sh"    # binaries execute_command may 
      `xargs`, `tar`, `git`, `ssh`, `nc`/`ncat`/`socat`, `tcpdump`, and
      `smbclient`/`rpcclient`, whose `!` command runs a local shell), and
      active-attack or noisy tools (`responder`, `ntlmrelayx.py`, `hping3`, `ffuf`,
-     `gobuster`, `feroxbuster`, `nuclei`). Even the defaults aren't inert: `curl`
+     `gobuster`, `feroxbuster`). Even the defaults aren't inert: `curl`
      can write files (`-o`) and read or upload local ones (`file://`, `-T`), and
      `wget --use-askpass` runs a program. Because `sudo` isn't denied by default,
      any allowed binary can run as root; add `sudo` to the denylist to prevent that.
@@ -299,14 +313,54 @@ Turn a finding into a recorded, evidence-backed verdict:
    `start_execution`). Generate the command first with `generate_nmap_cmd`,
    `generate_netexec_cmd` or `prepare_workflow`.
 2. **Ingest the output.** `ingest_results(execution_id)` parses nmap XML into
-   verified open ports and NSE vuln verdicts, and NetExec runs into a
-   security-flag snapshot. It is idempotent, and empty or partial runs return a
-   `skipped_reason` instead of an error. When mutations are on, executions are
-   ingested automatically (best-effort).
-3. **Review the evidence.** `cerno://finding/{id}/results` and
-   `get_finding_detail` show what was verified; `get_finding_verdict` also
-   returns a non-binding `suggested_verdict` from NSE evidence (never applied
-   automatically).
+   verified open ports and NSE vuln verdicts, NetExec runs into a
+   security-flag snapshot, and nuclei's JSON export into
+   `nuclei_match_observations`. It is idempotent, and empty or partial runs
+   return a `skipped_reason` instead of an error. When mutations are on,
+   executions are ingested automatically (best-effort).
+
+   nuclei matches are ingested as **evidence for the finding the run was
+   attributed to**, not as new findings — `import_nuclei` is what creates
+   `findings` rows. The ingester reads whichever of `-jle`/`-jsonl-export` or
+   `-je`/`-json-export` the command used, registered as a `nuclei_json`
+   artifact. Prefer `-jle`: it streams, so a cancelled run still leaves an
+   ingestible file, while `-je` buffers and writes once at exit.
+
+   nuclei **is** in the default exec allowlist, so `execute_command` can run it
+   and `ingest_results` can read the output back. Note what that allows: the
+   allowlist matches the binary basename, so the caller picks the arguments —
+   nuclei runs `code:`-protocol templates when passed `-code` (the bundled
+   template set ships ~960 of them, signed), reads local files via `-l` and
+   writes them via `-o`/`-je`/`-me`. That is the same risk class as the
+   allowlisted `curl`/`wget`. Remove it with
+   `cerno config set mcp_exec_allowlist "nmap,nxc,netexec,msfconsole"` if you
+   would rather run nuclei only from the TUI.
+3. **Review the evidence.** `cerno://finding/{id}/results` lists the verified
+   ports, NSE results and nuclei matches; `get_finding_detail` carries the
+   counts (`verified_port_count`, `nse_result_count`, `vulnerable_count`,
+   `nuclei_match_count`). `get_finding_verdict` also returns a non-binding
+   `suggested_verdict` (never applied automatically).
+
+   **`suggested_verdict` is derived from NSE evidence only, deliberately.** The
+   obvious extension — let a nuclei match above some severity suggest
+   `confirmed` — does not survive contact with real template severities.
+   nuclei's `info` tier holds both pure fingerprinting (`tech-detect`,
+   `nginx-version`, `robots-txt`) and genuine findings (`deprecated-tls`,
+   `http-missing-security-headers`, `mismatched-ssl-certificate`), and `low`
+   holds `expired-ssl` and `weak-cipher-suites`. A High floor would exclude
+   every corroboration case the nuclei integration exists to demonstrate; a
+   floor at Info would let a technology fingerprint suggest `confirmed`. Since
+   a wrong suggestion is the first thing an operator reads, the matches are
+   reported and the judgement is left to them.
+
+   The principled signal is **relevance, not severity**: a workflow entry
+   co-mapping `nessus:84502` with `nuclei:http-missing-security-headers` is an
+   explicit statement that they are the same issue, so a match on a
+   co-mapped template would be real corroboration. Those co-mappings now have a
+   route in — `also_covers` on the contribution tools (see
+   [Workflow contributions](#workflow-contributions)) — so the rule becomes
+   worth implementing once enough of them have been contributed for it to fire.
+   It stays unimplemented while the bundled set carries one.
 4. **Record the verdict.** `set_finding_verdict(finding_id, verdict, note,
    execution_id|artifact_id|nse_result_id)` with `confirmed`, `false_positive` or
    `unable`. Verdicts are append-only history and separate from review state.
@@ -380,13 +434,40 @@ you can contribute upstream.
    also lists `review_hints`, `possibly_superseded` (enhanced only: existing
    commands for the same tool that you didn't run; never auto-replaced),
    `excluded` runs and `leak_warnings`. Only successful runs (exit code 0) count.
+
+   A **nuclei** run is templated to its own syntax: the run's `-l <target file>`
+   becomes `-u <TARGET>` (nuclei takes no positional target, and `<TARGET>`
+   fills with a host, so `-l <TARGET>` would not run), result files
+   (`-je`/`-jle`/`-o`/`-me`) and operator config (`-ud`, `-profile`, the
+   configured `-H` User-Agent) are dropped, and `-tags`/`-t` are kept because
+   they name the check. Before 3.3.0 there was no nuclei branch at all, so every
+   nuclei run kept its local paths, tripped the leak scan and was silently
+   `excluded` — no nuclei finding could yield a candidate.
 4. **Export.** `export_workflow_contribution(finding_id, workflow=None)` writes
-   `<contribution_export_dir>/<plugin_id>-<timestamp>.yaml`. Pass an edited
+   `<contribution_export_dir>/<finding-id>-<timestamp>.yaml` (the `:` in the id
+   is flattened to `-`, since it is a reserved character in Windows filenames).
+   Pass an edited
    `workflow` (`workflow_name`, `description`, `steps[{title, commands, notes}]`,
    `references`) to polish titles and notes. Its commands are sanitized again, and
-   the plugin_id always comes from the finding. The file never overwrites an
+   the finding id always comes from the finding. The file never overwrites an
    existing one, loads as-is via `--custom-workflows`, and its header carries the
    steps for opening a PR against `develop`.
+
+**Co-mapping across sources (`also_covers`).** Both tools take
+`also_covers=["nessus:84502", …]`, which adds ids to the entry's `finding_id`
+key so **one** workflow answers `[W]` on every listed finding. Use it when you
+have verified in the field that two scanners report the same issue — typically a
+nuclei template and the equivalent Nessus plugin — instead of contributing a
+near-duplicate entry.
+
+The finding's own id always stays, and stays first, so this cannot retarget a
+contribution at an unrelated finding. Every id needs its source prefix
+(`parsing.plugin_source_id` rejects a bare `84502`), ids are de-duplicated, and
+an id another entry already claims is accepted but flagged in `review_hints` —
+the mapper resolves ids through a dict, so two entries claiming one id would
+silently shadow one of them. A co-mapping also adds a hint to state in the PR
+*why* the ids are the same issue: that is a human judgement and belongs in
+review, not asserted by tooling.
 
 **Safety:** export requires a `confirmed`/`false_positive` verdict and runs a
 **fail-closed leak scan** over every field and the serialized file. Every field is

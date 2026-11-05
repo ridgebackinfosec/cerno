@@ -47,8 +47,8 @@ def _seed_finding(conn, scan_id, plugin_id, hosts, ports, *, severity=2):
 def seeded(temp_db):
     """One scan with two synthetic (never bundled-mapped) plugins: 100 and 200."""
     scan_id = Scan(scan_name="engagement", export_root="/tmp").save(temp_db)
-    f1 = _seed_finding(temp_db, scan_id, 100, ["10.0.0.1"], [445], severity=4)
-    f2 = _seed_finding(temp_db, scan_id, 200, ["10.0.0.2"], [22], severity=1)
+    f1 = _seed_finding(temp_db, scan_id, "nessus:100", ["10.0.0.1"], [445], severity=4)
+    f2 = _seed_finding(temp_db, scan_id, "nessus:200", ["10.0.0.2"], [22], severity=1)
     return {"conn": temp_db, "scan_id": scan_id, "f1": f1, "f2": f2}
 
 
@@ -57,7 +57,7 @@ def many(temp_db):
     """One scan with 12 findings (for default-limit tests)."""
     scan_id = Scan(scan_name="big", export_root="/tmp").save(temp_db)
     for pid in range(1000, 1012):
-        _seed_finding(temp_db, scan_id, pid, ["10.0.1.1"], [80])
+        _seed_finding(temp_db, scan_id, f"nessus:{pid}", ["10.0.1.1"], [80])
     return {"conn": temp_db, "scan_id": scan_id}
 
 
@@ -68,7 +68,7 @@ def custom_wf(tmp_path) -> Path:
         "version": "1.0",
         "workflows": [
             {
-                "plugin_id": "100",
+                "finding_id": "nessus:100",
                 "workflow_name": "Custom 100",
                 "description": "custom",
                 "steps": [
@@ -97,14 +97,14 @@ def test_workflow_gaps_drop_custom_mapped_plugin(seeded, custom_wf):
     rows = mcp.tool_list_workflow_gaps(
         scan_ids=[seeded["scan_id"]], config=cfg, conn=seeded["conn"]
     )
-    assert [r["plugin_id"] for r in rows] == [200]
+    assert [r["plugin_id"] for r in rows] == ["nessus:200"]
 
 
 def test_workflow_gaps_unset_uses_bundled_only(seeded):
     rows = mcp.tool_list_workflow_gaps(
         scan_ids=[seeded["scan_id"]], config=CernoConfig(), conn=seeded["conn"]
     )
-    assert [r["plugin_id"] for r in rows] == [100, 200]
+    assert [r["plugin_id"] for r in rows] == ["nessus:100", "nessus:200"]
 
 
 def test_workflow_missing_custom_path_falls_back_to_bundled(seeded, tmp_path):
@@ -112,7 +112,7 @@ def test_workflow_missing_custom_path_falls_back_to_bundled(seeded, tmp_path):
     rows = mcp.tool_list_workflow_gaps(
         scan_ids=[seeded["scan_id"]], config=cfg, conn=seeded["conn"]
     )
-    assert [r["plugin_id"] for r in rows] == [100, 200]
+    assert [r["plugin_id"] for r in rows] == ["nessus:100", "nessus:200"]
 
 
 def test_malformed_custom_workflows_never_write_stdout(tmp_path, capsys):
@@ -120,7 +120,7 @@ def test_malformed_custom_workflows_never_write_stdout(tmp_path, capsys):
     from cerno_pkg.workflow_mapper import WorkflowMapper, build_workflow_mapper
 
     bad = tmp_path / "bad.yaml"
-    bad.write_text("workflows:\n  - plugin_id: [unclosed\n", encoding="utf-8")
+    bad.write_text("workflows:\n  - finding_id: [unclosed\n", encoding="utf-8")
     mapper = build_workflow_mapper(CernoConfig(custom_workflows_path=str(bad)))
     assert mapper.count() == WorkflowMapper().count()  # bundled set intact
     assert capsys.readouterr().out == ""
@@ -131,15 +131,15 @@ def test_query_findings_has_workflow_uses_custom(seeded, custom_wf):
     rows = mcp.tool_query_findings(
         scan_ids=[seeded["scan_id"]], has_workflow=True, config=cfg, conn=seeded["conn"]
     )
-    assert [r["plugin_id"] for r in rows] == [100]
+    assert [r["plugin_id"] for r in rows] == ["nessus:100"]
     assert rows[0]["has_workflow"] is True
 
 
 def test_get_workflow_uses_custom(custom_wf):
     cfg = CernoConfig(custom_workflows_path=str(custom_wf))
-    wf = mcp.tool_get_workflow(100, config=cfg)
+    wf = mcp.tool_get_workflow("nessus:100", config=cfg)
     assert wf is not None and wf["workflow_name"] == "Custom 100"
-    assert mcp.tool_get_workflow(100, config=CernoConfig()) is None
+    assert mcp.tool_get_workflow("nessus:100", config=CernoConfig()) is None
 
 
 def test_resource_and_prompt_use_custom_workflow(seeded, custom_wf):
@@ -173,7 +173,7 @@ def test_plan_batch_has_workflow_uses_custom(seeded, custom_wf):
         config=cfg,
         conn=seeded["conn"],
     )
-    assert [i["plugin_id"] for i in plan["items"]] == [100]
+    assert [i["plugin_id"] for i in plan["items"]] == ["nessus:100"]
 
 
 # ---------------------------------------------------------------------------
