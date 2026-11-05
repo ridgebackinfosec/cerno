@@ -863,3 +863,124 @@ def test_show_session_statistics_prints_severity_breakdown(monkeypatch, tmp_path
     assert "Done by severity" in out
     # Ordered by severity (Critical before High), not alphabetically.
     assert out.index("Critical") < out.index("High")
+
+
+# ---------------------------------------------------------------------------
+# Scan overview "Host & Port Analysis" breakdown
+#
+# Regression: the IPv4/IPv6 rows used to be bucketed by hosts.scan_target_type
+# (the type of the *scan target string*) while the value being bucketed was
+# hosts.ip_address. A host scanned by hostname is type 'fqdn', so its perfectly
+# valid resolved IP landed in neither bucket and the children did not sum to
+# the parent -- the "unique hosts count is off by one" report.
+# ---------------------------------------------------------------------------
+
+
+def _overview_rows(temp_db, monkeypatch, scan_id):
+    """Render show_scan_summary and return {row label: int} for the analysis table."""
+    import re
+    from io import StringIO
+    from pathlib import Path
+
+    from rich.console import Console
+
+    import cerno_pkg.ansi as ansi
+
+    buf = StringIO()
+    console = Console(file=buf, width=120, force_terminal=False)
+    monkeypatch.setattr(ansi, "get_console", lambda: console)
+
+    from cerno_pkg.session import show_scan_summary
+
+    show_scan_summary(Path("engagement"), top_ports_n=1, scan_id=scan_id)
+
+    rows = {}
+    for line in buf.getvalue().splitlines():
+        m = re.match(r"\s*(?:└─\s*)?([A-Za-z][A-Za-z0-9 ]*?)\s{2,}(\d+)\s*$", line)
+        if m:
+            rows[m.group(1).strip()] = int(m.group(2))
+    return rows
+
+
+@pytest.fixture
+def overview_scan(temp_db):
+    """One scan whose hosts cover every ip_address/scan_target_type combination."""
+    from cerno_pkg.models import Finding, Host, Plugin, Port, Scan
+
+    scan_id = Scan(scan_name="engagement", export_root="/tmp").save(temp_db)
+    Plugin(plugin_id="nessus:100", plugin_name="SMB Signing", severity_int=3).save(
+        temp_db
+    )
+    finding_id = Finding(scan_id=scan_id, plugin_id="nessus:100").save(temp_db)
+    Port.get_or_create(445, conn=temp_db)
+
+    host_ids = [
+        # Scanned by IP -> type 'ipv4', ip is IPv4.
+        Host.get_or_create("10.0.0.1", "10.0.0.1", "ipv4", conn=temp_db),
+        # Scanned by hostname -> type 'fqdn', but the resolved ip IS IPv4.
+        Host.get_or_create("10.0.0.2", "portal.example", "fqdn", conn=temp_db),
+        # Scanned by hostname -> type 'fqdn', and the resolved ip is IPv6.
+        Host.get_or_create("2001:db8::1", "v6.example", "fqdn", conn=temp_db),
+        # No resolved IP at all: nuclei/ingest key such hosts as (host, host).
+        Host.get_or_create("orphan.example", "orphan.example", "fqdn", conn=temp_db),
+    ]
+    for host_id in host_ids:
+        temp_db.execute(
+            "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number) "
+            "VALUES (?, ?, ?)",
+            (finding_id, host_id, 445),
+        )
+    temp_db.commit()
+    return scan_id
+
+
+@pytest.mark.integration
+def test_overview_breakdown_sums_to_unique_hosts(overview_scan, temp_db, monkeypatch):
+    """IPv4 + IPv6 + No resolved IP must equal Unique Hosts."""
+    rows = _overview_rows(temp_db, monkeypatch, overview_scan)
+
+    assert rows["Unique Hosts"] == 4
+    children = rows["IPv4"] + rows["IPv6"] + rows["No resolved IP"]
+    assert children == rows["Unique Hosts"], rows
+
+
+@pytest.mark.integration
+def test_overview_classifies_by_ip_not_scan_target_type(
+    overview_scan, temp_db, monkeypatch
+):
+    """A hostname-targeted host is classified by its resolved IP, not its target type."""
+    rows = _overview_rows(temp_db, monkeypatch, overview_scan)
+
+    # 10.0.0.1 (ipv4 target) and 10.0.0.2 (fqdn target, IPv4 ip).
+    assert rows["IPv4"] == 2
+    # 2001:db8::1 reached via an fqdn target still counts as IPv6.
+    assert rows["IPv6"] == 1
+    # orphan.example has no resolvable address in ip_address.
+    assert rows["No resolved IP"] == 1
+
+
+@pytest.mark.integration
+def test_overview_reports_scan_targets_under_vhosting(temp_db, monkeypatch):
+    """One IP with several vhosts: 1 machine, 3 scan targets."""
+    from cerno_pkg.models import Finding, Host, Plugin, Port, Scan
+
+    scan_id = Scan(scan_name="vhosts", export_root="/tmp").save(temp_db)
+    Plugin(plugin_id="nuclei:tls-version", plugin_name="TLS", severity_int=1).save(
+        temp_db
+    )
+    finding_id = Finding(scan_id=scan_id, plugin_id="nuclei:tls-version").save(temp_db)
+    Port.get_or_create(443, conn=temp_db)
+    for name in ("shop.example", "blog.example", "api.example"):
+        host_id = Host.get_or_create("10.0.0.9", name, "fqdn", conn=temp_db)
+        temp_db.execute(
+            "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number) "
+            "VALUES (?, ?, ?)",
+            (finding_id, host_id, 443),
+        )
+    temp_db.commit()
+
+    rows = _overview_rows(temp_db, monkeypatch, scan_id)
+
+    assert rows["Unique Hosts"] == 1
+    assert rows["IPv4"] == 1
+    assert rows["Scan Targets"] == 3

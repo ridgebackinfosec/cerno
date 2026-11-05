@@ -959,3 +959,102 @@ class TestModelRelationships:
             ("/tmp/scan.xml",),
         )
         assert cursor.fetchone()["execution_id"] is None
+
+
+# ---------------------------------------------------------------------------
+# Host identity: machines vs scan targets
+#
+# A machine is hosts.ip_address. A scan target is hosts.scan_target -- what you
+# point a tool at. host_id is the (ip_address, scan_target) pair and is
+# therefore the right key for neither count: it double-counts a machine
+# recorded under both its IP and its hostname, which is what made the
+# [V] View hosts (N) footer read one higher than the host list it opens.
+# Virtual hosting means one machine legitimately owns many targets.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def vhost_finding(temp_db):
+    """3 vhosts on one IP, plus a name that round-robins to two IPs.
+
+    Machines: 10.0.0.9, 10.0.0.2, 10.0.0.3  -> 3
+    Targets:  shop/blog/api.example, www.example -> 4
+    host_ids: 3 vhosts + 2 round-robin rows -> 5
+    """
+    from cerno_pkg.models import Finding, Host, Plugin, Port, Scan
+
+    scan_id = Scan(scan_name="vhosts", export_root="/tmp").save(temp_db)
+    Plugin(plugin_id="nuclei:tls-version", plugin_name="TLS", severity_int=1).save(
+        temp_db
+    )
+    finding_id = Finding(scan_id=scan_id, plugin_id="nuclei:tls-version").save(temp_db)
+    Port.get_or_create(443, conn=temp_db)
+
+    pairs = [
+        ("10.0.0.9", "shop.example"),
+        ("10.0.0.9", "blog.example"),
+        ("10.0.0.9", "api.example"),
+        ("10.0.0.2", "www.example"),
+        ("10.0.0.3", "www.example"),
+    ]
+    for ip, target in pairs:
+        host_id = Host.get_or_create(ip, target, "fqdn", conn=temp_db)
+        temp_db.execute(
+            "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number) "
+            "VALUES (?, ?, ?)",
+            (finding_id, host_id, 443),
+        )
+    temp_db.commit()
+    return scan_id, finding_id
+
+
+@pytest.mark.integration
+def test_count_targets_counts_every_vhost(vhost_finding, temp_db):
+    """Each vhost is its own target, so all three on one IP count separately."""
+    from cerno_pkg.models import Finding
+
+    _scan_id, finding_id = vhost_finding
+    assert Finding.count_targets([finding_id], temp_db) == 4
+
+
+@pytest.mark.integration
+def test_count_targets_matches_host_list_length(vhost_finding, temp_db):
+    """The footer count must equal the number of lines the [V] host list renders."""
+    from cerno_pkg.models import Finding
+
+    _scan_id, finding_id = vhost_finding
+    finding = Finding.get_by_id(finding_id, temp_db)
+    hosts, _ports = finding.get_hosts_and_ports(temp_db)
+
+    assert Finding.count_targets([finding_id], temp_db) == len(hosts)
+
+
+@pytest.mark.integration
+def test_count_targets_empty_for_no_ids(temp_db):
+    """No finding ids means no targets, not an SQL error."""
+    from cerno_pkg.models import Finding
+
+    assert Finding.count_targets([], temp_db) == 0
+
+
+@pytest.mark.integration
+def test_scan_unique_hosts_counts_machines_not_targets(vhost_finding, temp_db):
+    """`cerno scan list` reports machines by resolved IP, so vhosts collapse."""
+    from cerno_pkg.models import Scan
+
+    scans = {s["scan_name"]: s for s in Scan.get_all_with_stats(temp_db)}
+    # 3 machines behind 4 targets / 5 (ip, target) pairs.
+    assert scans["vhosts"]["unique_hosts"] == 3
+
+
+@pytest.mark.integration
+def test_port_distribution_agrees_with_host_list(vhost_finding, temp_db):
+    """Distribution counts targets, matching the "N across M port(s)" N above it."""
+    from cerno_pkg.models import Finding
+
+    _scan_id, finding_id = vhost_finding
+    finding = Finding.get_by_id(finding_id, temp_db)
+    hosts, _ports = finding.get_hosts_and_ports(temp_db)
+    distribution = finding.get_port_distribution(temp_db)
+
+    assert distribution == {"443": len(hosts)}

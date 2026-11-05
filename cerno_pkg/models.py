@@ -197,9 +197,15 @@ class Scan:
                     s.scan_name,
                     s.created_at,
                     s.last_reviewed_at,
-                    (SELECT COUNT(DISTINCT fah.host_id)
+                    -- Machines, not scan targets: count distinct resolved IPs
+                    -- so a host recorded under both its IP and its hostname
+                    -- counts once, and a machine serving several virtual hosts
+                    -- counts once. Finding.count_targets() is the per-finding
+                    -- target count the findings list and [V] footer use.
+                    (SELECT COUNT(DISTINCT h.ip_address)
                      FROM finding_affected_hosts fah
                      JOIN findings f2 ON fah.finding_id = f2.finding_id
+                     JOIN hosts h ON fah.host_id = h.host_id
                      WHERE f2.scan_id = s.scan_id) as unique_hosts,
                     COUNT(DISTINCT f.finding_id) as total_findings,
                     SUM(CASE WHEN p.severity_int = 4 THEN 1 ELSE 0 END) as critical_count,
@@ -1170,6 +1176,49 @@ class Finding:
             )
         return _dedupe_identifiers(rows)
 
+    @classmethod
+    def count_targets(
+        cls,
+        finding_ids: Iterable[int],
+        conn: Optional[sqlite3.Connection] = None,
+    ) -> int:
+        """Count distinct scan targets across the given findings.
+
+        A *target* is ``hosts.scan_target`` -- what a tool is pointed at. This
+        is deliberately not ``COUNT(DISTINCT host_id)``: ``host_id`` keys the
+        ``(ip_address, scan_target)`` pair, so a machine recorded under both
+        its IP and its hostname would count twice. Counting targets keeps every
+        virtual host separate (one IP may own many) while matching exactly the
+        number of lines :meth:`get_hosts_and_ports` renders.
+
+        Use :meth:`Scan.get_all_with_stats` (distinct ``ip_address``) when you
+        want machines rather than targets.
+
+        Args:
+            finding_ids: Finding ids to count across (empty = 0)
+            conn: Database connection
+
+        Returns:
+            Number of distinct scan targets
+        """
+        ids = [fid for fid in finding_ids if fid is not None]
+        if not ids:
+            return 0
+
+        with db_transaction(conn) as c:
+            placeholders = ",".join("?" * len(ids))
+            row = query_one(
+                c,
+                f"""
+                SELECT COUNT(DISTINCT h.scan_target)
+                FROM finding_affected_hosts fah
+                JOIN hosts h ON fah.host_id = h.host_id
+                WHERE fah.finding_id IN ({placeholders})
+                """,
+                tuple(ids),
+            )
+            return row[0] if row else 0
+
     def get_port_distribution(
         self, conn: Optional[sqlite3.Connection] = None
     ) -> dict[str, int]:
@@ -1196,8 +1245,9 @@ class Finding:
                 f"""
                 SELECT
                     fah.port_number,
-                    COUNT(DISTINCT fah.host_id) as host_count
+                    COUNT(DISTINCT h.scan_target) as host_count
                 FROM finding_affected_hosts fah
+                JOIN hosts h ON fah.host_id = h.host_id
                 WHERE fah.finding_id IN ({placeholders})
                 GROUP BY fah.port_number
                 ORDER BY fah.port_number ASC

@@ -318,6 +318,7 @@ def show_scan_summary(
     from .ansi import header, err, get_console, style_if_enabled
     from .analysis import count_reviewed_in_scan
     from .database import db_transaction, query_all
+    from .parsing import is_ipv4, is_ipv6
 
     if scan_id is None and not scan_ids:
         err("Database scan_id is required for scan summary")
@@ -343,8 +344,10 @@ def show_scan_summary(
 
     # Query all host/port data from database
     unique_hosts = set()
+    scan_targets = set()
     ipv4_set = set()
     ipv6_set = set()
+    no_ip_set = set()
     ports_counter: Counter = Counter()
     empties = 0
 
@@ -364,7 +367,7 @@ def show_scan_summary(
                 rows = query_all(
                     conn,
                     f"""
-                    SELECT DISTINCT h.ip_address, fah.port_number, h.scan_target_type, fah.finding_id
+                    SELECT DISTINCT h.ip_address, h.scan_target, fah.port_number, fah.finding_id
                     FROM finding_affected_hosts fah
                     JOIN findings f ON fah.finding_id = f.finding_id
                     JOIN hosts h ON fah.host_id = h.host_id
@@ -386,7 +389,7 @@ def show_scan_summary(
                 rows = query_all(
                     conn,
                     """
-                    SELECT DISTINCT h.ip_address, fah.port_number, h.scan_target_type, fah.finding_id
+                    SELECT DISTINCT h.ip_address, h.scan_target, fah.port_number, fah.finding_id
                     FROM finding_affected_hosts fah
                     JOIN findings f ON fah.finding_id = f.finding_id
                     JOIN hosts h ON fah.host_id = h.host_id
@@ -409,20 +412,28 @@ def show_scan_summary(
         # Track unique host:port combinations to avoid counting duplicates
         unique_host_port_pairs = set()
 
-        # Process query results
+        # Process query results.
+        #
+        # Classify by the ip_address VALUE, not by hosts.scan_target_type: that
+        # column describes the *scan target string*, so a host reached by
+        # hostname is 'fqdn' even when its resolved IP is a perfectly good
+        # IPv4/IPv6 address. Bucketing on it left those hosts in neither child
+        # row, so the breakdown did not sum to Unique Hosts.
         for row in rows:
             host = row["ip_address"]
             port = row["port_number"]
-            scan_target_type = row["scan_target_type"]
-            is_ipv4 = scan_target_type == "ipv4"
-            is_ipv6 = scan_target_type == "ipv6"
 
             unique_hosts.add(host)
+            scan_targets.add(row["scan_target"])
 
-            if is_ipv4:
+            if is_ipv4(host):
                 ipv4_set.add(host)
-            elif is_ipv6:
+            elif is_ipv6(host):
                 ipv6_set.add(host)
+            else:
+                # ip_address holds a hostname: nuclei_import and ingest create
+                # hosts keyed (host, host) when no address was resolved.
+                no_ip_set.add(host)
 
             if port is not None:
                 # Track unique (host, port) pairs instead of counting every row
@@ -468,9 +479,19 @@ def show_scan_summary(
         "Value", justify="right", style=style_if_enabled("yellow")
     )
 
+    # "Unique Hosts" counts machines (distinct resolved ip_address). The three
+    # children are mutually exclusive and always sum to it.
     analysis_table.add_row("Unique Hosts", str(len(unique_hosts)))
     analysis_table.add_row("  └─ IPv4", str(len(ipv4_set)))
     analysis_table.add_row("  └─ IPv6", str(len(ipv6_set)))
+    if no_ip_set:
+        analysis_table.add_row("  └─ No resolved IP", str(len(no_ip_set)))
+
+    # Scan targets are what you point a tool at. Virtual hosting makes one
+    # machine own several, so this legitimately exceeds Unique Hosts; show it
+    # only when the two differ, to keep the common case uncluttered.
+    if len(scan_targets) != len(unique_hosts):
+        analysis_table.add_row("Scan Targets", str(len(scan_targets)))
 
     port_set = set(ports_counter.keys())
     analysis_table.add_row("Unique Ports", str(len(port_set)))

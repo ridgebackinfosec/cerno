@@ -102,3 +102,40 @@ def test_scan_list_json_includes_source(seeded_db, capsys):
     rows = json.loads(capsys.readouterr().out)
     assert rows and all("source" in r for r in rows)
     assert rows[0]["source"] == "nessus"
+
+
+@pytest.fixture
+def vhost_db(tmp_path, monkeypatch):
+    """A scan where one machine serves three virtual hosts."""
+    dbfile = tmp_path / "cerno.db"
+    conn = sqlite3.connect(str(dbfile))
+    _init_schema(conn)
+
+    from cerno_pkg.models import Host, Port
+
+    scan_id = Scan(scan_name="vhosts", export_root=str(tmp_path)).save(conn)
+    Plugin(plugin_id="nuclei:tls-version", plugin_name="TLS", severity_int=1).save(conn)
+    finding_id = Finding(scan_id=scan_id, plugin_id="nuclei:tls-version").save(conn)
+    Port.get_or_create(443, conn=conn)
+    for name in ("shop.example", "blog.example", "api.example"):
+        host_id = Host.get_or_create("10.0.0.9", name, "fqdn", conn=conn)
+        conn.execute(
+            "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number) "
+            "VALUES (?, ?, ?)",
+            (finding_id, host_id, 443),
+        )
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(database, "DATABASE_PATH", dbfile)
+    return dbfile
+
+
+@pytest.mark.integration
+def test_scan_list_host_column_counts_machines(vhost_db, capsys):
+    """Three vhosts on one IP are one machine, not three."""
+    from cerno import list_scans
+
+    list_scans(wide=False, json_output=True)
+    data = json.loads(capsys.readouterr().out)
+
+    assert data[0]["unique_hosts"] == 1

@@ -1845,7 +1845,10 @@ def run_tool_workflow(
                 try:
                     if tcp_ips.exists():
                         with open(tcp_ips) as f:
-                            host_count = sum(1 for _ in f)
+                            # Skip blank lines, matching the MCP's
+                            # _parse_nmap_output so both paths log the same
+                            # host_count for the same targets file.
+                            host_count = sum(1 for line in f if line.strip())
                 except Exception:
                     pass
 

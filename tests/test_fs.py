@@ -254,3 +254,62 @@ class TestWriteWorkFiles:
 
         socket_content = tcp_sockets.read_text().strip()
         assert socket_content == "192.168.1.100:80,443,8443,3000"
+
+
+# ---------------------------------------------------------------------------
+# Target-file writing / host counting parity with the MCP
+#
+# The TUI counted the -iL targets file with sum(1 for _ in f) while the MCP's
+# _parse_nmap_output uses sum(1 for line in fh if line.strip()). Because the
+# writer always appended a trailing newline, an EMPTY host list logged
+# host_count=1 from the TUI and 0 from the MCP for the identical situation.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_write_work_files_empty_host_list_writes_empty_file(tmp_path):
+    """No hosts must mean no lines, not one blank line."""
+    from cerno_pkg.fs import write_work_files
+
+    tcp_ips, _udp_ips, _sockets = write_work_files(tmp_path, [], "", udp=False)
+
+    assert tcp_ips.read_text(encoding="utf-8") == ""
+
+
+@pytest.mark.unit
+def test_write_work_files_empty_host_count_matches_mcp(tmp_path):
+    """The TUI's host_count and the MCP's must agree for an empty target list."""
+    from cerno_pkg.fs import write_work_files
+
+    tcp_ips, _udp_ips, _sockets = write_work_files(tmp_path, [], "", udp=False)
+
+    with open(tcp_ips) as fh:
+        tui_count = sum(1 for line in fh if line.strip())
+    with open(tcp_ips) as fh:
+        mcp_count = sum(1 for line in fh if line.strip())
+
+    assert tui_count == mcp_count == 0
+
+
+@pytest.mark.unit
+def test_write_work_files_counts_hosts_without_trailing_blank(tmp_path):
+    """A populated list still yields exactly one line per host."""
+    from cerno_pkg.fs import write_work_files
+
+    hosts = ["10.0.0.1", "10.0.0.2", "portal.example"]
+    tcp_ips, udp_ips, _sockets = write_work_files(tmp_path, hosts, "", udp=True)
+
+    assert tcp_ips.read_text(encoding="utf-8").splitlines() == hosts
+    with open(tcp_ips) as fh:
+        assert sum(1 for line in fh if line.strip()) == 3
+    assert udp_ips.read_text(encoding="utf-8").splitlines() == hosts
+
+
+@pytest.mark.unit
+def test_write_work_files_empty_udp_list_is_empty(tmp_path):
+    """The UDP list follows the same rule as the TCP one."""
+    from cerno_pkg.fs import write_work_files
+
+    _tcp_ips, udp_ips, _sockets = write_work_files(tmp_path, [], "", udp=True)
+
+    assert udp_ips.read_text(encoding="utf-8") == ""

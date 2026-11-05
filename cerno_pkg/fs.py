@@ -280,9 +280,12 @@ def write_work_files(
     udp_ips = workdir / "udp_ips.list"
     tcp_sockets = workdir / "tcp_host_ports.list"
 
-    tcp_ips.write_text("\n".join(hosts) + "\n", encoding="utf-8")
+    # Trailing newline only when there is something to terminate: an empty list
+    # must produce an empty file, not one blank line. A blank line made the
+    # TUI's host_count read 1 where the MCP's _parse_nmap_output read 0.
+    tcp_ips.write_text("\n".join(hosts) + ("\n" if hosts else ""), encoding="utf-8")
     if udp:
-        udp_ips.write_text("\n".join(hosts) + "\n", encoding="utf-8")
+        udp_ips.write_text("\n".join(hosts) + ("\n" if hosts else ""), encoding="utf-8")
     if ports_str:
         with tcp_sockets.open("w", encoding="utf-8") as f:
             for host in hosts:
