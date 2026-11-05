@@ -241,6 +241,31 @@ workflows:
 Pressing **[W]** on the Nessus finding or on the nuclei finding shows the same
 workflow, so a finding corroborated by two scanners is verified once.
 
+You don't have to write that key by hand. When you verify a finding in the
+field and contribute the workflow back, pass `also_covers` to the MCP
+`get_workflow_candidate` / `export_workflow_contribution` tools:
+
+```
+get_workflow_candidate(finding_id=42, also_covers=["nessus:84502"])
+  -> finding_id: "nuclei:http-missing-security-headers,nessus:84502"
+```
+
+The finding's own id always stays first, ids need their source prefix (a bare
+`84502` is rejected), and an id another entry already covers is flagged in
+`review_hints` rather than silently shadowing it. See
+[MCP.md → Workflow contributions](MCP.md#workflow-contributions).
+
+#### Findings that deliberately have no workflow
+
+Some nuclei templates are pure fingerprinting — `tech-detect`,
+`apache-detect`, `tomcat-detect`, `nginx-version`, `robots-txt`,
+`ssl-dns-names`. They report what software is present, not a condition to
+confirm or refute, so there is nothing for a verification workflow to do and
+they are intentionally unmapped. `list_workflow_gaps` will keep listing them;
+that is correct output, not a backlog. Map a detection template only when
+confirming it needs real work — ruling out a catch-all host that answers every
+path, say, which is what the bundled `nessus:298485` (Oracle EBS) entry does.
+
 ### How Multi-Finding Workflows Work
 
 - The workflow is registered internally for **each individual finding ID**

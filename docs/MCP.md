@@ -356,9 +356,11 @@ Turn a finding into a recorded, evidence-backed verdict:
    The principled signal is **relevance, not severity**: a workflow entry
    co-mapping `nessus:84502` with `nuclei:http-missing-security-headers` is an
    explicit statement that they are the same issue, so a match on a
-   co-mapped template would be real corroboration. That is worth implementing
-   once `workflow_mappings.yaml` carries enough `nuclei:` entries for the rule
-   to fire — today it would cover one template.
+   co-mapped template would be real corroboration. Those co-mappings now have a
+   route in — `also_covers` on the contribution tools (see
+   [Workflow contributions](#workflow-contributions)) — so the rule becomes
+   worth implementing once enough of them have been contributed for it to fire.
+   It stays unimplemented while the bundled set carries one.
 4. **Record the verdict.** `set_finding_verdict(finding_id, verdict, note,
    execution_id|artifact_id|nse_result_id)` with `confirmed`, `false_positive` or
    `unable`. Verdicts are append-only history and separate from review state.
@@ -432,6 +434,15 @@ you can contribute upstream.
    also lists `review_hints`, `possibly_superseded` (enhanced only: existing
    commands for the same tool that you didn't run; never auto-replaced),
    `excluded` runs and `leak_warnings`. Only successful runs (exit code 0) count.
+
+   A **nuclei** run is templated to its own syntax: the run's `-l <target file>`
+   becomes `-u <TARGET>` (nuclei takes no positional target, and `<TARGET>`
+   fills with a host, so `-l <TARGET>` would not run), result files
+   (`-je`/`-jle`/`-o`/`-me`) and operator config (`-ud`, `-profile`, the
+   configured `-H` User-Agent) are dropped, and `-tags`/`-t` are kept because
+   they name the check. Before 3.3.0 there was no nuclei branch at all, so every
+   nuclei run kept its local paths, tripped the leak scan and was silently
+   `excluded` — no nuclei finding could yield a candidate.
 4. **Export.** `export_workflow_contribution(finding_id, workflow=None)` writes
    `<contribution_export_dir>/<finding-id>-<timestamp>.yaml` (the `:` in the id
    is flattened to `-`, since it is a reserved character in Windows filenames).
@@ -441,6 +452,22 @@ you can contribute upstream.
    the finding id always comes from the finding. The file never overwrites an
    existing one, loads as-is via `--custom-workflows`, and its header carries the
    steps for opening a PR against `develop`.
+
+**Co-mapping across sources (`also_covers`).** Both tools take
+`also_covers=["nessus:84502", …]`, which adds ids to the entry's `finding_id`
+key so **one** workflow answers `[W]` on every listed finding. Use it when you
+have verified in the field that two scanners report the same issue — typically a
+nuclei template and the equivalent Nessus plugin — instead of contributing a
+near-duplicate entry.
+
+The finding's own id always stays, and stays first, so this cannot retarget a
+contribution at an unrelated finding. Every id needs its source prefix
+(`parsing.plugin_source_id` rejects a bare `84502`), ids are de-duplicated, and
+an id another entry already claims is accepted but flagged in `review_hints` —
+the mapper resolves ids through a dict, so two entries claiming one id would
+silently shadow one of them. A co-mapping also adds a hint to state in the PR
+*why* the ids are the same issue: that is a human judgement and belongs in
+review, not asserted by tooling.
 
 **Safety:** export requires a `confirmed`/`false_positive` verdict and runs a
 **fail-closed leak scan** over every field and the serialized file. Every field is

@@ -1037,6 +1037,7 @@ def _workflow_candidate_hint(
 
 def tool_get_workflow_candidate(
     finding_id: int,
+    also_covers: Optional[list[str]] = None,
     config: Optional[CernoConfig] = None,
     conn: Optional[sqlite3.Connection] = None,
 ) -> dict:
@@ -1048,20 +1049,31 @@ def tool_get_workflow_candidate(
     ``leak_warnings`` must be empty and the verdict confirmed/false_positive for
     ``exportable``. ``excluded`` lists runs dropped because they still held
     engagement data after sanitizing.
+
+    ``also_covers`` adds further namespaced finding ids to the entry key, for a
+    finding the operator has verified reports the same issue from another
+    source (e.g. a Nessus plugin alongside a nuclei template). The finding's own
+    id always stays in the key.
     """
     from ..models import Finding, FindingVerdict
-    from ..workflow_contrib import CONTRIBUTABLE_VERDICTS, scan_candidate
+    from ..workflow_contrib import (
+        CONTRIBUTABLE_VERDICTS,
+        merge_also_covers,
+        scan_candidate,
+    )
 
     cfg = config or load_config()
     with _db(conn) as c:
         finding = Finding.get_by_id(finding_id, c)
         if finding is None:
             raise ValueError(f"No finding with id {finding_id}")
-        assessment, ctx, _ = _contribution_assessment(finding, c, cfg)
+        assessment, ctx, mapper = _contribution_assessment(finding, c, cfg)
         current = FindingVerdict.get_current(finding_id, c)
 
     verdict = current.verdict_label if current is not None else None
     candidate = assessment.candidate
+    if candidate is not None and also_covers:
+        merge_also_covers(candidate, also_covers, mapper)
     leaks = scan_candidate(candidate, ctx) if candidate is not None else []
     return {
         "finding_id": finding_id,
@@ -1093,6 +1105,7 @@ def _contribution_dir(config: CernoConfig) -> Path:
 def tool_export_workflow_contribution(
     finding_id: int,
     workflow: Optional[dict] = None,
+    also_covers: Optional[list[str]] = None,
     config: Optional[CernoConfig] = None,
     conn: Optional[sqlite3.Connection] = None,
 ) -> dict:
@@ -1103,6 +1116,9 @@ def tool_export_workflow_contribution(
     [{title, commands, notes}], references; plugin_id is always the finding's).
     Refuses unless the current verdict is confirmed/false_positive, and refuses
     (writing nothing) when the fail-closed leak scan finds any engagement data.
+
+    ``also_covers`` co-maps further namespaced finding ids onto the entry, so
+    one workflow serves findings that different scanners report separately.
     """
     import contextlib
     import sys
@@ -1113,6 +1129,7 @@ def tool_export_workflow_contribution(
         CONTRIBUTABLE_VERDICTS,
         SUBMISSION_INSTRUCTIONS,
         candidate_from_override,
+        merge_also_covers,
         scan_candidate,
         to_yaml_fragment,
     )
@@ -1144,6 +1161,8 @@ def tool_export_workflow_contribution(
                 "already covers what was run (or no attributed successful runs exist). "
                 "Pass an edited `workflow` to contribute one manually."
             )
+        if also_covers:
+            merge_also_covers(candidate, also_covers, mapper)
 
     hits = scan_candidate(candidate, ctx)
     if hits:
@@ -3442,34 +3461,43 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         return cast("VerdictResult", tool_get_finding_verdict(finding_id, config=cfg))
 
     @mcp.tool(annotations=_READONLY_ANN)
-    def get_workflow_candidate(finding_id: int) -> WorkflowCandidateResult:
+    def get_workflow_candidate(
+        finding_id: int, also_covers: Optional[list[str]] = None
+    ) -> WorkflowCandidateResult:
         """Draft a workflow contribution from the commands run against a finding.
 
         reason "new" = plugin has no mapped workflow; "enhanced" = non-baseline
         commands absent from the mapped one; available=false = nothing new.
         Hosts/ports/creds are templated (<TARGET>/<PORT>/<USERNAME>/<PASSWORD>/
         <DOMAIN>). Review/edit per review_hints, then export_workflow_contribution.
+        `also_covers` co-maps other namespaced ids you have verified report the
+        same issue (e.g. ["nessus:84502"] on a nuclei finding).
         """
         return cast(
             "WorkflowCandidateResult",
-            tool_get_workflow_candidate(finding_id, config=cfg),
+            tool_get_workflow_candidate(finding_id, also_covers, config=cfg),
         )
 
     @mcp.tool()
     def export_workflow_contribution(
-        finding_id: int, workflow: Optional[dict] = None
+        finding_id: int,
+        workflow: Optional[dict] = None,
+        also_covers: Optional[list[str]] = None,
     ) -> WorkflowExportResult:
         """Export a sanitized, PR-ready workflow YAML file (local file only).
 
         Uses the draft, or `workflow` (edited entry: workflow_name, description,
         steps [{title, commands, notes}], references). Requires a confirmed/
         false_positive verdict; refuses and writes nothing if the leak scan finds
-        real IPs/hostnames/paths. Returns the path + PR-against-develop steps.
+        real IPs/hostnames/paths. `also_covers` co-maps other namespaced finding
+        ids onto the entry. Returns the path + PR-against-develop steps.
         Never submits anything.
         """
         return cast(
             "WorkflowExportResult",
-            tool_export_workflow_contribution(finding_id, workflow, config=cfg),
+            tool_export_workflow_contribution(
+                finding_id, workflow, also_covers, config=cfg
+            ),
         )
 
     @mcp.tool(annotations=_READONLY_ANN)

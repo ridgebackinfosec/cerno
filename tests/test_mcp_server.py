@@ -1329,6 +1329,35 @@ class TestWorkflowContribution:
         )
         assert cand["available"] and not cand["exportable"] and cand["verdict"] is None
 
+    def test_also_covers_co_maps_the_entry(self, contrib):
+        """An operator-asserted cross-source co-mapping reaches the entry key."""
+        c, fid, cfg = contrib["conn"], contrib["f1"], contrib["cfg"]
+        cand = mcp.tool_get_workflow_candidate(
+            fid, also_covers=["nuclei:tls-version"], config=cfg, conn=c
+        )
+        assert cand["workflow"]["finding_id"] == "nessus:100,nuclei:tls-version"
+        assert any("same issue" in h for h in cand["review_hints"])
+
+    def test_also_covers_rejects_an_unprefixed_id(self, contrib):
+        c, fid, cfg = contrib["conn"], contrib["f1"], contrib["cfg"]
+        with pytest.raises(ValueError, match="source prefix"):
+            mcp.tool_get_workflow_candidate(
+                fid, also_covers=["84502"], config=cfg, conn=c
+            )
+
+    def test_export_carries_also_covers(self, contrib):
+        from cerno_pkg.workflow_mapper import WorkflowMapper
+
+        c, fid, cfg = contrib["conn"], contrib["f1"], contrib["cfg"]
+        mcp.tool_set_finding_verdict(fid, "confirmed", conn=c, config=cfg)
+        res = mcp.tool_export_workflow_contribution(
+            fid, also_covers=["nuclei:tls-version"], config=cfg, conn=c
+        )
+        m = WorkflowMapper(yaml_path=contrib["dir"] / "none.yaml")
+        assert m.load_additional_workflows(Path(res["path"])) == 1
+        # One entry, reachable from either source's finding id.
+        assert m.workflows["nessus:100"] is m.workflows["nuclei:tls-version"]
+
     def test_export_writes_loadable_sanitized_file(self, contrib):
         from cerno_pkg.workflow_mapper import WorkflowMapper
 

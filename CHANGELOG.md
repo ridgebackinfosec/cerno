@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.3.0] - 2026-11-05
+
+### Added
+- **Contribute a workflow that covers several scanners' ids (`also_covers`).** The MCP `get_workflow_candidate` and `export_workflow_contribution` tools take `also_covers=["nessus:84502", …]`, merging those ids into the entry's `finding_id` key so one workflow answers `[W]` on every listed finding. For the operator who verifies in the field that a nuclei template and a Nessus plugin are the same issue: previously the entry key came only from the finding's own `plugin_id` (`candidate_from_override` documented that "the finding_id is never taken from the override"), so the only way to contribute that was a near-duplicate standalone entry — the tooling could not produce the cross-source shape that the one bundled example, written by hand, demonstrates. The finding's own id always stays and stays first, so a contribution cannot be retargeted; ids must carry their source prefix (`parsing.plugin_source_id` rejects a bare `84502`), are de-duplicated, and an id another entry already claims is flagged in `review_hints` rather than silently shadowing it, since the mapper resolves ids through a dict. A co-mapping also adds a hint to state in the PR why the ids are the same issue.
+- `CONTRIBUTING.md` documents contributing a verification workflow end to end, and `docs/CUSTOM_WORKFLOWS.md` records that detection-only templates (`tech-detect`, `apache-detect`, `robots-txt`, `ssl-dns-names`, …) are deliberately unmapped — `list_workflow_gaps` listing them is correct output, not a backlog.
+
+### Fixed
+- **A nuclei run could never be contributed as a workflow.** `genericize_command` branched on nmap and nxc only, so a nuclei command kept its `-l` target list, `-ud` template directory, `-jle` output path and `-profile` verbatim — every one a local filesystem path. The fail-closed leak scan then correctly refused to publish them, which excluded the execution, so `assess_candidate` returned no candidate for **every** nuclei finding: the contribution pipeline was structurally incapable of producing a nuclei workflow. The sanitizer now templates nuclei to its own syntax — the run's target file becomes `-u <TARGET>` (not a bare positional like nmap's `-iL`: nuclei takes no positional target and `workflow_prep` fills `<TARGET>` with a host, so `-l <TARGET>` would not run), result files and operator config (`-ud`, `-profile`, the configured `-H` User-Agent, which is unrecoverable anyway because `command_text` is space-joined) are dropped, and `-tags`/`-t` are kept because they name the check. `-t` is deliberately still leak-scanned, so a local template path is caught rather than trusted. Introduced with the nuclei tool in 3.0.0; invisible because `tests/test_workflow_contrib.py` had no nuclei case at all, so the missing coverage concealed a total failure rather than a rough edge.
+
 ## [3.2.0] - 2026-11-05
 
 ### Added

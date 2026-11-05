@@ -92,6 +92,45 @@ reference `schema.sql` (a test checks it defines the same tables, views and
 indexes as `cerno_pkg/database.py`). Always test schema changes against a fresh
 database.
 
+## Contributing a verification workflow
+
+The bundled workflows in `cerno_pkg/workflow_mappings.yaml` are meant to come
+from real engagements, not from the demo data. If you verified a finding with a
+method the bundled set doesn't cover, Cerno will turn the commands you actually
+ran into a PR-ready entry.
+
+1. **Run with attribution** so the commands are tied to the finding — TUI tool
+   runs are attributed automatically; pass `finding_id` to the MCP
+   `execute_command` / `start_execution`.
+2. **Record a verdict** (`[R]` in the TUI, or `set_finding_verdict`). Only
+   `confirmed` / `false_positive` findings can be contributed.
+3. **Draft and review** with the MCP `get_workflow_candidate(finding_id)`. Hosts,
+   ports, credentials, output paths and local directories are templated or
+   dropped; read `review_hints` and rewrite the generated titles and notes into
+   something that says *how to read the output* — what proves vulnerable versus
+   not. That prose is the part only you can write.
+4. **Export** with `export_workflow_contribution(finding_id)`, test it locally
+   (`cerno review --custom-workflows <file>`, then `[W]` on a matching finding),
+   and open a PR against `develop`. The exported file's header carries these
+   steps too. Nothing is submitted for you.
+
+**Prefer co-mapping over a duplicate entry.** If the issue you verified is
+already covered for another scanner, add your finding's id to that entry rather
+than adding a second one — pass `also_covers=["nessus:84502"]` to either tool,
+or edit the existing entry's comma-separated `finding_id` in your PR. One entry
+per real issue means `[W]` shows one card however the finding was discovered,
+and it is what lets Cerno treat a match from one scanner as corroboration of
+another's finding. Say in the PR *why* the ids are the same issue; that claim is
+a judgement call and reviewers need it.
+
+A **detection-only** finding (a technology fingerprint such as
+`nuclei:tech-detect`) has nothing to verify and is deliberately left unmapped —
+see [docs/CUSTOM_WORKFLOWS.md](docs/CUSTOM_WORKFLOWS.md). Please don't add
+workflows just to clear `list_workflow_gaps`.
+
+Every export passes a fail-closed leak scan, but **read the file before you push
+it**: it came from your engagement.
+
 ## Versioning & changelog
 
 - Bump the version in `pyproject.toml` and add an entry under `[Unreleased]` in
