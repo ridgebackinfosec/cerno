@@ -160,6 +160,32 @@ class CernoConfig:
     )
     """Disable ANSI color output (default: False)."""
 
+    show_banner: bool = field(
+        default=True,
+        metadata={
+            "section": "Review & Display",
+            "kind": "bool",
+            "help": "Show the startup banner",
+        },
+    )
+    """Display the promotional banner when `cerno review` starts (default: True).
+
+    Replaces the removed ``cerno review -q/--quiet`` flag: banner suppression is
+    a standing preference, not a per-run decision."""
+
+    scan_list_wide: bool = field(
+        default=False,
+        metadata={
+            "section": "Review & Display",
+            "kind": "bool",
+            "help": "`scan list` shows every severity column",
+        },
+    )
+    """Render the full per-severity breakdown in `cerno scan list` (default: False).
+
+    Replaces the removed ``--wide``/``--details`` flags. ``--json`` is unaffected:
+    it short-circuits before any table is built."""
+
     color_scheme: str = field(
         default="light",
         metadata={
@@ -183,6 +209,23 @@ class CernoConfig:
     """Override TERM detection (e.g., 'dumb' to disable colors)."""
 
     # Tools & Workflows
+    tools_enabled: bool = field(
+        default=True,
+        metadata={
+            "section": "Tools & Workflows",
+            "kind": "bool",
+            "help": "Offer tool runs during review",
+        },
+    )
+    """Offer tool execution in the review TUI (default: True).
+
+    When False the finding view hides ``[T] Run tool`` and refuses an explicit
+    ``t``, and the startup availability table is skipped. Replaces the removed
+    ``cerno review --no-tools`` flag.
+
+    This gates the **TUI** only. The MCP server's execution gate is
+    ``mcp_allow_execution``; see ``MCP_NOT_APPLICABLE_KEYS``."""
+
     default_tool: Optional[str] = field(
         default=None,
         metadata={
@@ -226,6 +269,26 @@ class CernoConfig:
         },
     )
     """Path to custom workflows YAML."""
+
+    custom_workflows_exclusive: bool = field(
+        default=False,
+        metadata={
+            "section": "Tools & Workflows",
+            "kind": "bool",
+            "help": "Use ONLY custom_workflows_path (skip bundled)",
+        },
+    )
+    """Replace the bundled workflows with ``custom_workflows_path`` (default: False).
+
+    False (default) supplements: bundled workflows first, the custom file merged
+    on top (custom wins on finding_id conflict). True loads only the custom file,
+    which is how a workflow under development is tested in isolation.
+
+    Honored by ``workflow_mapper.build_workflow_mapper()``, so it applies to the
+    review TUI, ``cerno workflow list`` and every MCP workflow tool alike. Set
+    without ``custom_workflows_path`` it warns and falls back to bundled, since
+    exclusive-with-no-file would otherwise yield zero workflows and read as a
+    load failure. Replaces the removed ``--custom-workflows-only`` flag."""
 
     nuclei_templates_path: str = field(
         default="~/nuclei-templates",
@@ -273,6 +336,22 @@ class CernoConfig:
         },
     )
     """Template concurrency passed to nuclei as ``-c``."""
+
+    nuclei_min_severity: int = field(
+        default=0,
+        metadata={
+            "section": "Tools & Workflows",
+            "kind": "int",
+            "help": "Drop nuclei findings below this severity (0-4)",
+        },
+    )
+    """Minimum severity kept when importing nuclei results (default: 0 = keep all).
+
+    0=Info, 1=Low, 2=Medium, 3=High, 4=Critical. Applied by ``cerno import
+    nuclei`` (which no longer takes ``--min-severity``) and as the default for
+    the MCP ``import_nuclei`` tool, whose explicit ``min_severity`` argument
+    still wins per the MCP config contract. Validated at use, not load: a
+    hand-edited config.yaml can hold anything."""
 
     # Logging
     debug_logging: bool = field(
@@ -560,6 +639,15 @@ MCP_NOT_APPLICABLE_KEYS: frozenset[str] = frozenset(
         "pivot_interface",
         "pivot_http_port",
         "top_ports_count",
+        # Terminal presentation only: the MCP server renders no banner and no
+        # `scan list` table (list_scans returns structured rows either way).
+        "show_banner",
+        "scan_list_wide",
+        # Gates the review TUI's [T] action. The MCP server has its own, stricter
+        # execution gate (mcp_allow_execution + the exec allow/denylists); honoring
+        # this key there too would mean one flag silently weakening the other, and
+        # a TUI display preference could not then be read as an MCP policy change.
+        "tools_enabled",
         # These only shape the nuclei command suggested after a CLI import;
         # the MCP server prints no suggestions.
         "nuclei_templates_path",

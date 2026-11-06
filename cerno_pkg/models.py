@@ -171,7 +171,12 @@ class Scan:
                 c,
                 """
                 SELECT * FROM scans
-                ORDER BY last_reviewed_at DESC NULLS LAST, created_at DESC
+                -- scan_id breaks the tie: created_at is CURRENT_TIMESTAMP at
+                -- second resolution, so scans imported in the same second (a
+                -- scripted import, or `cerno demo`'s four) tie on BOTH keys and
+                -- SQLite's row order for a full tie is unspecified.
+                ORDER BY last_reviewed_at DESC NULLS LAST, created_at DESC,
+                         scan_id DESC
                 """,
             )
             return [cls.from_row(row) for row in rows]
@@ -230,7 +235,12 @@ class Scan:
                 LEFT JOIN findings f ON s.scan_id = f.scan_id
                 LEFT JOIN plugins p ON f.plugin_id = p.plugin_id
                 GROUP BY s.scan_id, s.scan_name, s.created_at, s.last_reviewed_at
-                ORDER BY s.last_reviewed_at DESC NULLS LAST, s.created_at DESC
+                -- scan_id breaks the tie: see Scan.get_all(). Without it the
+                -- row order of `cerno scan list` (and MCP list_scans, which
+                -- shares this query) varies between invocations whenever two
+                -- scans were imported in the same second.
+                ORDER BY s.last_reviewed_at DESC NULLS LAST, s.created_at DESC,
+                         s.scan_id DESC
                 """,
             )
             return [dict(row) for row in rows]

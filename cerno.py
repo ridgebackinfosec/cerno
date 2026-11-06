@@ -64,7 +64,6 @@ from cerno_pkg import (
 
 # === Standard library imports ===
 import math
-import types
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -82,6 +81,7 @@ from rich.traceback import install as rich_tb_install
 
 # Create a console for the interactive flow (configured with no_color setting)
 from cerno_pkg.ansi import get_console, get_terminal_width, print_verbatim, safe_text
+from cerno_pkg.workflow_mapper import build_workflow_mapper
 from cerno_pkg.models import count_review_states
 from cerno_pkg.constants import (
     REVIEW_STATE_DONE,
@@ -305,7 +305,6 @@ def browse_claude_chat_aggregate(
 def browse_workflow_groups(
     scan: Any,  # Scan object (primary scan)
     workflow_groups: Dict[str, List[Tuple[Any, Any]]],
-    args: types.SimpleNamespace,
     use_sudo: bool,
     in_progress_total: List[str],
     done_total: List[str],
@@ -324,7 +323,6 @@ def browse_workflow_groups(
     Args:
         scan: Primary Scan database object
         workflow_groups: Dict mapping workflow_name -> list of (Finding, Plugin) tuples
-        args: Command-line arguments
         use_sudo: Whether sudo is available
         in_progress_total: List of findings viewed but not marked done
         done_total: List of findings marked done
@@ -404,7 +402,6 @@ def browse_workflow_groups(
             None,  # No specific severity dir (workflow may span multiple severities)
             None,  # No severity filter
             f"Workflow: {workflow_name}",
-            args,
             use_sudo,
             in_progress_total,
             done_total,
@@ -441,7 +438,6 @@ def browse_file_list(
     sev_dir: Optional[Path],
     severity_dir_filter: Optional[str],
     severity_label: str,
-    args: types.SimpleNamespace,
     use_sudo: bool,
     in_progress_total: List[str],
     done_total: List[str],
@@ -462,7 +458,6 @@ def browse_file_list(
         severity_dir_filter: Severity directory filter for database query (e.g., "3_High")
         severity_label: Display label for the severity
         workflow_mapper: Optional workflow mapper for plugin workflows
-        args: Command-line arguments
         use_sudo: Whether sudo is available
         in_progress_total: List to track findings viewed but not marked done
         done_total: List to track findings marked done
@@ -481,12 +476,9 @@ def browse_file_list(
 
         config = load_config()
 
-    # Resolve proxy state (CLI override takes precedence over config)
+    # Proxy routing is config-only (proxychains_enabled); the per-session
+    # --proxy/--no-proxy overrides were removed in favour of that key.
     _proxy_active = config.proxychains_enabled
-    if getattr(args, "proxy", False):
-        _proxy_active = True
-    elif getattr(args, "no_proxy", False):
-        _proxy_active = False
 
     file_filter = ""
     reviewed_filter = ""
@@ -1197,7 +1189,6 @@ def browse_file_list(
                 finding,
                 scan_dir,
                 chosen_sev_dir,
-                args,
                 use_sudo,
                 in_progress_total,
                 done_total,
@@ -1367,19 +1358,14 @@ def show_session_statistics(
             _console_global.print()
 
 
-def main(args: types.SimpleNamespace) -> None:
+def main() -> None:
     """
     Main application entry point for interactive review mode.
 
-    Args:
-        args: Command-line arguments namespace containing:
-            - export_root (Optional[Path]): DEPRECATED and ignored. When set, the
-              review is skipped and only a 'cerno review' reminder is printed.
-            - no_tools (bool): Skip tool execution workflow if True.
-            - custom_workflows (Optional[Path]): Custom workflow YAML to supplement defaults.
-            - custom_workflows_only (Optional[Path]): Use only this workflow YAML.
-            - check (bool): Print the tool availability table and exit.
-            - proxy / no_proxy (bool): Force proxychains4 routing on/off for this session.
+    Takes no arguments: every per-session override this used to read off a CLI
+    namespace is now a config key (``tools_enabled``, ``custom_workflows_path``,
+    ``custom_workflows_exclusive``, ``proxychains_enabled``), read from the
+    config loaded by ``main_callback``.
     """
     # Load configuration
     config = get_current_config()
@@ -1405,57 +1391,29 @@ def main(args: types.SimpleNamespace) -> None:
     scan_id: int = 0  # Will be set when user selects a scan
     scan_dir: Optional[Path] = None  # Will be set when user selects a scan
 
-    # Initialize workflow mapper
-    custom_workflows = getattr(args, "custom_workflows", None)
-    custom_workflows_only = getattr(args, "custom_workflows_only", None)
+    # Initialize workflow mapper. build_workflow_mapper() reads
+    # custom_workflows_path / custom_workflows_exclusive, so supplement and
+    # exclusive mode behave identically here, in `cerno workflow list` and in
+    # the MCP workflow tools.
+    with _console_global.status("[bold green]Loading workflows..."):
+        workflow_mapper = build_workflow_mapper(config)
 
-    # Check config for custom workflows if CLI args not provided
-    if (
-        not custom_workflows
-        and not custom_workflows_only
-        and config.custom_workflows_path
-    ):
-        custom_workflows = Path(config.custom_workflows_path)
-
-    if custom_workflows_only:
-        # Replace mode: Use ONLY custom YAML
-        with _console_global.status("[bold green]Loading custom workflows..."):
-            workflow_mapper = WorkflowMapper(yaml_path=custom_workflows_only)
-        if workflow_mapper.count() > 0:
+    workflow_count = workflow_mapper.count()
+    if workflow_count > 0:
+        if config.custom_workflows_path and config.custom_workflows_exclusive:
             _console_global.print(
-                f"Loaded {workflow_mapper.count()} custom workflow(s) from {custom_workflows_only} (defaults disabled)"
+                f"Loaded {workflow_count} workflow(s) from "
+                f"{config.custom_workflows_path} (bundled disabled)\n"
+            )
+        elif config.custom_workflows_path:
+            _console_global.print(
+                f"Loaded {workflow_count} workflow(s), including custom from "
+                f"{config.custom_workflows_path}\n"
             )
         else:
-            warn(f"No workflows loaded from {custom_workflows_only}")
+            _console_global.print(f"Loaded {workflow_count} workflow(s)\n")
     else:
-        # Default or supplement mode
-        with _console_global.status("[bold green]Loading workflows..."):
-            workflow_mapper = WorkflowMapper()  # Load defaults
-            default_count = workflow_mapper.count()
-
-        if custom_workflows:
-            # Supplement mode: Load custom YAML in addition to defaults
-            # Determine source: CLI argument or config
-            source = (
-                "CLI argument" if getattr(args, "custom_workflows", None) else "config"
-            )
-            with _console_global.status(
-                "[bold green]Loading additional custom workflows..."
-            ):
-                additional_count = workflow_mapper.load_additional_workflows(
-                    custom_workflows
-                )
-            if additional_count > 0:
-                _console_global.print(
-                    f"Loaded {default_count} default + {additional_count} custom workflow(s) from {custom_workflows} ({source})"
-                )
-            else:
-                warn(f"No additional workflows loaded from {custom_workflows}")
-            _console_global.print(
-                f"Total: {workflow_mapper.count()} workflow(s) available"
-            )
-        elif default_count > 0:
-            _console_global.print(f"Loaded {default_count} default workflow(s)\n")
+        warn("No workflows loaded.")
 
     use_sudo = root_or_sudo_available()
     if not use_sudo:
@@ -1464,665 +1422,39 @@ def main(args: types.SimpleNamespace) -> None:
             "some scan types (e.g., UDP) may fail."
         )
 
-    # Tool availability check (unless --no-tools enabled)
-    check_only = getattr(args, "check", False)
-    if not args.no_tools or check_only:
+    # Tool availability table, skipped in review-only mode. `cerno check`
+    # renders the same table without entering review.
+    if config.tools_enabled:
         from cerno_pkg.render import render_tool_availability_table
 
         render_tool_availability_table(include_unavailable=True)
         _console_global.print()  # Add spacing
-
-    # --check reports availability and exits. Deliberately outside the no_tools
-    # gate: nesting it there made `--check --no-tools` fall through into the
-    # interactive review instead of exiting.
-    if check_only:
-        raise Exit(0)
-
-    export_root = Path(args.export_root) if args.export_root else None
-    if export_root and not export_root.exists():
-        err(f"Export root not found: {export_root}")
-        raise Exit(1)
-
-    # if export_root:
-    #     ok(f"Using export root: {export_root.resolve()}")
-    if args.no_tools:
-        info("(no-tools mode: tool prompts disabled for this session)")
+    else:
+        info("(tool prompts disabled: set tools_enabled true to re-enable)")
 
     in_progress_total: List[str] = []
     done_total: List[str] = []
 
-    # If no export_root specified, use database scan selection
-    if export_root is None:
-        from cerno_pkg.models import Scan, Finding
-        from datetime import datetime
-
-        def _additional_scan_ids(scans: list[Scan]) -> Optional[list[int]]:
-            """Return secondary scan IDs for a multi-scan selection (None for single scan)."""
-            ids = [s.scan_id for s in scans[1:] if s.scan_id is not None]
-            return ids or None
-
-        selected_scans: list[Scan] = []
-        # Carried across iterations of the scan-selection loop below: the
-        # previous scan's session is saved at the top of the next pass, after
-        # this has been populated from that selection.
-        all_scan_ids: list[int] = []
-
-        # Outer loop for scan selection
-        # Wrapped in try/finally to ensure session is saved on ALL exit paths
-        try:
-            while True:
-                # Save previous scan's session before loading next scan menu
-                # This handles the case where user reviews multiple scans (presses 'b' to go back)
-                if scan_id != 0:
-                    save_session(
-                        scan_id,
-                        session_start_time,
-                        in_progress_count=len(in_progress_total),
-                        done_count=len(done_total),
-                        additional_scan_ids=_additional_scan_ids(selected_scans),
-                    )
-
-                    # Show statistics if work was done
-                    if in_progress_total or done_total:
-                        if scan_dir is not None:
-                            show_session_statistics(
-                                session_start_time,
-                                in_progress_total,
-                                done_total,
-                                scan_dir,
-                                scan_id=scan_id,
-                                scan_ids=(
-                                    all_scan_ids if len(all_scan_ids) > 1 else None
-                                ),
-                            )
-
-                    delete_session(scan_id)
-
-                    # Reset tracking for next scan
-                    scan_id = 0
-                    scan_dir = None
-                    in_progress_total = []
-                    done_total = []
-
-                # Get all scans from database
-                try:
-                    with _console_global.status(
-                        "[bold green]Loading scans from database..."
-                    ):
-                        all_scans = Scan.get_all()
-                except Exception as e:
-                    err(f"Failed to query scans from database: {e}")
-                    info(
-                        "If the database is corrupted, try: rm ~/.cerno/cerno.db, then "
-                        "re-import with cerno import nessus|nuclei <file>"
-                    )
-                    return
-
-                if not all_scans:
-                    # First-time user - show guided tour
-                    from cerno_pkg.onboarding import show_guided_tour
-
-                    show_guided_tour()
-                    # After tour, show import instructions
-                    info("\nTo get started, import a scan:")
-                    info("  cerno import nessus /path/to/scan.nessus")
-                    info("  cerno import nuclei /path/to/nuclei.json\n")
-                    return
-
-                # Display scan selection menu
-                header("Available Scans")
-                from rich.table import Table
-                from rich import box
-                from cerno_pkg.ansi import style_if_enabled
-
-                scan_table = Table(
-                    show_header=True,
-                    header_style=style_if_enabled("bold cyan"),
-                    box=box.SIMPLE,
-                )
-                scan_table.add_column(
-                    "#", style=style_if_enabled("cyan"), justify="right"
-                )
-                scan_table.add_column("Scan Name", style=style_if_enabled("yellow"))
-                scan_table.add_column(
-                    "Last Reviewed", style=style_if_enabled("magenta")
-                )
-
-                for idx, scan in enumerate(all_scans, 1):
-                    last_reviewed = "never"
-                    if scan.last_reviewed_at:
-                        try:
-                            dt = datetime.fromisoformat(scan.last_reviewed_at)
-                            now = datetime.now()
-                            delta = now - dt
-                            if delta.days == 0:
-                                if delta.seconds < 3600:
-                                    mins = delta.seconds // 60
-                                    last_reviewed = (
-                                        f"{mins} min{'s' if mins != 1 else ''} ago"
-                                    )
-                                else:
-                                    hours = delta.seconds // 3600
-                                    last_reviewed = (
-                                        f"{hours} hour{'s' if hours != 1 else ''} ago"
-                                    )
-                            elif delta.days == 1:
-                                last_reviewed = "yesterday"
-                            elif delta.days < 7:
-                                last_reviewed = f"{delta.days} days ago"
-                            else:
-                                last_reviewed = dt.strftime("%Y-%m-%d")
-                        except Exception:
-                            last_reviewed = scan.last_reviewed_at[:10]  # Just date
-
-                    scan_table.add_row(str(idx), scan.scan_name, last_reviewed)
-
-                _console_global.print(scan_table)
-                print_action_menu([("Q", "Quit")])
-
-                try:
-                    ans = Prompt.ask(
-                        "Choose scan(s) (e.g. 1  or  1-3  or  1,3,5)"
-                    ).strip()
-                except KeyboardInterrupt:
-                    warn("\nInterrupted — exiting.")
-                    return
-
-                if ans in ("x", "exit", "q", "quit"):
-                    return
-
-                from cerno_pkg.tui import parse_scan_selection
-
-                indices = parse_scan_selection(ans, len(all_scans))
-                if indices is None:
-                    warn(
-                        f"Invalid choice. Enter 1-{len(all_scans)}, a range like 1-3, or [Q]uit."
-                    )
-                    continue
-
-                selected_scans = [all_scans[i - 1] for i in indices]
-                selected_scan = selected_scans[0]  # Primary scan for backward compat
-                export_root = Path(selected_scan.export_root)
-                scan_dir = export_root / selected_scan.scan_name
-
-                # Note: scan_dir is a Path object used for display (scan_dir.name) only
-                # In database-only mode, the directory doesn't need to exist
-
-                # Type narrowing: ensure scan_id is not None
-                if selected_scan.scan_id is None:
-                    warn("Invalid scan - missing scan_id")
-                    continue
-
-                scan_id = selected_scan.scan_id
-                all_scan_ids = [
-                    s.scan_id for s in selected_scans if s.scan_id is not None
-                ]
-                if len(selected_scans) > 1:
-                    names = ", ".join(s.scan_name for s in selected_scans)
-                    ok(f"Selected: {names}")
-                else:
-                    ok(f"Selected: {selected_scan.scan_name}")
-
-                # Check for existing session
-                previous_session = load_session(scan_id)
-                if previous_session:
-                    from datetime import datetime
-
-                    session_date = datetime.fromisoformat(
-                        previous_session.session_start
-                    )
-                    header("Previous Session Found")
-                    info(
-                        f"Session started: {session_date.strftime('%Y-%m-%d %H:%M:%S')}"
-                    )
-                    info(f"In Progress: {previous_session.in_progress_count} findings")
-                    info(f"Done: {previous_session.done_count} findings")
-                    try:
-                        resume = Confirm.ask("Resume this session?", default=True)
-                    except KeyboardInterrupt:
-                        warn("\nInterrupted — exiting.")
-                        return
-
-                    if resume:
-                        # Session start time is restored; file tracking continues from database
-                        session_start_time = session_date
-                        ok("Session resumed.")
-                    else:
-                        # Start fresh session - end the old one
-                        delete_session(scan_id)
-                        ok("Starting fresh session.")
-                else:
-                    # No previous session - start fresh
-                    pass
-
-                # Overview immediately after selecting scan
-                # Use config value if set, otherwise use DEFAULT_TOP_PORTS
-                top_ports = (
-                    config.top_ports_count
-                    if config.top_ports_count is not None
-                    else DEFAULT_TOP_PORTS
-                )
-
-                # Validate range
-                if top_ports <= 0:
-                    warn(
-                        f"Invalid top_ports_count {top_ports} in config, using default {DEFAULT_TOP_PORTS}"
-                    )
-                    top_ports = DEFAULT_TOP_PORTS
-                elif top_ports > 100:
-                    warn(f"top_ports_count {top_ports} is very large, capping at 100")
-                    top_ports = 100
-
-                show_scan_summary(
-                    scan_dir,
-                    top_ports_n=top_ports,
-                    scan_id=scan_id,
-                    scan_ids=all_scan_ids if len(all_scan_ids) > 1 else None,
-                    scan_names=(
-                        [s.scan_name for s in selected_scans]
-                        if len(selected_scans) > 1
-                        else None
-                    ),
-                )
-
-                # Show workflow guidance for first-time or returning users
-                from cerno_pkg.onboarding import show_workflow_guidance
-
-                show_workflow_guidance(
-                    scan_name=selected_scan.scan_name,
-                    scan_id=scan_id,
-                    scan_ids=all_scan_ids if len(all_scan_ids) > 1 else None,
-                    scan_names=(
-                        [s.scan_name for s in selected_scans]
-                        if len(selected_scans) > 1
-                        else None
-                    ),
-                )
-
-                # Host filter state (persists across severity loop iterations)
-                host_filter: Optional[str] = None  # Active host filter (IP/hostname)
-                host_filter_plugin_ids: Optional[list[str]] = (
-                    None  # Cached plugin IDs for filter
-                )
-
-                # Claude availability (computed once per scan selection)
-                from cerno_pkg.claude_assistant import (
-                    check_claude_available as _check_claude,
-                )
-                from cerno_pkg.claude_assistant import claude_enabled as _claude_enabled
-
-                _claude_installed_sev = _check_claude()
-                _has_claude_sev = _claude_enabled(config)
-
-                # Build multi-scan display label for breadcrumb/header
-                if len(selected_scans) > 1:
-                    _label_names = [s.scan_name for s in selected_scans]
-                    if len(_label_names) == 2:
-                        _scan_label = f"{_label_names[0]} + {_label_names[1]}"
-                    else:
-                        _scan_label = f"{len(_label_names)} scans"
-                else:
-                    _scan_label = scan_dir.name
-
-                # Severity loop (inner loop)
-                while True:
-                    from cerno_pkg import breadcrumb
-
-                    bc = breadcrumb(_scan_label, "Choose severity")
-                    header(bc if bc else f"Scan: {_scan_label} — choose severity")
-
-                    # Get severity directories from database (database-only mode)
-                    # Apply host filter if active
-                    severity_dir_names = Finding.get_severity_dirs_for_scan(
-                        scan_id,
-                        plugin_ids=host_filter_plugin_ids,
-                        scan_ids=all_scan_ids if len(all_scan_ids) > 1 else None,
-                    )
-                    if not severity_dir_names:
-                        warn("No severity directories in this scan.")
-                        break
-
-                    # Create virtual Path objects for compatibility with existing render code
-                    # Database returns pre-sorted (DESC), so no additional sorting needed
-                    severities = [
-                        scan_dir / sev_name for sev_name in severity_dir_names
-                    ]
-
-                    # Metasploit Module virtual group (menu counts) - query from database
-                    # Apply host filter if active
-                    if len(all_scan_ids) > 1:
-                        msf_files, _ = Finding.get_by_scan_ids_merged(
-                            scan_ids=all_scan_ids,
-                            has_metasploit=True,
-                            plugin_ids=host_filter_plugin_ids,
-                        )
-                    else:
-                        msf_files = Finding.get_by_scan_with_plugin(
-                            scan_id=scan_id,
-                            has_metasploit=True,
-                            plugin_ids=host_filter_plugin_ids,
-                        )
-
-                    has_msf = len(msf_files) > 0
-                    msf_summary = (
-                        count_review_states(pf for (pf, _p) in msf_files)
-                        if has_msf
-                        else None
-                    )
-
-                    # Workflow Mapped virtual group (menu counts) - query from database
-                    # Apply host filter if active (intersect workflow plugins with host filter)
-                    workflow_plugin_ids = workflow_mapper.get_all_finding_ids()
-                    if workflow_plugin_ids:
-                        # plugin_id is TEXT and namespaced per source, so this
-                        # must stay string-keyed: an int()/isdigit() filter here
-                        # would silently drop every non-Nessus workflow id.
-                        workflow_plugin_ids_filtered = [
-                            str(pid) for pid in workflow_plugin_ids
-                        ]
-                        # If host filter is active, intersect with host filter plugin IDs
-                        if host_filter_plugin_ids is not None:
-                            host_filter_set = {
-                                str(pid) for pid in host_filter_plugin_ids
-                            }
-                            workflow_plugin_ids_filtered = [
-                                pid
-                                for pid in workflow_plugin_ids_filtered
-                                if pid in host_filter_set
-                            ]
-                        if workflow_plugin_ids_filtered:
-                            if len(all_scan_ids) > 1:
-                                workflow_files, _ = Finding.get_by_scan_ids_merged(
-                                    scan_ids=all_scan_ids,
-                                    plugin_ids=workflow_plugin_ids_filtered,
-                                )
-                            else:
-                                workflow_files = Finding.get_by_scan_with_plugin(
-                                    scan_id=scan_id,
-                                    plugin_ids=workflow_plugin_ids_filtered,
-                                )
-                        else:
-                            workflow_files = []
-                    else:
-                        workflow_files = []
-
-                    has_workflows = len(workflow_files) > 0
-                    workflow_summary = (
-                        count_review_states(pf for (pf, _p) in workflow_files)
-                        if has_workflows
-                        else None
-                    )
-
-                    render_severity_table(
-                        severities,
-                        msf_summary=msf_summary,
-                        workflow_summary=workflow_summary,
-                        scan_id=scan_id,
-                        plugin_ids=host_filter_plugin_ids,
-                        scan_ids=all_scan_ids if len(all_scan_ids) > 1 else None,
-                    )
-
-                    # Show host filter status if active
-                    if host_filter:
-                        info(f"Filtering by host: {host_filter}")
-
-                    # Show action menu with appropriate options
-                    _sev_menu_items: list[tuple[str, str]] = [("H", "Host search")]
-                    if host_filter:
-                        _sev_menu_items.append(("C", "Clear filter"))
-                    if _has_claude_sev:
-                        _sev_menu_items.append(("A", "Ask Claude"))
-                    elif _claude_installed_sev:
-                        _sev_menu_items.append(("A", "Ask Claude (enable…)"))
-                    _sev_menu_items.append(("B", "Back"))
-                    print_action_menu(_sev_menu_items)
-
-                    # Dynamic tip message based on available special filters
-                    if has_msf and has_workflows:
-                        info("Tip: Use numbers (1-5), M, W, or combine (e.g., 1-3,M)")
-                    elif has_msf:
-                        info("Tip: Use numbers (1-5), M, or combine (e.g., 1-3,M)")
-                    elif has_workflows:
-                        info("Tip: Use numbers (1-5), W, or combine (e.g., 1-3,W)")
-                    else:
-                        info("Tip: Multi-select is supported (e.g., 1-3 or 1,3,5)")
-
-                    try:
-                        ans = Prompt.ask("Choose").strip().lower()
-                    except KeyboardInterrupt:
-                        warn("\nInterrupted — returning to scan menu.")
-                        break
-
-                    if ans in ("b", "back"):
-                        break
-                    elif ans == "q":
-                        return
-                    elif ans in ("h", "host"):
-                        # Host search flow
-                        from cerno_pkg.models import Host
-
-                        host_input = Prompt.ask("Enter IP address or hostname").strip()
-                        if not host_input:
-                            warn("No host entered.")
-                            continue
-
-                        # Strip brackets from IPv6 if present (e.g., [::1] -> ::1)
-                        if host_input.startswith("[") and host_input.endswith("]"):
-                            host_input = host_input[1:-1]
-
-                        # Query plugin IDs for this host across all selected scans
-                        plugin_ids = Host.get_plugin_ids_for_scan(
-                            ip_address=host_input,
-                            scan_id=scan_id,
-                            partial_match=True,
-                            scan_ids=all_scan_ids if len(all_scan_ids) > 1 else None,
-                        )
-
-                        if not plugin_ids:
-                            warn(f"No findings found for host: {host_input}")
-                            continue
-
-                        # Set filter state
-                        host_filter = host_input
-                        host_filter_plugin_ids = plugin_ids
-                        ok(
-                            f"Found {len(plugin_ids)} finding(s) for host '{host_input}'"
-                        )
-                        continue
-
-                    elif ans in ("c", "clear") and host_filter:
-                        # Clear host filter
-                        host_filter = None
-                        host_filter_plugin_ids = None
-                        ok("Host filter cleared.")
-                        continue
-
-                    elif ans == "a":
-                        if not _has_claude_sev and _claude_installed_sev:
-                            from cerno_pkg.claude_assistant import ensure_enabled
-
-                            if ensure_enabled(config):
-                                _has_claude_sev = True
-                        if _has_claude_sev:
-                            # Build aggregate context from all findings in the current scan scope
-                            _sev_scan_names = [s.scan_name for s in selected_scans]
-                            _sev_scope = "All findings — " + ", ".join(_sev_scan_names)
-                            if host_filter:
-                                _sev_scope += f" (host filter: {host_filter})"
-                            _sev_scan_ids_str = ",".join(
-                                str(sid) for sid in sorted(all_scan_ids)
-                            )
-                            _host_suffix = f":{host_filter}" if host_filter else ""
-                            _sev_context_key = (
-                                f"sev_menu:{_sev_scan_ids_str}{_host_suffix}"
-                            )
-                            # Fetch all findings for context (no severity filter)
-                            if len(all_scan_ids) > 1:
-                                _sev_findings, _ = Finding.get_by_scan_ids_merged(
-                                    scan_ids=all_scan_ids,
-                                    plugin_ids=host_filter_plugin_ids,
-                                )
-                            else:
-                                _sev_findings = Finding.get_by_scan_with_plugin(
-                                    scan_id=scan_id,
-                                    plugin_ids=host_filter_plugin_ids,
-                                )
-                            browse_claude_chat_aggregate(
-                                context_key=_sev_context_key,
-                                scope_description=_sev_scope,
-                                scan_names=_sev_scan_names,
-                                findings_with_plugins=_sev_findings,
-                            )
-                        elif not _claude_installed_sev:
-                            warn(
-                                "Claude Assistant is not available. Install the claude CLI to use this feature."
-                            )
-                        continue
-
-                    # Parse selection (supports ranges, comma-separated, and M/W letters)
-                    selection = parse_severity_selection(ans, len(severities))
-
-                    if selection is None:
-                        warn(
-                            "Invalid choice. Use numbers (1-5), M, W, or combine (e.g., 1-3,M)."
-                        )
-                        continue
-
-                    # Validate special filter selections against availability
-                    if selection.msf_selected and not has_msf:
-                        warn("No Metasploit modules available for this scan.")
-                        continue
-                    if selection.workflow_selected and not has_workflows:
-                        warn("No workflow-mapped findings available for this scan.")
-                        continue
-
-                    # Map new selection fields to existing variable names for minimal downstream changes
-                    severity_indices = selection.severity_indices
-                    msf_in_selection = selection.msf_selected
-                    workflow_in_selection = selection.workflow_selected
-
-                    # === Multiple severities selected (or mix of severities + MSF) ===
-                    if len(severity_indices) > 1 or (
-                        len(severity_indices) >= 1 and msf_in_selection
-                    ):
-                        selected_sev_dirs = [
-                            severities[idx - 1] for idx in severity_indices
-                        ]
-
-                        # Build combined label
-                        sev_labels = [
-                            pretty_severity_label(sev.name) for sev in selected_sev_dirs
-                        ]
-                        if msf_in_selection:
-                            sev_labels.append("Metasploit Module")
-
-                        combined_label = " + ".join(sev_labels)
-
-                        # For multi-severity selection, pass list of severity directories to filter
-                        severity_dir_names = [sev.name for sev in selected_sev_dirs]
-                        # Build label with host filter if active
-                        label = combined_label
-                        if host_filter:
-                            label = f"{combined_label} (Host: {host_filter})"
-                        browse_file_list(
-                            selected_scans,
-                            selected_sev_dirs[0] if selected_sev_dirs else None,
-                            None,  # Single severity filter not used for multi-severity
-                            label,
-                            args,
-                            use_sudo,
-                            in_progress_total,
-                            done_total,
-                            is_msf_mode=True,  # Show severity labels for each file
-                            workflow_mapper=workflow_mapper,
-                            severity_dirs_filter=severity_dir_names,
-                            plugin_ids_filter=host_filter_plugin_ids,
-                            config=config,
-                            session_start_time=session_start_time,
-                        )
-
-                    # === Single severity selected (normal or MSF only) ===
-                    elif len(severity_indices) == 1:
-                        choice_idx = severity_indices[0]
-                        sev_dir = severities[choice_idx - 1]
-
-                        # Use severity directory name as filter (e.g., "3_High")
-                        severity_dir_filter = sev_dir.name
-
-                        # Build label with host filter if active
-                        label = pretty_severity_label(sev_dir.name)
-                        if host_filter:
-                            label = f"{label} (Host: {host_filter})"
-
-                        browse_file_list(
-                            selected_scans,
-                            sev_dir,
-                            severity_dir_filter,
-                            label,
-                            args,
-                            use_sudo,
-                            in_progress_total,
-                            done_total,
-                            is_msf_mode=False,
-                            workflow_mapper=workflow_mapper,
-                            plugin_ids_filter=host_filter_plugin_ids,
-                            config=config,
-                            session_start_time=session_start_time,
-                        )
-
-                    # === Metasploit Module only ===
-                    elif msf_in_selection:
-                        # Build label with host filter if active
-                        label = "Metasploit Module"
-                        if host_filter:
-                            label = f"{label} (Host: {host_filter})"
-
-                        # Query database for metasploit plugins across all severities
-                        browse_file_list(
-                            selected_scans,
-                            None,  # No single severity dir
-                            None,  # No severity filter
-                            label,
-                            args,
-                            use_sudo,
-                            in_progress_total,
-                            done_total,
-                            is_msf_mode=True,
-                            workflow_mapper=workflow_mapper,
-                            has_metasploit_filter=True,
-                            plugin_ids_filter=host_filter_plugin_ids,
-                            config=config,
-                            session_start_time=session_start_time,
-                        )
-
-                    # === Workflow Mapped only ===
-                    elif workflow_in_selection:
-                        # Group findings by workflow name using database records
-                        # Note: workflow_files is already filtered by host_filter_plugin_ids
-                        workflow_groups = group_findings_by_workflow(
-                            workflow_files, workflow_mapper
-                        )
-
-                        browse_workflow_groups(
-                            selected_scan,
-                            workflow_groups,
-                            args,
-                            use_sudo,
-                            in_progress_total,
-                            done_total,
-                            workflow_mapper,
-                            config=config,
-                            session_start_time=session_start_time,
-                            scan_label=_scan_label,
-                            scans=selected_scans,
-                        )
-
-                # End of severity loop - continue to scan selection loop
-                # (User pressed 'b' or 'q' from severity menu)
-
-        finally:
-            # Always save session on exit (handles early exits via q, Ctrl+C, or errors)
-            # Only save if scan was actually selected (scan_id != 0)
+    from cerno_pkg.models import Scan, Finding
+    from datetime import datetime
+
+    def _additional_scan_ids(scans: list[Scan]) -> Optional[list[int]]:
+        """Return secondary scan IDs for a multi-scan selection (None for single scan)."""
+        ids = [s.scan_id for s in scans[1:] if s.scan_id is not None]
+        return ids or None
+
+    selected_scans: list[Scan] = []
+    # Carried across iterations of the scan-selection loop below: the
+    # previous scan's session is saved at the top of the next pass, after
+    # this has been populated from that selection.
+    all_scan_ids: list[int] = []
+
+    # Outer loop for scan selection
+    # Wrapped in try/finally to ensure session is saved on ALL exit paths
+    try:
+        while True:
+            # Save previous scan's session before loading next scan menu
+            # This handles the case where user reviews multiple scans (presses 'b' to go back)
             if scan_id != 0:
                 save_session(
                     scan_id,
@@ -2132,9 +1464,8 @@ def main(args: types.SimpleNamespace) -> None:
                     additional_scan_ids=_additional_scan_ids(selected_scans),
                 )
 
-                # Session summary with rich statistics (only if work was done)
+                # Show statistics if work was done
                 if in_progress_total or done_total:
-                    # Type guard: scan_dir must be defined if any work was done
                     if scan_dir is not None:
                         show_session_statistics(
                             session_start_time,
@@ -2142,14 +1473,596 @@ def main(args: types.SimpleNamespace) -> None:
                             done_total,
                             scan_dir,
                             scan_id=scan_id,
-                            scan_ids=all_scan_ids if len(all_scan_ids) > 1 else None,
+                            scan_ids=(all_scan_ids if len(all_scan_ids) > 1 else None),
                         )
 
-                # Always end session (mark session_end timestamp in database)
                 delete_session(scan_id)
 
-    _console_global.print()  # Empty line
-    ok('Now run "cerno review" to start reviewing findings.')
+                # Reset tracking for next scan
+                scan_id = 0
+                scan_dir = None
+                in_progress_total = []
+                done_total = []
+
+            # Get all scans from database
+            try:
+                with _console_global.status(
+                    "[bold green]Loading scans from database..."
+                ):
+                    all_scans = Scan.get_all()
+            except Exception as e:
+                err(f"Failed to query scans from database: {e}")
+                info(
+                    "If the database is corrupted, try: rm ~/.cerno/cerno.db, then "
+                    "re-import with cerno import nessus|nuclei <file>"
+                )
+                return
+
+            if not all_scans:
+                # First-time user - show guided tour
+                from cerno_pkg.onboarding import show_guided_tour
+
+                show_guided_tour()
+                # After tour, show import instructions
+                info("\nTo get started, import a scan:")
+                info("  cerno import nessus /path/to/scan.nessus")
+                info("  cerno import nuclei /path/to/nuclei.json\n")
+                return
+
+            # Display scan selection menu
+            header("Available Scans")
+            from rich.table import Table
+            from rich import box
+            from cerno_pkg.ansi import style_if_enabled
+
+            scan_table = Table(
+                show_header=True,
+                header_style=style_if_enabled("bold cyan"),
+                box=box.SIMPLE,
+            )
+            scan_table.add_column("#", style=style_if_enabled("cyan"), justify="right")
+            scan_table.add_column("Scan Name", style=style_if_enabled("yellow"))
+            scan_table.add_column("Last Reviewed", style=style_if_enabled("magenta"))
+
+            for idx, scan in enumerate(all_scans, 1):
+                last_reviewed = "never"
+                if scan.last_reviewed_at:
+                    try:
+                        dt = datetime.fromisoformat(scan.last_reviewed_at)
+                        now = datetime.now()
+                        delta = now - dt
+                        if delta.days == 0:
+                            if delta.seconds < 3600:
+                                mins = delta.seconds // 60
+                                last_reviewed = (
+                                    f"{mins} min{'s' if mins != 1 else ''} ago"
+                                )
+                            else:
+                                hours = delta.seconds // 3600
+                                last_reviewed = (
+                                    f"{hours} hour{'s' if hours != 1 else ''} ago"
+                                )
+                        elif delta.days == 1:
+                            last_reviewed = "yesterday"
+                        elif delta.days < 7:
+                            last_reviewed = f"{delta.days} days ago"
+                        else:
+                            last_reviewed = dt.strftime("%Y-%m-%d")
+                    except Exception:
+                        last_reviewed = scan.last_reviewed_at[:10]  # Just date
+
+                scan_table.add_row(str(idx), scan.scan_name, last_reviewed)
+
+            _console_global.print(scan_table)
+            print_action_menu([("Q", "Quit")])
+
+            try:
+                ans = Prompt.ask("Choose scan(s) (e.g. 1  or  1-3  or  1,3,5)").strip()
+            except KeyboardInterrupt:
+                warn("\nInterrupted — exiting.")
+                return
+
+            if ans in ("x", "exit", "q", "quit"):
+                return
+
+            from cerno_pkg.tui import parse_scan_selection
+
+            indices = parse_scan_selection(ans, len(all_scans))
+            if indices is None:
+                warn(
+                    f"Invalid choice. Enter 1-{len(all_scans)}, a range like 1-3, or [Q]uit."
+                )
+                continue
+
+            selected_scans = [all_scans[i - 1] for i in indices]
+            selected_scan = selected_scans[0]  # Primary scan for backward compat
+            export_root = Path(selected_scan.export_root)
+            scan_dir = export_root / selected_scan.scan_name
+
+            # Note: scan_dir is a Path object used for display (scan_dir.name) only
+            # In database-only mode, the directory doesn't need to exist
+
+            # Type narrowing: ensure scan_id is not None
+            if selected_scan.scan_id is None:
+                warn("Invalid scan - missing scan_id")
+                continue
+
+            scan_id = selected_scan.scan_id
+            all_scan_ids = [s.scan_id for s in selected_scans if s.scan_id is not None]
+            if len(selected_scans) > 1:
+                names = ", ".join(s.scan_name for s in selected_scans)
+                ok(f"Selected: {names}")
+            else:
+                ok(f"Selected: {selected_scan.scan_name}")
+
+            # Check for existing session
+            previous_session = load_session(scan_id)
+            if previous_session:
+                from datetime import datetime
+
+                session_date = datetime.fromisoformat(previous_session.session_start)
+                header("Previous Session Found")
+                info(f"Session started: {session_date.strftime('%Y-%m-%d %H:%M:%S')}")
+                info(f"In Progress: {previous_session.in_progress_count} findings")
+                info(f"Done: {previous_session.done_count} findings")
+                try:
+                    resume = Confirm.ask("Resume this session?", default=True)
+                except KeyboardInterrupt:
+                    warn("\nInterrupted — exiting.")
+                    return
+
+                if resume:
+                    # Session start time is restored; file tracking continues from database
+                    session_start_time = session_date
+                    ok("Session resumed.")
+                else:
+                    # Start fresh session - end the old one
+                    delete_session(scan_id)
+                    ok("Starting fresh session.")
+            else:
+                # No previous session - start fresh
+                pass
+
+            # Overview immediately after selecting scan
+            # Use config value if set, otherwise use DEFAULT_TOP_PORTS
+            top_ports = (
+                config.top_ports_count
+                if config.top_ports_count is not None
+                else DEFAULT_TOP_PORTS
+            )
+
+            # Validate range
+            if top_ports <= 0:
+                warn(
+                    f"Invalid top_ports_count {top_ports} in config, using default {DEFAULT_TOP_PORTS}"
+                )
+                top_ports = DEFAULT_TOP_PORTS
+            elif top_ports > 100:
+                warn(f"top_ports_count {top_ports} is very large, capping at 100")
+                top_ports = 100
+
+            show_scan_summary(
+                scan_dir,
+                top_ports_n=top_ports,
+                scan_id=scan_id,
+                scan_ids=all_scan_ids if len(all_scan_ids) > 1 else None,
+                scan_names=(
+                    [s.scan_name for s in selected_scans]
+                    if len(selected_scans) > 1
+                    else None
+                ),
+            )
+
+            # Show workflow guidance for first-time or returning users
+            from cerno_pkg.onboarding import show_workflow_guidance
+
+            show_workflow_guidance(
+                scan_name=selected_scan.scan_name,
+                scan_id=scan_id,
+                scan_ids=all_scan_ids if len(all_scan_ids) > 1 else None,
+                scan_names=(
+                    [s.scan_name for s in selected_scans]
+                    if len(selected_scans) > 1
+                    else None
+                ),
+            )
+
+            # Host filter state (persists across severity loop iterations)
+            host_filter: Optional[str] = None  # Active host filter (IP/hostname)
+            host_filter_plugin_ids: Optional[list[str]] = (
+                None  # Cached plugin IDs for filter
+            )
+
+            # Claude availability (computed once per scan selection)
+            from cerno_pkg.claude_assistant import (
+                check_claude_available as _check_claude,
+            )
+            from cerno_pkg.claude_assistant import claude_enabled as _claude_enabled
+
+            _claude_installed_sev = _check_claude()
+            _has_claude_sev = _claude_enabled(config)
+
+            # Build multi-scan display label for breadcrumb/header
+            if len(selected_scans) > 1:
+                _label_names = [s.scan_name for s in selected_scans]
+                if len(_label_names) == 2:
+                    _scan_label = f"{_label_names[0]} + {_label_names[1]}"
+                else:
+                    _scan_label = f"{len(_label_names)} scans"
+            else:
+                _scan_label = scan_dir.name
+
+            # Severity loop (inner loop)
+            while True:
+                from cerno_pkg import breadcrumb
+
+                bc = breadcrumb(_scan_label, "Choose severity")
+                header(bc if bc else f"Scan: {_scan_label} — choose severity")
+
+                # Get severity directories from database (database-only mode)
+                # Apply host filter if active
+                severity_dir_names = Finding.get_severity_dirs_for_scan(
+                    scan_id,
+                    plugin_ids=host_filter_plugin_ids,
+                    scan_ids=all_scan_ids if len(all_scan_ids) > 1 else None,
+                )
+                if not severity_dir_names:
+                    warn("No severity directories in this scan.")
+                    break
+
+                # Create virtual Path objects for compatibility with existing render code
+                # Database returns pre-sorted (DESC), so no additional sorting needed
+                severities = [scan_dir / sev_name for sev_name in severity_dir_names]
+
+                # Metasploit Module virtual group (menu counts) - query from database
+                # Apply host filter if active
+                if len(all_scan_ids) > 1:
+                    msf_files, _ = Finding.get_by_scan_ids_merged(
+                        scan_ids=all_scan_ids,
+                        has_metasploit=True,
+                        plugin_ids=host_filter_plugin_ids,
+                    )
+                else:
+                    msf_files = Finding.get_by_scan_with_plugin(
+                        scan_id=scan_id,
+                        has_metasploit=True,
+                        plugin_ids=host_filter_plugin_ids,
+                    )
+
+                has_msf = len(msf_files) > 0
+                msf_summary = (
+                    count_review_states(pf for (pf, _p) in msf_files)
+                    if has_msf
+                    else None
+                )
+
+                # Workflow Mapped virtual group (menu counts) - query from database
+                # Apply host filter if active (intersect workflow plugins with host filter)
+                workflow_plugin_ids = workflow_mapper.get_all_finding_ids()
+                if workflow_plugin_ids:
+                    # plugin_id is TEXT and namespaced per source, so this
+                    # must stay string-keyed: an int()/isdigit() filter here
+                    # would silently drop every non-Nessus workflow id.
+                    workflow_plugin_ids_filtered = [
+                        str(pid) for pid in workflow_plugin_ids
+                    ]
+                    # If host filter is active, intersect with host filter plugin IDs
+                    if host_filter_plugin_ids is not None:
+                        host_filter_set = {str(pid) for pid in host_filter_plugin_ids}
+                        workflow_plugin_ids_filtered = [
+                            pid
+                            for pid in workflow_plugin_ids_filtered
+                            if pid in host_filter_set
+                        ]
+                    if workflow_plugin_ids_filtered:
+                        if len(all_scan_ids) > 1:
+                            workflow_files, _ = Finding.get_by_scan_ids_merged(
+                                scan_ids=all_scan_ids,
+                                plugin_ids=workflow_plugin_ids_filtered,
+                            )
+                        else:
+                            workflow_files = Finding.get_by_scan_with_plugin(
+                                scan_id=scan_id,
+                                plugin_ids=workflow_plugin_ids_filtered,
+                            )
+                    else:
+                        workflow_files = []
+                else:
+                    workflow_files = []
+
+                has_workflows = len(workflow_files) > 0
+                workflow_summary = (
+                    count_review_states(pf for (pf, _p) in workflow_files)
+                    if has_workflows
+                    else None
+                )
+
+                render_severity_table(
+                    severities,
+                    msf_summary=msf_summary,
+                    workflow_summary=workflow_summary,
+                    scan_id=scan_id,
+                    plugin_ids=host_filter_plugin_ids,
+                    scan_ids=all_scan_ids if len(all_scan_ids) > 1 else None,
+                )
+
+                # Show host filter status if active
+                if host_filter:
+                    info(f"Filtering by host: {host_filter}")
+
+                # Show action menu with appropriate options
+                _sev_menu_items: list[tuple[str, str]] = [("H", "Host search")]
+                if host_filter:
+                    _sev_menu_items.append(("C", "Clear filter"))
+                if _has_claude_sev:
+                    _sev_menu_items.append(("A", "Ask Claude"))
+                elif _claude_installed_sev:
+                    _sev_menu_items.append(("A", "Ask Claude (enable…)"))
+                _sev_menu_items.append(("B", "Back"))
+                print_action_menu(_sev_menu_items)
+
+                # Dynamic tip message based on available special filters
+                if has_msf and has_workflows:
+                    info("Tip: Use numbers (1-5), M, W, or combine (e.g., 1-3,M)")
+                elif has_msf:
+                    info("Tip: Use numbers (1-5), M, or combine (e.g., 1-3,M)")
+                elif has_workflows:
+                    info("Tip: Use numbers (1-5), W, or combine (e.g., 1-3,W)")
+                else:
+                    info("Tip: Multi-select is supported (e.g., 1-3 or 1,3,5)")
+
+                try:
+                    ans = Prompt.ask("Choose").strip().lower()
+                except KeyboardInterrupt:
+                    warn("\nInterrupted — returning to scan menu.")
+                    break
+
+                if ans in ("b", "back"):
+                    break
+                elif ans == "q":
+                    return
+                elif ans in ("h", "host"):
+                    # Host search flow
+                    from cerno_pkg.models import Host
+
+                    host_input = Prompt.ask("Enter IP address or hostname").strip()
+                    if not host_input:
+                        warn("No host entered.")
+                        continue
+
+                    # Strip brackets from IPv6 if present (e.g., [::1] -> ::1)
+                    if host_input.startswith("[") and host_input.endswith("]"):
+                        host_input = host_input[1:-1]
+
+                    # Query plugin IDs for this host across all selected scans
+                    plugin_ids = Host.get_plugin_ids_for_scan(
+                        ip_address=host_input,
+                        scan_id=scan_id,
+                        partial_match=True,
+                        scan_ids=all_scan_ids if len(all_scan_ids) > 1 else None,
+                    )
+
+                    if not plugin_ids:
+                        warn(f"No findings found for host: {host_input}")
+                        continue
+
+                    # Set filter state
+                    host_filter = host_input
+                    host_filter_plugin_ids = plugin_ids
+                    ok(f"Found {len(plugin_ids)} finding(s) for host '{host_input}'")
+                    continue
+
+                elif ans in ("c", "clear") and host_filter:
+                    # Clear host filter
+                    host_filter = None
+                    host_filter_plugin_ids = None
+                    ok("Host filter cleared.")
+                    continue
+
+                elif ans == "a":
+                    if not _has_claude_sev and _claude_installed_sev:
+                        from cerno_pkg.claude_assistant import ensure_enabled
+
+                        if ensure_enabled(config):
+                            _has_claude_sev = True
+                    if _has_claude_sev:
+                        # Build aggregate context from all findings in the current scan scope
+                        _sev_scan_names = [s.scan_name for s in selected_scans]
+                        _sev_scope = "All findings — " + ", ".join(_sev_scan_names)
+                        if host_filter:
+                            _sev_scope += f" (host filter: {host_filter})"
+                        _sev_scan_ids_str = ",".join(
+                            str(sid) for sid in sorted(all_scan_ids)
+                        )
+                        _host_suffix = f":{host_filter}" if host_filter else ""
+                        _sev_context_key = f"sev_menu:{_sev_scan_ids_str}{_host_suffix}"
+                        # Fetch all findings for context (no severity filter)
+                        if len(all_scan_ids) > 1:
+                            _sev_findings, _ = Finding.get_by_scan_ids_merged(
+                                scan_ids=all_scan_ids,
+                                plugin_ids=host_filter_plugin_ids,
+                            )
+                        else:
+                            _sev_findings = Finding.get_by_scan_with_plugin(
+                                scan_id=scan_id,
+                                plugin_ids=host_filter_plugin_ids,
+                            )
+                        browse_claude_chat_aggregate(
+                            context_key=_sev_context_key,
+                            scope_description=_sev_scope,
+                            scan_names=_sev_scan_names,
+                            findings_with_plugins=_sev_findings,
+                        )
+                    elif not _claude_installed_sev:
+                        warn(
+                            "Claude Assistant is not available. Install the claude CLI to use this feature."
+                        )
+                    continue
+
+                # Parse selection (supports ranges, comma-separated, and M/W letters)
+                selection = parse_severity_selection(ans, len(severities))
+
+                if selection is None:
+                    warn(
+                        "Invalid choice. Use numbers (1-5), M, W, or combine (e.g., 1-3,M)."
+                    )
+                    continue
+
+                # Validate special filter selections against availability
+                if selection.msf_selected and not has_msf:
+                    warn("No Metasploit modules available for this scan.")
+                    continue
+                if selection.workflow_selected and not has_workflows:
+                    warn("No workflow-mapped findings available for this scan.")
+                    continue
+
+                # Map new selection fields to existing variable names for minimal downstream changes
+                severity_indices = selection.severity_indices
+                msf_in_selection = selection.msf_selected
+                workflow_in_selection = selection.workflow_selected
+
+                # === Multiple severities selected (or mix of severities + MSF) ===
+                if len(severity_indices) > 1 or (
+                    len(severity_indices) >= 1 and msf_in_selection
+                ):
+                    selected_sev_dirs = [
+                        severities[idx - 1] for idx in severity_indices
+                    ]
+
+                    # Build combined label
+                    sev_labels = [
+                        pretty_severity_label(sev.name) for sev in selected_sev_dirs
+                    ]
+                    if msf_in_selection:
+                        sev_labels.append("Metasploit Module")
+
+                    combined_label = " + ".join(sev_labels)
+
+                    # For multi-severity selection, pass list of severity directories to filter
+                    severity_dir_names = [sev.name for sev in selected_sev_dirs]
+                    # Build label with host filter if active
+                    label = combined_label
+                    if host_filter:
+                        label = f"{combined_label} (Host: {host_filter})"
+                    browse_file_list(
+                        selected_scans,
+                        selected_sev_dirs[0] if selected_sev_dirs else None,
+                        None,  # Single severity filter not used for multi-severity
+                        label,
+                        use_sudo,
+                        in_progress_total,
+                        done_total,
+                        is_msf_mode=True,  # Show severity labels for each file
+                        workflow_mapper=workflow_mapper,
+                        severity_dirs_filter=severity_dir_names,
+                        plugin_ids_filter=host_filter_plugin_ids,
+                        config=config,
+                        session_start_time=session_start_time,
+                    )
+
+                # === Single severity selected (normal or MSF only) ===
+                elif len(severity_indices) == 1:
+                    choice_idx = severity_indices[0]
+                    sev_dir = severities[choice_idx - 1]
+
+                    # Use severity directory name as filter (e.g., "3_High")
+                    severity_dir_filter = sev_dir.name
+
+                    # Build label with host filter if active
+                    label = pretty_severity_label(sev_dir.name)
+                    if host_filter:
+                        label = f"{label} (Host: {host_filter})"
+
+                    browse_file_list(
+                        selected_scans,
+                        sev_dir,
+                        severity_dir_filter,
+                        label,
+                        use_sudo,
+                        in_progress_total,
+                        done_total,
+                        is_msf_mode=False,
+                        workflow_mapper=workflow_mapper,
+                        plugin_ids_filter=host_filter_plugin_ids,
+                        config=config,
+                        session_start_time=session_start_time,
+                    )
+
+                # === Metasploit Module only ===
+                elif msf_in_selection:
+                    # Build label with host filter if active
+                    label = "Metasploit Module"
+                    if host_filter:
+                        label = f"{label} (Host: {host_filter})"
+
+                    # Query database for metasploit plugins across all severities
+                    browse_file_list(
+                        selected_scans,
+                        None,  # No single severity dir
+                        None,  # No severity filter
+                        label,
+                        use_sudo,
+                        in_progress_total,
+                        done_total,
+                        is_msf_mode=True,
+                        workflow_mapper=workflow_mapper,
+                        has_metasploit_filter=True,
+                        plugin_ids_filter=host_filter_plugin_ids,
+                        config=config,
+                        session_start_time=session_start_time,
+                    )
+
+                # === Workflow Mapped only ===
+                elif workflow_in_selection:
+                    # Group findings by workflow name using database records
+                    # Note: workflow_files is already filtered by host_filter_plugin_ids
+                    workflow_groups = group_findings_by_workflow(
+                        workflow_files, workflow_mapper
+                    )
+
+                    browse_workflow_groups(
+                        selected_scan,
+                        workflow_groups,
+                        use_sudo,
+                        in_progress_total,
+                        done_total,
+                        workflow_mapper,
+                        config=config,
+                        session_start_time=session_start_time,
+                        scan_label=_scan_label,
+                        scans=selected_scans,
+                    )
+
+            # End of severity loop - continue to scan selection loop
+            # (User pressed 'b' or 'q' from severity menu)
+
+    finally:
+        # Always save session on exit (handles early exits via q, Ctrl+C, or errors)
+        # Only save if scan was actually selected (scan_id != 0)
+        if scan_id != 0:
+            save_session(
+                scan_id,
+                session_start_time,
+                in_progress_count=len(in_progress_total),
+                done_count=len(done_total),
+                additional_scan_ids=_additional_scan_ids(selected_scans),
+            )
+
+            # Session summary with rich statistics (only if work was done)
+            if in_progress_total or done_total:
+                # Type guard: scan_dir must be defined if any work was done
+                if scan_dir is not None:
+                    show_session_statistics(
+                        session_start_time,
+                        in_progress_total,
+                        done_total,
+                        scan_dir,
+                        scan_id=scan_id,
+                        scan_ids=all_scan_ids if len(all_scan_ids) > 1 else None,
+                    )
+
+            # Always end session (mark session_end timestamp in database)
+            delete_session(scan_id)
 
 
 # === Typer CLI ===
@@ -2343,6 +2256,25 @@ def mcp_cmd() -> None:
     mcp_main()
 
 
+@app.command(name="check", help="Check external tool availability and exit")
+def check_cmd() -> None:
+    """Report which external tools Cerno can find on PATH, then exit.
+
+    Was ``cerno review --check``. Promoted to a command because it is an
+    action rather than a review preference, and because it is then
+    discoverable in ``cerno --help``.
+    """
+    from cerno_pkg.render import render_tool_availability_table
+
+    if not root_or_sudo_available():
+        warn(
+            "Not running as root and no 'sudo' found — "
+            "some scan types (e.g., UDP) may fail."
+        )
+
+    render_tool_availability_table(include_unavailable=True)
+
+
 @app.command(name="demo", help="Prepare bundled demo scans and NetExec enrichment")
 def demo_cmd(
     overwrite: bool = typer.Option(
@@ -2483,82 +2415,37 @@ def main_callback(
 
 
 @app.command(help="Interactive review of findings.")
-def review(
-    export_root: Optional[Path] = typer.Option(
-        None,
-        "--export-root",
-        "-r",
-        help="DEPRECATED and ignored: prints a reminder to use 'cerno import' and exits.",
-    ),
-    no_tools: bool = typer.Option(
-        False, "--no-tools", help="Disable tool prompts (review-only)."
-    ),
-    custom_workflows: Optional[Path] = typer.Option(
-        None,
-        "--custom-workflows",
-        "-w",
-        help="Custom workflow YAML to supplement defaults (custom overrides on conflict).",
-    ),
-    custom_workflows_only: Optional[Path] = typer.Option(
-        None,
-        "--custom-workflows-only",
-        help="Use ONLY this workflow YAML (ignores default workflows).",
-    ),
-    quiet: bool = typer.Option(
-        False, "--quiet", "-q", help="Suppress promotional banner display."
-    ),
-    check: bool = typer.Option(
-        False, "--check", help="Check tool availability and exit (no review)."
-    ),
-    proxy: bool = typer.Option(
-        False,
-        "--proxy",
-        help="Force-enable proxy routing via proxychains4 for this session (overrides config).",
-    ),
-    no_proxy: bool = typer.Option(
-        False,
-        "--no-proxy",
-        help="Force-disable proxychains4 routing for this session (overrides config).",
-    ),
-) -> None:
+def review() -> None:
     """
     Run interactive review mode with database-driven workflow.
 
     This command requires scans to be imported into the database first.
     Use 'cerno import' to import scans before reviewing.
 
-    Note: The --export-root flag is deprecated and ignored: passing it skips
-    the review and only prints a reminder to run 'cerno review'.
+    Takes no options: everything it used to accept as a flag is a
+    ``config.yaml`` key, so the preference persists instead of being retyped.
+    See ``cerno config show`` for current values.
+
+        show_banner                 was -q / --quiet
+        tools_enabled               was --no-tools
+        custom_workflows_path       was -w / --custom-workflows
+        custom_workflows_exclusive  was --custom-workflows-only
+        proxychains_enabled         was --proxy / --no-proxy
+
+    ``cerno review --check`` is now the ``cerno check`` command.
 
     Usage:
         cerno review                     # Select from imported scans
         cerno import nessus scan.nessus  # Import a scan first if needed
     """
-    # Display promotional banner (unless suppressed)
-    if not quiet:
+    config = get_current_config()
+
+    if config.show_banner:
         display_banner()
         _console_global.print()  # Add spacing after banner
 
-    # Validate: can't use both flags
-    if custom_workflows and custom_workflows_only:
-        err("Cannot use both --custom-workflows and --custom-workflows-only")
-        raise typer.Exit(1)
-
-    if proxy and no_proxy:
-        err("Cannot use both --proxy and --no-proxy")
-        raise typer.Exit(1)
-
-    args = types.SimpleNamespace(
-        export_root=export_root,
-        no_tools=no_tools,
-        custom_workflows=custom_workflows,
-        custom_workflows_only=custom_workflows_only,
-        check=check,
-        proxy=proxy,
-        no_proxy=no_proxy,
-    )
     try:
-        main(args)
+        main()
     except KeyboardInterrupt:
         warn("\nInterrupted — goodbye.")
 
@@ -2857,13 +2744,6 @@ def import_nuclei(
         "--name",
         help="Scan name to import under (default: the file's stem)",
     ),
-    min_severity: int = typer.Option(
-        0,
-        "--min-severity",
-        min=0,
-        max=4,
-        help="Drop findings below this severity (0=Info, 1=Low, 2=Medium, 3=High, 4=Critical)",
-    ),
 ) -> None:
     """
     Import nuclei results into the database.
@@ -2877,7 +2757,21 @@ def import_nuclei(
     template; a template that matched the same host:port several times (six
     missing security headers, say) keeps every match's evidence in that host's
     plugin output.
+
+    Findings below ``nuclei_min_severity`` (config, default 0 = keep all) are
+    dropped. This replaces the removed ``--min-severity`` flag.
     """
+    min_severity = get_current_config().nuclei_min_severity
+    # Validated here rather than at load: a hand-edited config.yaml can hold
+    # anything, and silently importing everything would misrepresent the scan.
+    if not 0 <= min_severity <= 4:
+        err(
+            f"Invalid nuclei_min_severity: {min_severity}. Must be 0-4 "
+            f"(0=Info, 1=Low, 2=Medium, 3=High, 4=Critical)."
+        )
+        info("Fix with: cerno config set nuclei_min_severity 0")
+        raise typer.Exit(1)
+
     if not results.exists():
         err(f"Path does not exist: {results}")
         raise typer.Exit(1)
@@ -3176,20 +3070,20 @@ def _import_nessus_directory(directory: Path) -> None:
     name="list", help="List all imported scans with statistics and review progress"
 )
 def list_scans(
-    wide: bool = typer.Option(
-        False, "--wide", "--details", help="Show the full per-severity breakdown"
-    ),
     json_output: bool = typer.Option(
         False, "--json", help="Output scan data as JSON (for scripting)"
     ),
 ) -> None:
     """Display all scans in the database with finding counts and severity breakdown.
 
-    The default view is compact (readable at 80 columns). Use --wide for every
-    severity column, or --json for machine-readable output.
+    The default view is compact (readable at 80 columns). Set
+    ``scan_list_wide`` to true for every severity column, or pass --json for
+    machine-readable output (which bypasses the table entirely).
     """
     from cerno_pkg.models import Scan
     from rich.table import Table
+
+    wide = get_current_config().scan_list_wide
 
     scans = Scan.get_all_with_stats()
 
@@ -3762,32 +3656,26 @@ def creds_reveal(
 @workflow_app.command(
     name="list", help="List all available workflows from bundled and custom YAML files"
 )
-def workflow_list(
-    custom_workflows: Optional[Path] = typer.Option(
-        None, "--custom-workflows", "-w", help="Path to custom workflows YAML file"
-    ),
-) -> None:
-    """Display all available workflows with finding IDs and descriptions."""
-    from cerno_pkg.workflow_mapper import WorkflowMapper
+def workflow_list() -> None:
+    """Display all available workflows with finding IDs and descriptions.
+
+    Reads the same two config keys the review TUI and the MCP workflow tools
+    read -- ``custom_workflows_path`` and ``custom_workflows_exclusive`` -- via
+    ``build_workflow_mapper()``. The former ``-w/--custom-workflows`` flag was
+    the only way a custom file reached this command, which meant
+    ``custom_workflows_path`` was silently ignored here while being honoured
+    everywhere else.
+    """
     from rich.table import Table
     from cerno_pkg.ansi import get_console
 
     console = get_console()
 
-    # Initialize workflow mapper (loads bundled workflows)
-    workflow_mapper = WorkflowMapper()
-
-    # Load custom workflows if provided
-    if custom_workflows:
-        if not custom_workflows.exists():
-            err(f"Custom workflows file not found: {custom_workflows}")
-            raise typer.Exit(1)
-        try:
-            count = workflow_mapper.load_additional_workflows(custom_workflows)
-            info(f"Loaded {count} custom workflow(s) from {custom_workflows}")
-        except Exception as e:
-            err(f"Failed to load custom workflows: {e}")
-            raise typer.Exit(1)
+    config = get_current_config()
+    workflow_mapper = build_workflow_mapper(config)
+    if config.custom_workflows_path:
+        mode = "exclusive" if config.custom_workflows_exclusive else "supplementing"
+        info(f"Using custom workflows from {config.custom_workflows_path} ({mode})")
 
     # Get all workflows
     all_workflows = workflow_mapper.get_all_workflows()

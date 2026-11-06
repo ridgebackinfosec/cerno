@@ -54,17 +54,23 @@ Commands use placeholders such as `<TARGET>` and `<PORT>` (see [Placeholder Syst
 
 ### Basic Usage
 
-Use the `--custom-workflows` flag to supplement the bundled workflows with your own:
+Point `custom_workflows_path` at your YAML to supplement the bundled workflows
+with your own:
 
 ```bash
-cerno review --custom-workflows my_workflows.yaml
+cerno config set custom_workflows_path my_workflows.yaml
 ```
 
-Or use `--custom-workflows-only` to replace the bundled workflows entirely:
+Or add `custom_workflows_exclusive` to replace the bundled workflows entirely:
 
 ```bash
-cerno review --custom-workflows-only my_workflows.yaml
+cerno config set custom_workflows_exclusive true
 ```
+
+Both keys are read in one place (`workflow_mapper.build_workflow_mapper()`), so
+they apply identically to `cerno review`, `cerno workflow list` and every MCP
+workflow tool. Confirm what loaded with `cerno workflow list`, which prints the
+file and the mode it is in.
 
 ### Viewing Workflows in the TUI
 
@@ -102,10 +108,11 @@ workflows:
       - "https://www.openssl.org/docs/man1.1.1/man1/s_client.html"
 ```
 
-Save this file and run:
+Save this file, register it, and start a review:
 
 ```bash
-cerno review --custom-workflows my_workflows.yaml
+cerno config set custom_workflows_path my_workflows.yaml
+cerno review
 ```
 
 When you review finding `nessus:10863`, press **[W]** to see your custom workflow.
@@ -340,22 +347,30 @@ literally and `prepare_workflow` never fills them.
 
 ## Configuration Integration
 
-### Using `custom_workflows_path` Config Key
+### The two config keys
 
-Instead of passing `--custom-workflows` every time, set a default path in your configuration:
+Custom workflows are configured, not passed per run:
 
 ```bash
-# Set default custom workflows path
+# Register your file (supplement mode: merged over the bundled set)
 cerno config set custom_workflows_path /path/to/my_workflows.yaml
 
-# Now 'cerno review' automatically loads your workflows
+# Confirm it loaded, and in which mode
+cerno workflow list
+
+# Now every interface sees it
 cerno review
 ```
 
-The config key is used only when neither `--custom-workflows` nor
-`--custom-workflows-only` is passed, and it always works in supplement mode. The
-MCP server honours it too: every MCP workflow lookup merges this file over the
-bundled set.
+| Key | Default | Effect |
+|-----|---------|--------|
+| `custom_workflows_path` | unset | File to load. Unset means bundled only |
+| `custom_workflows_exclusive` | `false` | `true` loads **only** that file, skipping the bundled set |
+
+Both are read by `workflow_mapper.build_workflow_mapper()`, the single loader, so
+`cerno review`, `cerno workflow list` and every MCP workflow tool agree on what
+is loaded. Setting `custom_workflows_exclusive` without a path warns and falls
+back to the bundled set, rather than leaving you with no workflows at all.
 
 View your current configuration:
 
@@ -363,21 +378,26 @@ View your current configuration:
 cerno config show
 ```
 
-Unset it again:
+Unset again:
 
 ```bash
 cerno config reset custom_workflows_path
+cerno config reset custom_workflows_exclusive
 ```
 
-### When to Use Config vs CLI Flags
+### Which mode to use
 
-| Scenario | Recommended Approach |
-|----------|---------------------|
-| **Personal workflows** you use for all scans | Set `custom_workflows_path` config |
-| **Project-specific workflows** for one engagement | Use `--custom-workflows` flag |
-| **Testing new workflows** before committing | Use `--custom-workflows` flag |
-| **Team-shared workflows** in version control | Document the flag in runbooks/scripts |
-| **Completely replacing** bundled workflows | Use `--custom-workflows-only` flag |
+| Scenario | Approach |
+|----------|----------|
+| **Personal workflows** you use for all scans | `custom_workflows_path` |
+| **Project-specific workflows** for one engagement | `custom_workflows_path`, re-pointed per engagement |
+| **Testing one new workflow** before committing | `custom_workflows_path` + `custom_workflows_exclusive true` |
+| **Team-shared workflows** in version control | Commit the YAML; document the `config set` in the runbook |
+
+> The `--custom-workflows`, `-w` and `--custom-workflows-only` flags were
+> removed. They duplicated these keys, and `cerno workflow list` accepted the
+> file *only* through its flag -- so `custom_workflows_path` was silently
+> ignored there while being honoured everywhere else.
 
 ### Configuration File Location
 
@@ -390,41 +410,36 @@ The configuration file is stored at:
 
 ## Merge Behavior
 
-### `--custom-workflows` (Supplement Mode)
+### Supplement mode (default)
 
-Supplements the bundled workflows with your custom workflows:
+With `custom_workflows_path` set and `custom_workflows_exclusive` left `false`:
 
 - **Bundled workflows are loaded first**
 - **Custom workflows are loaded second**
-- **If a plugin ID exists in both**, the custom workflow **overrides** the bundled one
+- **If a finding ID exists in both**, the custom workflow **overrides** the bundled one
 - **All other bundled workflows remain available**
 
-Example:
-
 ```bash
-# Your custom workflows override bundled ones for matching plugin IDs
-# All other bundled workflows remain available
-cerno review --custom-workflows my_workflows.yaml
+cerno config set custom_workflows_path my_workflows.yaml
 ```
 
 **Use case**: Adding new workflows or overriding specific bundled workflows while keeping the rest.
 
-### `--custom-workflows-only` (Replace Mode)
+### Exclusive mode
 
-Replaces the bundled workflows entirely:
+With `custom_workflows_exclusive` set to `true`:
 
 - **Only your custom workflows are loaded**
 - **Bundled workflows are completely ignored**
-- **Plugins without custom workflows have no workflow available**
-
-Example:
+- **Findings without a custom workflow have no workflow available**
 
 ```bash
-# ONLY your workflows are available - bundled workflows ignored
-cerno review --custom-workflows-only my_workflows.yaml
+cerno config set custom_workflows_exclusive true
+cerno workflow list   # prints "(exclusive)" and your count alone
 ```
 
-**Use case**: Complete control over workflows, organizational policy requires custom workflows only.
+**Use case**: Complete control over workflows, or testing one file in isolation
+without the bundled set masking a typo in your finding IDs.
 
 ### Override Behavior Details
 
@@ -461,10 +476,9 @@ workflows:
     # ... workflow details ...
 ```
 
-2. **Keep one file per engagement or team.** `--custom-workflows` accepts a
-   single file (if you pass it twice, only the last one is used), so keep the
-   workflows you want together in one YAML, or concatenate category files into
-   one before a review.
+2. **Keep one file per engagement or team.** `custom_workflows_path` holds a
+   single file, so keep the workflows you want together in one YAML, or
+   concatenate category files into one before a review.
 
 3. **Use version control** (Git) to track changes and share with team
 
@@ -756,21 +770,21 @@ python -c "import yaml; yaml.safe_load(open('my_workflows.yaml'))"
 cerno review  # Navigate to finding, check the displayed finding ID
 ```
 
-2. **Workflow file not loaded** - Pass the `--custom-workflows` flag, or set `custom_workflows_path`:
+2. **Workflow file not registered** - set `custom_workflows_path`:
 
 ```bash
-# ❌ Wrong - workflows not loaded (unless custom_workflows_path is set)
-cerno review
-
-# ✅ Correct - explicitly load workflows
-cerno review --custom-workflows my_workflows.yaml
+cerno config get custom_workflows_path   # (not set) means bundled only
+cerno config set custom_workflows_path my_workflows.yaml
+cerno workflow list                      # confirms the file and the mode
 ```
 
-3. **Workflow replaced by bundled workflow** - Your custom workflow might be overridden:
+3. **Workflow masked by a bundled one** - a bundled workflow with the same
+   finding ID wins only if yours failed to parse; otherwise custom overrides
+   bundled. To rule the bundled set out entirely:
 
 ```bash
-# Use --custom-workflows-only to ensure your workflow is used
-cerno review --custom-workflows-only my_workflows.yaml
+cerno config set custom_workflows_exclusive true
+cerno workflow list   # your file's count alone
 ```
 
 4. **YAML syntax error** - Check logs for parsing errors:
@@ -778,7 +792,7 @@ cerno review --custom-workflows-only my_workflows.yaml
 ```bash
 # Enable debug logging
 cerno config set debug_logging true
-cerno review --custom-workflows my_workflows.yaml
+cerno workflow list
 tail -f ~/.cerno/cerno.log
 ```
 
@@ -845,11 +859,8 @@ chmod 644 my_workflows.yaml
 View all available workflows (bundled + custom):
 
 ```bash
-# List all workflows
+# List all workflows (bundled + custom_workflows_path, in whichever mode is set)
 cerno workflow list
-
-# With custom workflows
-cerno workflow list --custom-workflows my_workflows.yaml
 ```
 
 Output shows:
@@ -861,17 +872,20 @@ Output shows:
 ### Reloading Workflows (Auto-Reload on File Modification)
 
 Cerno re-reads the **primary** workflow file when its modification time changes,
-checking before each lookup. The primary file is your file only in
-`--custom-workflows-only` mode. In supplement mode (`--custom-workflows` or
-`custom_workflows_path`) it is the bundled YAML, so edits to your file are picked
-up only after restarting the review. (The MCP server rebuilds its mapper on every
-call, so it always sees your latest edits.)
+checking before each lookup. The primary file is your file only in exclusive
+mode. In supplement mode it is the bundled YAML, so edits to your file are
+picked up only after restarting the review. (The MCP server rebuilds its mapper
+on every call, so it always sees your latest edits.)
 
-For rapid workflow development, use replace mode:
+For rapid workflow development, use exclusive mode:
 
 ```bash
+# Once
+cerno config set custom_workflows_path my_workflows.yaml
+cerno config set custom_workflows_exclusive true
+
 # Terminal 1: Start review
-cerno review --custom-workflows-only my_workflows.yaml
+cerno review
 
 # Terminal 2: Edit workflows while review is running
 vim my_workflows.yaml
@@ -981,7 +995,8 @@ domain and is reported unresolved without one. To submit:
 2. Merge the exported `workflows` entry into
    [`cerno_pkg/workflow_mappings.yaml`](https://github.com/ridgebackinfosec/cerno/blob/develop/cerno_pkg/workflow_mappings.yaml)
    (for an enhancement, update the existing entry).
-3. Test locally with `cerno review --custom-workflows <exported file>` and `[W]`.
+3. Test locally: `cerno config set custom_workflows_path <exported file>`, then
+   `cerno review` and `[W]` on a matching finding.
 4. Run `pytest`, `black`, `mypy`, then open a PR against **`develop`** (see
    [CONTRIBUTING.md](../CONTRIBUTING.md)).
 

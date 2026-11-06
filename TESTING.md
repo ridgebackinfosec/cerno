@@ -12,7 +12,7 @@ tests/
 │   ├── minimal.nessus          # Minimal scan (3 plugins, 3 hosts)
 │   ├── nmap/                   # nmap XML for ingest tests (MS17-010, no hosts up)
 │   └── nxc/                    # NetExec protocol databases (smb, ldap, winrm, …)
-└── test_*.py                   # 44 test modules, roughly one per cerno_pkg module
+└── test_*.py                   # 45 test modules, roughly one per cerno_pkg module
 ```
 
 The modules group roughly as:

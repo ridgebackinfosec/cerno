@@ -117,10 +117,12 @@ Notes:
   `plan_batch`/`execute_batch` take the same predicates.
 - `list_workflow_gaps(scan_ids, severity_min)` lists findings with **no** mapped
   workflow, worst first (the complement of `query_findings(has_workflow=True)`).
-- `import_nuclei(nuclei_path, scan_name=None, min_severity=0)` ingests a nuclei
+- `import_nuclei(nuclei_path, scan_name=None, min_severity=None)` ingests a nuclei
   results file. Either shape works — a JSON array (`-je`) or newline-delimited
   records (`-jle`/`-jsonl`) — detected from the contents, not the extension.
-  `scan_name` defaults to the file stem, since nuclei output carries no scan name.
+  `scan_name` defaults to the file stem, since nuclei output carries no scan name,
+  and `min_severity` omitted falls back to the `nuclei_min_severity` config key
+  (default `0` = keep all).
   One finding is created per template; a template that matched the same host:port
   several times keeps every match's evidence in that host's plugin output.
   `get_workflow` takes the finding id as a **string**, because every id is
@@ -161,6 +163,8 @@ default:
 | Config key | MCP effect |
 |---|---|
 | `custom_workflows_path` | Merged over the bundled workflows (custom wins on conflict) for `get_workflow`, `prepare_workflow`, `list_workflow_gaps`, `query_findings(has_workflow=…)`, `plan_batch`/`execute_batch`, the `cerno://finding/{id}/workflow` resource, and the finding prompts |
+| `custom_workflows_exclusive` | `true` loads **only** `custom_workflows_path`, skipping the bundled set, for every tool in the row above. Set without a path it warns and falls back to bundled |
+| `nuclei_min_severity` | Default `min_severity` for `import_nuclei` when the argument is omitted |
 | `default_netexec_protocol` | Protocol for `generate_netexec_cmd` when `protocol` is omitted (else `smb`), and for the bare `"netexec"` batch strategy |
 | `nmap_default_profile` | NSE scripts for `generate_nmap_cmd` when `nse_option` is omitted (`nse_option=""` = no scripts); a UDP profile (SNMP/IPMI) also turns on `-sU` unless `udp` is given |
 | `default_page_size` | Default `limit` for `list_findings`, `query_findings`, `search_findings` (minimum 8; else 500). Page past it with `offset` |
@@ -459,8 +463,8 @@ you can contribute upstream.
    `workflow` (`workflow_name`, `description`, `steps[{title, commands, notes}]`,
    `references`) to polish titles and notes. Its commands are sanitized again, and
    the finding id always comes from the finding. The file never overwrites an
-   existing one, loads as-is via `--custom-workflows`, and its header carries the
-   steps for opening a PR against `develop`.
+   existing one, loads as-is once `custom_workflows_path` points at it, and its
+   header carries the steps for opening a PR against `develop`.
 
 **Co-mapping across sources (`also_covers`).** Both tools take
 `also_covers=["nessus:84502", …]`, which adds ids to the entry's `finding_id`

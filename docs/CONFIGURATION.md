@@ -40,17 +40,22 @@ settings exist. Defaults shown are the values you get on a fresh install.
 | `default_page_size` | `auto` | Items per page in lists |
 | `top_ports_count` | `5` | Top ports to show |
 | `no_color` | `False` | Disable ANSI colors |
+| `show_banner` | `True` | Show the startup banner |
+| `scan_list_wide` | `False` | `scan list` shows every severity column |
 | `color_scheme` | `light` | Terminal background: light or dark |
 | `term_override` | `(not set)` | Force terminal type |
 | **Tools & Workflows** | | |
+| `tools_enabled` | `True` | Offer tool runs during review |
 | `default_tool` | `(not set)` | Pre-select: nmap/netexec/metasploit/custom |
 | `default_netexec_protocol` | `smb` | Default: smb/ssh/ftp/etc |
 | `nmap_default_profile` | `(not set)` | NSE profile name |
 | `custom_workflows_path` | `(not set)` | Path to custom workflows YAML |
+| `custom_workflows_exclusive` | `False` | Use ONLY custom_workflows_path (skip bundled) |
 | `nuclei_templates_path` | `~/nuclei-templates` | nuclei templates directory (-ud) |
 | `nuclei_profile` | `~/nuclei-templates/profiles/pentest.yml` | nuclei profile YAML (-profile) |
 | `nuclei_user_agent` | `Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0` | User-Agent nuclei sends (-H) |
 | `nuclei_concurrency` | `10` | nuclei template concurrency (-c) |
+| `nuclei_min_severity` | `0` | Drop nuclei findings below this severity (0-4) |
 | **Logging** | | |
 | `debug_logging` | `False` | Enable DEBUG logs |
 | **NetExec Integration** | | |
@@ -164,86 +169,95 @@ Current Configuration
 Config file: ~/.cerno/config.yaml
 
                                                   Configuration Values                                                  
-┏━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┓
-┃   ┃ Setting                  ┃ Value                                ┃ Description                          ┃ Status  ┃
-┡━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━┩
-│   │ Paths                    │                                      │                                      │         │
-│   │ results_root             │ ~/.cerno/artifacts                   │ Directory for tool output            │ default │
-│   │ log_path                 │ ~/.cerno/cerno.log                   │ Log file location                    │ default │
-├───┼──────────────────────────┼──────────────────────────────────────┼──────────────────────────────────────┼─────────┤
-│   │ Review & Display         │                                      │                                      │         │
-│   │ default_page_size        │ auto                                 │ Items per page in lists              │ default │
-│   │ top_ports_count          │ 5                                    │ Top ports to show                    │ default │
-│   │ no_color                 │ False                                │ Disable ANSI colors                  │ default │
-│   │ color_scheme             │ light                                │ Terminal background: light or dark   │ default │
-│   │ term_override            │ (not set)                            │ Force terminal type                  │ default │
-├───┼──────────────────────────┼──────────────────────────────────────┼──────────────────────────────────────┼─────────┤
-│   │ Tools & Workflows        │                                      │                                      │         │
-│   │ default_tool             │ (not set)                            │ Pre-select:                          │ default │
-│   │                          │                                      │ nmap/netexec/metasploit/custom       │         │
-│   │ default_netexec_protocol │ smb                                  │ Default: smb/ssh/ftp/etc             │ default │
-│   │ nmap_default_profile     │ (not set)                            │ NSE profile name                     │ default │
-│   │ custom_workflows_path    │ (not set)                            │ Path to custom workflows YAML        │ default │
-│   │ nuclei_templates_path    │ ~/nuclei-templates                   │ nuclei templates directory (-ud)     │ default │
-│   │ nuclei_profile           │ ~/nuclei-templates/profiles/pentest. │ nuclei profile YAML (-profile)       │ default │
-│   │                          │ yml                                  │                                      │         │
-│   │ nuclei_user_agent        │ Mozilla/5.0 (Windows NT 10.0; Win64; │ User-Agent nuclei sends (-H)         │ default │
-│   │                          │ x64; rv:132.0) Gecko/20100101        │                                      │         │
-│   │                          │ Firefox/132.0                        │                                      │         │
-│   │ nuclei_concurrency       │ 10                                   │ nuclei template concurrency (-c)     │ default │
-├───┼──────────────────────────┼──────────────────────────────────────┼──────────────────────────────────────┼─────────┤
-│   │ Logging                  │                                      │                                      │         │
-│   │ debug_logging            │ False                                │ Enable DEBUG logs                    │ default │
-├───┼──────────────────────────┼──────────────────────────────────────┼──────────────────────────────────────┼─────────┤
-│   │ NetExec Integration      │                                      │                                      │         │
-│ ▶ │ nxc_workspace_path       │ /path/to/cerno/docs/demo/nxc-workspa │ NetExec workspace directory          │ changed │
-│   │                          │ ce                                   │                                      │         │
-│   │ nxc_enrichment_enabled   │ True                                 │ NetExec enrichment, cred refs and    │ default │
-│   │                          │                                      │ nxc ingest                           │         │
-├───┼──────────────────────────┼──────────────────────────────────────┼──────────────────────────────────────┼─────────┤
-│   │ Claude Assistant         │                                      │                                      │         │
-│   │ claude_assistant_enabled │ False                                │ Enable Claude Assistant              │ default │
-├───┼──────────────────────────┼──────────────────────────────────────┼──────────────────────────────────────┼─────────┤
-│   │ MCP Server               │                                      │                                      │         │
-│   │ mcp_allow_execution      │ False                                │ Allow MCP server to execute commands │ default │
-│   │ mcp_allow_mutations      │ False                                │ Allow MCP server to mutate state     │ default │
-│   │ mcp_allow_cred_injection │ False                                │ Allow execute_command to resolve     │ default │
-│   │                          │                                      │ @cred placeholders to real secrets   │         │
-│   │ mcp_allow_cred_reveal    │ False                                │ Allow the MCP reveal_credential tool │ default │
-│   │                          │                                      │ to return cleartext secrets          │         │
-│   │ mcp_exec_allowlist       │ nmap, nxc, netexec, msfconsole,      │ Binaries execute_command may run     │ default │
-│   │                          │ nuclei, curl, wget, dig, host,       │                                      │         │
-│   │                          │ nslookup, whois, ping, traceroute,   │                                      │         │
-│   │                          │ ssh-audit, sslscan, testssl*,        │                                      │         │
-│   │                          │ whatweb, showmount, rpcinfo,         │                                      │         │
-│   │                          │ snmpwalk, onesixtyone                │                                      │         │
-│   │ mcp_exec_denylist        │ rm, rmdir, dd, shred, wipefs, mkfs*, │ Binaries execute_command may never   │ default │
-│   │                          │ fdisk, sfdisk, parted, shutdown,     │ run                                  │         │
-│   │                          │ reboot, halt, poweroff               │                                      │         │
-│   │ mcp_allow_batch          │ False                                │ Allow execute_batch to run a whole   │ default │
-│   │                          │                                      │ query's commands                     │         │
-│   │ mcp_batch_concurrency    │ 3                                    │ Max commands execute_batch runs at   │ default │
-│   │                          │                                      │ once                                 │         │
-│   │ mcp_batch_timeout        │ 300                                  │ Per-command timeout (s) for          │ default │
-│   │                          │                                      │ execute_batch                        │         │
-│   │ contribution_export_dir  │ <results_root>/contributions         │ Directory for exported workflow      │ default │
-│   │                          │                                      │ contributions                        │         │
-│   │ mcp_enforce_scope        │ True                                 │ Refuse execute_command targets       │ default │
-│   │                          │                                      │ outside the scan hosts / scope       │         │
-│   │ mcp_scope_extra          │ (none)                               │ Extra in-scope CIDRs / IPs /         │ default │
-│   │                          │                                      │ hostnames for execute_command        │         │
-├───┼──────────────────────────┼──────────────────────────────────────┼──────────────────────────────────────┼─────────┤
-│   │ Proxychains4             │                                      │                                      │         │
-│   │ proxychains_enabled      │ False                                │ Route tools through proxychains4     │ default │
-│   │                          │                                      │ (SOCKS5)                             │         │
-│   │ proxychains_host         │ 127.0.0.1                            │ proxychains4 SOCKS5 proxy host       │ default │
-│   │ proxychains_port         │ 9000                                 │ proxychains4 SOCKS5 proxy port       │ default │
-├───┼──────────────────────────┼──────────────────────────────────────┼──────────────────────────────────────┼─────────┤
-│   │ Remote Scan Mode         │                                      │                                      │         │
-│   │ pivot_interface          │ (not set)                            │ Interface for remote scan HTTPS      │ default │
-│   │                          │                                      │ server                               │         │
-│   │ pivot_http_port          │ 8877                                 │ Port for remote scan HTTPS server    │ default │
-└───┴──────────────────────────┴──────────────────────────────────────┴──────────────────────────────────────┴─────────┘
+┏━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┓
+┃   ┃ Setting                    ┃ Value                               ┃ Description                         ┃ Status  ┃
+┡━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━┩
+│   │ Paths                      │                                     │                                     │         │
+│   │ results_root               │ ~/.cerno/artifacts                  │ Directory for tool output           │ default │
+│   │ log_path                   │ ~/.cerno/cerno.log                  │ Log file location                   │ default │
+├───┼────────────────────────────┼─────────────────────────────────────┼─────────────────────────────────────┼─────────┤
+│   │ Review & Display           │                                     │                                     │         │
+│   │ default_page_size          │ auto                                │ Items per page in lists             │ default │
+│   │ top_ports_count            │ 5                                   │ Top ports to show                   │ default │
+│   │ no_color                   │ False                               │ Disable ANSI colors                 │ default │
+│   │ show_banner                │ True                                │ Show the startup banner             │ default │
+│   │ scan_list_wide             │ False                               │ `scan list` shows every severity    │ default │
+│   │                            │                                     │ column                              │         │
+│   │ color_scheme               │ light                               │ Terminal background: light or dark  │ default │
+│   │ term_override              │ (not set)                           │ Force terminal type                 │ default │
+├───┼────────────────────────────┼─────────────────────────────────────┼─────────────────────────────────────┼─────────┤
+│   │ Tools & Workflows          │                                     │                                     │         │
+│   │ tools_enabled              │ True                                │ Offer tool runs during review       │ default │
+│   │ default_tool               │ (not set)                           │ Pre-select:                         │ default │
+│   │                            │                                     │ nmap/netexec/metasploit/custom      │         │
+│   │ default_netexec_protocol   │ smb                                 │ Default: smb/ssh/ftp/etc            │ default │
+│   │ nmap_default_profile       │ (not set)                           │ NSE profile name                    │ default │
+│   │ custom_workflows_path      │ (not set)                           │ Path to custom workflows YAML       │ default │
+│   │ custom_workflows_exclusive │ False                               │ Use ONLY custom_workflows_path      │ default │
+│   │                            │                                     │ (skip bundled)                      │         │
+│   │ nuclei_templates_path      │ ~/nuclei-templates                  │ nuclei templates directory (-ud)    │ default │
+│   │ nuclei_profile             │ ~/nuclei-templates/profiles/pentest │ nuclei profile YAML (-profile)      │ default │
+│   │                            │ .yml                                │                                     │         │
+│   │ nuclei_user_agent          │ Mozilla/5.0 (Windows NT 10.0;       │ User-Agent nuclei sends (-H)        │ default │
+│   │                            │ Win64; x64; rv:132.0)               │                                     │         │
+│   │                            │ Gecko/20100101 Firefox/132.0        │                                     │         │
+│   │ nuclei_concurrency         │ 10                                  │ nuclei template concurrency (-c)    │ default │
+│   │ nuclei_min_severity        │ 0                                   │ Drop nuclei findings below this     │ default │
+│   │                            │                                     │ severity (0-4)                      │         │
+├───┼────────────────────────────┼─────────────────────────────────────┼─────────────────────────────────────┼─────────┤
+│   │ Logging                    │                                     │                                     │         │
+│   │ debug_logging              │ False                               │ Enable DEBUG logs                   │ default │
+├───┼────────────────────────────┼─────────────────────────────────────┼─────────────────────────────────────┼─────────┤
+│   │ NetExec Integration        │                                     │                                     │         │
+│ ▶ │ nxc_workspace_path         │ /path/to/cerno/docs/demo/nxc-worksp │ NetExec workspace directory         │ changed │
+│   │                            │ ace                                 │                                     │         │
+│   │ nxc_enrichment_enabled     │ True                                │ NetExec enrichment, cred refs and   │ default │
+│   │                            │                                     │ nxc ingest                          │         │
+├───┼────────────────────────────┼─────────────────────────────────────┼─────────────────────────────────────┼─────────┤
+│   │ Claude Assistant           │                                     │                                     │         │
+│   │ claude_assistant_enabled   │ False                               │ Enable Claude Assistant             │ default │
+├───┼────────────────────────────┼─────────────────────────────────────┼─────────────────────────────────────┼─────────┤
+│   │ MCP Server                 │                                     │                                     │         │
+│   │ mcp_allow_execution        │ False                               │ Allow MCP server to execute         │ default │
+│   │                            │                                     │ commands                            │         │
+│   │ mcp_allow_mutations        │ False                               │ Allow MCP server to mutate state    │ default │
+│   │ mcp_allow_cred_injection   │ False                               │ Allow execute_command to resolve    │ default │
+│   │                            │                                     │ @cred placeholders to real secrets  │         │
+│   │ mcp_allow_cred_reveal      │ False                               │ Allow the MCP reveal_credential     │ default │
+│   │                            │                                     │ tool to return cleartext secrets    │         │
+│   │ mcp_exec_allowlist         │ nmap, nxc, netexec, msfconsole,     │ Binaries execute_command may run    │ default │
+│   │                            │ nuclei, curl, wget, dig, host,      │                                     │         │
+│   │                            │ nslookup, whois, ping, traceroute,  │                                     │         │
+│   │                            │ ssh-audit, sslscan, testssl*,       │                                     │         │
+│   │                            │ whatweb, showmount, rpcinfo,        │                                     │         │
+│   │                            │ snmpwalk, onesixtyone               │                                     │         │
+│   │ mcp_exec_denylist          │ rm, rmdir, dd, shred, wipefs,       │ Binaries execute_command may never  │ default │
+│   │                            │ mkfs*, fdisk, sfdisk, parted,       │ run                                 │         │
+│   │                            │ shutdown, reboot, halt, poweroff    │                                     │         │
+│   │ mcp_allow_batch            │ False                               │ Allow execute_batch to run a whole  │ default │
+│   │                            │                                     │ query's commands                    │         │
+│   │ mcp_batch_concurrency      │ 3                                   │ Max commands execute_batch runs at  │ default │
+│   │                            │                                     │ once                                │         │
+│   │ mcp_batch_timeout          │ 300                                 │ Per-command timeout (s) for         │ default │
+│   │                            │                                     │ execute_batch                       │         │
+│   │ contribution_export_dir    │ <results_root>/contributions        │ Directory for exported workflow     │ default │
+│   │                            │                                     │ contributions                       │         │
+│   │ mcp_enforce_scope          │ True                                │ Refuse execute_command targets      │ default │
+│   │                            │                                     │ outside the scan hosts / scope      │         │
+│   │ mcp_scope_extra            │ (none)                              │ Extra in-scope CIDRs / IPs /        │ default │
+│   │                            │                                     │ hostnames for execute_command       │         │
+├───┼────────────────────────────┼─────────────────────────────────────┼─────────────────────────────────────┼─────────┤
+│   │ Proxychains4               │                                     │                                     │         │
+│   │ proxychains_enabled        │ False                               │ Route tools through proxychains4    │ default │
+│   │                            │                                     │ (SOCKS5)                            │         │
+│   │ proxychains_host           │ 127.0.0.1                           │ proxychains4 SOCKS5 proxy host      │ default │
+│   │ proxychains_port           │ 9000                                │ proxychains4 SOCKS5 proxy port      │ default │
+├───┼────────────────────────────┼─────────────────────────────────────┼─────────────────────────────────────┼─────────┤
+│   │ Remote Scan Mode           │                                     │                                     │         │
+│   │ pivot_interface            │ (not set)                           │ Interface for remote scan HTTPS     │ default │
+│   │                            │                                     │ server                              │         │
+│   │ pivot_http_port            │ 8877                                │ Port for remote scan HTTPS server   │ default │
+└───┴────────────────────────────┴─────────────────────────────────────┴─────────────────────────────────────┴─────────┘
 
 1 setting(s) changed from default (marked ▶).
 Edit config: ~/.cerno/config.yaml

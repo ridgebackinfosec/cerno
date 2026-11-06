@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.4.0] - 2026-11-05
+
+### Added
+- **`cerno check`** — reports external tool availability and exits. Was `cerno review --check`, which is an action rather than a review preference and was undiscoverable in `cerno --help`.
+- **Five config keys replacing removed CLI flags.** `show_banner` (was `review -q/--quiet`), `tools_enabled` (was `review --no-tools`), `scan_list_wide` (was `scan list --wide/--details`), `custom_workflows_exclusive` (was `review --custom-workflows-only`), `nuclei_min_severity` (was `import nuclei --min-severity`). Defaults preserve the previous no-flag behaviour exactly, so an untouched `config.yaml` changes nothing. All five appear in `cerno config show` / `get` / `set` / `reset` and in `docs/CONFIGURATION.md` automatically.
+
+### Removed
+- **BREAKING: 12 CLI flag spellings, each replaced by a config key.** Config is now the single source of truth for every setting; a flag survives only where its value genuinely changes per invocation (a filename, an output channel, a one-off action). Scripts passing any of these will now fail with `No such option` rather than being silently ignored — deliberate, so the breakage is visible:
+
+  | Removed | Use instead |
+  |---------|-------------|
+  | `review --export-root` / `-r` | nothing — it had been documented as deprecated-and-ignored for releases |
+  | `review --no-tools` | `cerno config set tools_enabled false` |
+  | `review --custom-workflows` / `-w` | `cerno config set custom_workflows_path PATH` |
+  | `review --custom-workflows-only` | `custom_workflows_path` + `cerno config set custom_workflows_exclusive true` |
+  | `review --quiet` / `-q` | `cerno config set show_banner false` |
+  | `review --check` | `cerno check` |
+  | `review --proxy` / `--no-proxy` | `cerno config set proxychains_enabled true\|false` |
+  | `workflow list --custom-workflows` / `-w` | `cerno config set custom_workflows_path PATH` |
+  | `scan list --wide` / `--details` | `cerno config set scan_list_wide true` |
+  | `import nuclei --min-severity N` | `cerno config set nuclei_min_severity N` |
+
+  `cerno review` now takes no options at all. Flags that remain: `--version/-v`, `import nuclei --name`, `scan list --json`, `scan compare --severity/-s`, `demo --overwrite`, `demo --no-nxc`.
+
+### Changed
+- **MCP `import_nuclei` defaults `min_severity` from config.** The parameter is now `Optional[int] = None`; omitted, it reads `nuclei_min_severity` instead of hardcoding `0`, matching the documented MCP precedence (explicit tool arg > config > hardcoded default). An explicit `min_severity` still wins.
+- `cerno review` no longer prints `Now run "cerno review" to start reviewing findings.` when a review session ends. That line was the `--export-root` deprecation reminder, but it had been left unconditional, so it fired after every normal session.
+
+### Fixed
+- **`cerno workflow list` ignored `custom_workflows_path`.** It built a bare `WorkflowMapper()` and accepted a custom file *only* through its own `-w` flag, so the config key was silently dropped there while `cerno review` and every MCP workflow tool honoured it — the same question answered two different ways with no error. It now goes through `workflow_mapper.build_workflow_mapper(config)` like everything else, and prints which file is loaded and in which mode.
+- **Test isolation: `cerno._config_context` leaked between tests.** `main_callback` populates that contextvar on every CLI invocation and `get_current_config()` prefers it over `load_config()`, so one test's `CliRunner` run would leak its config into the next test — which then silently ignored the config file `conftest.reset_environment` had just isolated. The autouse fixture now clears it alongside the config path and `DATABASE_PATH`.
+- **`cerno scan list` reordered itself between invocations.** `Scan.get_all()` and `Scan.get_all_with_stats()` (the latter shared with MCP `list_scans`) ordered by `last_reviewed_at DESC NULLS LAST, created_at DESC`, but `created_at` is `CURRENT_TIMESTAMP` at **second** resolution and an import takes milliseconds — so scans imported in the same second tie on *both* keys, and SQLite's row order for a full tie is unspecified and follows the query plan. Any scripted import hits this, and `cerno demo`'s four scans hit it every time. Added `scan_id DESC` as the tie-break, keeping the documented newest-first intent. Found via CI: the generated `scan-list.svg` doc example drifted intermittently, failing `test (ubuntu-latest, 3.12)` on a commit whose other eleven jobs passed — the same one-off I had earlier attributed to stale bytecode and should not have set aside.
+
 ## [3.3.2] - 2026-11-05
 
 ### Changed

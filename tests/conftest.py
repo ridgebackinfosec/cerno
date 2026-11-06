@@ -136,11 +136,21 @@ def reset_environment(monkeypatch, tmp_path_factory):
     ``database.DATABASE_PATH`` is redirected the same way so no test ever opens
     (or schema-version-checks) the developer's real ``~/.cerno/cerno.db``.
     Tests that need a database still point ``DATABASE_PATH`` at their own file.
+
+    ``cerno._config_context`` is cleared too. ``main_callback`` populates that
+    contextvar on every CLI invocation and ``get_current_config()`` prefers it
+    over ``load_config()``, so without this reset one test's ``CliRunner`` run
+    leaks its config into the next test — which then silently ignores the
+    config file this fixture just isolated.
     """
     isolated_dir = tmp_path_factory.mktemp("cerno_cfg")
     isolated_config = isolated_dir / "config.yaml"
     monkeypatch.setattr("cerno_pkg.config.get_config_path", lambda: isolated_config)
     monkeypatch.setattr("cerno_pkg.database.DATABASE_PATH", isolated_dir / "cerno.db")
+
+    import cerno
+
+    cerno._config_context.set(None)
 
     # Clear database-related env vars (no longer used - config file only)
     monkeypatch.delenv("CERNO_RESULTS_ROOT", raising=False)
