@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.5.0] - 2026-11-06
+
+### Added
+- **Eight bundled nuclei verification workflows** (15 → 23), covering findings that previously had no `[W]` workflow at all: `http-missing-security-headers`, `weak-csp-detect`, `xss-deprecated-header`, `options-method`, `swagger-api`, `bigip-detect`, the certificate-inventory trio (`ssl-issuer` / `ssl-dns-names` / `wildcard-tls` on one entry), and `azure-domain-tenant`. Each states the confirm/false-positive criteria rather than only the command, so a match can be settled from the workflow alone.
+  - The active steps are fenced: `options-method` tests TRACE but defers PUT/DELETE to a tester-owned path, `swagger-api` filters state-changing verbs out of its documented-GET sweep, and `azure-domain-tenant` marks steps 1–4 as passive OSINT against Microsoft endpoints with step 5 (username validation) requiring explicit ROE approval.
+- **Alternative `nmap --script ssl-enum-ciphers` step** on the SSL/TLS versions workflow, for graded output or when `sslscan` is unavailable.
+
+### Changed
+- **`nuclei:http-missing-security-headers` now has its own workflow** instead of sharing the HSTS entry, which checks one header where the template fires a matcher per missing header. The HSTS entry instead co-maps `nuclei:weak-hsts-detect`, whose max-age threshold that workflow actually settles.
+- **`nessus:56984` (SSL/TLS Versions Supported) now also covers `nuclei:tls-version`**, so a nuclei version listing resolves to the workflow that decides whether a legacy protocol is really offered.
+- **`test_bundled_yaml_ships_a_cross_source_entry` asserts the cross-source property** rather than one hardcoded id pair. Which findings share a workflow is editorial and gets reshuffled; the old form failed on a legitimate YAML edit while still not catching a broken loader.
+
 ## [3.4.0] - 2026-11-05
 
 ### Added
