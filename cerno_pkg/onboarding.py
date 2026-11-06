@@ -156,7 +156,7 @@ def show_tour_step(step: int) -> None:
         info("Each finding has a status: Unreviewed → In Progress → Done.")
         info("")
         info("  [M] Move - move a finding to its next status")
-        info("  [D] Done list - [M] there moves a finding back to Unreviewed")
+        info("  [D] Done only - show Done findings here; [M] then moves them back")
         info("")
         info("Resume where you left off - Cerno saves your progress!")
         info("")
@@ -270,7 +270,9 @@ def show_workflow_guidance(
     content.append(" to find duplicate findings across the list\n")
     content.append("  6️⃣  Check ")
     content.append("[D]", style="cyan")
-    content.append(" for the Done list ([M] there moves back to Unreviewed)\n\n")
+    content.append(
+        " to show Done findings ([M] then moves them back to Unreviewed)\n\n"
+    )
 
     # Combine content and shortcuts
     combined = Text()
@@ -459,7 +461,7 @@ def show_additional_tips() -> None:
     content.append(" Move - Unreviewed → In Progress → Done\n")
     content.append("  • ")
     content.append("[D]", style="cyan")
-    content.append(" Done list - move findings back to Unreviewed with ")
+    content.append(" Done only - review Done findings, or move them back with ")
     content.append("[M]", style="cyan")
     content.append("\n")
     content.append("  • Sessions auto-save - resume where you left off!")

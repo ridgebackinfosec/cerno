@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.6.0] - 2026-11-06
+
+### Changed
+- **`[D]` is now a Done-only filter on the findings list, not a separate list.** Done findings stay hidden by default, but `[D]` shows them in the *same* table as everything else — severity, host counts, the `✓` Status icon, `[S]` sorting, `[N]`/`[P]` pagination — and a finding number opens the full finding view, where `[V]`, `[W]`, `[T]`, `[N]`, `[R]` and `[A]` all work and `[M]` moves the finding back to Unreviewed. `[H]`, `[O]`, `[V]`, `[E]` and `[A]` operate on the Done set too.
+  - `[I]` and `[D]` are symmetric toggles over one filter: each clears only while its own filter is active, so pressing the other switches rather than clears. `[C]` still clears both the name and status filters.
+  - Under the Done-only filter, `[M]` moves every shown finding back to Unreviewed. Narrow with `[F]` or a group filter first — this replaces the old Done list's `"1,3,5"` subset prompt, and matches how bulk moves already worked for Unreviewed and In Progress.
+  - Reopened findings are deliberately left out of the session's In Progress / Done tallies: those count work completed, not work undone.
+- **Bulk `[M]` names only the moves that are actually pending.** The confirmation used to read `"N → In Progress, M → Done"` with zeroes in it; it now lists just the non-empty destinations, so a Done-only list reads `"7 → Unreviewed"` instead of claiming a no-op.
+- **The findings-list status line always shows the Done count** alongside Unreviewed and In Progress. It is the only thing that tells you `[D]` has anything behind it.
+
+### Fixed
+- **The Status-column legend now explains `✓ Done`** (`render.py:_status_legend()`). Done findings were unreachable in this list before, so the legend only covered `○` and `◐`; under the Done-only filter every visible row carries `✓`, which would have been an unexplained glyph.
+- **The "no findings with this status" empty state names the key that set the filter** (`render.py:render_empty_state()`). It hardcoded `[I]`, which is the wrong advice on an empty Done-only list — `[I]` and `[D]` each clear only their own filter.
+
+### Removed
+- **The separate `[D]` Done list** and its private name filter (`reviewed_filter`). It was a parallel reimplementation of the findings list with no severity column, host counts, sorting or pagination, and it refused finding selection outright ("Read-only view; no finding selection here."), which is exactly what made a Done finding unreachable. `render.show_reviewed_help()` and the dead `sev_map` parameter went with it, and `tui.handle_finding_list_actions()` now returns a 5-tuple.
+
 ## [3.5.0] - 2026-11-06
 
 ### Added

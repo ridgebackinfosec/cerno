@@ -102,7 +102,11 @@ REVIEW_STATE_ICONS: dict[str, str] = {
     REVIEW_STATE_IN_PROGRESS: "◐",
     REVIEW_STATE_DONE: "✓",
 }
-"""Compact status indicators: ○ Unreviewed, ◐ In Progress, ✓ Done (Done list rows)."""
+"""Compact status indicators for the findings-list Status column and its legend.
+
+✓ Done is reachable in that list via the [D] Done-only filter, so all three
+are rendered -- see ``render._status_legend``.
+"""
 
 REVIEW_MOVE_LABELS: dict[str, str] = {
     REVIEW_STATE_IN_PROGRESS: "Move to In Progress",

@@ -321,7 +321,7 @@ Verdicts, ingestion and batch runs are driven through the [MCP server](docs/MCP.
 
 **Session Management:**
 - Auto-save/resume interrupted reviews
-- Finding status: Unreviewed → In Progress → Done, moved with `[M]`; the Done list's `[M]` moves findings back to Unreviewed
+- Finding status: Unreviewed → In Progress → Done, moved with `[M]`; Done findings are hidden until `[D]`, where `[M]` moves them back to Unreviewed
 - Session statistics (duration, per-severity breakdown)
 
 **Database:** SQLite-backed persistence at `~/.cerno/cerno.db` tracks scans, findings, sessions, tool executions, and artifacts. Cross-scan tracking enables host history queries. See [docs/DATABASE.md](docs/DATABASE.md) for schema details.
@@ -472,8 +472,9 @@ scopes, and management commands.
 - `[X]` - Clear group filter (when a comparison/overlap group is active)
 - `[E]` - Extract CVEs for all findings matching current filter
 - `[M]` - Move to next status: every filtered finding moves one step (Unreviewed → In Progress, In Progress → Done)
-- `[D]` - Done list; inside it, `[M]` moves selected findings back to Unreviewed
-- Status column: `○` Unreviewed, `◐` In Progress
+- `[D]` - Done only: show the Done findings in this same list, with every action available (sort, page, open, `[V]`/`[W]`/`[T]`/`[A]`). `[M]` there moves every shown finding back to Unreviewed
+- `[I]` - In Progress only; `[I]`/`[D]` switch between each other, and `[C]` clears both
+- Status column: `○` Unreviewed, `◐` In Progress, `✓` Done
 - `[A]` - Ask Claude — chat about the current filtered findings set
 - `[N]` / `[P]` - Next / previous page
 - `[B]` - Back to severity menu

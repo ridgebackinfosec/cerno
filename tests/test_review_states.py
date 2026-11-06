@@ -269,14 +269,21 @@ class TestSchemaVersionGuard:
 
 @pytest.mark.unit
 def test_status_legend_and_icons():
+    """The legend explains every icon the Status column can show.
+
+    Done used to be unreachable in this list, so the legend left ✓ out. Under
+    the [D] Done-only filter every visible row carries ✓, so an incomplete
+    legend is an unexplained glyph.
+    """
     from cerno_pkg.render import (
         _review_state_cell,
         _status_legend,
     )  # pyright: ignore[reportPrivateUsage]
 
-    assert _status_legend().plain == "Status: ○ Unreviewed  ◐ In Progress"
+    assert _status_legend().plain == "Status: ○ Unreviewed  ◐ In Progress  ✓ Done"
     assert _review_state_cell("unreviewed").plain == "○"
     assert _review_state_cell("in_progress").plain == "◐"
+    assert _review_state_cell("done").plain == "✓"
 
 
 @pytest.mark.unit
@@ -298,18 +305,32 @@ class TestFilterFindingCandidates:
                 Finding(plugin_id="nessus:3", review_state="in_progress"),
                 Plugin(plugin_id="nessus:3", plugin_name="SMB Signing"),
             ),
+            (
+                Finding(plugin_id="nessus:4", review_state="done"),
+                Plugin(plugin_id="nessus:4", plugin_name="SSL Expired Cert"),
+            ),
+            (
+                Finding(plugin_id="nessus:5", review_state="done"),
+                Plugin(plugin_id="nessus:5", plugin_name="SMB Null Session"),
+            ),
         ]
 
     @staticmethod
     def _ids(records):
         return [p.plugin_id for (_f, p) in records]
 
-    def test_no_filters_returns_all(self):
+    def test_no_filters_returns_the_whole_pool(self):
+        """With no status filter, every record in the pool survives.
+
+        Hiding Done findings is the *caller's* job: ``browse_file_list`` picks
+        the open or Done pool before calling this. Filtering Done out here too
+        would make the Done-only view impossible.
+        """
         from cerno_pkg.tui import filter_finding_candidates
 
         assert self._ids(
             filter_finding_candidates(self._records(), "", None, None)
-        ) == ["nessus:1", "nessus:2", "nessus:3"]
+        ) == ["nessus:1", "nessus:2", "nessus:3", "nessus:4", "nessus:5"]
 
     def test_in_progress_only(self):
         from cerno_pkg.tui import filter_finding_candidates
@@ -317,11 +338,26 @@ class TestFilterFindingCandidates:
         result = filter_finding_candidates(self._records(), "", None, "in_progress")
         assert self._ids(result) == ["nessus:2", "nessus:3"]
 
+    def test_done_only(self):
+        """[D] filters to Done exactly as [I] filters to In Progress."""
+        from cerno_pkg.tui import filter_finding_candidates
+
+        result = filter_finding_candidates(self._records(), "", None, "done")
+        assert self._ids(result) == ["nessus:4", "nessus:5"]
+
     def test_combines_with_name_filter(self):
         from cerno_pkg.tui import filter_finding_candidates
 
         result = filter_finding_candidates(self._records(), "ssl", None, "in_progress")
         assert self._ids(result) == ["nessus:2"]
+
+    def test_done_combines_with_name_filter(self):
+        """[F] narrows a Done-only list -- the workflow that replaced the
+        old Done list's "move 1,3,5 back" subset prompt."""
+        from cerno_pkg.tui import filter_finding_candidates
+
+        result = filter_finding_candidates(self._records(), "smb", None, "done")
+        assert self._ids(result) == ["nessus:5"]
 
     def test_combines_with_group_filter(self):
         from cerno_pkg.tui import filter_finding_candidates
@@ -337,6 +373,89 @@ class TestFilterFindingCandidates:
         assert self._ids(
             filter_finding_candidates(self._records(), "", group, "in_progress")
         ) == ["nessus:3"]
+
+    def test_done_combines_with_group_filter(self):
+        from cerno_pkg.tui import filter_finding_candidates
+
+        group = (
+            1,
+            {
+                "Finding nessus:4: SSL Expired Cert",
+                "Finding nessus:1: SSL Weak Cipher",
+            },
+            "desc",
+        )
+        assert self._ids(
+            filter_finding_candidates(self._records(), "", group, "done")
+        ) == ["nessus:4"]
+
+
+@pytest.mark.unit
+class TestDoneListRemoved:
+    """The separate [D] Done list is gone; [D] is a status filter now.
+
+    The old list was a parallel reimplementation of the findings list that
+    refused selection outright ("Read-only view; no finding selection here."),
+    so a Done finding could not be opened, sorted, paged, or analysed. These
+    tests pin the removal so it cannot grow back.
+    """
+
+    def test_action_result_has_no_reviewed_filter(self):
+        """The Done list's private name filter left the action-result tuple."""
+        import typing
+
+        from cerno_pkg.tui import ActionResult
+
+        assert len(typing.get_args(ActionResult)) == 5
+
+    def test_handler_takes_neither_reviewed_nor_sev_map(self):
+        """Its ``reviewed`` pool and dead ``sev_map`` parameter went with it."""
+        import inspect
+
+        from cerno_pkg.tui import handle_finding_list_actions
+
+        params = inspect.signature(handle_finding_list_actions).parameters
+        assert "reviewed" not in params
+        assert "reviewed_filter" not in params
+        assert "sev_map" not in params
+
+    def test_handler_returns_five_tuple(self):
+        """A real call returns the 5-tuple, not just an annotation that says so."""
+        from cerno_pkg.tui import handle_finding_list_actions
+
+        result = handle_finding_list_actions(
+            "b",
+            candidates=[],
+            page_items=[],
+            display=[],
+            file_filter="",
+            group_filter=None,
+            sort_mode="severity",
+            page_idx=0,
+            total_pages=1,
+        )
+        assert len(result) == 5
+        assert result[0] == "back"
+
+    def test_d_is_no_longer_swallowed_by_the_handler(self):
+        """``browse_file_list`` intercepts 'd' before the handler, like 'i'.
+
+        If the handler still claimed 'd' it would shadow the filter toggle.
+        """
+        from cerno_pkg.tui import handle_finding_list_actions
+
+        action_type, *_ = handle_finding_list_actions(
+            "d",
+            candidates=[],
+            page_items=[],
+            display=[],
+            file_filter="",
+            group_filter=None,
+            sort_mode="severity",
+            page_idx=0,
+            total_pages=1,
+        )
+        assert action_type is None
 
 
 @pytest.mark.integration

@@ -673,7 +673,7 @@ Regression tests live in `tests/test_markup_injection.py` — add a case there w
 - `Finding.update_review_state()` is the raw setter with no check; use it only to sync multi-scan siblings to an already-validated state
 - All TUI status changes go through `fs.py:move_review_state(finding, target=None)` (default = next status in the cycle)
 - UI wording/colours come from `constants.py` (`REVIEW_STATE_LABELS`, `REVIEW_STATE_STYLES`, `REVIEW_STATE_ICONS`, `REVIEW_MOVE_LABELS`): users see "status" and the verb "Move" ("Move to In Progress", "Move to Done", "Move back to Unreviewed", bulk "Move to next status") — reuse these rather than hardcoding strings
-- Finding view `[M]` moves one step; findings list `[M]` moves every filtered finding one step; `[D]` Done list → `[M]` moves Done findings back to Unreviewed (multi-select)
+- Finding view `[M]` moves one step; findings list `[M]` moves every filtered finding one step, which under the `[D]` Done-only filter means Done → Unreviewed for everything shown
 - Finding view `[R]` records a verification verdict (confirmed / false_positive / unable) via `fs.py:record_verdict()` → `models.FindingVerdict.set()`; a confirmed/false-positive verdict offers to advance the finding to Done. This is the TUI counterpart to the MCP `set_finding_verdict` tool (same append-only `finding_verdicts` history)
 - Findings list `[I]` toggles an In Progress-only status filter (`tui.py:filter_finding_candidates()` applies name/group/status filters); `[C]` clears it with the name filter
 
@@ -714,7 +714,7 @@ Set to `null` or omit for automatic detection from terminal height. Falls back t
 - **Streamlined file view**: Default to grouped format, offer post-view menu for Copy/Change format/Back (reduces 4 steps to 1-2)
 - **Smart CVE format**: Auto-selects combined format for 1-2 findings, separated for 3+ (shows preview before asking)
 - **MSF indicator**: Metasploit module indicator moved to panel subtitle for cleaner visual hierarchy
-- **Done list**: `[D]` in the findings list opens the Done list; `[M]` there moves selected findings back to Unreviewed
+- **Done-only filter**: `[D]` in the findings list is a *status filter*, not a separate view — Done findings render in the same table with every action available, and a number opens the full finding view. There is deliberately no second list: the old `[D]` Done list was a parallel reimplementation with no severity column, host counts, sorting or pagination that refused finding selection outright, which is what made a Done finding unreachable. `[I]` and `[D]` are symmetric toggles over one `status_filter` value (each clears only its own filter, so pressing the other switches), intercepted in `cerno.py:browse_file_list` **before** `tui.handle_finding_list_actions` because the filter decides which pool (`reviewed` vs `unreviewed`) the list is built from
 - **Comparison groups pager**: After `[H]` Compare, groups with >8 findings can be paged in full by answering `D` at the prompt
 
 ## Testing Practices
