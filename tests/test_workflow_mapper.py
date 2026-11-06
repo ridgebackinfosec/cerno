@@ -222,11 +222,29 @@ class TestCrossSourceWorkflowEntry:
 
 @pytest.mark.unit
 def test_bundled_yaml_ships_a_cross_source_entry():
-    """The shipped mappings must prove the cross-source key actually works."""
+    """The shipped mappings must prove the cross-source key actually works.
+
+    Asserted as a property rather than against one named pair: which findings
+    share a workflow is editorial and gets reshuffled (the HSTS entry swapped
+    `nuclei:http-missing-security-headers` for `nuclei:weak-hsts-detect` once
+    the former earned its own workflow), so pinning a pair here fails on a
+    legitimate YAML edit while still not noticing a broken loader.
+    """
+    from cerno_pkg.parsing import plugin_source
+
     mapper = WorkflowMapper()
-    nessus = mapper.get_workflow("nessus:84502")
-    nuclei = mapper.get_workflow("nuclei:http-missing-security-headers")
-    assert nessus is not None and nuclei is not None and nessus is nuclei
+    for finding_id in mapper.get_all_finding_ids():
+        workflow = mapper.get_workflow(finding_id)
+        assert workflow is not None
+        covered = [fid.strip() for fid in workflow.finding_id.split(",")]
+        if len({plugin_source(fid) for fid in covered}) < 2:
+            continue
+        # Every id on a cross-source entry must resolve to that same workflow.
+        assert all(
+            mapper.get_workflow(fid) is workflow for fid in covered
+        ), f"{workflow.finding_id}: not every covered id resolves to the entry"
+        return
+    pytest.fail("bundled workflow_mappings.yaml ships no cross-source entry")
 
 
 @pytest.mark.unit
