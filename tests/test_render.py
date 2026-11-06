@@ -84,12 +84,8 @@ def _record_console(monkeypatch, module):
     return console
 
 
-@pytest.mark.unit
-@pytest.mark.parametrize(
-    "active,label", [(False, "In Progress only"), (True, "All statuses")]
-)
-def test_actions_footer_shows_status_toggle(monkeypatch, active, label):
-    """Findings-list footer offers [I] with a label that reflects the toggle state."""
+def _footer_text(monkeypatch, **kwargs) -> str:
+    """Render the findings-list footer wide and return its text."""
     from cerno_pkg import ansi, render as render_module
 
     console = _record_console(monkeypatch, render_module)
@@ -100,15 +96,52 @@ def test_actions_footer_shows_status_toggle(monkeypatch, active, label):
         sort_mode="severity",
         can_next=False,
         can_prev=False,
-        status_filter_active=active,
+        **kwargs,
     )
-    out = console.export_text()
-    assert "[I]" in out
-    assert label in out
+    return console.export_text()
+
+
+#: (status_filter, [I] label, [D] label, [M] label) for the three-way filter.
+#: [I] and [D] are symmetric toggles: each reads "All statuses" only while its
+#: own filter is the active one, so pressing the other switches rather than
+#: clears. [M] follows the filter because Done-only moves findings *back*.
+STATUS_FILTER_LABELS = [
+    (None, "In Progress only", "Done only", "Move to next status"),
+    ("in_progress", "All statuses", "Done only", "Move to next status"),
+    ("done", "In Progress only", "All statuses", "Move back to Unreviewed"),
+]
 
 
 @pytest.mark.unit
-def test_actions_help_mentions_status_toggle(monkeypatch):
+@pytest.mark.parametrize("status_filter,i_label,d_label,m_label", STATUS_FILTER_LABELS)
+def test_actions_footer_status_filter_labels(
+    monkeypatch, status_filter, i_label, d_label, m_label
+):
+    """Footer [I]/[D]/[M] labels all reflect which status filter is active."""
+    out = _footer_text(monkeypatch, status_filter=status_filter)
+    assert "[I]" in out and "[D]" in out and "[M]" in out
+    assert i_label in out
+    assert d_label in out
+    assert m_label in out
+
+
+@pytest.mark.unit
+def test_actions_footer_done_filter_does_not_offer_next_status(monkeypatch):
+    """Done-only [M] must not claim to move findings forward.
+
+    The only transition out of Done is back to Unreviewed
+    (``constants.REVIEW_TRANSITIONS``), so the forward wording would be a lie.
+    """
+    out = _footer_text(monkeypatch, status_filter="done")
+    assert "Move to next status" not in out
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("status_filter,i_label,d_label,m_label", STATUS_FILTER_LABELS)
+def test_actions_help_status_filter_labels(
+    monkeypatch, status_filter, i_label, d_label, m_label
+):
+    """The [?] help panel describes the same three-way filter as the footer."""
     from cerno_pkg import render as render_module
 
     console = _record_console(monkeypatch, render_module)
@@ -118,8 +151,54 @@ def test_actions_help_mentions_status_toggle(monkeypatch):
         sort_mode="severity",
         can_next=False,
         can_prev=False,
+        status_filter=status_filter,
     )
-    assert "[I]" in console.export_text()
+    out = console.export_text()
+    assert "[I]" in out and "[D]" in out
+    assert i_label in out
+    assert d_label in out
+    assert m_label in out
+
+
+@pytest.mark.unit
+def test_all_completed_empty_state_points_at_the_done_filter(capsys):
+    """The 'all Done' message must send the operator to [D], not to a list view.
+
+    The separate Done list is gone; [D] is now a filter on this same list.
+    """
+    from cerno_pkg import render as render_module
+
+    render_module.render_empty_state("all_completed")
+    out = capsys.readouterr().out
+    assert "[D]" in out
+    assert "Done list" not in out
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("label,key", [("In Progress", "[I]"), ("Done", "[D]")])
+def test_status_mismatch_empty_state_names_the_key_that_clears_it(capsys, label, key):
+    """ "Turn this off" must name the key that actually set the filter.
+
+    [I] and [D] each clear only their own filter, so a hardcoded [I] is wrong
+    advice on an empty Done-only list.
+    """
+    from cerno_pkg import render as render_module
+
+    render_module.render_empty_state("status_mismatch", label)
+    out = capsys.readouterr().out
+    assert f"No {label} findings" in out
+    assert f"Press {key} to show all" in out
+
+
+@pytest.mark.unit
+def test_show_reviewed_help_is_gone():
+    """The Done-list help panel went with the Done list itself."""
+    import cerno_pkg
+    from cerno_pkg import render as render_module
+
+    assert not hasattr(render_module, "show_reviewed_help")
+    assert not hasattr(cerno_pkg, "show_reviewed_help")
+    assert "show_reviewed_help" not in cerno_pkg.__all__
 
 
 @pytest.mark.unit
