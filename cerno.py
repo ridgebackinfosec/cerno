@@ -84,11 +84,14 @@ from cerno_pkg.ansi import get_console, get_terminal_width, print_verbatim, safe
 from cerno_pkg.workflow_mapper import build_workflow_mapper
 from cerno_pkg.models import count_review_states
 from cerno_pkg.constants import (
+    REVIEW_MOVE_LABELS,
     REVIEW_STATE_DONE,
     REVIEW_STATE_IN_PROGRESS,
     REVIEW_STATE_LABELS,
     REVIEW_STATE_STYLES,
     REVIEW_STATE_UNREVIEWED,
+    REVIEW_STATES,
+    REVIEW_TRANSITIONS,
 )
 
 _console_global = get_console()
@@ -461,7 +464,8 @@ def browse_file_list(
         use_sudo: Whether sudo is available
         in_progress_total: List to track findings viewed but not marked done
         done_total: List to track findings marked done
-        is_msf_mode: If True, display severity labels in the Done list
+        is_msf_mode: If True, derive each finding's severity directory from
+            its plugin metadata rather than the single sev_dir
         has_metasploit_filter: Optional filter for metasploit plugins
         plugin_ids_filter: Optional list of specific plugin IDs to include
         severity_dirs_filter: Optional list of severity filters for a multi-severity view
@@ -481,9 +485,9 @@ def browse_file_list(
     _proxy_active = config.proxychains_enabled
 
     file_filter = ""
-    reviewed_filter = ""
     group_filter: Optional[Tuple[int, set, str]] = None
-    status_filter: Optional[str] = None  # [I] toggle: None = all open statuses
+    # [I] / [D] toggles: None = all open statuses (Done hidden)
+    status_filter: Optional[str] = None
     # Default sort: severity for mixed views (Critical at top), plugin_id for single severity
     sort_mode = "plugin_id" if severity_dir_filter is not None else "severity"
 
@@ -586,9 +590,12 @@ def browse_file_list(
             (pf, p) for (pf, p) in all_records if pf.review_state != REVIEW_STATE_DONE
         ]
 
-        # Apply name, group, and status filters
+        # Apply name, group, and status filters.
+        # The Done-only filter ([D]) draws from the Done pool; every other
+        # filter state draws from the open pool, so Done stays hidden by default.
+        pool = reviewed if status_filter == REVIEW_STATE_DONE else unreviewed
         candidates = filter_finding_candidates(
-            unreviewed, file_filter, group_filter, status_filter
+            pool, file_filter, group_filter, status_filter
         )
 
         # Unique CVE count across all filtered candidates
@@ -701,20 +708,26 @@ def browse_file_list(
 
             status_parts: list[str | Text] = []
 
-            # Open (not Done) counts by status
+            # Counts by status. The Done total is always shown, even though Done
+            # findings are hidden by default: it is the only thing that tells the
+            # operator [D] has anything behind it.
             open_unrev, open_in_prog, _done, _total = count_review_states(
                 pf for (pf, _p) in unreviewed
             )
             open_text = Text()
-            open_text.append(
-                f"{REVIEW_STATE_LABELS[REVIEW_STATE_UNREVIEWED]} {open_unrev}",
-                style=style_if_enabled(REVIEW_STATE_STYLES[REVIEW_STATE_UNREVIEWED]),
-            )
-            open_text.append(" · ")
-            open_text.append(
-                f"{REVIEW_STATE_LABELS[REVIEW_STATE_IN_PROGRESS]} {open_in_prog}",
-                style=style_if_enabled(REVIEW_STATE_STYLES[REVIEW_STATE_IN_PROGRESS]),
-            )
+            for i, (state, count) in enumerate(
+                (
+                    (REVIEW_STATE_UNREVIEWED, open_unrev),
+                    (REVIEW_STATE_IN_PROGRESS, open_in_prog),
+                    (REVIEW_STATE_DONE, len(reviewed)),
+                )
+            ):
+                if i:
+                    open_text.append(" · ")
+                open_text.append(
+                    f"{REVIEW_STATE_LABELS[state]} {count}",
+                    style=style_if_enabled(REVIEW_STATE_STYLES[state]),
+                )
             status_parts.append(open_text)
 
             # File filter with visual indicator if active
@@ -848,7 +861,10 @@ def browse_file_list(
                 # Determine context for empty state
                 if file_filter:
                     render_empty_state("filter_mismatch", file_filter)
-                elif status_filter and unreviewed:
+                elif status_filter and all_records:
+                    # Checked against all_records, not the pool: a Done-only
+                    # filter with no Done findings must report the status
+                    # mismatch rather than fall through to "all completed".
                     render_empty_state(
                         "status_mismatch", REVIEW_STATE_LABELS[status_filter]
                     )
@@ -909,7 +925,7 @@ def browse_file_list(
                 can_prev=can_prev,
                 has_claude=has_claude,
                 claude_installed=claude_installed,
-                status_filter_active=status_filter is not None,
+                status_filter=status_filter,
             )
 
             ans = Prompt.ask("Choose a finding number, or action").strip().lower()
@@ -1018,14 +1034,19 @@ def browse_file_list(
 
             continue
 
-        # Toggle In Progress-only status filter (intercept before generic action handler)
-        if ans == "i":
-            if status_filter is None:
-                status_filter = REVIEW_STATE_IN_PROGRESS
-                ok(f"Showing {REVIEW_STATE_LABELS[status_filter]} findings only.")
-            else:
+        # Status-filter toggles ([I] In Progress-only, [D] Done-only). These are
+        # intercepted before the generic action handler because changing the
+        # filter changes which pool of findings the list is built from.
+        # They are symmetric: each key clears the filter only when its own
+        # filter is the active one, so pressing the other one switches.
+        if ans in ("i", "d"):
+            wanted = REVIEW_STATE_IN_PROGRESS if ans == "i" else REVIEW_STATE_DONE
+            if status_filter == wanted:
                 status_filter = None
-                ok("Showing all statuses.")
+                ok("Showing all open statuses.")
+            else:
+                status_filter = wanted
+                ok(f"Showing {REVIEW_STATE_LABELS[wanted]} findings only.")
             page_idx = 0
             continue
 
@@ -1070,23 +1091,19 @@ def browse_file_list(
             page_items,
             display,
             file_filter,
-            reviewed_filter,
             group_filter,
             sort_mode,
             page_idx,
             total_pages,
-            reviewed,
-            None,  # sev_map no longer used
             get_counts_for,
             unique_cve_count=unique_cve_count,
             unique_host_count=unique_host_count,
-            status_filter_active=status_filter is not None,
+            status_filter=status_filter,
         )
 
         (
             action_type,
             file_filter,
-            reviewed_filter,
             group_filter,
             sort_mode,
             page_idx,
@@ -1102,23 +1119,36 @@ def browse_file_list(
         elif action_type == "help":
             continue
         elif action_type == "mark_all":
-            # Bulk move: each filtered finding moves to its next status
+            # Bulk move: each filtered finding moves one step along the cycle
+            # (constants.REVIEW_TRANSITIONS). Under the Done-only filter that
+            # step is Done → Unreviewed, so this reopens rather than advances.
             from cerno_pkg.fs import finding_label, move_review_state
             from rich.prompt import Confirm
 
-            to_start = sum(
-                1 for (f, _p) in candidates if f.review_state == REVIEW_STATE_UNREVIEWED
+            # Count the moves actually pending, keyed by destination, and name
+            # only the non-empty ones: a Done-only list claiming
+            # "0 → In Progress, 0 → Done" reads as a no-op.
+            pending = {
+                REVIEW_TRANSITIONS[state][0]: sum(
+                    1 for (f, _p) in candidates if f.review_state == state
+                )
+                for state in REVIEW_STATES
+            }
+            move_summary = ", ".join(
+                f"{count} → {REVIEW_STATE_LABELS[target]}"
+                for target, count in pending.items()
+                if count
             )
-            to_finish = sum(
-                1
-                for (f, _p) in candidates
-                if f.review_state == REVIEW_STATE_IN_PROGRESS
+            is_reopen = status_filter == REVIEW_STATE_DONE
+            action_phrase = (
+                REVIEW_MOVE_LABELS[REVIEW_STATE_UNREVIEWED].replace("Move", "move", 1)
+                if is_reopen
+                else "move to their next status"
             )
 
             try:
                 confirm_msg = (
-                    f"Move {len(candidates)} findings to their next status? "
-                    f"{to_start} → In Progress, {to_finish} → Done"
+                    f"Move {len(candidates)} findings — {action_phrase}? {move_summary}"
                 )
                 confirmed = Confirm.ask(confirm_msg, default=False)
             except KeyboardInterrupt:
@@ -1129,7 +1159,10 @@ def browse_file_list(
                 info("Bulk operation cancelled.")
                 continue
 
-            started = finished = 0
+            # Tallied per destination. Reopened findings are deliberately kept
+            # out of in_progress_total / done_total: those drive the end-of-
+            # session statistics, which count work completed, not undone.
+            moved: dict[str, int] = {}
             with Progress(
                 SpinnerColumn(style="cyan"),
                 TextColumn("[progress.description]{task.description}"),
@@ -1138,17 +1171,21 @@ def browse_file_list(
                 transient=True,
             ) as progress:
                 task = progress.add_task(
-                    "Moving findings to next status...", total=len(candidates)
+                    (
+                        "Moving findings back to Unreviewed..."
+                        if is_reopen
+                        else "Moving findings to next status..."
+                    ),
+                    total=len(candidates),
                 )
                 for finding, plugin in candidates:
                     new_state = move_review_state(finding, plugin, quiet=True)
                     if new_state is not None:
                         display_name = finding_label(finding, plugin)
+                        moved[new_state] = moved.get(new_state, 0) + 1
                         if new_state == REVIEW_STATE_DONE:
-                            finished += 1
                             done_total.append(display_name)
-                        else:
-                            started += 1
+                        elif new_state == REVIEW_STATE_IN_PROGRESS:
                             in_progress_total.append(display_name)
                         # Sync other scan instances in multi-scan mode
                         if is_multi_scan:
@@ -1156,7 +1193,15 @@ def browse_file_list(
                                 if other_f.finding_id != finding.finding_id:
                                     other_f.update_review_state(new_state)
                     progress.advance(task)
-            ok(f"Moved {started} to In Progress, {finished} to Done.")
+            if moved:
+                ok(
+                    "Moved "
+                    + ", ".join(
+                        f"{count} to {REVIEW_STATE_LABELS[state]}"
+                        for state, count in moved.items()
+                    )
+                    + "."
+                )
             continue
         elif action_type == "file_selected":
             # Determine which record was selected
