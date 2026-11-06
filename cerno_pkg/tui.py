@@ -2,7 +2,8 @@
 
 This module handles interactive menus and findings-list action handling:
 - Generic menu selectors (choose_from_list, parse_severity_selection, parse_scan_selection)
-- Findings-list actions: filtering, sorting, pagination, grouping, Done list
+- Findings-list actions: filtering, sorting, pagination, grouping
+  (the [I] / [D] status-filter toggles are handled by browse_file_list, not here)
 - Multi-line Claude Assistant input
 
 The findings-list and workflow-group browsers themselves (browse_file_list,
@@ -12,8 +13,7 @@ browse_workflow_groups) live in cerno.py.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, List, Optional, Tuple, Dict, Callable, TYPE_CHECKING
+from typing import Any, List, Optional, Tuple, Callable, TYPE_CHECKING
 
 from rich.prompt import Prompt
 from rich.text import Text
@@ -31,17 +31,10 @@ class SeveritySelection:
     workflow_selected: bool  # True if 'W' was in selection
 
 
-from .ansi import warn, info, ok, header, get_console, colorize_severity_label
+from .ansi import warn, info, ok, header, get_console
 from .fs import finding_label
-from .render import print_action_menu, show_actions_help, show_reviewed_help
-from .constants import (
-    REVIEW_MOVE_LABELS,
-    REVIEW_STATE_DONE,
-    REVIEW_STATE_ICONS,
-    REVIEW_STATE_STYLES,
-    REVIEW_STATE_UNREVIEWED,
-    VISIBLE_GROUPS,
-)
+from .render import print_action_menu, show_actions_help
+from .constants import VISIBLE_GROUPS
 
 if TYPE_CHECKING:
     from .models import Finding
@@ -52,7 +45,6 @@ _console_global = get_console()
 ActionResult = Tuple[
     Optional[str],  # action_type: None, "back", "file_selected", "help", "mark_all"
     str,  # file_filter
-    str,  # reviewed_filter
     Optional[Tuple[int, set, str]],  # group_filter: (index, plugin_ids, description)
     str,  # sort_mode
     int,  # page_idx
@@ -301,20 +293,21 @@ def handle_finding_list_actions(
     page_items: List[Any],  # List of (Finding, Plugin) tuples
     display: List[Any],  # List of (Finding, Plugin) tuples
     file_filter: str,
-    reviewed_filter: str,
     group_filter: Optional[Tuple[int, set, str]],
     sort_mode: str,
     page_idx: int,
     total_pages: int,
-    reviewed: List[Any],  # List of (Finding, Plugin) tuples
-    sev_map: Optional[Dict[Path, Path]] = None,
     get_counts_for: Optional[Callable[["Finding"], Tuple[int, str]]] = None,
     unique_cve_count: int = 0,
     unique_host_count: int = 0,
-    status_filter_active: bool = False,
+    status_filter: Optional[str] = None,
 ) -> ActionResult:
     """
     Handle findings-list actions (filter, sort, navigate, group, etc.).
+
+    The status-filter keys ``[I]`` and ``[D]`` are *not* handled here --
+    ``browse_file_list`` intercepts them before calling this, because changing
+    the filter changes which pool of findings the list is built from.
 
     Args:
         ans: User input command
@@ -322,22 +315,18 @@ def handle_finding_list_actions(
         page_items: Records on current page
         display: All records to display (after sort)
         file_filter: Current name filter string
-        reviewed_filter: Current Done-list filter string
         group_filter: Optional group filter tuple (index, set of
             "Plugin <id>: <name>" labels, description)
         sort_mode: Current sort mode ("severity", "plugin_id", "name" or "hosts")
         page_idx: Current page index
         total_pages: Total number of pages
-        reviewed: Done (Finding, Plugin) records, for the [D] Done list
-        sev_map: Map of file to severity dir (deprecated, unused)
         get_counts_for: Function to get host counts for a Finding (database-driven)
         unique_cve_count: Unique CVEs across candidates (help display only)
         unique_host_count: Unique hosts across candidates (help display only)
-        status_filter_active: Whether the [I] In Progress-only filter is on (help display only)
+        status_filter: Active review-state filter (help display only)
 
     Returns:
-        Tuple of (action_type, file_filter, reviewed_filter,
-                 group_filter, sort_mode, page_idx)
+        Tuple of (action_type, file_filter, group_filter, sort_mode, page_idx)
         action_type: None (continue), "back", "file_selected", "help", "mark_all"
     """
     if ans in ("?", "help"):
@@ -349,26 +338,26 @@ def handle_finding_list_actions(
             sort_mode=sort_mode,
             can_next=(page_idx + 1 < total_pages),
             can_prev=(page_idx > 0),
-            status_filter_active=status_filter_active,
+            status_filter=status_filter,
         )
-        return "help", file_filter, reviewed_filter, group_filter, sort_mode, page_idx
+        return "help", file_filter, group_filter, sort_mode, page_idx
 
     if ans in ("b", "back", "q"):
-        return "back", file_filter, reviewed_filter, group_filter, sort_mode, page_idx
+        return "back", file_filter, group_filter, sort_mode, page_idx
 
     if ans == "n":
         if page_idx + 1 < total_pages:
             page_idx += 1
         else:
             warn("Already at last page.")
-        return None, file_filter, reviewed_filter, group_filter, sort_mode, page_idx
+        return None, file_filter, group_filter, sort_mode, page_idx
 
     if ans == "p":
         if page_idx > 0:
             page_idx -= 1
         else:
             warn("Already at first page.")
-        return None, file_filter, reviewed_filter, group_filter, sort_mode, page_idx
+        return None, file_filter, group_filter, sort_mode, page_idx
 
     if ans == "f":
         info("Filter help: Enter any text to match finding names (case-insensitive)")
@@ -380,13 +369,13 @@ def handle_finding_list_actions(
             default="",
         ).strip()
         page_idx = 0
-        return None, file_filter, reviewed_filter, group_filter, sort_mode, page_idx
+        return None, file_filter, group_filter, sort_mode, page_idx
 
     if ans == "c":
         file_filter = ""
         page_idx = 0
         ok("Filter cleared. Showing all findings.")
-        return None, file_filter, reviewed_filter, group_filter, sort_mode, page_idx
+        return None, file_filter, group_filter, sort_mode, page_idx
 
     if ans == "s":
         # Cycle through sort modes: severity -> plugin_id -> name -> hosts -> severity
@@ -410,176 +399,13 @@ def handle_finding_list_actions(
         # No need to pre-load host counts - they're already in the database!
 
         page_idx = 0
-        return None, file_filter, reviewed_filter, group_filter, sort_mode, page_idx
+        return None, file_filter, group_filter, sort_mode, page_idx
 
     if ans == "x" and group_filter:
         group_filter = None
         ok("Cleared group filter.")
         page_idx = 0
-        return None, file_filter, reviewed_filter, group_filter, sort_mode, page_idx
-
-    if ans == "d":
-        header("Done List")
-        _console_global.print(f"Current filter: '{reviewed_filter or '*'}'")
-        filtered_reviewed = [
-            (pf, p)
-            for (pf, p) in reviewed
-            if (reviewed_filter.lower() in p.plugin_name.lower())
-        ]
-
-        done_style = REVIEW_STATE_STYLES[REVIEW_STATE_DONE]
-        done_icon = REVIEW_STATE_ICONS[REVIEW_STATE_DONE]
-        for idx, (finding, plugin) in enumerate(filtered_reviewed, 1):
-            display_name = finding_label(finding, plugin)
-            if sev_map:  # MSF mode with severity labels (deprecated)
-                # Get severity label from plugin metadata
-                sev_label = plugin.severity_label or f"Severity {plugin.severity_int}"
-                sev_col = colorize_severity_label(sev_label)
-                # Use Rich markup instead of ANSI codes for Rich console
-                _console_global.print(
-                    f"[{idx}] [{done_style}]{done_icon} {display_name}[/{done_style}]  — {sev_col}"
-                )
-            else:
-                # Use Rich markup instead of ANSI codes for Rich console
-                _console_global.print(
-                    f"[{idx}] [{done_style}]{done_icon} {display_name}[/{done_style}]"
-                )
-
-        print_action_menu(
-            [
-                ("?", "Help"),
-                ("M", REVIEW_MOVE_LABELS[REVIEW_STATE_UNREVIEWED]),
-                ("F", "Filter"),
-                ("C", "Clear filter"),
-                ("B", "Back"),
-            ]
-        )
-
-        try:
-            choice = Prompt.ask("Action or [B]ack").strip().lower()
-        except KeyboardInterrupt:
-            warn("\nInterrupted — returning.")
-            return (
-                None,
-                file_filter,
-                reviewed_filter,
-                group_filter,
-                sort_mode,
-                page_idx,
-            )
-
-        if choice in ("?", "help"):
-            show_reviewed_help()
-            return (
-                None,
-                file_filter,
-                reviewed_filter,
-                group_filter,
-                sort_mode,
-                page_idx,
-            )
-        if choice == "m":
-            # Move one or more Done findings back to Unreviewed
-            if not filtered_reviewed:
-                warn("No Done findings to move back.")
-                return (
-                    None,
-                    file_filter,
-                    reviewed_filter,
-                    group_filter,
-                    sort_mode,
-                    page_idx,
-                )
-
-            try:
-                selection = Prompt.ask(
-                    "Finding number(s) to move back to Unreviewed (e.g. 1 or 1,3,5) or [A]ll"
-                ).strip()
-            except KeyboardInterrupt:
-                return (
-                    None,
-                    file_filter,
-                    reviewed_filter,
-                    group_filter,
-                    sort_mode,
-                    page_idx,
-                )
-
-            if selection.lower() == "a":
-                files_to_move = filtered_reviewed
-            else:
-                try:
-                    indices = [int(i.strip()) for i in selection.split(",")]
-                    files_to_move = [
-                        filtered_reviewed[i - 1]
-                        for i in indices
-                        if 1 <= i <= len(filtered_reviewed)
-                    ]
-                except (ValueError, IndexError):
-                    warn("Invalid selection.")
-                    return (
-                        None,
-                        file_filter,
-                        reviewed_filter,
-                        group_filter,
-                        sort_mode,
-                        page_idx,
-                    )
-
-            # Move each finding back (lists will be regenerated on next loop)
-            from .fs import move_review_state
-
-            for finding, plugin in files_to_move:
-                move_review_state(finding, plugin, target=REVIEW_STATE_UNREVIEWED)
-
-            return (
-                None,
-                file_filter,
-                reviewed_filter,
-                group_filter,
-                sort_mode,
-                page_idx,
-            )
-        if choice == "f":
-            info(
-                "Filter help: Enter any text to match finding names (case-insensitive)"
-            )
-            info(
-                "Examples: 'apache' matches 'Apache HTTP Server', 'ssl' matches 'SSL Certificate'"
-            )
-            reviewed_filter = Prompt.ask(
-                "Enter substring to filter by (e.g., 'apache', 'ssl', 'windows') or press Enter for none",
-                default="",
-            ).strip()
-            return (
-                None,
-                file_filter,
-                reviewed_filter,
-                group_filter,
-                sort_mode,
-                page_idx,
-            )
-        if choice == "c":
-            reviewed_filter = ""
-            return (
-                None,
-                file_filter,
-                reviewed_filter,
-                group_filter,
-                sort_mode,
-                page_idx,
-            )
-        if choice in ("b", "back", "q"):
-            return (
-                None,
-                file_filter,
-                reviewed_filter,
-                group_filter,
-                sort_mode,
-                page_idx,
-            )
-        warn("Read-only view; no finding selection here.")
-        return None, file_filter, reviewed_filter, group_filter, sort_mode, page_idx
+        return None, file_filter, group_filter, sort_mode, page_idx
 
     if ans == "e":
         if not candidates:
@@ -587,7 +413,6 @@ def handle_finding_list_actions(
             return (
                 None,
                 file_filter,
-                reviewed_filter,
                 group_filter,
                 sort_mode,
                 page_idx,
@@ -599,7 +424,7 @@ def handle_finding_list_actions(
 
         plugin_info_list = [(p.plugin_id, p.plugin_name) for _pf, p in candidates]
         bulk_extract_cves_for_plugins(plugin_info_list)
-        return None, file_filter, reviewed_filter, group_filter, sort_mode, page_idx
+        return None, file_filter, group_filter, sort_mode, page_idx
 
     if ans == "m":
         if not candidates:
@@ -607,7 +432,6 @@ def handle_finding_list_actions(
             return (
                 None,
                 file_filter,
-                reviewed_filter,
                 group_filter,
                 sort_mode,
                 page_idx,
@@ -618,7 +442,6 @@ def handle_finding_list_actions(
         return (
             "mark_all",
             file_filter,
-            reviewed_filter,
             group_filter,
             sort_mode,
             page_idx,
@@ -630,7 +453,6 @@ def handle_finding_list_actions(
             return (
                 None,
                 file_filter,
-                reviewed_filter,
                 group_filter,
                 sort_mode,
                 page_idx,
@@ -662,7 +484,7 @@ def handle_finding_list_actions(
                     ok(f"Applied group filter #{idx+1} ({len(groups[idx])} findings).")
                     page_idx = 0
 
-        return None, file_filter, reviewed_filter, group_filter, sort_mode, page_idx
+        return None, file_filter, group_filter, sort_mode, page_idx
 
     if ans == "o":
         if not candidates:
@@ -670,7 +492,6 @@ def handle_finding_list_actions(
             return (
                 None,
                 file_filter,
-                reviewed_filter,
                 group_filter,
                 sort_mode,
                 page_idx,
@@ -714,7 +535,7 @@ def handle_finding_list_actions(
                     )
                     page_idx = 0
 
-        return None, file_filter, reviewed_filter, group_filter, sort_mode, page_idx
+        return None, file_filter, group_filter, sort_mode, page_idx
 
     # File selection logic
     if ans == "":
@@ -723,7 +544,6 @@ def handle_finding_list_actions(
             return (
                 None,
                 file_filter,
-                reviewed_filter,
                 group_filter,
                 sort_mode,
                 page_idx,
@@ -731,7 +551,6 @@ def handle_finding_list_actions(
         return (
             "file_selected",
             file_filter,
-            reviewed_filter,
             group_filter,
             sort_mode,
             page_idx,
@@ -739,17 +558,16 @@ def handle_finding_list_actions(
 
     if not ans.isdigit():
         warn("Please select a finding by number, or use actions above.")
-        return None, file_filter, reviewed_filter, group_filter, sort_mode, page_idx
+        return None, file_filter, group_filter, sort_mode, page_idx
 
     global_idx = int(ans) - 1
     if global_idx < 0 or global_idx >= len(display):
         warn("Invalid index.")
-        return None, file_filter, reviewed_filter, group_filter, sort_mode, page_idx
+        return None, file_filter, group_filter, sort_mode, page_idx
 
     return (
         "file_selected",
         file_filter,
-        reviewed_filter,
         group_filter,
         sort_mode,
         page_idx,

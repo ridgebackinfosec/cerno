@@ -39,6 +39,7 @@ from .constants import (
     REVIEW_STATE_LABELS,
     REVIEW_STATE_STYLES,
     REVIEW_STATE_UNREVIEWED,
+    REVIEW_STATES,
     REVIEW_TRANSITIONS,
     SEVERITY_COLORS,
     VERDICT_ICONS,
@@ -346,16 +347,21 @@ def render_empty_state(context: str, filter_text: str = "") -> None:
         ok("\n✓ All findings are Done!")
         info("")
         info("Next steps:")
-        info("  • Press [D] to open the Done list")
-        info("  • In the Done list, [M] moves findings back to Unreviewed")
+        info("  • Press [D] to show the Done findings in this list")
+        info("  • With the Done filter on, [M] moves them back to Unreviewed")
         info("  • All normal menu actions are available below")
         info("")
 
     elif context == "status_mismatch":
+        # [I] and [D] each clear only their own filter, so name the one that
+        # set this view rather than always pointing at [I].
+        toggle_key = (
+            "[D]" if filter_text == REVIEW_STATE_LABELS[REVIEW_STATE_DONE] else "[I]"
+        )
         info(f"\nNo {filter_text} findings in this view.")
         info("")
         info("Suggestions:")
-        info("  • Press [I] to show all statuses")
+        info(f"  • Press {toggle_key} to show all statuses")
         info("  • Press [C] to clear all filters")
         info("")
 
@@ -911,6 +917,45 @@ _SORT_LABELS = {
 }
 
 
+#: Label shown by [I] / [D] when pressing it clears the status filter.
+_ALL_STATUSES_LABEL = "All statuses"
+
+
+def _status_filter_labels(status_filter: Optional[str]) -> tuple[str, str, str]:
+    """Return the ([I], [D], [M]) findings-list labels for a status filter.
+
+    ``[I]`` and ``[D]`` are symmetric toggles over one ``status_filter`` value:
+    each reads "All statuses" only while *its own* filter is the active one, so
+    pressing the other one switches rather than clears.
+
+    ``[M]`` follows the filter because the only transition out of Done is back
+    to Unreviewed (``constants.REVIEW_TRANSITIONS``) -- the forward "next
+    status" wording would be wrong for a Done-only list.
+
+    Args:
+        status_filter: Active review state filter, or None for all open statuses
+
+    Returns:
+        Tuple of (in-progress toggle label, done toggle label, bulk move label)
+    """
+    in_progress_label = (
+        _ALL_STATUSES_LABEL
+        if status_filter == REVIEW_STATE_IN_PROGRESS
+        else f"{REVIEW_STATE_LABELS[REVIEW_STATE_IN_PROGRESS]} only"
+    )
+    done_label = (
+        _ALL_STATUSES_LABEL
+        if status_filter == REVIEW_STATE_DONE
+        else f"{REVIEW_STATE_LABELS[REVIEW_STATE_DONE]} only"
+    )
+    move_label = (
+        REVIEW_MOVE_LABELS[REVIEW_STATE_UNREVIEWED]
+        if status_filter == REVIEW_STATE_DONE
+        else "Move to next status"
+    )
+    return in_progress_label, done_label, move_label
+
+
 @log_timing
 def render_actions_footer(
     *,
@@ -923,7 +968,7 @@ def render_actions_footer(
     can_prev: bool,
     has_claude: bool = False,
     claude_installed: bool = False,
-    status_filter_active: bool = False,
+    status_filter: Optional[str] = None,
 ) -> None:
     """Render action footer with responsive layout based on terminal width.
 
@@ -940,9 +985,12 @@ def render_actions_footer(
         can_prev: Whether previous page is available
         has_claude: Whether Claude Assistant is available and enabled
         claude_installed: Whether `claude` is on PATH (shows [A] for the opt-in prompt)
-        status_filter_active: Whether the [I] In Progress-only filter is on
+        status_filter: Active review-state filter ("in_progress" / "done"), or
+            None for all open statuses; sets the [I], [D] and [M] labels
     """
     from .ansi import get_terminal_width
+
+    in_progress_label, done_label, move_label = _status_filter_labels(status_filter)
 
     # Row 1: Navigation basics + filtering controls
     left_row1 = join_actions_texts(
@@ -957,9 +1005,7 @@ def render_actions_footer(
     right_row1 = join_actions_texts(
         [
             key_text("F", "Filter"),
-            key_text(
-                "I", "All statuses" if status_filter_active else "In Progress only"
-            ),
+            key_text("I", in_progress_label),
             key_text("C", "Clear filter"),
             key_text("S", f"Sort: {sort_label}"),
         ]
@@ -968,7 +1014,7 @@ def render_actions_footer(
     # Row 2: Analysis + pagination
     left_row2 = join_actions_texts(
         [
-            key_text("D", "Done list"),
+            key_text("D", done_label),
             key_text("H", "Compare"),
             key_text("O", "Overlapping"),
             key_text("V", f"View hosts ({unique_host_count})"),
@@ -986,7 +1032,7 @@ def render_actions_footer(
     left_row3 = join_actions_texts(
         [
             key_text("E", f"CVEs ({unique_cve_count})"),
-            key_text("M", f"Move to next status ({candidates_count})"),
+            key_text("M", f"{move_label} ({candidates_count})"),
         ]
     )
     right_row3_items = []
@@ -1376,7 +1422,7 @@ def show_actions_help(
     sort_mode: str,
     can_next: bool,
     can_prev: bool,
-    status_filter_active: bool = False,
+    status_filter: Optional[str] = None,
 ) -> None:
     """Render a categorized help panel for the main/MSF findings lists.
 
@@ -1388,8 +1434,10 @@ def show_actions_help(
         sort_mode: Current sort mode ("severity", "plugin_id", "name" or "hosts")
         can_next: Whether next page is available
         can_prev: Whether previous page is available
-        status_filter_active: Whether the [I] In Progress-only filter is on
+        status_filter: Active review-state filter ("in_progress" / "done"), or
+            None for all open statuses; sets the [I], [D] and [M] labels
     """
+    in_progress_label, done_label, move_label = _status_filter_labels(status_filter)
     table = Table.grid(padding=(0, 1))
     table.add_row(
         Text("Navigation", style="bold"),
@@ -1404,9 +1452,9 @@ def show_actions_help(
         key_text(
             "I",
             (
-                "All statuses - Turn off the In Progress-only filter"
-                if status_filter_active
-                else "In Progress only - Show only In Progress findings"
+                f"{in_progress_label} - Turn off the In Progress-only filter"
+                if status_filter == REVIEW_STATE_IN_PROGRESS
+                else f"{in_progress_label} - Show only In Progress findings"
             ),
         ),
         key_text("C", "Clear filter - Remove active name and status filters"),
@@ -1419,16 +1467,20 @@ def show_actions_help(
             "Cycle severity → finding ID → name → host count",
         ),
     )
+    move_detail = (
+        "Done → Unreviewed, reopening every finding shown"
+        if status_filter == REVIEW_STATE_DONE
+        else "Unreviewed → In Progress, In Progress → Done"
+    )
+    done_detail = (
+        f"{done_label} - Turn off the Done-only filter"
+        if status_filter == REVIEW_STATE_DONE
+        else f"{done_label} - Show Done findings in this list, with every action available"
+    )
     table.add_row(
         Text("Status", style="bold"),
-        key_text(
-            "M",
-            f"Move to next status ({candidates_count}) - Unreviewed → In Progress, In Progress → Done",
-        ),
-        key_text(
-            "D",
-            "Done list - Findings with Done status; [M] there moves them back to Unreviewed",
-        ),
+        key_text("M", f"{move_label} ({candidates_count}) - {move_detail}"),
+        key_text("D", done_detail),
     )
     table.add_row(
         Text("Analysis", style="bold"),
@@ -1448,31 +1500,6 @@ def show_actions_help(
     if group_applied:
         table.add_row(Text("Groups", style="bold"), key_text("X", "Clear group filter"))
     panel = Panel(table, title="Actions", border_style=style_if_enabled("cyan"))
-    _console_global.print(panel)
-
-
-def show_reviewed_help() -> None:
-    """Render help panel for the Done list."""
-    table = Table.grid(padding=(0, 1))
-    table.add_column(style=style_if_enabled("cyan"), no_wrap=True)
-    table.add_column()
-
-    table.add_row("Purpose", "Findings with Done status")
-    table.add_row(
-        "Move", f"Press [M] to {REVIEW_MOVE_LABELS[REVIEW_STATE_UNREVIEWED].lower()}"
-    )
-    table.add_row("Filter", "Press [F] to filter by finding name")
-    table.add_row("", "")
-    table.add_row(
-        "Note",
-        "This is a management view - select findings in main list to work with them",
-    )
-
-    panel = Panel(
-        table,
-        title="[bold cyan]Done List Help[/]",
-        border_style=style_if_enabled("cyan"),
-    )
     _console_global.print(panel)
 
 
@@ -1641,10 +1668,13 @@ def review_count_cells(counts: tuple[int, int, int, int]) -> list[Text]:
 
 
 def _status_legend() -> Text:
-    """Dim one-line legend for the findings-list Status icons."""
+    """Dim one-line legend for the findings-list Status icons.
+
+    Covers Done too: under the [D] Done-only filter every visible row carries
+    the ✓ icon, so leaving it out of the legend leaves a glyph unexplained.
+    """
     legend = Text("Status: ", style=style_if_enabled("dim"))
-    states = (REVIEW_STATE_UNREVIEWED, REVIEW_STATE_IN_PROGRESS)
-    for i, state in enumerate(states):
+    for i, state in enumerate(REVIEW_STATES):
         if i:
             legend.append("  ")
         legend.append(
