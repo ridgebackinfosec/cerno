@@ -264,7 +264,7 @@ workflows:
       - "https://www.tenable.com/plugins/nessus/35297"
       - "https://www.tenable.com/plugins/nessus/91263"
 
-  - finding_id: "nessus:56984"
+  - finding_id: "nessus:56984,nuclei:tls-version"
     workflow_name: "SSL / TLS Versions Supported"
     description: "Enumerate which SSL/TLS protocol versions the service accepts and flag any legacy versions (SSLv2/SSLv3/TLS 1.0/TLS 1.1)."
     steps:
@@ -273,8 +273,15 @@ workflows:
           - "sslscan --no-colour <TARGET>:<PORT>"
         notes: "Read the 'SSL/TLS Protocols' block. Any of SSLv2, SSLv3, TLSv1.0 or TLSv1.1 showing 'enabled' is a reportable legacy-protocol issue (see the deprecated-protocol plugins). TLSv1.2/TLSv1.3 only = informational. Note whether TLSv1.3 is missing - worth mentioning, not a vuln on its own. The same output also covers cipher suites, key-exchange groups and the leaf certificate, so one run serves the related TLS inventory plugins."
 
+      - title: "Alternative: enumerate protocols and grade ciphers with nmap"
+        commands:
+          - "nmap -Pn -p <PORT> --script ssl-enum-ciphers <TARGET>"
+        notes: "Use when sslscan is unavailable or for graded output. Each protocol section lists its ciphers with a letter grade; any SSLv3/TLSv1.0/TLSv1.1 section, or a cipher graded below A (CBC, 3DES, RC4, non-PFS), is reportable. TLSv1.2/1.3 only with 'least strength: A' = nothing to report. For nuclei tls-version (which just lists the versions seen), this settles whether a legacy version is actually offered."
+
     references:
       - "https://www.tenable.com/plugins/nessus/56984"
+      - "https://github.com/projectdiscovery/nuclei-templates/blob/main/ssl/tls-version.yaml"
+      - "https://nmap.org/nsedoc/scripts/ssl-enum-ciphers.html"
 
   - finding_id: "nessus:95631"
     workflow_name: "SSL Certificate Signed Using Weak Hashing Algorithm (Known CA)"
@@ -288,19 +295,19 @@ workflows:
     references:
       - "https://www.tenable.com/plugins/nessus/95631"
 
-  - finding_id: "nessus:142960,nessus:84502,nuclei:http-missing-security-headers"
+  - finding_id: "nessus:142960,nessus:84502,nuclei:weak-hsts-detect"
     workflow_name: "HSTS Missing From HTTPS Server (RFC 6797)"
     description: "Confirm whether HTTPS responses carry a Strict-Transport-Security header with an adequate max-age."
     steps:
       - title: "Check the HTTPS response for a Strict-Transport-Security header"
         commands:
           - "curl -sk --max-time 15 -D - https://<TARGET>:<PORT>/ | grep -i '^strict-transport-security'"
-        notes: "No output = no HSTS header = confirmed. Also flag a header with max-age below 31536000 (1 year) or max-age=0. A header present with max-age >= 31536000 = false positive. Use a GET (as above) rather than -I, since some servers only add HSTS to GET responses. Check every HTTPS port Nessus listed - CDN alternate ports (2053/2083/2087/2096/8443) can behave differently from 443. An error or 404 response without HSTS still counts: browsers honour HSTS on any response sent over HTTPS. Reached from a nuclei finding: http-missing-security-headers fires on several headers at once, so read its matcher names first - this workflow only settles the strict-transport-security one, and a matcher naming a different header is a separate finding."
+        notes: "No output = no HSTS header = confirmed. Also flag a header with max-age below 31536000 (1 year) or max-age=0. A header present with max-age >= 31536000 = false positive. Use a GET (as above) rather than -I, since some servers only add HSTS to GET responses. Check every HTTPS port Nessus listed - CDN alternate ports (2053/2083/2087/2096/8443) can behave differently from 443. An error or 404 response without HSTS still counts: browsers honour HSTS on any response sent over HTTPS. Reached from nuclei weak-hsts-detect: the template fires on a short max-age (and on a missing includeSubDomains), so the max-age threshold above settles it; note whether preload is present. The nuclei http-missing-security-headers template has its own workflow covering every header it checks."
 
     references:
       - "https://www.tenable.com/plugins/nessus/142960"
       - "https://www.tenable.com/plugins/nessus/84502"
-      - "https://github.com/projectdiscovery/nuclei-templates/blob/main/http/misconfiguration/http-missing-security-headers.yaml"
+      - "https://github.com/projectdiscovery/nuclei-templates/blob/main/http/misconfiguration/weak-hsts-detect.yaml"
       - "https://datatracker.ietf.org/doc/html/rfc6797"
 
   - finding_id: "nessus:298485"
@@ -346,3 +353,180 @@ workflows:
       - "https://www.tenable.com/plugins/nessus/304671"
       - "https://nvd.nist.gov/vuln/detail/CVE-2026-1642"
       - "https://endoflife.date/nginx"
+
+  # ---------------------------------------------------------------------------
+  # Added from Cerno-verified nuclei findings (FieldNurse engagement, 2026-11).
+  # ---------------------------------------------------------------------------
+
+  - finding_id: "nuclei:http-missing-security-headers"
+    workflow_name: "HTTP Missing Security Headers"
+    description: "Confirm which security response headers are absent. The nuclei template fires one matcher per missing header, so verify every header it named, not just HSTS."
+    steps:
+      - title: "Pull the full response header set"
+        commands:
+          - "curl -sk --max-time 15 -D - -o /dev/null https://<TARGET>:<PORT>/"
+        notes: "Compare against the matcher names in the nuclei output. Check for: Strict-Transport-Security, Content-Security-Policy, X-Frame-Options (or CSP frame-ancestors), X-Content-Type-Options, Referrer-Policy, Permissions-Policy, Cross-Origin-Opener-Policy, Cross-Origin-Embedder-Policy, Cross-Origin-Resource-Policy, X-Permitted-Cross-Domain-Policies. Each matcher whose header is absent = confirmed. Use GET, not -I: some servers and WAFs only add headers to GET responses. If the root redirects, also check the final landing page (add -L) and an authenticated page if one is in scope."
+
+      - title: "Spot-check a second path and an API response"
+        commands:
+          - "curl -sk --max-time 15 -D - -o /dev/null https://<TARGET>:<PORT>/cerno-nonexistent-8f3a1c"
+        notes: "Headers set by application code (not the web server or load balancer) often disappear on error pages and API endpoints. A header missing only on some responses is still worth reporting, with the affected paths named. Settle HSTS specifically with the 'HSTS Missing From HTTPS Server' workflow."
+
+    references:
+      - "https://github.com/projectdiscovery/nuclei-templates/blob/main/http/misconfiguration/http-missing-security-headers.yaml"
+      - "https://owasp.org/www-project-secure-headers/"
+
+  - finding_id: "nuclei:weak-csp-detect"
+    workflow_name: "Weak Content Security Policy"
+    description: "Read the Content-Security-Policy header and decide whether it actually restricts script execution."
+    steps:
+      - title: "Extract the CSP header(s)"
+        commands:
+          - "curl -sk --max-time 15 -D - -o /dev/null https://<TARGET>:<PORT>/ | grep -iE '^content-security-policy(-report-only)?:'"
+        notes: "Confirmed weak if any of: no default-src and no script-src (the policy gives no XSS protection, e.g. a CSP that is only 'frame-ancestors'); script-src or default-src containing 'unsafe-inline' (without a nonce/hash), 'unsafe-eval', '*', 'data:' or 'https:'; no object-src (falls back to default-src) or no base-uri. A Content-Security-Policy-Report-Only header enforces nothing. A policy with a strict script-src (nonces/hashes or 'self' only) plus object-src 'none' and base-uri = false positive."
+
+      - title: "Optional: grade the policy"
+        commands:
+          - "Paste the policy into https://csp-evaluator.withgoogle.com/"
+        notes: "Use the evaluator output as supporting evidence; do not paste customer-confidential policies into third-party sites without approval."
+
+    references:
+      - "https://github.com/projectdiscovery/nuclei-templates/blob/main/http/misconfiguration/weak-csp-detect.yaml"
+      - "https://cheatsheetseries.owasp.org/cheatsheets/Content_Security_Policy_Cheat_Sheet.html"
+
+  - finding_id: "nuclei:xss-deprecated-header"
+    workflow_name: "Deprecated X-XSS-Protection Header"
+    description: "Confirm the response still sends the deprecated X-XSS-Protection header."
+    steps:
+      - title: "Check for the X-XSS-Protection header"
+        commands:
+          - "curl -sk --max-time 15 -D - -o /dev/null https://<TARGET>:<PORT>/ | grep -i '^x-xss-protection'"
+        notes: "Any value present = confirmed. '1; mode=block' or '1' is the case to report: modern browsers ignore the header, and in legacy browsers the XSS auditor it enables has been abused for cross-site information leaks. '0' is the recommended value if the header is kept at all. No output = false positive. Recommend removing it (or setting 0) and relying on a strict Content-Security-Policy instead."
+
+    references:
+      - "https://github.com/projectdiscovery/nuclei-templates/blob/main/http/misconfiguration/xss-deprecated-header.yaml"
+      - "https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/X-XSS-Protection"
+
+  - finding_id: "nuclei:options-method"
+    workflow_name: "Verify Advertised HTTP Methods and TRACE Handling"
+    description: "Confirm which methods the server advertises via OPTIONS, then test whether TRACE is actually honored (Cross-Site Tracing)."
+    steps:
+      - title: "List advertised methods"
+        commands:
+          - "curl -sk --max-time 15 -i -X OPTIONS https://<TARGET>:<PORT>/"
+        notes: "Check the Allow / Public response headers for the advertised methods. Note PUT, DELETE, TRACE, PROPFIND or other WebDAV verbs."
+
+      - title: "Test whether TRACE echoes the request"
+        commands:
+          - "curl -sk --max-time 15 -i -X TRACE -H 'X-Trace-Test: cerno' https://<TARGET>:<PORT>/"
+        notes: "Vulnerable (XST) only if the response is 200 with Content-Type message/http and the body echoes the request, including the X-Trace-Test header. A 405/501 response or no echo means TRACE is merely advertised (e.g. IIS returns 501) - report as informational at most. Test advertised PUT/DELETE separately and only against a harmless, tester-owned path."
+
+    references:
+      - "https://github.com/projectdiscovery/nuclei-templates/blob/main/http/miscellaneous/options-method.yaml"
+      - "https://owasp.org/www-community/attacks/Cross_Site_Tracing"
+
+  - finding_id: "nuclei:swagger-api"
+    workflow_name: "Public Swagger / OpenAPI Documentation"
+    description: "Confirm the API documentation and machine-readable spec are retrievable without authentication, then use the spec to test whether the documented endpoints enforce authentication."
+    steps:
+      - title: "Retrieve the Swagger UI and common spec locations"
+        commands:
+          - "curl -sk --max-time 15 -o /dev/null -w '%{http_code} %{content_type} %{size_download} %{url}\\n' https://<TARGET>:<PORT>/swagger/index.html"
+          - "curl -sk --max-time 15 -o /dev/null -w '%{http_code} %{content_type} %{size_download} %{url}\\n' https://<TARGET>:<PORT>/swagger/v1/swagger.json"
+          - "curl -sk --max-time 15 -o /dev/null -w '%{http_code} %{content_type} %{size_download} %{url}\\n' https://<TARGET>:<PORT>/v2/api-docs"
+          - "curl -sk --max-time 15 -o /dev/null -w '%{http_code} %{content_type} %{size_download} %{url}\\n' https://<TARGET>:<PORT>/openapi.json"
+        notes: "Confirmed if a spec returns 200 with a JSON content type and a non-trivial size. The UI page alone (HTML) is weaker evidence - the spec URL is usually referenced in the page source. A catch-all site may return 200 for every path; compare against a random path before calling it."
+
+      - title: "Summarize the spec"
+        commands:
+          - "curl -sk --max-time 30 https://<TARGET>:<PORT>/swagger/v1/swagger.json -o swagger.json"
+          - "jq '{title: .info.title, version: .info.version, paths: (.paths | length), security: .security, schemes: .components.securitySchemes}' swagger.json"
+          - "jq -r '.paths | to_entries[] | .key as $p | .value | keys[] | \"\\(ascii_upcase) \\($p)\"' swagger.json"
+        notes: "Record the API title, path count and declared auth scheme. Flag sensitive operations for the report (admin, impersonation, user/patient/payment data, password reset, file upload/download)."
+
+      - title: "Test documented GET endpoints without authentication"
+        commands:
+          - "jq -r '.paths | to_entries[] | select(.value.get) | .key' swagger.json | sed -E 's/\\{[^}]+\\}/1/g' | while read -r p; do curl -sk --max-time 15 -o /dev/null -w \"%{http_code} %{size_download} %{url}\\n\" \"https://<TARGET>:<PORT>$p\"; sleep 0.2; done"
+        notes: "401/403 = auth enforced. 200 on an endpoint the spec marks as secured = authentication not enforced; fetch and review those bodies to judge sensitivity. Before running, remove any GET path whose name implies a state change (Delete, Disable, Enable, Reset, Update, Submit, Impersonate, Process, Remove, Send) - GETs are not always safe. Do not send POST/PUT/DELETE without explicit approval. Data exposed this way is often a separate, higher-severity finding than the Swagger exposure itself."
+
+    references:
+      - "https://github.com/projectdiscovery/nuclei-templates/blob/main/http/exposures/apis/swagger-api.yaml"
+      - "https://owasp.org/API-Security/editions/2023/en/0xa9-improper-inventory-management/"
+
+  - finding_id: "nuclei:bigip-detect"
+    workflow_name: "F5 BIG-IP Detection and Persistence Cookie Disclosure"
+    description: "Confirm an F5 BIG-IP sits in front of the service and check whether its persistence cookie leaks internal pool member addresses."
+    steps:
+      - title: "Confirm the BIG-IP and capture its persistence cookie"
+        commands:
+          - "curl -sk --max-time 15 -D - -o /dev/null https://<TARGET>:<PORT>/ | grep -iE '^(set-cookie: *BIGipServer|server)'"
+          - "curl -sk --max-time 15 -D - -o /dev/null https://<TARGET>:<PORT>/my.policy | grep -iE '^(HTTP|set-cookie|location)'"
+        notes: "A BIGipServer<pool> cookie (or /my.policy answering for APM) confirms the BIG-IP. Inspect the cookie value: a plain numeric form such as 1677787402.36895.0000 (IPv4), a 'rd<N>o' route-domain form or a 'vi<hex>' IPv6 form is unencrypted and decodable. A value beginning with '!' is encrypted - no disclosure."
+
+      - title: "Decode an unencrypted cookie"
+        commands:
+          - "nmap -Pn -p <PORT> --script http-bigip-cookie --script-args http-bigip-cookie.path=/ <TARGET>"
+        notes: "The script prints the decoded internal IP:port when the cookie is unencrypted. No script output with a cookie present = encrypted or unrecognized format (informational only). A decoded RFC1918 address = reportable internal IP disclosure; recommend enabling cookie encryption on the persistence profile. Also check the BIG-IP version against current F5 advisories if a version leaks (e.g. via /tmui or APM pages) - but never touch /tmui management endpoints without approval."
+
+    references:
+      - "https://github.com/projectdiscovery/nuclei-templates/blob/main/http/technologies/bigip-detect.yaml"
+      - "https://nmap.org/nsedoc/scripts/http-bigip-cookie.html"
+      - "https://my.f5.com/manage/s/article/K14784"
+
+  - finding_id: "nuclei:ssl-issuer,nuclei:ssl-dns-names,nuclei:wildcard-tls"
+    workflow_name: "TLS Certificate Review (Issuer, SANs, Wildcard)"
+    description: "Pull the leaf certificate once to settle the certificate-inventory templates: issuer, subject alternative names, wildcard use and validity."
+    steps:
+      - title: "Dump the leaf certificate"
+        commands:
+          - "nmap -Pn -p <PORT> --script ssl-cert <TARGET>"
+        notes: "Issuer: a public CA (DigiCert, Sectigo, Let's Encrypt, GlobalSign...) is expected; a self-signed or internal CA on an internet-facing service is reportable. SANs: list every DNS name as recon - additional hostnames may be new targets if they fall within scope. Wildcard: a '*.' subject or SAN confirms the wildcard template; it is informational, but note that one private key protects every matching host, so compromise of any host sharing the cert enables impersonation of all of them. Also record key type/size (flag RSA < 2048), signature algorithm (flag SHA-1/MD5) and the 'Not valid after' date (flag expired or expiring within ~30-60 days)."
+
+      - title: "Optional: inspect the full chain"
+        commands:
+          - "sslscan --no-colour --show-certificates <TARGET>:<PORT>"
+        notes: "Use when the issuer or chain looks wrong (missing intermediate, unexpected CA). Compare Subject and Issuer for each certificate in the chain."
+
+    references:
+      - "https://github.com/projectdiscovery/nuclei-templates/blob/main/ssl/detect-ssl-issuer.yaml"
+      - "https://github.com/projectdiscovery/nuclei-templates/blob/main/ssl/ssl-dns-names.yaml"
+      - "https://github.com/projectdiscovery/nuclei-templates/blob/main/ssl/wildcard-tls.yaml"
+      - "https://nmap.org/nsedoc/scripts/ssl-cert.html"
+
+  - finding_id: "nuclei:azure-domain-tenant"
+    workflow_name: "Microsoft Entra ID Tenant Discovery"
+    description: "Confirm the customer's Entra ID tenant ID and build out identity reconnaissance from it. Steps 1-4 are passive OSINT against Microsoft's public endpoints and DNS, not against the target host; step 5 is active and needs explicit approval."
+    steps:
+      - title: "1. Confirm the tenant ID from the OpenID configuration"
+        commands:
+          - "curl -s --max-time 15 https://login.microsoftonline.com/<DOMAIN>/v2.0/.well-known/openid-configuration | jq -r '.issuer, .token_endpoint, .tenant_region_scope, .cloud_instance_name'"
+        notes: "The GUID in the issuer URL is the tenant ID; confirmed if it matches the nuclei output. tenant_region_scope gives the region (e.g. NA, EU) and cloud_instance_name the cloud (microsoftonline.com = commercial; .us / .cn = government or sovereign clouds, which change the endpoints for later steps). This queries Microsoft, not the customer - confirm the ROE allows cloud/identity reconnaissance. A tenant ID is not a vulnerability; record it as recon."
+
+      - title: "2. Identify the authentication type (managed vs federated)"
+        commands:
+          - "curl -s --max-time 15 \"https://login.microsoftonline.com/getuserrealm.srf?login=nonexistent@<DOMAIN>&xml=1\""
+        notes: "Passive. NameSpaceType 'Managed' = cloud authentication (password hash sync or pass-through auth); Entra ID Smart Lockout applies. 'Federated' = authentication is redirected to an on-premises identity provider; AuthURL names that host (e.g. ADFS) and FederationBrandName the organisation. A federated IdP is a separate target with its own lockout policy and attack surface - add it only if the customer confirms it is in scope. 'Unknown' = the domain is not registered in Entra ID."
+
+      - title: "3. Enumerate the tenant's verified domains and tenant settings"
+        commands:
+          - "Invoke-AADIntReconAsOutsider -DomainName <DOMAIN> | Format-Table"
+        notes: "Passive (AADInternals PowerShell module; uses public Microsoft endpoints). Records the tenant brand name, the <name>.onmicrosoft.com default domain, every verified domain in the tenant, and per-domain DNS/MX/SPF/DMARC/STS/Desktop SSO status. Extra domains frequently reveal parent companies, subsidiaries or acquired brands - treat each one as a scope question for the customer, never as an automatic target. 'Desktop SSO' = Seamless SSO is enabled (relevant to later identity testing). Without PowerShell, Get-AADIntTenantDomains gives the domain list alone."
+
+      - title: "4. Review email-authentication records for the domain"
+        commands:
+          - "dig +short MX <DOMAIN>"
+          - "dig +short TXT <DOMAIN> | grep -i 'v=spf1'"
+          - "dig +short TXT _dmarc.<DOMAIN>"
+        notes: "Passive DNS lookups. An MX ending in mail.protection.outlook.com confirms Exchange Online. Flag a missing DMARC record, a DMARC policy of p=none (monitor only), or an SPF record ending in ~all (softfail) or +all / ?all, since these weaken spoofing protection - report them only if email security or social engineering is in scope. Repeat for each verified domain from step 3 that the customer confirms is in scope."
+
+      - title: "5. Validate candidate usernames (ACTIVE - requires explicit ROE approval)"
+        commands:
+          - "curl -s --max-time 15 -X POST https://login.microsoftonline.com/common/GetCredentialType -H 'Content-Type: application/json' -d '{\"Username\":\"<USERNAME>@<DOMAIN>\"}' | jq '{IfExistsResult, ThrottleStatus, DesktopSso: .EstsProperties.DesktopSsoEnabled}'"
+        notes: "Active: this interacts with the customer's identity configuration, so run it only when user enumeration is explicitly approved. IfExistsResult 0 = account exists, 1 = does not exist, 5/6 = exists in a different tenant or identity provider. ThrottleStatus 1 means Microsoft is throttling and results are unreliable - stop and slow down. Results are less reliable for federated domains (step 2). Keep volume low and pace requests. Build candidates from the email format seen in the application or public sources (e.g. first.last@<DOMAIN>). Valid usernames feed a separate, separately scoped identity test (password spraying, MFA coverage) that needs an agreed lockout threshold; do not spray from this workflow."
+
+    references:
+      - "https://github.com/projectdiscovery/nuclei-templates/blob/main/http/exposures/configs/azure-domain-tenant.yaml"
+      - "https://learn.microsoft.com/en-us/entra/identity-platform/v2-protocols-oidc"
+      - "https://aadinternals.com/aadinternals/"
+      - "https://learn.microsoft.com/en-us/entra/identity/authentication/howto-password-smart-lockout"
+      - "https://www.blackhillsinfosec.com/tag/azure/"
