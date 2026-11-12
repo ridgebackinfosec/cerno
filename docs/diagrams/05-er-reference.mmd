@@ -11,8 +11,8 @@ erDiagram
         TEXT color_hint
     }
     finding_sources {
-        INTEGER source_id PK "2 seeded rows"
-        TEXT source_name UK "nessus|nuclei"
+        INTEGER source_id PK "5 seeded rows"
+        TEXT source_name UK "nessus|nuclei|burp|operator|agent"
     }
     plugins {
         TEXT plugin_id PK "namespaced per source"

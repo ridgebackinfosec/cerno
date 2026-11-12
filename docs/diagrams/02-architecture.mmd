@@ -18,7 +18,7 @@ flowchart TB
     end
 
     subgraph mcplayer["② MCP layer — every module here is MCP-only; the TUI imports none of them"]
-        server["<b>server.py</b><br/>48 tools · 9 resources · 4 prompts<br/><i>adapters never print to stdout</i>"]
+        server["<b>server.py</b><br/>50 tools · 9 resources · 4 prompts<br/><i>adapters never print to stdout</i>"]
         jobs["<b>jobs.py</b><br/>async job registry<br/>start / status / cancel"]
         query["<b>query.py</b> — FindingQuery<br/><b>batch.py</b> — plan / execute_batch"]
         ingestmod["<b>ingest.py · nmap_parse.py</b><br/>run output → verified data"]
@@ -30,7 +30,7 @@ flowchart TB
         dbmod["<b>database.py</b><br/>schema v5 · SCHEMA_SQL_*<br/>db_transaction()"]
         toolsmod["<b>tools.py</b><br/>+ tool_registry · tool_definitions<br/>· tool_context"]
         opsmod["<b>ops.py</b><br/>execution, sudo,<br/>proxychains4, remote scan"]
-        importmod["<b>nessus_import.py · nuclei_import.py · burp_import.py</b><br/>nuclei_parse.py · burp_parse.py · cross_scan.py · parsing.py"]
+        importmod["<b>nessus_import.py · nuclei_import.py · burp_import.py</b><br/>nuclei_parse.py · burp_parse.py · authored_findings.py<br/>cross_scan.py · parsing.py"]
         credsmod["<b>nxc_db.py · creds.py</b><br/>NetExec access, audited reveal"]
         wmap["<b>workflow_mapper.py</b><br/>claude_assistant.py"]
         cfg["<b>config.py · constants.py</b><br/>logging_setup.py · enums.py"]

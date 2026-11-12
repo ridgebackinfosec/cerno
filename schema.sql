@@ -158,6 +158,8 @@ CREATE INDEX IF NOT EXISTS idx_workflow_executions_finding ON workflow_execution
 -- (1, 'nessus')
 -- (2, 'nuclei')
 -- (3, 'burp')
+-- (4, 'operator')  -- hand-authored in the TUI, not a scanner
+-- (5, 'agent')     -- hand-authored by an MCP client, not a scanner
 CREATE TABLE IF NOT EXISTS finding_sources (
     source_id INTEGER PRIMARY KEY,
     source_name TEXT NOT NULL UNIQUE
@@ -450,7 +452,7 @@ CREATE INDEX IF NOT EXISTS idx_verdict_evidence_verdict ON verdict_evidence(verd
 --   ('nmap_xml','.xml','Nmap XML output') ('nmap_gnmap','.gnmap','Nmap greppable output')
 --   ('nmap_nmap','.nmap','Nmap normal output') ('netexec_txt','.txt','NetExec text output')
 --   ('log','.log','Tool execution log')
--- finding_sources: (1,'nessus') (2,'nuclei') (3,'burp')
+-- finding_sources: (1,'nessus') (2,'nuclei') (3,'burp') (4,'operator') (5,'agent')
 -- verdict_types: confirmed, false_positive, unable
 -- nse_verdicts: VULNERABLE, NOT_VULNERABLE, LIKELY_VULNERABLE, UNKNOWN
 -- port_states: open, closed, filtered, open|filtered, closed|filtered, unfiltered

@@ -4,7 +4,7 @@
 
 # Cerno
 
-A **TUI tool** for reviewing vulnerability scan findings and orchestrating security tools (**nmap**, **NetExec**, **nuclei**, custom commands). Import `.nessus` exports, **nuclei** results and **Burp Suite** XML reports into a SQLite database for organized, persistent vulnerability verification and exploitation.
+A **TUI tool** for reviewing vulnerability scan findings and orchestrating security tools (**nmap**, **NetExec**, **nuclei**, custom commands). Import `.nessus` exports, **nuclei** results and **Burp Suite** XML reports into a SQLite database — or write up what you found by hand — for organized, persistent vulnerability verification and exploitation.
 
 **Key capabilities:**
 - 🔍 Interactive TUI for browsing/reviewing vulnerability findings — triage hundreds of findings fast
@@ -93,7 +93,7 @@ See [docs/demo](docs/demo) for details.
 
 ## How It Works
 
-Cerno turns raw scanner output — a Nessus export, nuclei results, a Burp report, or all of them — into a tracked, actionable verification workflow:
+Cerno turns raw scanner output — a Nessus export, nuclei results, a Burp report, or all of them — into a tracked, actionable verification workflow, and lets you add the findings no scanner reported:
 
 <p align="center">
   <picture>
@@ -102,7 +102,7 @@ Cerno turns raw scanner output — a Nessus export, nuclei results, a Burp repor
   </picture>
 </p>
 
-1. **Import** — parse one or more `.nessus` files, nuclei JSON/JSONL results, or Burp Suite XML reports into a local SQLite database (`~/.cerno/cerno.db`). All three sources share one review loop, and a multi-scan review can span them.
+1. **Import** — parse one or more `.nessus` files, nuclei JSON/JSONL results, or Burp Suite XML reports into a local SQLite database (`~/.cerno/cerno.db`). Findings written by hand join them as two more sources, split by who wrote them: `[+]` in the review list files one as `operator:`, while the MCP `create_finding` tool files an agent's as `agent:` — so a finding you verified stays distinguishable from one an agent asserted. All of them share one review loop, and a multi-scan review can span them.
 2. **Review** — browse findings in an interactive TUI: filter by severity, host, and exploitability; inspect finding detail, CVEs, and affected `host:port`s.
 3. **Act** — launch nmap / NetExec / nuclei / Metasploit / custom commands against the exact hosts and ports of a finding, with execution and artifacts logged automatically.
 4. **Track** — review state, sessions, and tool history persist in the database, so progress survives restarts and you can compare a host's risk across scans.
@@ -493,6 +493,7 @@ scopes, and management commands.
 - `[E]` - CVE info for this finding
 - `[N]` - NetExec Data (per-host credential and access breakdown)
 - `[T]` - Run Tool (launch nmap, NetExec, nuclei, Metasploit, or custom workflow)
+- `[+]` - Add a finding you found by hand (findings list); `[U]` edits any hand-authored one, yours (`operator:`) or an agent's (`agent:`)
 - `[A]` - Ask Claude — chat about this specific finding
 - `[W]` - View workflow verification steps (when one is mapped)
 - `[M]` - Move to In Progress / Move to Done (label follows the finding's status)

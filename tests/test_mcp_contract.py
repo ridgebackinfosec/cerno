@@ -78,6 +78,8 @@ EXPECTED_TOOLS = {
     "import_nessus",  # mcp_allow_mutations
     "import_nuclei",  # mcp_allow_mutations
     "import_burp",  # mcp_allow_mutations
+    "create_finding",  # mcp_allow_mutations
+    "update_finding",  # mcp_allow_mutations
     "ingest_results",  # mcp_allow_mutations
     "set_finding_verdict",  # mcp_allow_mutations
     "reveal_credential",  # mcp_allow_cred_reveal
@@ -96,7 +98,8 @@ EXPECTED_PROMPTS = {"triage_finding", "exploit_plan", "triage_scope", "verify_fi
 
 # Advisory tool annotations (hints clients use to decide auto-approval). Tools not
 # listed here intentionally carry no annotations (export_workflow_contribution,
-# add_note, import_nessus, import_nuclei, import_burp, reveal_credential).
+# add_note, import_nessus, import_nuclei, import_burp, create_finding,
+# reveal_credential).
 EXPECTED_READONLY_TOOLS = {
     "list_scans",
     "list_findings",
@@ -138,6 +141,7 @@ EXPECTED_IDEMPOTENT_TOOLS = {
     "ingest_results",
     "set_review_state",
     "set_finding_verdict",
+    "update_finding",
     "cancel_execution",
 }
 EXPECTED_DESTRUCTIVE_TOOLS = {"execute_command", "start_execution", "execute_batch"}
@@ -147,6 +151,7 @@ EXPECTED_UNANNOTATED_TOOLS = {
     "import_nessus",
     "import_nuclei",
     "import_burp",
+    "create_finding",
     "reveal_credential",
 }
 
@@ -367,14 +372,23 @@ def test_tools_callable_through_server(contract):
         "add_note": {"finding_id": fid, "note": "t"},
         "set_finding_verdict": {"finding_id": fid, "verdict": "confirmed"},
         "ingest_results": {"execution_id": contract["execution_id"]},
+        # operator findings: created, not imported, so they need no fixture file
+        "create_finding": {
+            "title": "Contract check",
+            "severity_int": 2,
+            "targets": ["10.0.0.21:443"],
+            "description": "Written by the contract test.",
+        },
         # after set_finding_verdict (export requires a verified finding)
         "get_workflow_candidate": {"finding_id": fid},
         "export_workflow_contribution": {"finding_id": fid},
     }
     # execute_command + the async job tools (start/get/cancel/list_jobs are
-    # subprocess/async) and import_nessus/import_nuclei (need a file) are covered by the
-    # inventory test + test_mcp_server.py/test_jobs.py; exercising them here would
-    # add platform/side-effect flakiness.
+    # subprocess/async) and import_nessus/import_nuclei/import_burp (need a file)
+    # are covered by the inventory test + test_mcp_server.py/test_jobs.py;
+    # exercising them here would add platform/side-effect flakiness.
+    # update_finding needs the id create_finding returns, so it gets its own
+    # round-trip test below rather than a place in this table.
     for name, result in _client_call_tools(s, args).items():
         detail = result.content[0].text if result.content else ""
         assert not result.is_error, f"{name} failed via MCP client: {detail}"
@@ -727,3 +741,76 @@ def test_nuclei_ingest_count_reaches_structured_content(contract, tmp_path):
     assert structured.get("nuclei_matches") == 28, (
         "the ingest count did not survive the output schema: " f"{structured!r}"
     )
+
+
+@pytest.mark.integration
+def test_agent_finding_round_trips_through_the_mcp(contract):
+    """create_finding -> query_findings -> update_finding, via the adapters.
+
+    A hand-authored finding must be indistinguishable downstream, so the check
+    is that the ordinary read tools see it -- while its *attribution* stays
+    visible, which is what the ``agent:`` prefix and the ``Agent`` scan are for.
+    """
+    created = mcp.tool_create_finding(
+        title="Weak JWT validation",
+        severity_int=3,
+        targets=["10.0.0.21:443", "10.0.0.22"],
+        description="The API accepts a token signed with alg=none.",
+        cves=["CVE-2021-44228"],
+        reference_url="https://example.com/jwt",
+    )
+    # The MCP is the agent's channel: never operator:, which is the TUI's.
+    assert created["plugin_id"].startswith("agent:")
+    assert created["scan_name"] == "Agent"
+    assert created["targets_written"] == 2
+
+    matched = mcp.tool_query_findings(source="agent")
+    assert [f["plugin_id"] for f in matched] == [created["plugin_id"]]
+    assert matched[0]["severity_int"] == 3
+
+    # ...and it is not filed under the operator's own findings.
+    assert mcp.tool_query_findings(source="operator") == []
+
+    updated = mcp.tool_update_finding(created["finding_id"], severity_int=1)
+    assert updated["plugin_id"] == created["plugin_id"]  # identity never moves
+    assert updated["severity_int"] == 1
+    assert updated["title"] == "Weak JWT validation"  # untouched field survives
+
+
+@pytest.mark.integration
+def test_mcp_can_edit_an_operator_finding(contract):
+    """Edits are symmetric: the agent may correct what the operator entered.
+
+    The namespace records the creator, so the edit must not reattribute it.
+    """
+    from cerno_pkg.authored_findings import (
+        AuthoredFindingInput,
+        create_authored_finding,
+    )
+    from cerno_pkg.constants import SOURCE_OPERATOR
+
+    plugin_id, finding_id = create_authored_finding(
+        AuthoredFindingInput(title="Typed by hand", severity_int=2),
+        SOURCE_OPERATOR,
+    )
+    assert plugin_id.startswith("operator:")
+
+    updated = mcp.tool_update_finding(finding_id, severity_int=4)
+    assert updated["plugin_id"] == plugin_id  # still operator:, not reattributed
+    assert updated["severity_int"] == 4
+    assert updated["title"] == "Typed by hand"
+
+
+@pytest.mark.integration
+def test_mcp_refuses_to_edit_a_scanner_finding(contract):
+    """A scanner finding is a record of what the scanner reported."""
+    with pytest.raises(ValueError, match="not entered by hand"):
+        mcp.tool_update_finding(contract["finding_id"], title="Hijacked")
+
+
+@pytest.mark.integration
+def test_mcp_reports_every_validation_problem_at_once(contract):
+    with pytest.raises(ValueError) as excinfo:
+        mcp.tool_create_finding(title="", severity_int=9)
+    message = str(excinfo.value)
+    assert "Title" in message and "Severity" in message

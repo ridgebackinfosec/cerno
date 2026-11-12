@@ -1050,6 +1050,50 @@ def browse_file_list(
             page_idx = 0
             continue
 
+        # Add a hand-authored finding ([+]). Intercepted before the generic
+        # action handler because a create can pull a second scan into the
+        # session, which changes the loop's own scan variables.
+        if ans == "+":
+            from cerno_pkg.authored_findings import (
+                AuthoredFindingError,
+                create_authored_finding,
+                get_or_create_authored_scan,
+            )
+            from cerno_pkg.constants import SOURCE_OPERATOR
+            from cerno_pkg.tui import prompt_new_finding
+
+            drafted = prompt_new_finding()
+            if drafted is None:
+                continue
+            try:
+                # SOURCE_OPERATOR, not agent: this keystroke is the operator
+                # typing. An MCP client's creates go in under `agent:`, which
+                # is what keeps the two authorships distinguishable later.
+                new_plugin_id, _new_finding_id = create_authored_finding(
+                    drafted, SOURCE_OPERATOR
+                )
+            except AuthoredFindingError as exc:
+                err(f"Could not save the finding: {exc}")
+                continue
+
+            ok(f"Saved as {new_plugin_id}.")
+            operator_scan = get_or_create_authored_scan(SOURCE_OPERATOR)
+            if operator_scan.scan_id not in scan_ids:
+                # Append in place: this list is the caller's `selected_scans`,
+                # reused across the whole severity menu and handed to
+                # save_session(), so the Operator scan reaches session_scans
+                # and every later view without a new session API.
+                scans.append(operator_scan)
+                scan_ids = [s.scan_id for s in scans]
+                scan_names = [s.scan_name for s in scans]
+                is_multi_scan = len(scans) > 1
+                info(
+                    f"Added the {operator_scan.scan_name} scan to this review "
+                    "session, so hand-authored findings show up in this list."
+                )
+            page_idx = 0
+            continue
+
         # Handle Claude aggregate chat (intercept before generic action handler)
         if ans == "a":
             if not has_claude and claude_installed:
@@ -1739,6 +1783,15 @@ def main() -> None:
 
             # Severity loop (inner loop)
             while True:
+                # Re-derived every pass, not once at selection: browse_file_list
+                # appends the Operator scan to selected_scans in place when the
+                # operator writes a finding with [+], and the severity menu, the
+                # aggregate Claude context key and the statistics all have to
+                # see it.
+                all_scan_ids = [
+                    s.scan_id for s in selected_scans if s.scan_id is not None
+                ]
+
                 from cerno_pkg import breadcrumb
 
                 bc = breadcrumb(_scan_label, "Choose severity")

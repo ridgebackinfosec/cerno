@@ -4,7 +4,11 @@ This module handles interactive menus and findings-list action handling:
 - Generic menu selectors (choose_from_list, parse_severity_selection, parse_scan_selection)
 - Findings-list actions: filtering, sorting, pagination, grouping
   (the [I] / [D] status-filter toggles are handled by browse_file_list, not here)
-- Multi-line Claude Assistant input
+- Multi-line free-text input (Claude Assistant, authored finding descriptions)
+- Authored-finding prompts (create and edit), which validate through
+  ``authored_findings.validate_authored_input`` and re-prompt rather than
+  discard what was typed. These serve the TUI, so what they collect is written
+  under ``operator:``; an MCP client's findings go in under ``agent:``
 
 The findings-list and workflow-group browsers themselves (browse_file_list,
 browse_workflow_groups) live in cerno.py.
@@ -38,6 +42,7 @@ from .constants import VISIBLE_GROUPS
 
 if TYPE_CHECKING:
     from .models import Finding
+    from .authored_findings import AuthoredFindingInput
 
 _console_global = get_console()
 
@@ -574,12 +579,17 @@ def handle_finding_list_actions(
     )
 
 
-def ask_claude_multiline() -> str:
-    """Prompt for Claude assistant input with multi-line support.
+def prompt_multiline(label: str, default: str = "") -> str:
+    """Prompt for free text with multi-line support.
 
     Enter inserts a newline; Alt+Enter (prompt_toolkit default) or Ctrl+J
     (the custom c-j binding; many terminals send it for Ctrl+Enter) submits.
     Returns "" on Ctrl+D; Ctrl+C re-raises KeyboardInterrupt for the caller.
+
+    Args:
+        label: Prompt text shown to the left of the cursor.
+        default: Pre-filled, editable text -- what makes editing a stored
+            description a correction rather than a retype.
     """
     from prompt_toolkit import PromptSession
     from prompt_toolkit.key_binding import KeyBindings
@@ -592,11 +602,134 @@ def ask_claude_multiline() -> str:
 
     session: PromptSession[str] = PromptSession(key_bindings=kb, multiline=True)
     try:
-        return session.prompt("Ask Claude: ").strip()
+        return session.prompt(label, default=default).strip()
     except KeyboardInterrupt:
         raise
     except EOFError:
         return ""
+
+
+def ask_claude_multiline() -> str:
+    """Prompt for Claude assistant input with multi-line support."""
+    return prompt_multiline("Ask Claude: ")
+
+
+# ===================================================================
+# Operator-authored findings (the TUI's channel; see authored_findings)
+# ===================================================================
+
+#: Severity choices offered when writing a finding by hand.
+_SEVERITY_CHOICES = {
+    "0": "Info",
+    "1": "Low",
+    "2": "Medium",
+    "3": "High",
+    "4": "Critical",
+}
+
+
+def _prompt_authored_fields(
+    existing: Optional["AuthoredFindingInput"] = None,
+) -> Optional["AuthoredFindingInput"]:
+    """Prompt for every authored-finding field, pre-filled from ``existing``.
+
+    Shared by the create and edit flows so the two cannot ask different
+    questions. Re-prompts on validation failure with everything the operator
+    typed still in place -- discarding a written-up description because a port
+    was out of range would be unforgivable.
+
+    Collects fields only; the ``source`` the result is written under is the
+    caller's to supply, and for every path through this module that is
+    :data:`~cerno_pkg.constants.SOURCE_OPERATOR`.
+
+    Returns:
+        The collected input, or None if the operator cancelled (Ctrl+C).
+    """
+    from .authored_findings import AuthoredFindingInput, parse_target_tokens
+    from .authored_findings import validate_authored_input
+
+    draft = existing or AuthoredFindingInput(title="", severity_int=2)
+
+    while True:
+        try:
+            title = Prompt.ask("Title", default=draft.title or None) or ""
+
+            severity_label = ", ".join(f"{k}={v}" for k, v in _SEVERITY_CHOICES.items())
+            info(f"Severity: {severity_label}")
+            severity_raw = Prompt.ask(
+                "Severity",
+                choices=list(_SEVERITY_CHOICES),
+                default=str(draft.severity_int),
+                show_choices=False,
+            )
+
+            targets_default = ", ".join(
+                f"{host}:{port}" if port is not None else host
+                for host, port in draft.targets
+            )
+            info("Affected hosts: 'host' or 'host:port', comma-separated")
+            targets_raw = Prompt.ask(
+                "Affected hosts (blank for none)", default=targets_default
+            )
+
+            info("Description: Enter inserts a newline, Ctrl+J submits")
+            description = prompt_multiline("Description: ", default=draft.description)
+
+            cves_raw = Prompt.ask(
+                "CVEs, comma-separated (optional)", default=", ".join(draft.cves)
+            )
+            reference = Prompt.ask(
+                "Reference URL (optional)", default=draft.reference_url or ""
+            )
+        except KeyboardInterrupt:
+            warn("Cancelled.")
+            return None
+
+        draft = AuthoredFindingInput(
+            title=title.strip(),
+            severity_int=int(severity_raw),
+            targets=parse_target_tokens([targets_raw]),
+            description=description,
+            cves=[c.strip() for c in cves_raw.split(",") if c.strip()],
+            reference_url=reference.strip() or None,
+        )
+
+        problems = validate_authored_input(draft)
+        if not problems:
+            return draft
+
+        warn("That finding cannot be saved yet:")
+        for problem in problems:
+            warn(f"  - {problem}")
+        info("Your answers are kept below; correct the ones that are wrong.")
+
+
+def prompt_new_finding() -> Optional["AuthoredFindingInput"]:
+    """Collect a brand-new operator finding, or None if cancelled."""
+    header("Add a finding")
+    info("Press Ctrl+C at any prompt to cancel.")
+    return _prompt_authored_fields()
+
+
+def prompt_edit_finding(finding_id: int) -> Optional["AuthoredFindingInput"]:
+    """Collect edits to an existing authored finding, or None if cancelled.
+
+    Every prompt starts pre-filled with what is stored, so an unchanged answer
+    writes the same value back. Accepts an ``agent:`` finding as readily as an
+    ``operator:`` one -- the operator owns the engagement and must be able to
+    correct what an agent asserted.
+    """
+    from .authored_findings import AuthoredFindingError, load_authored_finding
+
+    try:
+        existing = load_authored_finding(finding_id)
+    except AuthoredFindingError as exc:
+        warn(str(exc))
+        return None
+
+    header("Update finding")
+    info("Press Ctrl+C at any prompt to cancel; Enter keeps the current value.")
+    return _prompt_authored_fields(existing)
 
 
 # Note: browse_file_list and browse_workflow_groups live in cerno.py.

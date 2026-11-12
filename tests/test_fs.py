@@ -313,3 +313,85 @@ def test_write_work_files_empty_udp_list_is_empty(tmp_path):
     _tcp_ips, udp_ips, _sockets = write_work_files(tmp_path, [], "", udp=True)
 
     assert udp_ips.read_text(encoding="utf-8") == ""
+
+
+# ---------------------------------------------------------------------------
+# Operator-entered findings: the [U] gate
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_update_interactive_refuses_a_finding_with_no_id(capsys):
+    """Nothing to write against; must warn rather than raise."""
+    from cerno_pkg.fs import update_authored_finding_interactive
+    from cerno_pkg.models import Finding
+
+    finding = Finding(finding_id=None, scan_id=1, plugin_id="operator:1")
+
+    assert update_authored_finding_interactive(finding) is False
+    assert "database id" in capsys.readouterr().out
+
+
+@pytest.mark.integration
+def test_update_interactive_writes_what_the_prompt_returned(temp_db, monkeypatch):
+    from cerno_pkg import fs
+    from cerno_pkg.models import Finding
+    from cerno_pkg.authored_findings import (
+        AuthoredFindingInput,
+        create_authored_finding,
+        load_authored_finding,
+    )
+    from cerno_pkg.constants import SOURCE_OPERATOR
+
+    _plugin_id, finding_id = create_authored_finding(
+        AuthoredFindingInput(
+            title="Original",
+            severity_int=3,
+            targets=[("10.0.0.21", 443)],
+            description="before",
+        ),
+        SOURCE_OPERATOR,
+        conn=temp_db,
+    )
+
+    monkeypatch.setattr(
+        "cerno_pkg.tui.prompt_edit_finding",
+        lambda fid: AuthoredFindingInput(
+            title="Corrected",
+            severity_int=1,
+            targets=[("10.0.0.99", 22)],
+            description="after",
+        ),
+    )
+
+    finding = Finding(finding_id=finding_id, scan_id=1, plugin_id="operator:1")
+    assert fs.update_authored_finding_interactive(finding) is True
+
+    stored = load_authored_finding(finding_id, conn=temp_db)
+    assert stored.title == "Corrected"
+    assert stored.severity_int == 1
+    assert stored.targets == [("10.0.0.99", 22)]
+
+
+@pytest.mark.integration
+def test_update_interactive_cancels_cleanly(temp_db, monkeypatch):
+    """Ctrl+C at a prompt returns None, which must change nothing."""
+    from cerno_pkg import fs
+    from cerno_pkg.models import Finding
+    from cerno_pkg.authored_findings import (
+        AuthoredFindingInput,
+        create_authored_finding,
+        load_authored_finding,
+    )
+    from cerno_pkg.constants import SOURCE_OPERATOR
+
+    _plugin_id, finding_id = create_authored_finding(
+        AuthoredFindingInput(title="Original", severity_int=3),
+        SOURCE_OPERATOR,
+        conn=temp_db,
+    )
+    monkeypatch.setattr("cerno_pkg.tui.prompt_edit_finding", lambda fid: None)
+
+    finding = Finding(finding_id=finding_id, scan_id=1, plugin_id="operator:1")
+    assert fs.update_authored_finding_interactive(finding) is False
+    assert load_authored_finding(finding_id, conn=temp_db).title == "Original"

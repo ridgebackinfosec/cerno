@@ -758,6 +758,121 @@ def tool_import_nuclei(
     }
 
 
+def tool_create_finding(
+    title: str,
+    severity_int: int,
+    targets: Optional[list[str]] = None,
+    description: str = "",
+    cves: Optional[list[str]] = None,
+    reference_url: Optional[str] = None,
+) -> dict:
+    """Create a finding attributed to the agent. Returns its ids and where it landed.
+
+    Writes under :data:`~cerno_pkg.constants.SOURCE_AGENT`, because this
+    adapter *is* the MCP channel: everything reaching it is something an agent
+    asserted, whether it concluded it from tool output or the operator dictated
+    it. The resulting ``agent:`` id is what keeps it distinguishable afterwards
+    from what the operator typed by hand (``operator:``) and from what a
+    scanner reported.
+
+    The findings live in one shared ``Agent`` scan, created on first use, which
+    keeps every scanner scan single-source so ``compare_scans`` goes on working
+    on the scans around it.
+    """
+    from ..authored_findings import (
+        AuthoredFindingError,
+        AuthoredFindingInput,
+        create_authored_finding,
+        get_or_create_authored_scan,
+        parse_target_tokens,
+    )
+    from ..constants import SOURCE_AGENT
+
+    data = AuthoredFindingInput(
+        title=title,
+        severity_int=severity_int,
+        targets=parse_target_tokens(targets or []),
+        description=description or "",
+        cves=list(cves or []),
+        reference_url=reference_url,
+    )
+    try:
+        # SOURCE_AGENT, not operator: this adapter *is* the MCP channel, so
+        # everything written through it is the agent's assertion. The TUI's [+]
+        # passes SOURCE_OPERATOR for the same reason.
+        plugin_id, finding_id = create_authored_finding(data, SOURCE_AGENT)
+    except AuthoredFindingError as exc:
+        # Every problem at once, so the caller fixes them in one more call.
+        raise ValueError("; ".join(exc.problems)) from None
+
+    return {
+        "plugin_id": plugin_id,
+        "finding_id": finding_id,
+        "scan_name": get_or_create_authored_scan(SOURCE_AGENT).scan_name,
+        "targets_written": len(data.targets),
+    }
+
+
+def tool_update_finding(
+    finding_id: int,
+    title: Optional[str] = None,
+    severity_int: Optional[int] = None,
+    targets: Optional[list[str]] = None,
+    description: Optional[str] = None,
+    cves: Optional[list[str]] = None,
+    reference_url: Optional[str] = None,
+) -> dict:
+    """Edit a hand-authored finding in place. Returns its ids.
+
+    Accepts both ``agent:`` findings and the operator's own ``operator:`` ones,
+    so a correction the operator asks for can be applied directly. Scanner
+    findings are refused: they record what the scanner reported.
+
+    Only the arguments given are changed. The ``plugin_id`` never moves, even
+    when the title does, so a workflow mapping or a note naming it stays valid
+    -- which also means an edit does not reattribute a finding: an edited
+    ``agent:`` finding stays ``agent:``.
+
+    Pass ``reference_url=""`` to remove a reference; omitting it keeps the
+    stored one.
+    """
+    from ..authored_findings import (
+        UNCHANGED,
+        AuthoredFindingError,
+        load_authored_finding,
+        parse_target_tokens,
+        update_authored_finding,
+    )
+
+    # Across a JSON boundary, omitting an argument and clearing a field are the
+    # same None, so "" is the explicit "remove the reference" value.
+    resolved_url: object = (
+        UNCHANGED if reference_url is None else (reference_url or None)
+    )
+
+    try:
+        plugin_id = update_authored_finding(
+            finding_id,
+            title=title,
+            severity_int=severity_int,
+            targets=None if targets is None else parse_target_tokens(targets),
+            description=description,
+            cves=cves,
+            reference_url=resolved_url,
+        )
+        updated = load_authored_finding(finding_id)
+    except AuthoredFindingError as exc:
+        raise ValueError("; ".join(exc.problems)) from None
+
+    return {
+        "plugin_id": plugin_id,
+        "finding_id": finding_id,
+        "title": updated.title,
+        "severity_int": updated.severity_int,
+        "targets": len(updated.targets),
+    }
+
+
 def tool_import_burp(
     burp_path: str,
     scan_name: Optional[str] = None,
@@ -4077,6 +4192,65 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
                 burp_path, scan_name=scan_name, min_severity=min_severity
             )
 
+        @mcp.tool()
+        def create_finding(
+            title: str,
+            severity_int: int,
+            targets: Optional[list[str]] = None,
+            description: str = "",
+            cves: Optional[list[str]] = None,
+            reference_url: Optional[str] = None,
+        ) -> dict:
+            """Record something you found yourself as a first-class finding.
+
+            For what a scanner did not report: a misconfiguration you spotted,
+            a chained issue, a manual exploitation result. severity_int is 0-4
+            (0=Info, 4=Critical). targets are "host" or "host:port" strings and
+            may be omitted for an engagement-level observation.
+
+            The finding is attributed to you: it gets an "agent:" id in the
+            shared "Agent" scan, kept apart from the "operator:" findings the
+            tester enters by hand so the two authorships stay distinguishable.
+            It is reviewable, verdictable and workflow-matchable like any other.
+            """
+            return tool_create_finding(
+                title,
+                severity_int,
+                targets=targets,
+                description=description,
+                cves=cves,
+                reference_url=reference_url,
+            )
+
+        @mcp.tool(annotations=_IDEMPOTENT_ANN)
+        def update_finding(
+            finding_id: int,
+            title: Optional[str] = None,
+            severity_int: Optional[int] = None,
+            targets: Optional[list[str]] = None,
+            description: Optional[str] = None,
+            cves: Optional[list[str]] = None,
+            reference_url: Optional[str] = None,
+        ) -> dict:
+            """Edit a hand-authored finding ("agent:" or "operator:").
+
+            Both namespaces are editable, so a correction the operator asks for
+            can be applied directly. Only the arguments given change; the
+            finding's id never moves, even when the title does — so an edit
+            never reattributes a finding either. Pass reference_url="" to
+            remove a reference. Scanner findings are refused — they record what
+            the scanner reported; record a verdict on one instead.
+            """
+            return tool_update_finding(
+                finding_id,
+                title=title,
+                severity_int=severity_int,
+                targets=targets,
+                description=description,
+                cves=cves,
+                reference_url=reference_url,
+            )
+
         @mcp.tool(annotations=_IDEMPOTENT_ANN)
         def ingest_results(execution_id: int) -> IngestResult:
             """Parse a completed execution's output into structured facts (idempotent).
@@ -4118,7 +4292,8 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
     else:
         log_info(
             "mcp: set_review_state/add_note/import_nessus/import_nuclei/"
-            "import_burp/ingest_results/set_finding_verdict not registered "
+            "import_burp/create_finding/update_finding/ingest_results/"
+            "set_finding_verdict not registered "
             "(mcp_allow_mutations=false)"
         )
 

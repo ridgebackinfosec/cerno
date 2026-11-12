@@ -589,3 +589,70 @@ class TestBurpEscapesAreNeutralizedAtRender:
         render.display_finding_preview(plugin, finding, None, None)  # type: ignore[arg-type]
         out = capsys.readouterr().out
         assert "[bold]weird[/bold]" in out
+
+
+# An operator finding's title and description carry whatever was typed -- or,
+# when the MCP client wrote it, whatever an agent lifted out of tool output.
+# That makes this the same hazard class as scan text, not merely a typo risk.
+OPERATOR_ESC_TITLE = "Weak \x1b[31mJWT\x1b[0m [/] validation"
+OPERATOR_ESC_DESCRIPTION = (
+    "Response said \x1b]0;pwned\x07 [bold red]alg=none[/] accepted \x1b[1;32m!"
+)
+
+
+@pytest.mark.unit
+class TestAuthoredFindingEscapesAreNeutralizedAtRender:
+    """Authored text is stored verbatim; rendering must neutralize it.
+
+    This matters more for ``agent:`` than for ``operator:``: an agent writes a
+    title by summarizing tool output, which is attacker-influenced, so a
+    hostile hostname or banner can reach the title without anyone typing it.
+    """
+
+    def test_safe_text_strips_every_escape_from_a_title(self) -> None:
+        out = safe_text(OPERATOR_ESC_TITLE)
+        assert "\x1b" not in out
+        assert "JWT" in out and "validation" in out
+
+    def test_safe_text_strips_escapes_from_a_description(self) -> None:
+        out = safe_text(OPERATOR_ESC_DESCRIPTION)
+        assert "\x1b" not in out
+        assert "\x07" not in out
+        assert "alg=none" in out
+
+    def test_unbalanced_markup_in_a_title_does_not_crash_render(self) -> None:
+        plugin = Plugin(
+            plugin_id="operator:1",
+            plugin_name=OPERATOR_ESC_TITLE,
+            severity_int=3,
+        )
+        finding = Finding(finding_id=1, scan_id=1, plugin_id="operator:1")
+        finding.get_hosts_and_ports = lambda *a, **k: ([], "")  # type: ignore[method-assign]
+        render.display_finding_preview(plugin, finding, None, None)  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize("source", ["operator", "agent"])
+    def test_hostile_text_survives_the_round_trip_to_the_database(
+        self, temp_db, source
+    ) -> None:
+        """The writer stores what was entered; only display is sanitized."""
+        from cerno_pkg.authored_findings import (
+            AuthoredFindingInput,
+            create_authored_finding,
+        )
+
+        _plugin_id, finding_id = create_authored_finding(
+            AuthoredFindingInput(
+                title=OPERATOR_ESC_TITLE,
+                severity_int=3,
+                targets=[("10.0.0.21", 443)],
+                description=OPERATOR_ESC_DESCRIPTION,
+            ),
+            source,
+            conn=temp_db,
+        )
+        stored = temp_db.execute(
+            "SELECT plugin_output FROM finding_affected_hosts WHERE finding_id = ?",
+            (finding_id,),
+        ).fetchone()[0]
+        assert "\x1b" in stored  # stored verbatim
+        assert "\x1b" not in safe_text(stored)  # neutralized for display

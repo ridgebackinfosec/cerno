@@ -545,3 +545,78 @@ class TestFindingIdColumn:
         at_200 = _finding_list_output([self.LONG], width=200)
         assert self.LONG not in at_80
         assert self.LONG in at_200
+
+
+# ---------------------------------------------------------------------------
+# Operator-entered findings
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_findings_list_footer_offers_add_finding(monkeypatch):
+    """[+] is the only way into the create flow, so it must always be shown."""
+    out = _footer_text(monkeypatch, unique_cve_count=0, unique_host_count=0)
+    assert "[+]" in out
+    assert "Add finding" in out
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("term_width", [200, 80])
+def test_add_finding_survives_both_layouts(monkeypatch, term_width):
+    """It shares a row with [M], which is assembled differently per width."""
+    from cerno_pkg import ansi, render as render_module
+
+    console = _record_console(monkeypatch, render_module)
+    monkeypatch.setattr(ansi, "get_terminal_width", lambda: term_width)
+    render_module.render_actions_footer(
+        group_applied=False,
+        candidates_count=3,
+        sort_mode="severity",
+        can_next=False,
+        can_prev=False,
+        unique_cve_count=0,
+        unique_host_count=0,
+    )
+    out = console.export_text()
+    assert "Add finding" in out
+    assert "CVEs" in out  # the rest of the row survived
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("term_width", [200, 80])
+def test_update_is_offered_only_for_an_operator_finding(monkeypatch, term_width):
+    """A scanner finding is a record of what the scanner reported.
+
+    Showing [U] on one would promise an edit handle_finding_view refuses.
+    """
+    from cerno_pkg import ansi, render as render_module
+
+    for is_operator, expected in ((True, True), (False, False)):
+        console = _record_console(monkeypatch, render_module)
+        monkeypatch.setattr(ansi, "get_terminal_width", lambda: term_width)
+        render_module.render_finding_actions_footer(
+            review_state="unreviewed", is_authored_finding=is_operator
+        )
+        out = console.export_text()
+        assert ("Update finding" in out) is expected
+        # The row it shares must survive either way.
+        assert "Record verdict" in out
+
+
+@pytest.mark.unit
+def test_actions_help_documents_add_finding(monkeypatch):
+    from cerno_pkg import render as render_module
+
+    console = _record_console(monkeypatch, render_module)
+    render_module.show_actions_help(
+        group_applied=False,
+        candidates_count=1,
+        unique_cve_count=0,
+        unique_host_count=0,
+        sort_mode="severity",
+        can_next=False,
+        can_prev=False,
+    )
+    out = console.export_text()
+    assert "Add finding" in out
+    assert "Operator" in out
