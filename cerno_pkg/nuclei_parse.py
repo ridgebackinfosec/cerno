@@ -45,6 +45,7 @@ from typing import Any, Optional, Union
 from .config import coerce_str_list
 from .constants import NUCLEI_TEMPLATE_REPO_BASE, NUCLEI_TEMPLATE_URL_BASE
 from .logging_setup import log_debug, log_error
+from .parsing import SCHEME_PORTS
 
 __all__ = [
     "NUCLEI_TEMPLATE_REPO_BASE",
@@ -82,7 +83,10 @@ SEVERITY_BY_LABEL: dict[str, int] = {
 }
 
 #: Default port per URL scheme, for records that omit ``port``.
-_SCHEME_PORTS: dict[str, int] = {"http": 80, "https": 443}
+#:
+#: Shared with the Burp parser via :data:`cerno_pkg.parsing.SCHEME_PORTS`, so
+#: both scanners' scheme-derived ports and services stay in step.
+_SCHEME_PORTS = SCHEME_PORTS
 
 #: Same validation the Nessus importer applies to ``<cve>`` elements.
 _CVE_RE = re.compile(r"^CVE-\d{4}-\d{4,}$")

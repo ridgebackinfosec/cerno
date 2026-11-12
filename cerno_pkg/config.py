@@ -353,6 +353,22 @@ class CernoConfig:
     still wins per the MCP config contract. Validated at use, not load: a
     hand-edited config.yaml can hold anything."""
 
+    burp_min_severity: int = field(
+        default=0,
+        metadata={
+            "section": "Tools & Workflows",
+            "kind": "int",
+            "help": "Drop Burp findings below this severity (0-3)",
+        },
+    )
+    """Minimum severity kept when importing a Burp report (default: 0 = keep all).
+
+    0=Info, 1=Low, 2=Medium, 3=High. Burp has no Critical, so a floor of 4
+    drops every issue. Applied by ``cerno import burp`` and as the default for
+    the MCP ``import_burp`` tool, whose explicit ``min_severity`` argument still
+    wins per the MCP config contract. Validated at use, not load: a hand-edited
+    config.yaml can hold anything."""
+
     # Logging
     debug_logging: bool = field(
         default=False,

@@ -102,7 +102,7 @@ resources, and prompts Cerno exposes.
 | Contribute | `get_workflow_candidate` (draft a sanitized workflow from the commands run against a finding), `export_workflow_contribution` (write it as a local, PR-ready YAML file; never submits). See [Workflow contributions](#workflow-contributions) | always available |
 | Execute | `execute_command` (runs a command, captures output, logs it; reports progress). Target binary must match `mcp_exec_allowlist` and no binary in the chain may match `mcp_exec_denylist` (common wrappers such as `sudo`/`env`/`timeout` are unwrapped); `timeout` clamped to [1, 3600]s; optional `finding_id` attributes the run (then surfaced by `get_finding_artifacts`, verdict evidence and [workflow contributions](#workflow-contributions); always pass it when verifying a finding). For an nmap command (`-oA` present) it registers the output files as artifacts and records `host_count`/`ports` even when no hosts are up, and refuses to overwrite an existing run's `-oA` output (use a fresh `generate_nmap_cmd` path). `start_execution`, `get_execution_status`, `cancel_execution`, `list_jobs`: the same run as a background job. See [Jobs and batch](#jobs-and-batch) | `mcp_allow_execution` |
 | Batch | `execute_batch` (runs every runnable command from a `plan_batch` query) | `mcp_allow_execution` **and** `mcp_allow_batch` |
-| Mutate | `set_review_state` (`unreviewed` → `in_progress` → `done` → `unreviewed`; other changes rejected), `add_note` (append-only), `set_finding_verdict`, `ingest_results`, `import_nessus`, `import_nuclei` | `mcp_allow_mutations` |
+| Mutate | `set_review_state` (`unreviewed` → `in_progress` → `done` → `unreviewed`; other changes rejected), `add_note` (append-only), `set_finding_verdict`, `ingest_results`, `import_nessus`, `import_nuclei`, `import_burp` | `mcp_allow_mutations` |
 | Reveal | `reveal_credential` (returns a credential's **cleartext** secret; audited) | `mcp_allow_cred_reveal` |
 
 Notes:
@@ -112,7 +112,7 @@ Notes:
 - `query_findings` AND-combines optional predicates: `scan_ids` (omit for all
   scans), `severity_int`/`severity_min`, `review_state`, `verdict`
   (`confirmed`/`false_positive`/`unable`/`none`), `cve` (exact id), `port`,
-  `service`, `host`, `plugin_name`, `source` (`nessus`/`nuclei`),
+  `service`, `host`, `plugin_name`, `source` (`nessus`/`nuclei`/`burp`),
   `has_metasploit`, `has_workflow`, plus `merged`/`limit`/`offset`.
   `plan_batch`/`execute_batch` take the same predicates.
 - `list_workflow_gaps(scan_ids, severity_min)` lists findings with **no** mapped
@@ -125,9 +125,20 @@ Notes:
   (default `0` = keep all).
   One finding is created per template; a template that matched the same host:port
   several times keeps every match's evidence in that host's plugin output.
+- `import_burp(burp_path, scan_name=None, min_severity=None)` ingests a Burp Suite
+  "Report issues" XML export. `scan_name` defaults to the file stem, since a Burp
+  report carries no scan name, and `min_severity` omitted falls back to the
+  `burp_min_severity` config key (default `0` = keep all). Burp's scale tops out
+  at High (3), so a floor of 4 drops everything, and issues the tester marked as
+  false positives in Burp are skipped regardless.
+  One finding is created per *issue type*, identified by the 8-digit hex type
+  index PortSwigger publishes (`burp:00200300`); every instance on one host:port
+  is merged into that host's plugin output, request and response included and
+  truncated. A file whose root element is not `<issues>` is reported as not being
+  a Burp report rather than importing nothing silently.
   `get_workflow` takes the finding id as a **string**, because every id is
-  source-namespaced (`"nessus:57608"`, `"nuclei:apache-detect"`). A bare number
-  matches nothing.
+  source-namespaced (`"nessus:57608"`, `"nuclei:apache-detect"`,
+  `"burp:00200300"`). A bare number matches nothing.
 - `compare_scans` refuses two scans from different sources: their finding ids share
   no namespace, so every finding would be reported as both new and resolved.
 - `generate_nmap_cmd` takes `nse_option` as NSE script names or categories,
@@ -165,6 +176,7 @@ default:
 | `custom_workflows_path` | Merged over the bundled workflows (custom wins on conflict) for `get_workflow`, `prepare_workflow`, `list_workflow_gaps`, `query_findings(has_workflow=…)`, `plan_batch`/`execute_batch`, the `cerno://finding/{id}/workflow` resource, and the finding prompts |
 | `custom_workflows_exclusive` | `true` loads **only** `custom_workflows_path`, skipping the bundled set, for every tool in the row above. Set without a path it warns and falls back to bundled |
 | `nuclei_min_severity` | Default `min_severity` for `import_nuclei` when the argument is omitted |
+| `burp_min_severity` | Default `min_severity` for `import_burp` when the argument is omitted |
 | `default_netexec_protocol` | Protocol for `generate_netexec_cmd` when `protocol` is omitted (else `smb`), and for the bare `"netexec"` batch strategy |
 | `nmap_default_profile` | NSE scripts for `generate_nmap_cmd` when `nse_option` is omitted (`nse_option=""` = no scripts); a UDP profile (SNMP/IPMI) also turns on `-sU` unless `udp` is given |
 | `default_page_size` | Default `limit` for `list_findings`, `query_findings`, `search_findings` (minimum 8; else 500). Page past it with `offset` |
@@ -225,7 +237,7 @@ box. Enable only the capabilities you want:
 
 ```bash
 cerno config set mcp_allow_execution true        # execute_command + background jobs
-cerno config set mcp_allow_mutations true        # set_review_state, add_note, set_finding_verdict, ingest_results, import_nessus, import_nuclei
+cerno config set mcp_allow_mutations true        # set_review_state, add_note, set_finding_verdict, ingest_results, import_nessus, import_nuclei, import_burp
 cerno config set mcp_allow_batch true            # execute_batch (also needs mcp_allow_execution)
 cerno config set mcp_allow_cred_injection true   # resolve @cred:<ref>@ placeholders at run time
 cerno config set mcp_allow_cred_reveal true      # reveal_credential (returns cleartext)
@@ -236,7 +248,7 @@ cerno config set mcp_exec_denylist "rm,dd,sh"    # binaries execute_command may 
 | Flag | Unlocks |
 | --- | --- |
 | `mcp_allow_execution` | `execute_command`, `start_execution`, `get_execution_status`, `cancel_execution`, `list_jobs` |
-| `mcp_allow_mutations` | `set_review_state`, `add_note`, `set_finding_verdict`, `ingest_results`, `import_nessus`, `import_nuclei` (importing writes scans/findings, so it counts as a mutation). With execution also on, runs are auto-ingested best-effort |
+| `mcp_allow_mutations` | `set_review_state`, `add_note`, `set_finding_verdict`, `ingest_results`, `import_nessus`, `import_nuclei`, `import_burp` (importing writes scans/findings, so it counts as a mutation). With execution also on, runs are auto-ingested best-effort |
 | `mcp_allow_batch` | `execute_batch`, only when `mcp_allow_execution` is also on. It authorizes the fan-out across a query; every command still passes the exec policy, the credential gate and the per-command timeout |
 | `mcp_allow_cred_injection` | `execute_command`/`start_execution`/`execute_batch` may resolve `@cred:<ref>@` placeholders to real secrets server-side. Independent of execution |
 | `mcp_allow_cred_reveal` | `reveal_credential`. Strictly more sensitive than injection, and gated separately: injection being on does **not** enable reveal |

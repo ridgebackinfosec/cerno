@@ -13,8 +13,10 @@ import re
 from typing import TYPE_CHECKING, Any, Optional
 
 from .constants import (
+    BURP_GENERIC_TYPES,
     PLUGIN_ID_PREFIXES,
     PLUGIN_URL_TEMPLATES,
+    SOURCE_BURP,
     SOURCE_IDS,
     SOURCE_UNKNOWN,
 )
@@ -160,6 +162,60 @@ def detect_host_type(host: str) -> str:
     if is_ipv6(host):
         return "ipv6"
     return "hostname"
+
+
+# ====== Importer helpers (shared by the nuclei and Burp importers) ======
+SCHEME_PORTS: dict[str, int] = {"http": 80, "https": 443}
+"""Default port per URL scheme, for records that omit an explicit port."""
+
+SCHEME_SERVICES: frozenset[str] = frozenset(SCHEME_PORTS)
+"""Services derived from a real URL scheme, which outrank a bare record type.
+
+These are exactly the tokens ``v_http_services`` recognises by name, which is
+why a scheme-derived service is worth preferring: it is what makes a web-only
+scan's targets visible to ``get_web_targets`` and ``FindingQuery.service``.
+"""
+
+
+def unbracket(host: str) -> str:
+    """Strip the brackets a scanner puts around a literal IPv6 target.
+
+    ``hosts.ip_address`` and ``hosts.scan_target`` store bare addresses, so
+    ``[2001:db8::1]`` must become ``2001:db8::1`` before it is written -- a
+    bracketed form would key a second, duplicate host row.
+    """
+    if host.startswith("[") and host.endswith("]"):
+        return host[1:-1]
+    return host
+
+
+def scan_target_type(host: str) -> str:
+    """Map a host to the ``hosts.scan_target_type`` CHECK vocabulary.
+
+    :func:`detect_host_type` says ``'hostname'``; the column's CHECK constraint
+    says ``'fqdn'``. Brackets are stripped first so an IPv6 literal is
+    recognised as one.
+    """
+    detected = detect_host_type(unbracket(host))
+    return "fqdn" if detected == "hostname" else detected
+
+
+def prefer_service(current: Optional[str], candidate: str) -> str:
+    """Pick the more informative of two services seen on one host:port.
+
+    A host:port can be reported several times with different fidelity -- an
+    http nuclei template or a Burp issue gives a real URL scheme, an ssl
+    template gives only its record ``type``. ``host_services`` is UNIQUE per
+    host:port, so a winner must be chosen: an explicit ``http``/``https``
+    scheme beats anything else, because it says what the service actually is.
+    Without this the winner would come down to the order rows happen to be
+    inserted in.
+    """
+    if current is None:
+        return candidate
+    if candidate in SCHEME_SERVICES and current not in SCHEME_SERVICES:
+        return candidate
+    return current
 
 
 def is_valid_token(
@@ -360,11 +416,22 @@ def plugin_details_url(
     source's template. Returning None matters: callers must not fall back to
     the Tenable base URL, which would fabricate a dead link for a finding that
     did not come from Nessus.
+
+    One ref is deliberately excluded from its source's template: a Burp
+    extension-generated issue carries a :data:`~cerno_pkg.constants.BURP_GENERIC_TYPES`
+    type with a name slug appended (``burp:08000000-jwt-none-algorithm``), and
+    PortSwigger publishes no knowledge-base page for it. The importer stores no
+    URL for those, so without this guard the template would run anyway and
+    produce a 404 link.
     """
     if stored_url:
         return stored_url
-    template = PLUGIN_URL_TEMPLATES.get(plugin_source(plugin_id))
-    return template.format(ref=plugin_ref(plugin_id)) if template else None
+    source = plugin_source(plugin_id)
+    ref = plugin_ref(plugin_id)
+    if source == SOURCE_BURP and ref.split("-", 1)[0] in BURP_GENERIC_TYPES:
+        return None
+    template = PLUGIN_URL_TEMPLATES.get(source)
+    return template.format(ref=ref) if template else None
 
 
 def extract_plugin_id_from_filename(name_or_path) -> Optional[str]:

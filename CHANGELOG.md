@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.7.0] - 2026-11-12
+
+### Added
+- **Burp Suite XML import** — `cerno import burp <report.xml>` (or a directory of them) ingests PortSwigger's "Report issues" export as a third finding source, reviewable in the same loop as Nessus and nuclei findings: same review states, same `[W]` workflows, same `[R]` verdicts, same `cerno scan compare` / `scan history`. **No schema version bump and no re-import** — the only database change is one more seeded `finding_sources` row (`burp`=3), and seeding runs with `INSERT OR IGNORE` on every `initialize_database()`, so existing databases pick it up on next open.
+  - **One finding per issue type, identified by the hex type index** PortSwigger publishes: `burp:00200300`. The XML stores the type in decimal, but the hex form is what keys the knowledge base, so `https://portswigger.net/kb/issues/00200300` is derivable from the id alone — the finding panel's `[Burp Issue Type]` row links straight to the issue definition. Extension-generated issues all share type `0x08000000`, so those get a name slug appended (`burp:08000000-jwt-none-algorithm`) to stop two unrelated findings merging onto one `plugins` row, and no details link, since PortSwigger publishes no page for them.
+  - **Every instance's evidence is kept.** One issue type routinely fires on many parameters of the same host:port, while `finding_affected_hosts` is UNIQUE per `(finding_id, host_id, port_number)`, so all of them merge into one plugin output: location, confidence and detail per instance, followed by the decoded HTTP request and response (both request/response export forms are read, base64 or not). Payloads are capped at 4 KiB each and 10 instances per host:port, because the whole cell renders into the finding panel and the Claude assistant's context.
+  - **Severity maps Information/Low/Medium/High to 0-3.** Burp has no Critical, so nothing it reports reaches severity 4 and a Burp High sorts alongside a Nessus High. Issues the tester dismissed in Burp (`severity="False positive"`) are skipped rather than imported at Info — that judgement has already been made.
+  - **`host_services` is populated from the `<host>` URL scheme**, so a Burp-only scan still reports web services to `v_http_services`, `get_web_targets`, `FindingQuery.service` and the `scan/{id}/hosts` resource. A web-app engagement may import nothing but a Burp report.
+  - HTML prose (`issueBackground`, `issueDetail`, …) is flattened to plain text, CWE ids are captured from `vulnerabilityClassifications`, and any CVE named in the references or prose goes into the existing `plugins.cves` column so a Burp finding cross-references a Nessus one.
+  - `.xml` is also nmap's and a renamed `.nessus`'s extension, so a file whose root element is not `<issues>` is reported as "not a Burp report" rather than importing zero findings silently. A missing, empty or truncated file keeps whatever parsed and never raises.
+- **MCP `import_burp(burp_path, scan_name=None, min_severity=None)`** tool, gated by `mcp_allow_mutations` alongside the other importers. `query_findings(source="burp")` and workflow mappings keyed `burp:<hex>` work with no further changes.
+- **`burp_min_severity` config key** (default `0` = keep all): severity floor for `cerno import burp`, and the default for MCP `import_burp` whose explicit `min_severity` argument still wins. Validated at use, not at load.
+- **A bundled demo Burp report** (`cerno demo` now loads five scans: two Nessus, two nuclei, one Burp). It targets the same web services the demo Nessus scans found, so selecting one of each at the review scan prompt shows all three scanners against the same hosts. Regenerate with `scripts/create_demo_burp_report.py`; every issue type in it is a real PortSwigger type index, so every details link resolves.
+
+### Fixed
+- **MCP `import_nuclei` now honours `nuclei_min_severity`.** The registered tool declared `min_severity: int = 0`, so the config key could never apply through the real MCP surface even though the adapter beneath it resolved the fallback correctly — contrary to the documented precedence (explicit tool arg > config > default). The parameter now defaults to `None`, as `import_burp`'s does.
+
+### Changed
+- `nuclei_import`'s `_prefer_service()`, `_unbracket()` and `_scan_target_type()` moved to `parsing.py` as public `prefer_service()`, `unbracket()` and `scan_target_type()`, shared with the Burp importer; `ingest.py`'s private duplicate of the last one went with them. Internal refactor, no behaviour change.
+
 ## [3.6.0] - 2026-11-06
 
 ### Changed

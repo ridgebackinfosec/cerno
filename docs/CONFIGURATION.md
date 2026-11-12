@@ -56,6 +56,7 @@ settings exist. Defaults shown are the values you get on a fresh install.
 | `nuclei_user_agent` | `Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0` | User-Agent nuclei sends (-H) |
 | `nuclei_concurrency` | `10` | nuclei template concurrency (-c) |
 | `nuclei_min_severity` | `0` | Drop nuclei findings below this severity (0-4) |
+| `burp_min_severity` | `0` | Drop Burp findings below this severity (0-3) |
 | **Logging** | | |
 | `debug_logging` | `False` | Enable DEBUG logs |
 | **NetExec Integration** | | |
@@ -204,6 +205,8 @@ Config file: ~/.cerno/config.yaml
 │   │ nuclei_concurrency         │ 10                                  │ nuclei template concurrency (-c)    │ default │
 │   │ nuclei_min_severity        │ 0                                   │ Drop nuclei findings below this     │ default │
 │   │                            │                                     │ severity (0-4)                      │         │
+│   │ burp_min_severity          │ 0                                   │ Drop Burp findings below this       │ default │
+│   │                            │                                     │ severity (0-3)                      │         │
 ├───┼────────────────────────────┼─────────────────────────────────────┼─────────────────────────────────────┼─────────┤
 │   │ Logging                    │                                     │                                     │         │
 │   │ debug_logging              │ False                               │ Enable DEBUG logs                   │ default │

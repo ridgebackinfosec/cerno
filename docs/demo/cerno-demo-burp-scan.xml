@@ -1,0 +1,199 @@
+<?xml version="1.0"?>
+<!DOCTYPE issues [
+<!ELEMENT issues (issue*)>
+<!ATTLIST issues burpVersion CDATA "">
+<!ATTLIST issues exportTime CDATA "">
+]>
+<issues burpVersion="2024.9.2" exportTime="Thu Nov 12 09:15:00 EST 2026">
+  <issue>
+    <serialNumber>7384839134921138726</serialNumber>
+    <type>3145984</type>
+    <name><![CDATA[Cleartext submission of password]]></name>
+    <host ip="198.51.100.10">http://198.51.100.10</host>
+    <path><![CDATA[/login]]></path>
+    <location><![CDATA[/login]]></location>
+    <severity>High</severity>
+    <confidence>Certain</confidence>
+    <issueBackground><![CDATA[<p>Passwords submitted over an unencrypted connection are vulnerable to capture by an attacker who is suitably positioned on the network.</p>]]></issueBackground>
+    <remediationBackground><![CDATA[<p>Applications should use transport-level encryption (SSL/TLS) to protect all sensitive communications.</p>]]></remediationBackground>
+    <vulnerabilityClassifications><![CDATA[<ul><li><a href="https://cwe.mitre.org/data/definitions/319.html">CWE-319: Cleartext Transmission of Sensitive Information</a></li></ul>]]></vulnerabilityClassifications>
+    <issueDetail><![CDATA[The page contains a form with the following action URL, which is submitted over clear-text HTTP:<ul><li>http://198.51.100.10/login</li></ul>]]></issueDetail>
+    <requestresponse>
+      <request method="GET" base64="true"><![CDATA[UE9TVCAvbG9naW4gSFRUUC8xLjENCkhvc3Q6IDE5OC41MS4xMDAuMTANCkNvbnRlbnQtVHlwZTogYXBwbGljYXRpb24veC13d3ctZm9ybS11cmxlbmNvZGVkDQpDb250ZW50LUxlbmd0aDogMjkNCg0KdXNlcm5hbWU9YWRtaW4mcGFzc3dvcmQ9aHVudGVyMg==]]></request>
+      <response base64="true"><![CDATA[SFRUUC8xLjEgMjAwIE9LDQpDb250ZW50LVR5cGU6IHRleHQvaHRtbA0KDQo8aHRtbD48Ym9keT48Zm9ybSBhY3Rpb249L2xvZ2luIG1ldGhvZD1wb3N0PjxpbnB1dCBuYW1lPXBhc3N3b3JkIHR5cGU9cGFzc3dvcmQ+PC9mb3JtPjwvYm9keT48L2h0bWw+]]></response>
+      <responseRedirected>false</responseRedirected>
+    </requestresponse>
+  </issue>
+  <issue>
+    <serialNumber>7819494431364556820</serialNumber>
+    <type>6292992</type>
+    <name><![CDATA[Robots.txt file]]></name>
+    <host ip="198.51.100.10">http://198.51.100.10</host>
+    <path><![CDATA[/robots.txt]]></path>
+    <location><![CDATA[/robots.txt]]></location>
+    <severity>Information</severity>
+    <confidence>Certain</confidence>
+    <issueBackground><![CDATA[<p>The file robots.txt is used to give instructions to web robots, such as search engine crawlers, about locations within the web site that robots are allowed, or not allowed, to crawl and index.</p>]]></issueBackground>
+    <remediationBackground><![CDATA[<p>The robots.txt file is not itself a security risk; review its contents for references to sensitive locations.</p>]]></remediationBackground>
+    <issueDetail><![CDATA[The web server contains a robots.txt file.]]></issueDetail>
+    <requestresponse>
+      <request method="GET" base64="true"><![CDATA[R0VUIC9yb2JvdHMudHh0IEhUVFAvMS4xDQpIb3N0OiAxOTguNTEuMTAwLjEwDQoNCg==]]></request>
+      <response base64="true"><![CDATA[SFRUUC8xLjEgMjAwIE9LDQpDb250ZW50LVR5cGU6IHRleHQvcGxhaW4NCg0KVXNlci1hZ2VudDogKg0KRGlzYWxsb3c6IC9hZG1pbg0KRGlzYWxsb3c6IC9iYWNrdXANCg==]]></response>
+      <responseRedirected>false</responseRedirected>
+    </requestresponse>
+  </issue>
+  <issue>
+    <serialNumber>7895068034739982695</serialNumber>
+    <type>8389120</type>
+    <name><![CDATA[HTML does not specify charset]]></name>
+    <host ip="198.51.100.10">http://198.51.100.10</host>
+    <path><![CDATA[/]]></path>
+    <location><![CDATA[/]]></location>
+    <severity>Information</severity>
+    <confidence>Certain</confidence>
+    <issueBackground><![CDATA[<p>If a web response does not specify a character set, then the browser may process it using an unexpected character set.</p>]]></issueBackground>
+    <remediationBackground><![CDATA[<p>Specify the character set in the Content-Type header of every response.</p>]]></remediationBackground>
+    <issueDetail><![CDATA[The response does not specify a character set in its Content-Type header.]]></issueDetail>
+  </issue>
+  <issue>
+    <serialNumber>7047458713967950879</serialNumber>
+    <type>1049088</type>
+    <name><![CDATA[SQL injection]]></name>
+    <host ip="198.51.100.12">http://198.51.100.12:8080</host>
+    <path><![CDATA[/reports/list]]></path>
+    <location><![CDATA[/reports/list [category parameter]]]></location>
+    <severity>High</severity>
+    <confidence>Firm</confidence>
+    <issueBackground><![CDATA[<p>SQL injection vulnerabilities arise when user-controllable data is incorporated into database SQL queries in an unsafe manner.</p>]]></issueBackground>
+    <remediationBackground><![CDATA[<p>The most effective way to prevent SQL injection attacks is to use parameterized queries (also known as prepared statements).</p>]]></remediationBackground>
+    <vulnerabilityClassifications><![CDATA[<ul><li><a href="https://cwe.mitre.org/data/definitions/89.html">CWE-89: Improper Neutralization of Special Elements used in an SQL Command</a></li></ul>]]></vulnerabilityClassifications>
+    <issueDetail><![CDATA[The <b>category</b> parameter appears to be vulnerable to SQL injection attacks. The payload <b>'||(select '')||'</b> was submitted and the application returned the base response.]]></issueDetail>
+    <requestresponse>
+      <request method="GET" base64="true"><![CDATA[R0VUIC9yZXBvcnRzL2xpc3Q/Y2F0ZWdvcnk9c2FsZXMlMjclN2MlN2Moc2VsZWN0KyUyNyUyNyklN2MlN2MlMjcgSFRUUC8xLjENCkhvc3Q6IDE5OC41MS4xMDAuMTI6ODA4MA0KDQo=]]></request>
+      <response base64="true"><![CDATA[SFRUUC8xLjEgMjAwIE9LDQpDb250ZW50LVR5cGU6IHRleHQvaHRtbA0KDQo8aHRtbD48Ym9keT48dGFibGU+PHRyPjx0ZD5RMyByZXZlbnVlPC90ZD48L3RyPjwvdGFibGU+PC9ib2R5PjwvaHRtbD4=]]></response>
+      <responseRedirected>false</responseRedirected>
+    </requestresponse>
+  </issue>
+  <issue>
+    <serialNumber>7130928514865478168</serialNumber>
+    <type>2097920</type>
+    <name><![CDATA[Cross-site scripting (reflected)]]></name>
+    <host ip="198.51.100.12">http://198.51.100.12:8080</host>
+    <path><![CDATA[/reports/search]]></path>
+    <location><![CDATA[/reports/search [q parameter]]]></location>
+    <severity>High</severity>
+    <confidence>Certain</confidence>
+    <issueBackground><![CDATA[<p>Reflected cross-site scripting vulnerabilities arise when data is copied from a request and echoed into the application's immediate response in an unsafe way.</p>]]></issueBackground>
+    <remediationBackground><![CDATA[<p>In most situations where user-controllable data is copied into application responses, the vulnerability can be prevented by HTML-encoding the data.</p>]]></remediationBackground>
+    <vulnerabilityClassifications><![CDATA[<ul><li><a href="https://cwe.mitre.org/data/definitions/79.html">CWE-79: Improper Neutralization of Input During Web Page Generation</a></li><li><a href="https://cwe.mitre.org/data/definitions/80.html">CWE-80: Improper Neutralization of Script-Related HTML Tags</a></li></ul>]]></vulnerabilityClassifications>
+    <issueDetail><![CDATA[The value of the <b>q</b> request parameter is copied into the HTML document as plain text between tags. The payload <b>&lt;script&gt;alert(1)&lt;/script&gt;</b> was submitted in the q parameter.]]></issueDetail>
+    <requestresponse>
+      <request method="GET" base64="true"><![CDATA[R0VUIC9yZXBvcnRzL3NlYXJjaD9xPSUzQ3NjcmlwdCUzRWFsZXJ0KDEpJTNDJTJGc2NyaXB0JTNFIEhUVFAvMS4xDQpIb3N0OiAxOTguNTEuMTAwLjEyOjgwODANCg0K]]></request>
+      <response base64="true"><![CDATA[SFRUUC8xLjEgMjAwIE9LDQpDb250ZW50LVR5cGU6IHRleHQvaHRtbA0KDQo8aHRtbD48Ym9keT48aDE+UmVzdWx0cyBmb3IgPHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0PjwvaDE+PC9ib2R5PjwvaHRtbD4=]]></response>
+      <responseRedirected>false</responseRedirected>
+    </requestresponse>
+  </issue>
+  <issue>
+    <serialNumber>7362537149692211541</serialNumber>
+    <type>2097920</type>
+    <name><![CDATA[Cross-site scripting (reflected)]]></name>
+    <host ip="198.51.100.12">http://198.51.100.12:8080</host>
+    <path><![CDATA[/reports/search]]></path>
+    <location><![CDATA[/reports/search [sort parameter]]]></location>
+    <severity>High</severity>
+    <confidence>Firm</confidence>
+    <issueBackground><![CDATA[<p>Reflected cross-site scripting vulnerabilities arise when data is copied from a request and echoed into the application's immediate response in an unsafe way.</p>]]></issueBackground>
+    <remediationBackground><![CDATA[<p>In most situations where user-controllable data is copied into application responses, the vulnerability can be prevented by HTML-encoding the data.</p>]]></remediationBackground>
+    <vulnerabilityClassifications><![CDATA[<ul><li><a href="https://cwe.mitre.org/data/definitions/79.html">CWE-79: Improper Neutralization of Input During Web Page Generation</a></li><li><a href="https://cwe.mitre.org/data/definitions/80.html">CWE-80: Improper Neutralization of Script-Related HTML Tags</a></li></ul>]]></vulnerabilityClassifications>
+    <issueDetail><![CDATA[The value of the <b>sort</b> request parameter is copied into an HTML attribute value.]]></issueDetail>
+  </issue>
+  <issue>
+    <serialNumber>7334091285312464158</serialNumber>
+    <type>5243392</type>
+    <name><![CDATA[TLS cookie without secure flag set]]></name>
+    <host ip="203.0.113.50">https://portal.demo.example</host>
+    <path><![CDATA[/]]></path>
+    <location><![CDATA[/]]></location>
+    <severity>Medium</severity>
+    <confidence>Firm</confidence>
+    <issueBackground><![CDATA[<p>If the secure flag is not set, then the cookie will be transmitted in cleartext if the user visits any HTTP URLs within the cookie's scope.</p>]]></issueBackground>
+    <remediationBackground><![CDATA[<p>Set the secure flag on every cookie that is issued.</p>]]></remediationBackground>
+    <vulnerabilityClassifications><![CDATA[<ul><li><a href="https://cwe.mitre.org/data/definitions/614.html">CWE-614: Sensitive Cookie in HTTPS Session Without Secure Attribute</a></li></ul>]]></vulnerabilityClassifications>
+    <issueDetail><![CDATA[The following cookie was issued by the application and does not have the secure flag set:<ul><li>PORTALSESSID</li></ul>]]></issueDetail>
+    <requestresponse>
+      <request method="GET" base64="true"><![CDATA[R0VUIC8gSFRUUC8xLjENCkhvc3Q6IHBvcnRhbC5kZW1vLmV4YW1wbGUNCg0K]]></request>
+      <response base64="true"><![CDATA[SFRUUC8xLjEgMjAwIE9LDQpTZXQtQ29va2llOiBQT1JUQUxTRVNTSUQ9OGQzZjFhMmI7IFBhdGg9Lw0KDQo=]]></response>
+      <responseRedirected>false</responseRedirected>
+    </requestresponse>
+  </issue>
+  <issue>
+    <serialNumber>7386113695842519522</serialNumber>
+    <type>5244416</type>
+    <name><![CDATA[Cookie without HttpOnly flag set]]></name>
+    <host ip="203.0.113.50">https://portal.demo.example</host>
+    <path><![CDATA[/]]></path>
+    <location><![CDATA[/]]></location>
+    <severity>Low</severity>
+    <confidence>Firm</confidence>
+    <issueBackground><![CDATA[<p>If the HttpOnly attribute is set on a cookie, then the cookie's value cannot be read or set by client-side JavaScript.</p>]]></issueBackground>
+    <remediationBackground><![CDATA[<p>Set the HttpOnly attribute on every cookie that is issued.</p>]]></remediationBackground>
+    <vulnerabilityClassifications><![CDATA[<ul><li><a href="https://cwe.mitre.org/data/definitions/1004.html">CWE-1004: Sensitive Cookie Without HttpOnly Flag</a></li></ul>]]></vulnerabilityClassifications>
+    <issueDetail><![CDATA[The following cookie was issued by the application and does not have the HttpOnly flag set:<ul><li>PORTALSESSID</li></ul>]]></issueDetail>
+  </issue>
+  <issue>
+    <serialNumber>7153790952784246905</serialNumber>
+    <type>16777984</type>
+    <name><![CDATA[Strict transport security not enforced]]></name>
+    <host ip="203.0.113.50">https://portal.demo.example</host>
+    <path><![CDATA[/]]></path>
+    <location><![CDATA[/]]></location>
+    <severity>Low</severity>
+    <confidence>Certain</confidence>
+    <issueBackground><![CDATA[<p>HTTP Strict Transport Security (HSTS) instructs web browsers to only access the web server over HTTPS.</p>]]></issueBackground>
+    <remediationBackground><![CDATA[<p>Return a Strict-Transport-Security header on every HTTPS response.</p>]]></remediationBackground>
+    <vulnerabilityClassifications><![CDATA[<ul><li><a href="https://cwe.mitre.org/data/definitions/523.html">CWE-523: Unprotected Transport of Credentials</a></li></ul>]]></vulnerabilityClassifications>
+    <issueDetail><![CDATA[The application does not return a Strict-Transport-Security header with any HTTPS response.]]></issueDetail>
+  </issue>
+  <issue>
+    <serialNumber>7758001017729396508</serialNumber>
+    <type>7340288</type>
+    <name><![CDATA[Cacheable HTTPS response]]></name>
+    <host ip="203.0.113.50">https://portal.demo.example</host>
+    <path><![CDATA[/account/profile]]></path>
+    <location><![CDATA[/account/profile]]></location>
+    <severity>Information</severity>
+    <confidence>Certain</confidence>
+    <issueBackground><![CDATA[<p>Web responses that are cacheable may be stored by intermediate proxies and by the browser, where they may be accessible to other users.</p>]]></issueBackground>
+    <remediationBackground><![CDATA[<p>Applications should return caching directives instructing browsers not to store local copies of any sensitive data.</p>]]></remediationBackground>
+    <vulnerabilityClassifications><![CDATA[<ul><li><a href="https://cwe.mitre.org/data/definitions/524.html">CWE-524: Use of Cache Containing Sensitive Information</a></li></ul>]]></vulnerabilityClassifications>
+    <issueDetail><![CDATA[The response contains personal information and may be stored by the browser's cache.]]></issueDetail>
+  </issue>
+  <issue>
+    <serialNumber>7837620823530833735</serialNumber>
+    <type>2097920</type>
+    <name><![CDATA[Cross-site scripting (reflected)]]></name>
+    <host ip="198.51.100.13">https://198.51.100.13:8443</host>
+    <path><![CDATA[/app/view]]></path>
+    <location><![CDATA[/app/view [id parameter]]]></location>
+    <severity>High</severity>
+    <confidence>Firm</confidence>
+    <issueBackground><![CDATA[<p>Reflected cross-site scripting vulnerabilities arise when data is copied from a request and echoed into the application's immediate response in an unsafe way.</p>]]></issueBackground>
+    <remediationBackground><![CDATA[<p>In most situations where user-controllable data is copied into application responses, the vulnerability can be prevented by HTML-encoding the data.</p>]]></remediationBackground>
+    <vulnerabilityClassifications><![CDATA[<ul><li><a href="https://cwe.mitre.org/data/definitions/79.html">CWE-79: Improper Neutralization of Input During Web Page Generation</a></li><li><a href="https://cwe.mitre.org/data/definitions/80.html">CWE-80: Improper Neutralization of Script-Related HTML Tags</a></li></ul>]]></vulnerabilityClassifications>
+    <issueDetail><![CDATA[The value of the <b>id</b> request parameter is copied into the HTML document as plain text between tags.]]></issueDetail>
+  </issue>
+  <issue>
+    <serialNumber>7922318056233085759</serialNumber>
+    <type>16777984</type>
+    <name><![CDATA[Strict transport security not enforced]]></name>
+    <host ip="2001:db8:10::25">https://ipv6-web.demo.example</host>
+    <path><![CDATA[/]]></path>
+    <location><![CDATA[/]]></location>
+    <severity>Low</severity>
+    <confidence>Certain</confidence>
+    <issueBackground><![CDATA[<p>HTTP Strict Transport Security (HSTS) instructs web browsers to only access the web server over HTTPS.</p>]]></issueBackground>
+    <remediationBackground><![CDATA[<p>Return a Strict-Transport-Security header on every HTTPS response.</p>]]></remediationBackground>
+    <vulnerabilityClassifications><![CDATA[<ul><li><a href="https://cwe.mitre.org/data/definitions/523.html">CWE-523: Unprotected Transport of Credentials</a></li></ul>]]></vulnerabilityClassifications>
+    <issueDetail><![CDATA[The application does not return a Strict-Transport-Security header with any HTTPS response.]]></issueDetail>
+  </issue>
+</issues>

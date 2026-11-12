@@ -44,6 +44,7 @@ REMOVED_FLAGS = [
 #: Flags that are per-invocation data and must survive.
 KEPT_FLAGS = [
     (["import", "nuclei"], "--name"),
+    (["import", "burp"], "--name"),
     (["scan", "list"], "--json"),
     (["scan", "compare"], "--severity"),
     (["scan", "compare"], "-s"),
@@ -202,6 +203,35 @@ def test_tools_disabled_refuses_an_explicit_t(monkeypatch, capsys):
 
     assert result == "back"
     assert "tools_enabled" in capsys.readouterr().out.replace("\n", " ")
+
+
+@pytest.mark.integration
+def test_burp_min_severity_is_validated_before_import(tmp_path):
+    """A hand-edited out-of-range value is refused, not silently ignored."""
+    from cerno import app
+
+    report = tmp_path / "report.xml"
+    report.write_text("<issues></issues>", encoding="utf-8")
+    _write_config(burp_min_severity=9)
+
+    result = CliRunner().invoke(app, ["import", "burp", str(report)])
+
+    assert result.exit_code == 1, result.output
+    assert "burp_min_severity" in result.output
+
+
+@pytest.mark.integration
+def test_burp_import_rejects_a_non_xml_file(tmp_path):
+    """.nessus and .json files go to their own importers."""
+    from cerno import app
+
+    report = tmp_path / "report.json"
+    report.write_text("[]", encoding="utf-8")
+
+    result = CliRunner().invoke(app, ["import", "burp", str(report)])
+
+    assert result.exit_code == 1, result.output
+    assert ".xml" in result.output
 
 
 @pytest.mark.integration

@@ -520,3 +520,72 @@ class TestNucleiEscapesAreNeutralizedAtRender:
         render.display_finding_preview(plugin, finding, None, None)  # type: ignore[arg-type]
         out = capsys.readouterr().out
         assert "[bold]weird[/bold]" in out
+
+
+# A Burp issue name / response body carrying terminal escapes and Rich markup.
+# A Burp response is lifted verbatim from a live target, so it is the most
+# directly attacker-controlled text Cerno stores: an attacker who can shape a
+# response body picks these bytes.
+BURP_ESC_NAME = "Stored \x1b[31mXSS\x1b[0m [/] in header"
+BURP_ESC_RESPONSE = (
+    "HTTP/1.1 200 OK\r\n\r\n<html>\x1b]0;pwned\x07 [bold red]owned[/] \x1b[1;32m!"
+)
+
+
+@pytest.mark.unit
+class TestBurpEscapesAreNeutralizedAtRender:
+    """The importer stores Burp evidence verbatim; rendering must neutralize it."""
+
+    def test_safe_text_strips_every_escape_from_an_issue_name(self) -> None:
+        out = safe_text(BURP_ESC_NAME)
+        assert "\x1b" not in out
+        assert "XSS" in out and "header" in out
+
+    def test_safe_text_strips_escapes_from_a_response_body(self) -> None:
+        out = safe_text(BURP_ESC_RESPONSE)
+        assert "\x1b" not in out
+        assert "\x07" not in out
+        assert "owned" in out
+
+    def test_unbalanced_markup_in_an_issue_name_does_not_crash_render(self) -> None:
+        plugin = Plugin(
+            plugin_id="burp:00200100",
+            plugin_name=BURP_ESC_NAME,
+            severity_int=3,
+        )
+        finding = Finding(finding_id=1, scan_id=1, plugin_id="burp:00200100")
+        finding.get_hosts_and_ports = lambda *a, **k: ([], "")  # type: ignore[method-assign]
+        render.display_finding_preview(plugin, finding, None, None)  # type: ignore[arg-type]
+
+    def test_merged_plugin_output_with_escapes_renders(self) -> None:
+        """format_plugin_output is stored raw, so the renderer must cope."""
+        from cerno_pkg.burp_parse import ParsedBurpInstance, format_plugin_output
+
+        text = format_plugin_output(
+            [
+                ParsedBurpInstance(
+                    host="h.example.com",
+                    ip=None,
+                    port=443,
+                    scheme="https",
+                    path="/",
+                    location="/ [User-Agent header]",
+                    confidence="Certain",
+                    detail="payload [/] echoed",
+                    request="GET / HTTP/1.1",
+                    response=BURP_ESC_RESPONSE,
+                )
+            ]
+        )
+        assert "\x1b" in text  # stored verbatim
+        assert "\x1b" not in safe_text(text)  # neutralized for display
+
+    def test_burp_plugin_id_is_not_markup_parsed(self, capsys) -> None:
+        """A slugged extension ref with brackets must not vanish from the panel."""
+        hostile = "burp:08000000-[bold]weird[/bold]-check"
+        plugin = Plugin(plugin_id=hostile, plugin_name="Weird", severity_int=0)
+        finding = Finding(finding_id=1, scan_id=1, plugin_id=hostile)
+        finding.get_hosts_and_ports = lambda *a, **k: ([], "")  # type: ignore[method-assign]
+        render.display_finding_preview(plugin, finding, None, None)  # type: ignore[arg-type]
+        out = capsys.readouterr().out
+        assert "[bold]weird[/bold]" in out

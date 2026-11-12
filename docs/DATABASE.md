@@ -57,7 +57,7 @@ Cerno uses a **fully normalized database schema** following relational best prac
 
 1. **Normalized Lookup Tables**
    - `severity_levels` - Centralized severity reference data
-   - `finding_sources` - Which scanner produced a plugin row (nessus, nuclei)
+   - `finding_sources` - Which scanner produced a plugin row (nessus, nuclei, burp)
    - `artifact_types` - Standardized artifact type definitions
    - `verdict_types`, `nse_verdicts`, `port_states` - Verification lookup values
    - `hosts` - Deduplicated host data across scans
@@ -207,7 +207,12 @@ Scan sources - which scanner produced a `plugins` row.
 ```text
 (1, 'nessus')
 (2, 'nuclei')
+(3, 'burp')
 ```
+
+Seeded with `INSERT OR IGNORE` on every `initialize_database()` call, so a new
+source row reaches existing databases without a `SCHEMA_VERSION` bump. Only a
+change to a *table* forces one.
 
 **Foreign Keys**: Referenced by `plugins.source_id`
 
@@ -307,16 +312,16 @@ source. Global: there is no `scan_id` column, so all scans share these rows.
 
 | Column | Type | Description |
 |---|---|---|
-| `plugin_id` | TEXT | Primary key - namespaced per source, with no default source: `'nessus:57608'`, `'nuclei:apache-detect'`. A bare number is not a valid id |
+| `plugin_id` | TEXT | Primary key - namespaced per source, with no default source: `'nessus:57608'`, `'nuclei:apache-detect'`, `'burp:00200300'`. A bare number is not a valid id |
 | `source_id` | INTEGER | Foreign key to `finding_sources` (default 1 = nessus) |
-| `plugin_name` | TEXT | Plugin name (nuclei: `info.name`) |
-| `severity_int` | INTEGER | 0=Info, 1=Low, 2=Medium, 3=High, 4=Critical |
+| `plugin_name` | TEXT | Plugin name (nuclei: `info.name`; Burp: the issue `<name>`) |
+| `severity_int` | INTEGER | 0=Info, 1=Low, 2=Medium, 3=High, 4=Critical. Burp has no Critical, so nothing it reports reaches 4 |
 | `has_metasploit` | BOOLEAN | Metasploit module availability |
 | `cvss3_score` | REAL | CVSS v3 base score |
 | `cvss2_score` | REAL | CVSS v2 base score (fallback) |
 | `metasploit_names` | TEXT | JSON array of Metasploit module names |
 | `cves` | TEXT | JSON array of CVE IDs |
-| `plugin_url` | TEXT | Details page captured at import. Nessus: the Tenable plugin page. nuclei: the template's source in the nuclei-templates repo, built from the result's `template` path, falling back to the public template viewer when that path is absent or unusable. See `nuclei_parse.resolve_template_url()` and `constants.PLUGIN_URL_TEMPLATES` |
+| `plugin_url` | TEXT | Details page captured at import. Nessus: the Tenable plugin page. nuclei: the template's source in the nuclei-templates repo, built from the result's `template` path, falling back to the public template viewer when that path is absent or unusable. Burp: the PortSwigger knowledge-base page for the hex type index, or NULL for an extension-generated issue, which has none. See `nuclei_parse.resolve_template_url()`, `burp_parse.kb_url()` and `constants.PLUGIN_URL_TEMPLATES` |
 | `metadata_fetched_at` | TIMESTAMP | When metadata was last fetched |
 
 **Note**: The `severity_label` is accessed via the `v_plugins_with_severity` view or by JOINing with `severity_levels`.

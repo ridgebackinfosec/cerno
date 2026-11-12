@@ -77,6 +77,7 @@ EXPECTED_TOOLS = {
     "add_note",  # mcp_allow_mutations
     "import_nessus",  # mcp_allow_mutations
     "import_nuclei",  # mcp_allow_mutations
+    "import_burp",  # mcp_allow_mutations
     "ingest_results",  # mcp_allow_mutations
     "set_finding_verdict",  # mcp_allow_mutations
     "reveal_credential",  # mcp_allow_cred_reveal
@@ -95,7 +96,7 @@ EXPECTED_PROMPTS = {"triage_finding", "exploit_plan", "triage_scope", "verify_fi
 
 # Advisory tool annotations (hints clients use to decide auto-approval). Tools not
 # listed here intentionally carry no annotations (export_workflow_contribution,
-# add_note, import_nessus, import_nuclei, reveal_credential).
+# add_note, import_nessus, import_nuclei, import_burp, reveal_credential).
 EXPECTED_READONLY_TOOLS = {
     "list_scans",
     "list_findings",
@@ -145,6 +146,7 @@ EXPECTED_UNANNOTATED_TOOLS = {
     "add_note",
     "import_nessus",
     "import_nuclei",
+    "import_burp",
     "reveal_credential",
 }
 
