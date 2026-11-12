@@ -5,4 +5,4 @@ pyperclip>=1.8,<2
 loguru>=0.7.3
 pyyaml>=6.0.0
 prompt_toolkit>=3.0
-mcp>=2,<3
+mcp>=2.3.0,<3
