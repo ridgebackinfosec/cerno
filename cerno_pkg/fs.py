@@ -105,6 +105,53 @@ _VERDICT_CHOICES: dict[str, str] = {
 }
 
 
+def update_authored_finding_interactive(finding: "Finding") -> bool:
+    """Prompt the operator to edit a hand-authored finding, and write it.
+
+    The counterpart to :func:`record_verdict`: prompt, write, report. Only
+    findings from :data:`~cerno_pkg.constants.AUTHORED_SOURCES` reach here --
+    the ``[U]`` action is hidden otherwise and :func:`handle_finding_view`
+    refuses an explicit ``u`` on anything else, because a scanner finding is a
+    record of what the scanner reported.
+
+    An ``agent:`` finding is editable here just like an ``operator:`` one: the
+    operator owns the engagement and must be able to correct what an agent
+    asserted. The finding keeps its original namespace, so the edit does not
+    reattribute it.
+
+    Returns:
+        True if the finding was changed (so the caller can refresh its view).
+    """
+    from .authored_findings import AuthoredFindingError, update_authored_finding
+    from .tui import prompt_edit_finding
+
+    fid = getattr(finding, "finding_id", None)
+    if not isinstance(fid, int):
+        warn("This finding has no database id - cannot edit it")
+        return False
+
+    edited = prompt_edit_finding(fid)
+    if edited is None:
+        return False
+
+    try:
+        plugin_id = update_authored_finding(
+            fid,
+            title=edited.title,
+            severity_int=edited.severity_int,
+            targets=edited.targets,
+            description=edited.description,
+            cves=edited.cves,
+            reference_url=edited.reference_url,
+        )
+    except AuthoredFindingError as exc:
+        err(f"Could not update the finding: {exc}")
+        return False
+
+    ok(f"Updated {plugin_id}.")
+    return True
+
+
 def record_verdict(finding: "Finding", plugin: Optional["Plugin"] = None) -> bool:
     """Prompt the operator to record a verification verdict for a finding.
 
@@ -422,6 +469,13 @@ def handle_finding_view(
     if workflow_mapper and plugin:
         has_workflow = workflow_mapper.has_workflow(str(plugin.plugin_id))
 
+    # Only a hand-authored finding is editable; see the [U] branch below.
+    # Membership, not equality: `operator:` and `agent:` are both authored, and
+    # testing one of them would leave the other's findings uneditable.
+    from .constants import AUTHORED_SOURCES
+
+    is_authored_finding = plugin is not None and plugin.source in AUTHORED_SOURCES
+
     # Check Claude Assistant availability (cheap: shutil.which + config load)
     from .claude_assistant import check_claude_available
     from .config import load_config as _load_config
@@ -449,6 +503,7 @@ def handle_finding_view(
             claude_installed=claude_installed,
             use_proxy=use_proxy,
             no_tools=not _cfg.tools_enabled,
+            is_authored_finding=is_authored_finding,
         )
         try:
             action_choice = Prompt.ask("Choose action").strip().lower()
@@ -477,6 +532,35 @@ def handle_finding_view(
                 continue
             if record_verdict(finding, plugin):
                 return "mark_complete"
+            continue
+
+        # Handle Update finding action (hand-authored findings only)
+        if action_choice in ("u", "update"):
+            if finding is None:
+                warn("Database not available - cannot edit this finding")
+                continue
+            if not is_authored_finding:
+                warn(
+                    "Only hand-authored findings can be edited; this one came "
+                    "from a scanner."
+                )
+                info("Record a verdict with [R] instead.")
+                continue
+            if update_authored_finding_interactive(finding):
+                # Everything on screen is now stale: the plugin row carries the
+                # new title and severity, and the targets may have changed
+                # under the tool workflow's feet. Re-read both and redraw the
+                # panel rather than leaving the operator looking at the old one.
+                from .models import Plugin as _Plugin
+
+                refreshed = _Plugin.get_by_id(str(finding.plugin_id))
+                if refreshed is not None:
+                    plugin = refreshed
+                hosts, ports_str = finding.get_hosts_and_ports()
+                if plugin is not None:
+                    display_finding_preview(
+                        plugin, finding, sev_dir, chosen, workflow_mapper
+                    )
             continue
 
         # Handle Run tool action
@@ -735,10 +819,17 @@ def process_single_finding(
     display_name = finding_label(finding, plugin)
 
     if not hosts:
-        info(
-            "Finding has no affected hosts. This usually means the vulnerability doesn't affect any hosts."
-        )
-        return
+        # A hand-authored finding may legitimately name no host -- an
+        # engagement-level observation has none -- and refusing to open it
+        # would make it uneditable, since [U] lives in this view.
+        from .constants import AUTHORED_SOURCES
+
+        if not plugin or plugin.source not in AUTHORED_SOURCES:
+            info(
+                "Finding has no affected hosts. This usually means the vulnerability doesn't affect any hosts."
+            )
+            return
+        info("This finding names no affected host. Press [U] to add one.")
 
     # Display finding preview panel
     display_finding_preview(plugin, finding, sev_dir, chosen, workflow_mapper)

@@ -860,10 +860,12 @@ LOOKUP_SEEDS: tuple[tuple[str, list[tuple]], ...] = (
             (0, "Info", 0, "#4682B4"),
         ],
     ),
-    # Import sources (plugins.plugin_id is namespaced per source)
+    # Finding sources (plugins.plugin_id is namespaced per source).
+    # 1-3 are imported from a scanner; 4-5 are hand-authored, split by the
+    # channel that wrote them -- the TUI (operator) or an MCP client (agent).
     (
         "INSERT OR IGNORE INTO finding_sources (source_id, source_name) VALUES (?, ?)",
-        [(1, "nessus"), (2, "nuclei"), (3, "burp")],
+        [(1, "nessus"), (2, "nuclei"), (3, "burp"), (4, "operator"), (5, "agent")],
     ),
     (
         "INSERT OR IGNORE INTO artifact_types "

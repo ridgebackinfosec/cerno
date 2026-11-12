@@ -1033,6 +1033,7 @@ def render_actions_footer(
         [
             key_text("E", f"CVEs ({unique_cve_count})"),
             key_text("M", f"{move_label} ({candidates_count})"),
+            key_text("+", "Add finding"),
         ]
     )
     right_row3_items = []
@@ -1081,6 +1082,7 @@ def render_finding_actions_footer(
     claude_installed: bool = False,
     use_proxy: bool = False,
     no_tools: bool = False,
+    is_authored_finding: bool = False,
 ) -> None:
     """Render action footer for finding review with responsive layout.
 
@@ -1098,6 +1100,9 @@ def render_finding_actions_footer(
         claude_installed: Whether claude CLI is on PATH (shows [A] for the opt-in prompt)
         use_proxy: Whether proxychains4 routing is active (shows the [PROXY] badge)
         no_tools: Review-only mode (``--no-tools``); hides the [T] Run tool action
+        is_authored_finding: Whether this finding was hand-authored (``operator:``
+            or ``agent:``); shows the [U] Update action, which no scanner
+            finding offers
     """
     from .ansi import get_terminal_width
 
@@ -1125,9 +1130,14 @@ def render_finding_actions_footer(
     right_row2 = Text() if no_tools else join_actions_texts([key_text("T", "Run tool")])
 
     # Row 3: Control actions (always present)
-    left_row3 = join_actions_texts(
-        [_move_action_text(review_state), key_text("R", "Record verdict")]
-    )
+    left_row3_items = [_move_action_text(review_state), key_text("R", "Record verdict")]
+    if is_authored_finding:
+        # Only a hand-authored finding is editable, whichever channel wrote it:
+        # a scanner finding is a record of what the scanner reported, so
+        # offering [U] on one would promise something handle_finding_view
+        # refuses.
+        left_row3_items.append(key_text("U", "Update finding"))
+    left_row3 = join_actions_texts(left_row3_items)
     right_row3 = join_actions_texts([key_text("B", "Back")])
 
     # Row 4: Claude Assistant (conditional)
@@ -1495,6 +1505,14 @@ def show_actions_help(
         ),
         key_text(
             "E", f"CVEs ({unique_cve_count}) - Extract CVEs for all filtered findings"
+        ),
+    )
+    table.add_row(
+        Text("Authoring", style="bold"),
+        key_text(
+            "+",
+            "Add finding - Write up something you found by hand, into the "
+            "Operator scan",
         ),
     )
     if group_applied:

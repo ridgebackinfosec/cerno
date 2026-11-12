@@ -49,7 +49,7 @@ class FindingQuery:
     service: Optional[str] = None  # host_services.svc_name substring
     host: Optional[str] = None  # scan_target / ip_address substring
     plugin_name: Optional[str] = None  # plugin name substring (case-insensitive)
-    source: Optional[str] = None  # scan source: nessus|nuclei
+    source: Optional[str] = None  # nessus|nuclei|burp|operator|agent
     has_metasploit: Optional[bool] = None
     has_workflow: Optional[bool] = None  # consults the workflow mapper, not the DB
     merged: bool = False  # dedup by plugin across >1 scan (TUI multi-scan semantics)

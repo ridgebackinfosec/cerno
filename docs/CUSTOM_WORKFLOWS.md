@@ -130,6 +130,8 @@ workflows:      # Required: List of workflow definitions
   - finding_id: "nessus:12345"   # Required: Finding ID(s) - string, can be comma-separated
                                  #   Nessus: "nessus:<plugin-id>". nuclei: "nuclei:<template-id>"
                                  #   Burp: "burp:<hex-type-index>", e.g. "burp:00200300"
+                                 #   Operator: "operator:<n>", e.g. "operator:3"
+                                 #   Agent:    "agent:<n>",    e.g. "agent:7"
     workflow_name: "Workflow Name"  # Recommended: Human-readable workflow name
     description: "Brief description"  # Recommended: What this workflow verifies
 
@@ -155,8 +157,10 @@ The loader only enforces `workflows` and `finding_id`, and it enforces them stri
 namespaced per scan source for **every** source — there is no default. A Nessus
 plugin is `nessus:57608`; a nuclei template is `nuclei:<template-id>`; a Burp
 issue type is `burp:<hex-type-index>` (the 8-digit index PortSwigger publishes,
-which is also the last path segment of its knowledge-base URL). A bare
-number matches nothing and the entry is skipped:
+which is also the last path segment of its knowledge-base URL); a finding you
+entered yourself is `operator:<n>` and one an MCP client created is `agent:<n>`,
+the number shown in each one's panel, which stays the same however often you
+rename the finding. A bare number matches nothing and the entry is skipped:
 
 ```yaml
 workflows:
@@ -281,7 +285,7 @@ path, say, which is what the bundled `nessus:298485` (Oracle EBS) entry does.
 - The workflow is registered internally for **each individual finding ID**
 - Pressing **[W]** on any of the related findings shows the **same workflow**
 - The workflow's `finding_id` field preserves the original comma-separated string
-- The ids may span sources; mixing `nessus:`, `nuclei:` and `burp:` in one entry is supported
+- The ids may span sources; mixing `nessus:`, `nuclei:`, `burp:`, `operator:` and `agent:` in one entry is supported
 - Include all relevant reference URLs in the `references` section
 
 ### When to Use Multi-Plugin Workflows

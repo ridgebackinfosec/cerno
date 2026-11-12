@@ -209,6 +209,52 @@ unreadable. Instances beyond the cap are summarised by a trailing count.
 SOURCE_NESSUS: str = "nessus"
 SOURCE_NUCLEI: str = "nuclei"
 SOURCE_BURP: str = "burp"
+SOURCE_OPERATOR: str = "operator"
+"""Findings the tester wrote by hand in the review TUI.
+
+One of two sources that are *created* rather than imported, which is why
+neither has a parser or importer module -- :mod:`cerno_pkg.authored_findings`
+writes both directly. Everything downstream treats them like any other source.
+"""
+
+SOURCE_AGENT: str = "agent"
+"""Findings an MCP client created, i.e. ones an agent asserted.
+
+Split from :data:`SOURCE_OPERATOR` so the channel that wrote a hand-authored
+finding stays visible after the fact: a finding the tester verified by hand is
+a different claim from one an agent produced, and on an engagement that
+difference carries evidentiary weight. The namespace records the *creator*
+only -- editing an ``agent:`` finding in the TUI leaves it ``agent:``.
+"""
+
+AUTHORED_SOURCES: frozenset[str] = frozenset({SOURCE_OPERATOR, SOURCE_AGENT})
+"""Sources whose findings are hand-authored rather than parsed from a scan.
+
+The single definition every "can this be edited?" test uses, so the two
+channels cannot drift apart: forgetting one value in a two-way ``or`` would
+leave a finding that no interface can correct. Contrast the scanner sources,
+whose rows are a record of what a tool reported and are deliberately immutable.
+"""
+
+AUTHORED_SCAN_NAMES: dict[str, str] = {
+    SOURCE_OPERATOR: "Operator",
+    SOURCE_AGENT: "Agent",
+}
+"""The scan each authored source collects its findings into, per source.
+
+``findings`` needs a ``scan_id`` and a hand-authored finding belongs to no
+scanner run, so one scan per source holds them all. Keeping them out of the
+scanner scans preserves the invariant ``cross_scan`` relies on -- that a scan
+has a single source -- so ``cerno scan compare`` keeps working on the scans
+around them. Comparing the two authored scans *with each other* is refused for
+the same reason it refuses Nessus against nuclei: their plugin ids are
+namespaced apart, so they share none and a diff would report every finding on
+both sides as unique to its scan.
+
+One scan per source per *database*, created on first use, which means each
+accumulates across engagements. The findings list's ``[F]`` name filter narrows
+it, and ``cerno scan delete Operator`` / ``cerno scan delete Agent`` clears it.
+"""
 
 SOURCE_UNKNOWN: str = "unknown"
 """Source of an id carrying no recognised namespace prefix.
@@ -220,7 +266,13 @@ known source" and render a finding without a details link rather than
 fabricating one.
 """
 
-SOURCE_IDS: dict[str, int] = {SOURCE_NESSUS: 1, SOURCE_NUCLEI: 2, SOURCE_BURP: 3}
+SOURCE_IDS: dict[str, int] = {
+    SOURCE_NESSUS: 1,
+    SOURCE_NUCLEI: 2,
+    SOURCE_BURP: 3,
+    SOURCE_OPERATOR: 4,
+    SOURCE_AGENT: 5,
+}
 """``finding_sources.source_id`` per source name.
 
 Mirrors the ``finding_sources`` rows in ``database.LOOKUP_SEEDS``.
@@ -230,6 +282,8 @@ PLUGIN_ID_PREFIXES: dict[str, str] = {
     SOURCE_NESSUS: "nessus:",
     SOURCE_NUCLEI: "nuclei:",
     SOURCE_BURP: "burp:",
+    SOURCE_OPERATOR: "operator:",
+    SOURCE_AGENT: "agent:",
 }
 """Namespace prefix applied to ``plugins.plugin_id`` per source.
 
@@ -248,6 +302,8 @@ PLUGIN_ID_LABELS: dict[str, str] = {
     SOURCE_NESSUS: "Nessus Plugin ID",
     SOURCE_NUCLEI: "Nuclei Template ID",
     SOURCE_BURP: "Burp Issue Type",
+    SOURCE_OPERATOR: "Operator Finding ID",
+    SOURCE_AGENT: "Agent Finding ID",
 }
 """Label for the identifier row in the finding panel, per source."""
 
@@ -259,7 +315,11 @@ PLUGIN_URL_TEMPLATES: dict[str, str] = {
 """Details-page template per source, keyed on the source-native ``{ref}``.
 
 A source absent from this map has no known details page, and callers must
-render no link rather than fabricate one.
+render no link rather than fabricate one. Every source in
+:data:`AUTHORED_SOURCES` is such a source by nature: a hand-written finding has
+nothing to link to unless its author supplied a reference URL, which is stored
+in ``plugins.plugin_url`` and preferred by :func:`parsing.plugin_details_url`
+over any template.
 
 Burp is a partial case: the template is right for a real issue type, but an
 extension-generated issue carries a :data:`BURP_GENERIC_TYPES` ref with a name
@@ -279,6 +339,24 @@ one as a ``plugin_id`` would merge, say, two different extensions' findings onto
 a single ``plugins`` row under whichever name was imported first. The importer
 appends a slug of the issue name for these (``burp:08000000-jwt-none-algorithm``)
 and records no details URL, since PortSwigger publishes no page for them.
+"""
+
+
+# ========== Hand-authored findings ==========
+AUTHORED_TITLE_MAX_CHARS: int = 200
+"""Cap on a hand-authored finding's title.
+
+``plugins.plugin_name`` has no length constraint, but the title is rendered
+into a table cell and a panel header; a runaway title from an MCP client
+pasting tool output would push every column off screen.
+"""
+
+AUTHORED_DESCRIPTION_MAX_CHARS: int = 20_000
+"""Cap on a hand-authored finding's description.
+
+Stored once per affected host, like every other source's evidence, so the cost
+is multiplied by the host count. Generous enough for a written-up finding and
+small enough that a pasted scan log is refused rather than silently stored.
 """
 
 

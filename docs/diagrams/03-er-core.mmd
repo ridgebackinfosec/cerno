@@ -9,11 +9,11 @@ erDiagram
         TIMESTAMP created_at
     }
     finding_sources {
-        INTEGER source_id PK "1=nessus, 2=nuclei"
+        INTEGER source_id PK "1=nessus..5=agent"
         TEXT source_name UK
     }
     plugins {
-        TEXT plugin_id PK "'nessus:57608' | 'nuclei:apache-detect'"
+        TEXT plugin_id PK "'nessus:57608' | 'burp:00200300' | 'agent:7'"
         INTEGER source_id FK
         TEXT plugin_name
         INTEGER severity_int FK

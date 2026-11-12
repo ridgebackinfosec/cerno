@@ -91,7 +91,7 @@ Before implementing any schema change, verify:
 
 ## Project Overview
 
-**Cerno** is a Python CLI tool for reviewing vulnerability findings from multiple scanners and orchestrating security tools (nmap, NetExec, nuclei, Metasploit). Findings are imported from Nessus `.nessus` exports, nuclei JSON/JSONL results and Burp Suite XML reports, and all three share one review loop. It features a Rich-based TUI for interactive review, SQLite-backed persistence, and session state tracking.
+**Cerno** is a Python CLI tool for reviewing vulnerability findings from multiple scanners and orchestrating security tools (nmap, NetExec, nuclei, Metasploit). Findings are imported from Nessus `.nessus` exports, nuclei JSON/JSONL results and Burp Suite XML reports, or written by hand in the TUI (`operator:`) / by the MCP client (`agent:`), and all five sources share one review loop. It features a Rich-based TUI for interactive review, SQLite-backed persistence, and session state tracking.
 
 **Core workflow**: Import `.nessus` files, nuclei results and/or Burp reports → Review findings in TUI → Run security tools → Track progress in database
 
@@ -175,7 +175,7 @@ pytest tests/test_parsing.py::TestSplitHostPort::test_ipv4_with_port
 pytest --durations=10
 ```
 
-**Coverage goals**: 85% overall, 90%+ for critical modules (database.py, models.py, parsing.py, nessus_import.py, nuclei_parse.py, nuclei_import.py, burp_parse.py, burp_import.py)
+**Coverage goals**: 85% overall, 90%+ for critical modules (database.py, models.py, parsing.py, nessus_import.py, nuclei_parse.py, nuclei_import.py, burp_parse.py, burp_import.py, authored_findings.py)
 
 ### Linting & Formatting
 
@@ -241,6 +241,13 @@ cerno_pkg/
   │                        # HTML prose flattened, base64 request/response decoded + capped
   ├── burp_import.py       # import_burp_file(): one finding per issue type; merges every
   │                        # instance on a host:port into one plugin_output row
+  ├── authored_findings.py # Hand-authored findings (no parser — they are created, not
+  │                        # imported). Every entry point takes an explicit source:
+  │                        # operator: (TUI) or agent: (MCP), never a default.
+  │                        # get_or_create_authored_scan(), next_authored_ref(),
+  │                        # create_authored_finding(), update_authored_finding(),
+  │                        # load_authored_finding(); shared by the TUI [+]/[U] and
+  │                        # MCP create_finding/update_finding
   ├── cross_scan.py        # `cerno scan compare` / `scan history` data (v_scan_plugin_summary, v_host_scan_findings)
   ├── parsing.py           # Host:port parsing: parse_hosts_ports(), split_host_port()
   ├── analysis.py          # Identical host:port groups ([H]) and superset/overlap analysis ([O])
@@ -307,7 +314,7 @@ cerno_pkg/
 
 ### Core Data Flow
 
-1. **Import**: `.nessus` XML → `nessus_import.py` → SQLite (`scans`, `plugins`, `findings`, `finding_affected_hosts`); nuclei JSON/JSONL → `nuclei_parse.py` → `nuclei_import.py` → the same tables; Burp XML → `burp_parse.py` → `burp_import.py` → the same tables
+1. **Import**: `.nessus` XML → `nessus_import.py` → SQLite (`scans`, `plugins`, `findings`, `finding_affected_hosts`); nuclei JSON/JSONL → `nuclei_parse.py` → `nuclei_import.py` → the same tables; Burp XML → `burp_parse.py` → `burp_import.py` → the same tables. **Hand-authored findings skip this step**: `authored_findings.py` writes those tables directly from the TUI `[+]` action (`operator:`) or MCP `create_finding` (`agent:`)
 2. **Review**: `Finding.get_by_scan_with_plugin()` → `(Finding, Plugin)` tuples → `render.py` tables → User actions → Update `review_state` column
 3. **Tools**: TUI menu → Pass `Plugin`/`Finding` objects → `tools.py` → Execute command → `tool_executions` + `artifacts` tables
 4. **Session**: Auto-save to `sessions` table (start time, duration, statistics)
@@ -338,7 +345,7 @@ no dispatch changes. See `docs/TOOL_SYSTEM_GUIDE.md`.
 
 **Foundation Tables**:
 - `severity_levels`: Normalized severity reference data (0-4, labels, colors)
-- `finding_sources`: Which scanner produced a plugin row (`nessus`=1, `nuclei`=2, `burp`=3); seeded by `database.seed_lookup_tables()`, the single source shared with the test fixtures. Seeding runs with `INSERT OR IGNORE` on **every** `initialize_database()`, so adding a source row reaches existing databases and needs no `SCHEMA_VERSION` bump — only a *table* change does
+- `finding_sources`: Which source produced a plugin row (`nessus`=1, `nuclei`=2, `burp`=3, `operator`=4, `agent`=5 — the last two being hand-authored, not scanners, and split by the channel that wrote them: the TUI vs an MCP client); seeded by `database.seed_lookup_tables()`, the single source shared with the test fixtures. Seeding runs with `INSERT OR IGNORE` on **every** `initialize_database()`, so adding a source row reaches existing databases and needs no `SCHEMA_VERSION` bump — only a *table* change does
 - `artifact_types`: Artifact type definitions
 - `hosts`: Normalized host data across ALL scans (enables cross-scan tracking)
 - `ports`: Port metadata
@@ -347,7 +354,7 @@ no dispatch changes. See `docs/TOOL_SYSTEM_GUIDE.md`.
 **Core Tables**:
 - `scans`: Top-level scan metadata (scan_name, export_root, .nessus hash)
 - `plugins`: Finding-type metadata, global across scans (plugin_id **TEXT**, source_id, severity_int, CVSS, CVEs, Metasploit modules)
-  - `plugin_id` is namespaced for **every** source, Nessus included: `'nessus:57608'`, `'nuclei:apache-detect'`, `'burp:00200300'`. No source is the default, so a bare token is not a valid plugin id anywhere. Helpers live in `parsing.py`: `plugin_source()` (returns `SOURCE_UNKNOWN`, never a guess, for an unprefixed id), `plugin_source_id()` (**raises** on one — the write-side guard), `plugin_ref()` (strips the prefix; this is what a details URL takes), `plugin_details_url()`
+  - `plugin_id` is namespaced for **every** source, Nessus included: `'nessus:57608'`, `'nuclei:apache-detect'`, `'burp:00200300'`, `'operator:3'`, `'agent:7'`. No source is the default, so a bare token is not a valid plugin id anywhere. Helpers live in `parsing.py`: `plugin_source()` (returns `SOURCE_UNKNOWN`, never a guess, for an unprefixed id), `plugin_source_id()` (**raises** on one — the write-side guard), `plugin_ref()` (strips the prefix; this is what a details URL takes), `plugin_details_url()`
   - `source_id` duplicates what the prefix implies; that is deliberate, so `FindingQuery.source` is an indexed SQL predicate rather than a `LIKE 'nuclei:%'` scan. `Plugin.save()` keeps them consistent
   - TEXT means `ORDER BY plugin_id` is lexicographic — use `database.plugin_id_order_sql()`, which sorts by prefix then by the **ref cast to an integer**. Casting the whole column is not equivalent: every namespaced id casts to 0, silently degrading to a text sort that puts `nessus:10114` before `nessus:9`
   - Note: `severity_label` accessed via `severity_levels` table JOIN
@@ -590,7 +597,7 @@ The user-facing reference is `docs/CONFIGURATION.md`, whose settings table is **
 - `burp_min_severity` - Severity floor for `cerno import burp` (default: `0` = keep all), and the default for MCP `import_burp`. Same validate-at-use rule. Burp's scale stops at High (3), so a floor of 4 drops every issue — and issues the tester marked "False positive" in Burp are skipped regardless of this key
 - `claude_assistant_enabled` - Enable/disable Claude Assistant (default: `false`, opt-in). Pressing `[A]` while installed-but-disabled shows a data-path disclosure (`claude_assistant.CONSENT_DISCLOSURE`) and persists consent via `claude_assistant.ensure_enabled()`; `claude_assistant.claude_enabled(config)` is the single availability gate. `[A]` is hidden only when `claude` is not on PATH
 - `mcp_allow_execution` - Allow the `cerno mcp` server to execute tool commands via `execute_command` (default: `false`)
-- `mcp_allow_mutations` - Allow the `cerno mcp` server to mutate state (`set_review_state`, `add_note`, `import_nessus`, `import_nuclei`, `import_burp`, `ingest_results`, `set_finding_verdict`) (default: `false`)
+- `mcp_allow_mutations` - Allow the `cerno mcp` server to mutate state (`set_review_state`, `add_note`, `import_nessus`, `import_nuclei`, `import_burp`, `create_finding`, `update_finding`, `ingest_results`, `set_finding_verdict`) (default: `false`)
 - `mcp_allow_cred_injection` - Allow `execute_command` to resolve `@cred:<ref>@` placeholders to real NetExec secrets server-side at run time (default: `false`). Independent of `mcp_allow_execution`; the resolved secret is never logged, returned, or written to an artifact (masked in `command_text`, scrubbed from stdout/stderr **and from registered `--log`/`-oA` artifact files**)
 - `mcp_allow_cred_reveal` - Allow the MCP `reveal_credential` tool to return a credential's **cleartext** secret to the caller (default: `false`). Strictly more sensitive than injection (reveal hands the secret back), gated independently — injection being on does NOT enable reveal. The local `cerno creds reveal <ref>` CLI works regardless of this flag; every reveal is audited to `tool_executions` (`tool_name='cred_reveal'`, ref only, never the value)
 - `mcp_exec_allowlist` - Glob patterns for the binaries the MCP `execute_command` tool may run, matched on the basename of the target binary after unwrapping `sudo`/`proxychains4` (default: `config.DEFAULT_MCP_EXEC_ALLOWLIST` = `nmap, nxc, netexec, msfconsole, nuclei` plus low-impact recon utilities: `curl, wget, dig, host, nslookup, whois, ping, traceroute, ssh-audit, sslscan, testssl*, whatweb, showmount, rpcinfo, snmpwalk, onesixtyone`; binaries with built-in command escapes such as `find`/`ssh`/`nc`/`smbclient` are deliberately excluded; `nuclei` is allowlisted despite running `code:` templates under `-code` and reading/writing local files via `-l`/`-o`, on the basis that this is the same risk class as the allowlisted `curl`/`wget`). `*` = any binary not denied; **empty list = deny all**. Only consulted when `mcp_allow_execution` is on. Set via CSV: `cerno config set mcp_exec_allowlist "nmap,nxc"`
@@ -685,6 +692,23 @@ Regression tests live in `tests/test_markup_injection.py` — add a case there w
 - Finding view `[M]` moves one step; findings list `[M]` moves every filtered finding one step, which under the `[D]` Done-only filter means Done → Unreviewed for everything shown
 - Finding view `[R]` records a verification verdict (confirmed / false_positive / unable) via `fs.py:record_verdict()` → `models.FindingVerdict.set()`; a confirmed/false-positive verdict offers to advance the finding to Done. This is the TUI counterpart to the MCP `set_finding_verdict` tool (same append-only `finding_verdicts` history)
 - Findings list `[I]` toggles an In Progress-only status filter (`tui.py:filter_finding_candidates()` applies name/group/status filters); `[C]` clears it with the name filter
+
+### Hand-Authored Findings (`operator:` and `agent:`)
+
+`authored_findings.py` holds the two sources Cerno **creates** rather than imports, and is the single writer both interfaces go through, so the TUI and the MCP cannot drift.
+
+- **The source is the channel, and it is never defaulted.** `create_authored_finding(data, source)` takes `source` as a **required positional**: `SOURCE_OPERATOR` from the TUI's `[+]`, `SOURCE_AGENT` from MCP `create_finding`. This exists because an agent asserting a finding and a tester verifying one by hand are different claims, and on an engagement the difference carries evidentiary weight. A default would let a new caller silently inherit the operator's name for something an agent wrote — which is the whole failure the split prevents. `_require_authored_source()` also refuses a scanner source, so nothing hand-written can be filed as `nessus:`/`nuclei:`/`burp:`
+- **`constants.AUTHORED_SOURCES`** is the one membership set every "can this be edited?" test uses (`fs.py` `[U]` footer, the explicit-`u` refusal, the zero-host exception, and both guards in the module). Use it rather than `== SOURCE_OPERATOR`: forgetting one value leaves that channel's findings uneditable by any interface
+- **Findings list `[+]`** prompts (`tui.py:prompt_new_finding()`) and writes via `create_authored_finding(drafted, SOURCE_OPERATOR)`. Intercepted in `cerno.py:browse_file_list` **before** `tui.handle_finding_list_actions`, like `[I]`/`[D]`, because a create can pull a second scan into the session
+- **Finding view `[U]`** edits one (`fs.py:update_authored_finding_interactive()` → `update_authored_finding()`), rendered when `plugin.source in AUTHORED_SOURCES`; `fs.handle_finding_view()` refuses an explicit `u` on a scanner finding, which is a record of what the scanner reported. There is deliberately no delete: a wrong finding is corrected in place or retracted with a `false_positive` verdict
+- **Edits are symmetric, and never reattribute.** Either channel may edit either namespace — the operator owns the engagement and must be able to correct what an agent asserted; an agent refining a dictated finding is ordinary collaboration. The `plugin_id` never moves, so the namespace records the finding's **creator, not its last editor**: an edited `agent:` finding stays `agent:`
+- **One scan per source per database** (`constants.AUTHORED_SCAN_NAMES` → `Operator`, `Agent`), created on first use. That is what keeps every scanner scan single-source, so `cross_scan.py` — which refuses to compare scans whose sources differ — keeps working on the scans around them. Comparing `Operator` against `Agent` is refused for the same reason Nessus against nuclei is: namespaced ids share nothing, so every finding would read as unique to its side. One scan per *database*, so each accumulates across engagements
+- **The ref is sequential per source** (`operator:1`, `agent:1` coexist), allocated as `MAX(ref)+1` over that source's ids **inside** the write transaction so a TUI and an MCP client cannot collide. The `source_id` filter is what keeps the two counters independent. Deliberately not derived from the title: `Plugin.save()` is `INSERT OR REPLACE` against a table global to every scan, so a title-derived id would let a second finding silently overwrite an earlier one's name and severity, and renaming would move the identity
+- **The description is stored per affected host** in `finding_affected_hosts.plugin_output` (the same text on each row) because `plugins` has no description column — that is where all three importers put their evidence too
+- **No `host_services` rows are written.** The author is describing a finding, not reporting what is listening; an invented `svc_name` would put guesses into `v_http_services` and the web-target lists
+- A finding may name **zero hosts** (an engagement-level observation has none). `fs.view_finding_file()` special-cases that for these sources so the finding can still be opened and edited; for a scanner finding the "no affected hosts" early return stands
+- `validate_authored_input()` is the one validator both interfaces call, returning **every** problem at once so the TUI re-prompts with what was typed still in place. The reference URL is held to the same `^https?://\S+$` rule as a nuclei template URL, because `plugin_url` is interpolated into a Rich *style* string to build the panel's OSC-8 link
+- **Known gap**: the `import_*` MCP tools remain a second route to writing findings, and an agent asked for several at once can author a scanner export file and import it — landing under `nessus:` with no trace of its real origin (this is how `Fabricated_Demo_Scan` came about). The namespace split does not close that; doing so means stating in the `import_*` descriptions that they take genuine scanner output, and adding batch creation so `create_finding` is no less convenient
 
 **Database-only**: `findings.review_state` is the sole record (no filename prefixes).
 
@@ -798,7 +822,7 @@ sqlite3 ~/.cerno/cerno.db "SELECT COUNT(*) FROM artifact_types;"   # Expected: 6
 sqlite3 ~/.cerno/cerno.db "SELECT COUNT(*) FROM verdict_types;"    # Expected: 3
 sqlite3 ~/.cerno/cerno.db "SELECT COUNT(*) FROM nse_verdicts;"     # Expected: 4
 sqlite3 ~/.cerno/cerno.db "SELECT COUNT(*) FROM port_states;"      # Expected: 6
-sqlite3 ~/.cerno/cerno.db "SELECT COUNT(*) FROM finding_sources;"  # Expected: 3
+sqlite3 ~/.cerno/cerno.db "SELECT COUNT(*) FROM finding_sources;"  # Expected: 5
 sqlite3 ~/.cerno/cerno.db "PRAGMA user_version;"                   # Expected: 5
 ```
 

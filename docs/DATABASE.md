@@ -57,7 +57,7 @@ Cerno uses a **fully normalized database schema** following relational best prac
 
 1. **Normalized Lookup Tables**
    - `severity_levels` - Centralized severity reference data
-   - `finding_sources` - Which scanner produced a plugin row (nessus, nuclei, burp)
+   - `finding_sources` - Which source produced a plugin row (nessus, nuclei, burp, operator, agent)
    - `artifact_types` - Standardized artifact type definitions
    - `verdict_types`, `nse_verdicts`, `port_states` - Verification lookup values
    - `hosts` - Deduplicated host data across scans
@@ -208,7 +208,19 @@ Scan sources - which scanner produced a `plugins` row.
 (1, 'nessus')
 (2, 'nuclei')
 (3, 'burp')
+(4, 'operator')
+(5, 'agent')
 ```
+
+``operator`` and ``agent`` are the two sources with no scanner behind them:
+those findings are written by hand rather than parsed, both by
+``cerno_pkg/authored_findings.py``. They are split by the channel that wrote
+them -- ``operator`` for the review TUI's ``[+]``, ``agent`` for an MCP
+client's ``create_finding`` -- so a finding a tester verified by hand stays
+distinguishable from one an agent asserted. Each collects into a single scan of
+its own, named ``Operator`` and ``Agent``, which also keeps every scanner scan
+single-source. The namespace records a finding's creator, not its last editor:
+either channel may edit either namespace, and the ``plugin_id`` never moves.
 
 Seeded with `INSERT OR IGNORE` on every `initialize_database()` call, so a new
 source row reaches existing databases without a `SCHEMA_VERSION` bump. Only a
@@ -312,16 +324,16 @@ source. Global: there is no `scan_id` column, so all scans share these rows.
 
 | Column | Type | Description |
 |---|---|---|
-| `plugin_id` | TEXT | Primary key - namespaced per source, with no default source: `'nessus:57608'`, `'nuclei:apache-detect'`, `'burp:00200300'`. A bare number is not a valid id |
+| `plugin_id` | TEXT | Primary key - namespaced per source, with no default source: `'nessus:57608'`, `'nuclei:apache-detect'`, `'burp:00200300'`, `'operator:3'`, `'agent:7'`. A bare number is not a valid id |
 | `source_id` | INTEGER | Foreign key to `finding_sources` (default 1 = nessus) |
-| `plugin_name` | TEXT | Plugin name (nuclei: `info.name`; Burp: the issue `<name>`) |
+| `plugin_name` | TEXT | Plugin name (nuclei: `info.name`; Burp: the issue `<name>`; operator/agent: the title given) |
 | `severity_int` | INTEGER | 0=Info, 1=Low, 2=Medium, 3=High, 4=Critical. Burp has no Critical, so nothing it reports reaches 4 |
 | `has_metasploit` | BOOLEAN | Metasploit module availability |
 | `cvss3_score` | REAL | CVSS v3 base score |
 | `cvss2_score` | REAL | CVSS v2 base score (fallback) |
 | `metasploit_names` | TEXT | JSON array of Metasploit module names |
 | `cves` | TEXT | JSON array of CVE IDs |
-| `plugin_url` | TEXT | Details page captured at import. Nessus: the Tenable plugin page. nuclei: the template's source in the nuclei-templates repo, built from the result's `template` path, falling back to the public template viewer when that path is absent or unusable. Burp: the PortSwigger knowledge-base page for the hex type index, or NULL for an extension-generated issue, which has none. See `nuclei_parse.resolve_template_url()`, `burp_parse.kb_url()` and `constants.PLUGIN_URL_TEMPLATES` |
+| `plugin_url` | TEXT | Details page captured at import. Nessus: the Tenable plugin page. nuclei: the template's source in the nuclei-templates repo, built from the result's `template` path, falling back to the public template viewer when that path is absent or unusable. Burp: the PortSwigger knowledge-base page for the hex type index, or NULL for an extension-generated issue, which has none. operator/agent: whatever reference URL was supplied, or NULL — a hand-authored finding has no details page to derive. See `nuclei_parse.resolve_template_url()`, `burp_parse.kb_url()` and `constants.PLUGIN_URL_TEMPLATES` |
 | `metadata_fetched_at` | TIMESTAMP | When metadata was last fetched |
 
 **Note**: The `severity_label` is accessed via the `v_plugins_with_severity` view or by JOINing with `severity_levels`.
