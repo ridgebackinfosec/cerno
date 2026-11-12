@@ -4,7 +4,7 @@
 
 # Cerno
 
-A **TUI tool** for reviewing vulnerability scan findings and orchestrating security tools (**nmap**, **NetExec**, **nuclei**, custom commands). Import `.nessus` exports and **nuclei** results into a SQLite database for organized, persistent vulnerability verification and exploitation.
+A **TUI tool** for reviewing vulnerability scan findings and orchestrating security tools (**nmap**, **NetExec**, **nuclei**, custom commands). Import `.nessus` exports, **nuclei** results and **Burp Suite** XML reports into a SQLite database for organized, persistent vulnerability verification and exploitation.
 
 **Key capabilities:**
 - 🔍 Interactive TUI for browsing/reviewing vulnerability findings — triage hundreds of findings fast
@@ -57,6 +57,9 @@ cerno import nessus scan.nessus
 # ...or nuclei results (-je JSON or -jle/-jsonl)
 cerno import nuclei nuclei.json
 
+# ...or a Burp Suite "Report issues" XML export
+cerno import burp report.xml
+
 # Review findings interactively
 cerno review
 ```
@@ -70,10 +73,11 @@ cerno demo
 cerno review
 ```
 
-That loads four scans — two Nessus and two nuclei — so both import paths are
-covered. The nuclei scans target the same hosts the Nessus scans found, so at
-the `cerno review` scan prompt you can select one of each (e.g. `2,4`) and see
-where the two scanners agree, and what only nuclei caught.
+That loads five scans — two Nessus, two nuclei and one Burp — so every import
+path is covered. The nuclei and Burp scans target the same hosts the Nessus
+scans found, so at the `cerno review` scan prompt you can select one of each
+(e.g. `2,4,5`) and see where the scanners agree, and what only one of them
+caught.
 
 The demo fixtures use documentation-only IP ranges and `.example` hostnames.
 See [docs/demo](docs/demo) for details.
@@ -89,7 +93,7 @@ See [docs/demo](docs/demo) for details.
 
 ## How It Works
 
-Cerno turns raw scanner output — a Nessus export, nuclei results, or both — into a tracked, actionable verification workflow:
+Cerno turns raw scanner output — a Nessus export, nuclei results, a Burp report, or all of them — into a tracked, actionable verification workflow:
 
 <p align="center">
   <picture>
@@ -98,7 +102,7 @@ Cerno turns raw scanner output — a Nessus export, nuclei results, or both — 
   </picture>
 </p>
 
-1. **Import** — parse one or more `.nessus` files, or nuclei JSON/JSONL results, into a local SQLite database (`~/.cerno/cerno.db`). Both sources share one review loop, and a multi-scan review can span them.
+1. **Import** — parse one or more `.nessus` files, nuclei JSON/JSONL results, or Burp Suite XML reports into a local SQLite database (`~/.cerno/cerno.db`). All three sources share one review loop, and a multi-scan review can span them.
 2. **Review** — browse findings in an interactive TUI: filter by severity, host, and exploitability; inspect finding detail, CVEs, and affected `host:port`s.
 3. **Act** — launch nmap / NetExec / nuclei / Metasploit / custom commands against the exact hosts and ports of a finding, with execution and artifacts logged automatically.
 4. **Track** — review state, sessions, and tool history persist in the database, so progress survives restarts and you can compare a host's risk across scans.
@@ -375,7 +379,9 @@ cerno import nessus <scan.nessus>              # Import a single .nessus file
 cerno import nessus <directory>                # Recursively import all .nessus files in a directory
 cerno import nuclei <nuclei.json>              # Import nuclei results (-je array or -jle/-jsonl)
 cerno import nuclei <f.json> --name webapp     # Override the scan name (defaults to the file stem)
-cerno demo [--overwrite] [--no-nxc]            # Import the bundled demo scans (Nessus + nuclei) + NetExec workspace
+cerno import burp <report.xml>                 # Import a Burp Suite "Report issues" XML export
+cerno import burp <f.xml> --name webapp        # Override the scan name (defaults to the file stem)
+cerno demo [--overwrite] [--no-nxc]            # Import the bundled demo scans (Nessus + nuclei + Burp) + NetExec workspace
 cerno review                                   # Start interactive review (all behaviour from config.yaml)
 cerno check                                    # Check external tool availability and exit
 

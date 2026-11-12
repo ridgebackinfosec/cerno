@@ -43,7 +43,7 @@ from .models import (
 )
 from .nmap_parse import parse_nmap_xml
 from .nuclei_parse import parse_nuclei_file
-from .parsing import detect_host_type
+from .parsing import scan_target_type
 
 _NMAP_TOOLS = {"nmap"}
 _NXC_TOOLS = {"nxc", "netexec"}
@@ -101,12 +101,6 @@ class IngestSummary:
         }
 
 
-def _scan_target_type(address: str) -> str:
-    """Map a host address to a valid hosts.scan_target_type value."""
-    detected = detect_host_type(address)
-    return "fqdn" if detected == "hostname" else detected
-
-
 def _resolve_host_id(address: str, conn: sqlite3.Connection) -> int:
     """Find an existing host_id for an IP, else create one keyed by (ip, ip)."""
     existing = Host.get_by_ip(address, conn)
@@ -114,7 +108,7 @@ def _resolve_host_id(address: str, conn: sqlite3.Connection) -> int:
         host_id = existing[0].host_id
         if host_id is not None:
             return host_id
-    return Host.get_or_create(address, address, _scan_target_type(address), conn=conn)
+    return Host.get_or_create(address, address, scan_target_type(address), conn=conn)
 
 
 def _reconcile_execution_rows(

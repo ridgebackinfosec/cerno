@@ -863,7 +863,7 @@ LOOKUP_SEEDS: tuple[tuple[str, list[tuple]], ...] = (
     # Import sources (plugins.plugin_id is namespaced per source)
     (
         "INSERT OR IGNORE INTO finding_sources (source_id, source_name) VALUES (?, ?)",
-        [(1, "nessus"), (2, "nuclei")],
+        [(1, "nessus"), (2, "nuclei"), (3, "burp")],
     ),
     (
         "INSERT OR IGNORE INTO artifact_types "

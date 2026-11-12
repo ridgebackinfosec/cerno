@@ -2177,6 +2177,7 @@ def _demo_assets_dir() -> Path:
 
 DEMO_NUCLEI_INITIAL_SCAN = "Cerno_Demo_Nuclei_Initial_Scan"
 DEMO_NUCLEI_EXPANDED_SCAN = "Cerno_Demo_Nuclei_Expanded_Scan"
+DEMO_BURP_SCAN = "Cerno_Demo_Burp_Scan"
 
 
 def _import_demo_nuclei(
@@ -2221,6 +2222,52 @@ def _import_demo_nuclei(
 
     out_dir.mkdir(parents=True, exist_ok=True)
     result = import_nuclei_file(nuclei_file, out_dir, scan_name=scan_name)
+    ok(f"Imported {scan_name}: {result.plugins_exported} findings")
+    return scan_name, True
+
+
+def _import_demo_burp(
+    burp_file: Path, scan_name: str, overwrite: bool = False
+) -> tuple[str, bool]:
+    """Import the bundled demo Burp report.
+
+    Mirrors :func:`_import_demo_nuclei` exactly -- same hash-based idempotency,
+    same ``--overwrite`` semantics, same deliberate bypass of the interactive
+    duplicate prompt, and the same need for an explicit scan name, since a Burp
+    report has no equivalent of a ``.nessus`` ``Report@name`` either.
+
+    Args:
+        burp_file: Bundled demo report (Burp's "Report issues" XML export).
+        scan_name: Scan name to import under.
+        overwrite: Replace an existing scan whose source file changed.
+
+    Returns:
+        Tuple of (scan_name, did_import).
+    """
+    from cerno_pkg.burp_import import import_burp_file
+    from cerno_pkg.constants import SCANS_ROOT
+    from cerno_pkg.database import compute_file_hash
+    from cerno_pkg.models import Scan
+
+    out_dir = SCANS_ROOT / scan_name
+    new_file_hash = compute_file_hash(burp_file)
+    existing_scan = Scan.get_by_name(scan_name)
+
+    if existing_scan:
+        if existing_scan.source_file_hash == new_file_hash:
+            info(f"Scan already imported: {scan_name}")
+            return scan_name, False
+        if not overwrite:
+            warn(f"Scan exists with different content, skipping: {scan_name}")
+            warn("Use `cerno demo --overwrite` to replace demo scans.")
+            return scan_name, False
+
+        if not Scan.delete_by_name(scan_name):
+            raise RuntimeError(f"Failed to replace existing scan: {scan_name}")
+        info(f"Replaced existing scan: {scan_name}")
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    result = import_burp_file(burp_file, out_dir, scan_name=scan_name)
     ok(f"Imported {scan_name}: {result.plugins_exported} findings")
     return scan_name, True
 
@@ -2351,9 +2398,16 @@ def demo_cmd(
     expanded_scan = assets_dir / "cerno-demo-expanded.nessus"
     initial_nuclei = assets_dir / "cerno-demo-nuclei-initial.json"
     expanded_nuclei = assets_dir / "cerno-demo-nuclei-expanded.json"
+    burp_report = assets_dir / "cerno-demo-burp-scan.xml"
     nxc_workspace = assets_dir / "nxc-workspace"
 
-    demo_scans = (initial_scan, expanded_scan, initial_nuclei, expanded_nuclei)
+    demo_scans = (
+        initial_scan,
+        expanded_scan,
+        initial_nuclei,
+        expanded_nuclei,
+        burp_report,
+    )
     missing = [path for path in demo_scans if not path.exists()]
     if not no_nxc and not nxc_workspace.exists():
         missing.append(nxc_workspace)
@@ -2396,6 +2450,12 @@ def demo_cmd(
         if did_import:
             imported += 1
 
+    # The Burp half targets the same web services again, from a third angle:
+    # one finding per issue type, with several instances merged per host:port.
+    _, did_import = _import_demo_burp(burp_report, DEMO_BURP_SCAN, overwrite=overwrite)
+    if did_import:
+        imported += 1
+
     _console_global.print()
     ok(f"Demo setup complete: {imported} scan(s) imported or updated.")
     info("Next commands:")
@@ -2407,8 +2467,8 @@ def demo_cmd(
     )
     info("  cerno review")
     info(
-        "At the scan prompt, select a Nessus and a nuclei scan together "
-        "(e.g. '2,4') to review both sources side by side."
+        "At the scan prompt, select a Nessus, a nuclei and the Burp scan "
+        "together (e.g. '2,4,5') to review all three sources side by side."
     )
     if not no_nxc:
         info(
@@ -2774,6 +2834,13 @@ def _import_single_nessus(nessus: Path) -> bool:
 NUCLEI_SUFFIXES: tuple[str, ...] = (".json", ".jsonl")
 """File extensions ``cerno import nuclei`` accepts (``-je`` and ``-jle`` output)."""
 
+BURP_SUFFIXES: tuple[str, ...] = (".xml",)
+"""File extension ``cerno import burp`` accepts.
+
+Not distinguishing on its own -- nmap and a renamed ``.nessus`` are also
+``.xml`` -- so the parser checks the root element and the importer reports a
+non-Burp file as such rather than as an import of zero findings."""
+
 
 @import_app.command(
     name="nuclei",
@@ -2834,6 +2901,66 @@ def import_nuclei(
         raise typer.Exit(1)
 
 
+@import_app.command(
+    name="burp",
+    help="Import a Burp Suite XML report (or a directory of them) and populate database with findings",
+)
+def import_burp(
+    report: Path = typer.Argument(
+        ...,
+        help="Path to a Burp Suite .xml report, or a directory containing them",
+    ),
+    name: Optional[str] = typer.Option(
+        None,
+        "--name",
+        help="Scan name to import under (default: the file's stem)",
+    ),
+) -> None:
+    """
+    Import a Burp Suite report into the database.
+
+    Expects the XML produced by Burp's "Report issues" export (Target ->
+    Issues -> Report issues, or Dashboard -> scan -> Export). Both
+    request/response forms are read, base64-encoded or not.
+
+    A Burp report carries no scan name, so the file's stem is used unless
+    ``--name`` is given. One finding is created per *issue type*; a type that
+    fired several times on the same host:port (reflected XSS on three
+    parameters, say) keeps every instance's evidence in that host's plugin
+    output, truncated to keep the finding panel readable.
+
+    Issues the tester marked as false positives in Burp are skipped, and
+    findings below ``burp_min_severity`` (config, default 0 = keep all) are
+    dropped. Burp's scale tops out at High, so a floor of 4 drops everything.
+    """
+    min_severity = get_current_config().burp_min_severity
+    # Validated here rather than at load: a hand-edited config.yaml can hold
+    # anything, and silently importing everything would misrepresent the scan.
+    if not 0 <= min_severity <= 4:
+        err(
+            f"Invalid burp_min_severity: {min_severity}. Must be 0-4 "
+            f"(0=Info, 1=Low, 2=Medium, 3=High; Burp has no Critical)."
+        )
+        info("Fix with: cerno config set burp_min_severity 0")
+        raise typer.Exit(1)
+
+    if not report.exists():
+        err(f"Path does not exist: {report}")
+        raise typer.Exit(1)
+
+    if report.is_dir():
+        _import_burp_directory(report, min_severity)
+    elif report.is_file():
+        if report.suffix.lower() not in BURP_SUFFIXES:
+            err(f"File does not have a .xml extension: {report.name}")
+            raise typer.Exit(1)
+        if not _import_single_burp(report, name, min_severity):
+            raise typer.Exit(1)
+    else:
+        err(f"Path is not a file or directory: {report}")
+        raise typer.Exit(1)
+
+
 def _derive_nuclei_scan_name(results: Path) -> str:
     """Pick a scan name for a nuclei results file that has no embedded name.
 
@@ -2867,16 +2994,22 @@ def _derive_nuclei_scan_name(results: Path) -> str:
 GENERIC_NUCLEI_STEMS = frozenset({"nuclei", "results", "output", "nuclei_results"})
 
 
-def show_nuclei_tool_suggestions(scan_name: str) -> None:
-    """Display suggested next steps after a nuclei import completes.
+def show_web_tool_suggestions(scan_name: str, source_label: str = "nuclei") -> None:
+    """Display suggested next steps after a web-source import completes.
 
-    A nuclei-only scan is a first-class case -- a web-app engagement may import
-    nothing else -- so it needs its own suggestions. The Nessus path reaches
-    ``_show_nuclei_suggestion`` and stops there, which would leave an operator
-    who started with nuclei no onward step at all.
+    A web-only scan is a first-class case -- a web-app engagement may import
+    nothing but nuclei results or a Burp report -- so it needs its own
+    suggestions. The Nessus path reaches ``_show_nuclei_suggestion`` and stops
+    there, which would leave an operator who started with nuclei or Burp no
+    onward step at all.
+
+    The web services are read back out of the database rather than from the
+    file just imported, so this is source-agnostic; ``source_label`` only names
+    the scanner in the prose.
 
     Args:
         scan_name: Name of the imported scan (for DB queries)
+        source_label: Scanner that produced the scan, for the wording.
     """
     try:
         from cerno_pkg.constants import SCANS_ROOT
@@ -2898,11 +3031,11 @@ def show_nuclei_tool_suggestions(scan_name: str) -> None:
 
         header("Suggested Next Steps")
         info(
-            f"\nnuclei matched {len(urls)} web service(s) — the URL(s) have been "
-            f"written to {urls_file}\n"
+            f"\n{source_label} matched {len(urls)} web service(s) — the URL(s) "
+            f"have been written to {urls_file}\n"
         )
 
-        info(fmt_action("1. nmap (fingerprint the services nuclei matched):"))
+        info(fmt_action(f"1. nmap (fingerprint the services {source_label} matched):"))
         info(f"   nmap -sV -iL {urls_file} -oA {out_dir / 'nmap-web'}\n")
 
         info(fmt_action("2. nuclei (re-run with a wider template set):"))
@@ -2986,7 +3119,7 @@ def _import_single_nuclei(
     ok(f"Import complete: {result.plugins_exported} findings")
     _show_severity_breakdown(result.severities)
 
-    show_nuclei_tool_suggestions(scan_name)
+    show_web_tool_suggestions(scan_name)
 
     _console_global.print()
     info("Review them with: cerno review")
@@ -3042,6 +3175,142 @@ def _import_nuclei_directory(directory: Path, min_severity: int) -> None:
     for idx, f in enumerate(files, 1):
         _console_global.rule(f"[cyan][{idx}/{count}] {safe_text(f.name)}[/cyan]")
         if _import_single_nuclei(f, None, min_severity):
+            imported += 1
+        else:
+            skipped += 1
+
+    _console_global.rule("[bold cyan]Import Complete[/bold cyan]")
+    ok(f"Summary: {imported} imported, {skipped} skipped")
+
+
+#: Stems that say nothing about which engagement a Burp report belongs to.
+GENERIC_BURP_STEMS = frozenset({"burp", "issues", "report", "burp_report", "export"})
+
+
+def _import_single_burp(report: Path, name: Optional[str], min_severity: int) -> bool:
+    """Import one Burp XML report. Returns True on success."""
+    from cerno_pkg.burp_import import import_burp_file
+    from cerno_pkg.constants import SCANS_ROOT
+    from cerno_pkg.nessus_import import sanitize_filename
+
+    if report.stat().st_size == 0:
+        warn(f"{report.name} is empty — nothing to import.")
+        info("For pre-built data to explore, run: cerno demo")
+        return False
+
+    if name:
+        scan_name = sanitize_filename(name)
+    else:
+        scan_name = sanitize_filename(report.stem)
+        if scan_name.lower() in GENERIC_BURP_STEMS:
+            warn(
+                f"'{scan_name}' says nothing about this engagement — "
+                "pass --name to label the scan."
+            )
+    info(f"Using scan name: {scan_name}")
+
+    resolved = _resolve_duplicate_scan(scan_name, report)
+    if resolved is None:
+        return False
+    scan_name = resolved
+    out_dir = SCANS_ROOT / scan_name
+
+    header("Importing Burp report to database")
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        with Progress(
+            SpinnerColumn(style="cyan"),
+            TextColumn("[progress.description]{task.description}"),
+            TimeElapsedColumn(),
+            console=_console_global,
+            transient=True,
+        ) as progress:
+            progress.add_task(f"Importing {report.name}...", total=None)
+            result = import_burp_file(
+                report,
+                out_dir,
+                scan_name=scan_name,
+                min_severity=min_severity,
+            )
+    except Exception as e:
+        err(f"Import failed: {e}")
+        return False
+
+    if result.plugins_exported == 0:
+        warn("No Burp findings were imported.")
+        if min_severity > 0:
+            info(
+                f"burp_min_severity {min_severity} may have filtered everything "
+                "out — Burp's highest severity is High (3)."
+            )
+        else:
+            info(
+                "The file parsed, but it holds no importable issues. Check it is "
+                "Burp's 'Report issues' XML export, not an nmap or Nessus file."
+            )
+        return False
+
+    ok(f"Import complete: {result.plugins_exported} findings")
+    _show_severity_breakdown(result.severities)
+
+    # Source-agnostic: it reads the scan's web services back out of the
+    # database, so a Burp import flows into a nuclei sweep of the same targets.
+    show_web_tool_suggestions(scan_name, source_label="Burp")
+
+    _console_global.print()
+    info("Review them with: cerno review")
+    return True
+
+
+def _import_burp_directory(directory: Path, min_severity: int) -> None:
+    """Discover and import every Burp .xml report under a directory."""
+    from rich import box
+    from rich.table import Table
+
+    from cerno_pkg.ansi import safe_text, style_if_enabled
+
+    files = sorted(
+        f
+        for suffix in BURP_SUFFIXES
+        for f in directory.rglob(f"*{suffix}")
+        if f.is_file()
+    )
+    if not files:
+        err(f"No .xml files found in: {directory}")
+        raise typer.Exit(1)
+
+    count = len(files)
+    header(f"Found {count} XML file{'s' if count != 1 else ''} in {directory}")
+    info("Any that are not Burp reports will be reported and skipped.")
+
+    table = Table(
+        show_header=True,
+        header_style=style_if_enabled("bold cyan"),
+        box=box.SIMPLE,
+    )
+    table.add_column("#", justify="right", style=style_if_enabled("cyan"))
+    table.add_column("File")
+    table.add_column("Size", justify="right", style=style_if_enabled("yellow"))
+    for idx, f in enumerate(files, 1):
+        size = f.stat().st_size
+        if size >= 1_048_576:
+            human = f"{size / 1_048_576:.1f} MB"
+        elif size >= 1024:
+            human = f"{size / 1024:.1f} KB"
+        else:
+            human = f"{size} B"
+        table.add_row(str(idx), safe_text(str(f.relative_to(directory))), human)
+    _console_global.print(table)
+
+    if not Confirm.ask(f"\nImport all {count} file(s) above?", default=True):
+        info("Import cancelled.")
+        raise typer.Exit(0)
+
+    imported = skipped = 0
+    for idx, f in enumerate(files, 1):
+        _console_global.rule(f"[cyan][{idx}/{count}] {safe_text(f.name)}[/cyan]")
+        if _import_single_burp(f, None, min_severity):
             imported += 1
         else:
             skipped += 1

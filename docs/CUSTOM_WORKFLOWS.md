@@ -129,6 +129,7 @@ version: "1.0"  # Recommended: Schema version (currently always "1.0")
 workflows:      # Required: List of workflow definitions
   - finding_id: "nessus:12345"   # Required: Finding ID(s) - string, can be comma-separated
                                  #   Nessus: "nessus:<plugin-id>". nuclei: "nuclei:<template-id>"
+                                 #   Burp: "burp:<hex-type-index>", e.g. "burp:00200300"
     workflow_name: "Workflow Name"  # Recommended: Human-readable workflow name
     description: "Brief description"  # Recommended: What this workflow verifies
 
@@ -152,7 +153,9 @@ The loader only enforces `workflows` and `finding_id`, and it enforces them stri
 
 `finding_id` is the finding's ID as stored in the database, and those IDs are
 namespaced per scan source for **every** source — there is no default. A Nessus
-plugin is `nessus:57608`; a nuclei template is `nuclei:<template-id>`. A bare
+plugin is `nessus:57608`; a nuclei template is `nuclei:<template-id>`; a Burp
+issue type is `burp:<hex-type-index>` (the 8-digit index PortSwigger publishes,
+which is also the last path segment of its knowledge-base URL). A bare
 number matches nothing and the entry is skipped:
 
 ```yaml
@@ -176,7 +179,7 @@ the `template-id` field in nuclei's JSON output.
 |-------|------|----------|-------------|
 | `version` | string | Recommended | Schema version (currently "1.0") |
 | `workflows` | list | Yes | List of workflow definitions |
-| `finding_id` | string | Yes | Finding ID(s) to map, comma-separated for one workflow covering several findings. Every id must carry its source prefix: `"nessus:57608"`, `"nuclei:apache-detect"`. A bare number is rejected — see below |
+| `finding_id` | string | Yes | Finding ID(s) to map, comma-separated for one workflow covering several findings. Every id must carry its source prefix: `"nessus:57608"`, `"nuclei:apache-detect"`, `"burp:00200300"`. A bare number is rejected — see below |
 | `workflow_name` | string | Recommended | Human-readable workflow name (shown in the TUI and `cerno workflow list`) |
 | `description` | string | Recommended | Brief description of what the workflow verifies |
 | `steps` | list | Recommended | List of verification steps |
@@ -278,7 +281,7 @@ path, say, which is what the bundled `nessus:298485` (Oracle EBS) entry does.
 - The workflow is registered internally for **each individual finding ID**
 - Pressing **[W]** on any of the related findings shows the **same workflow**
 - The workflow's `finding_id` field preserves the original comma-separated string
-- The ids may span sources; mixing `nessus:` and `nuclei:` in one entry is supported
+- The ids may span sources; mixing `nessus:`, `nuclei:` and `burp:` in one entry is supported
 - Include all relevant reference URLs in the `references` section
 
 ### When to Use Multi-Plugin Workflows

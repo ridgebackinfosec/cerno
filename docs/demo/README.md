@@ -65,7 +65,7 @@ cerno scan history 198.51.100.10
 │  Scan Target: 198.51.100.10                                                                                │
 │  First Seen: 2026-01-01                                                                                    │
 │  Last Seen: 2026-01-01                                                                                     │
-│  Total Scans: 4                                                                                            │
+│  Total Scans: 5                                                                                            │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 
                                                 Scan Timeline                                                 
@@ -76,9 +76,10 @@ cerno scan history 198.51.100.10
 │ Cerno_Demo_Expanded_Scan     │ nessus │ 2026-01-01 │     5 │        - │    - │      3 │   1 │    1 │   =   │
 │ Cerno_Demo_Nuclei_Initial_S… │ nuclei │ 2026-01-01 │     7 │        - │    - │      - │   1 │    6 │  n/a  │
 │ Cerno_Demo_Nuclei_Expanded_… │ nuclei │ 2026-01-01 │     7 │        - │    - │      - │   1 │    6 │   =   │
+│ Cerno_Demo_Burp_Scan         │ burp   │ 2026-01-01 │     3 │        - │    1 │      - │   - │    2 │  n/a  │
 ╰──────────────────────────────┴────────┴────────────┴───────┴──────────┴──────┴────────┴─────┴──────┴───────╯
 
-Overall trend: not shown - this host's scans come from different sources (nessus, nuclei), which count different things. Compare scans from one source.
+Overall trend: not shown - this host's scans come from different sources (burp, nessus, nuclei), which count different things. Compare scans from one source.
 ```
 <!-- END GENERATED: scan-history -->
 

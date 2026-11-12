@@ -143,13 +143,13 @@ class TestNucleiImport:
         """The fixture alone cannot prove this: 'https' < 'ssl' alphabetically,
         so insertion order would have produced the right answer by accident.
         """
-        from cerno_pkg.nuclei_import import _prefer_service
+        from cerno_pkg.parsing import prefer_service
 
-        assert _prefer_service(None, "ssl") == "ssl"
-        assert _prefer_service("ssl", "https") == "https"
-        assert _prefer_service("https", "ssl") == "https"
+        assert prefer_service(None, "ssl") == "ssl"
+        assert prefer_service("ssl", "https") == "https"
+        assert prefer_service("https", "ssl") == "https"
         # Two schemes: first one wins, nothing to prefer between them.
-        assert _prefer_service("http", "https") == "http"
+        assert prefer_service("http", "https") == "http"
 
     # ---------- shape ----------
 
@@ -517,9 +517,10 @@ class TestNucleiImportSuggestions:
         monkeypatch.setattr(cerno_pkg.constants, "SCANS_ROOT", tmp_path / "scans")
         import_nuclei_file(FIXTURES / "web_scan.json", temp_dir, scan_name="web")
 
-        cerno.show_nuclei_tool_suggestions("web")
+        cerno.show_web_tool_suggestions("web")
         out = capsys.readouterr().out
         assert "Suggested Next Steps" in out
+        assert "nuclei matched" in out
         assert "nmap -sV -iL" in out
         assert "cerno import nuclei" in out
         # The re-run command must write JSON, the only shape the importer reads.
@@ -531,5 +532,5 @@ class TestNucleiImportSuggestions:
         import cerno_pkg.constants
 
         monkeypatch.setattr(cerno_pkg.constants, "SCANS_ROOT", tmp_path / "scans")
-        cerno.show_nuclei_tool_suggestions("no-such-scan")
+        cerno.show_web_tool_suggestions("no-such-scan")
         assert "Suggested Next Steps" not in capsys.readouterr().out

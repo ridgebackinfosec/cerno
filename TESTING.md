@@ -12,14 +12,14 @@ tests/
 │   ├── minimal.nessus          # Minimal scan (3 plugins, 3 hosts)
 │   ├── nmap/                   # nmap XML for ingest tests (MS17-010, no hosts up)
 │   └── nxc/                    # NetExec protocol databases (smb, ldap, winrm, …)
-└── test_*.py                   # 45 test modules, roughly one per cerno_pkg module
+└── test_*.py                   # 47 test modules, roughly one per cerno_pkg module
 ```
 
 The modules group roughly as:
 
 | Area | Test files |
 |---|---|
-| Core data | `test_database.py`, `test_models.py`, `test_parsing.py`, `test_nessus_import.py`, `test_cross_scan.py`, `test_analysis.py`, `test_scan_list.py` |
+| Core data | `test_database.py`, `test_models.py`, `test_parsing.py`, `test_nessus_import.py`, `test_nuclei_parse.py`, `test_nuclei_import.py`, `test_burp_parse.py`, `test_burp_import.py`, `test_cross_scan.py`, `test_analysis.py`, `test_scan_list.py` |
 | Review TUI | `test_render.py`, `test_fs.py`, `test_session.py`, `test_review_states.py`, `test_multi_scan_review.py`, `test_color_scheme.py`, `test_demo_command.py` |
 | Tools & execution | `test_ops.py`, `test_tool_registry.py`, `test_exec_chain.py`, `test_workflow_mapper.py`, `test_workflow_prep.py`, `test_nxc_db.py` |
 | Verification loop | `test_nmap_parse.py`, `test_ingest.py`, `test_verdicts.py`, `test_query.py`, `test_batch.py`, `test_jobs.py`, `test_workflow_contrib.py` |

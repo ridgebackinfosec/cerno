@@ -91,9 +91,9 @@ Before implementing any schema change, verify:
 
 ## Project Overview
 
-**Cerno** is a Python CLI tool for reviewing vulnerability findings from multiple scanners and orchestrating security tools (nmap, NetExec, nuclei, Metasploit). Findings are imported from Nessus `.nessus` exports and nuclei JSON/JSONL results, and both share one review loop. It features a Rich-based TUI for interactive review, SQLite-backed persistence, and session state tracking.
+**Cerno** is a Python CLI tool for reviewing vulnerability findings from multiple scanners and orchestrating security tools (nmap, NetExec, nuclei, Metasploit). Findings are imported from Nessus `.nessus` exports, nuclei JSON/JSONL results and Burp Suite XML reports, and all three share one review loop. It features a Rich-based TUI for interactive review, SQLite-backed persistence, and session state tracking.
 
-**Core workflow**: Import `.nessus` files and/or nuclei results → Review findings in TUI → Run security tools → Track progress in database
+**Core workflow**: Import `.nessus` files, nuclei results and/or Burp reports → Review findings in TUI → Run security tools → Track progress in database
 
 **Target Python**: 3.11+ (3.8+ may work but not the target)
 
@@ -137,6 +137,8 @@ cerno --help
 cerno import nessus scan.nessus   # Import Nessus scan
 cerno import nuclei nuclei.json   # Import nuclei results (-je array or -jle/-jsonl)
                                   #   --name <scan>; severity floor = nuclei_min_severity
+cerno import burp report.xml      # Import a Burp Suite "Report issues" XML export
+                                  #   --name <scan>; severity floor = burp_min_severity
 cerno review                      # Start interactive review (no flags: all config keys)
                                   #   At scan prompt, enter "1-3" or "1,3,5" to review multiple scans merged
 cerno check                       # External tool availability, then exit (was `review --check`)
@@ -173,7 +175,7 @@ pytest tests/test_parsing.py::TestSplitHostPort::test_ipv4_with_port
 pytest --durations=10
 ```
 
-**Coverage goals**: 85% overall, 90%+ for critical modules (database.py, models.py, parsing.py, nessus_import.py, nuclei_parse.py, nuclei_import.py)
+**Coverage goals**: 85% overall, 90%+ for critical modules (database.py, models.py, parsing.py, nessus_import.py, nuclei_parse.py, nuclei_import.py, burp_parse.py, burp_import.py)
 
 ### Linting & Formatting
 
@@ -234,6 +236,11 @@ cerno_pkg/
   │                        # Sniffs shape, filters matcher-status=false, maps severity, merges nothing
   ├── nuclei_import.py     # import_nuclei_file(): namespaces template ids as 'nuclei:<id>' and
   │                        # merges colliding host:port matches into one plugin_output row
+  ├── burp_parse.py        # Pure Burp Suite XML parser (<issues> root; iterparse; no DB)
+  │                        # Hex type index is the ref (burp:00200300 -> the KB page);
+  │                        # HTML prose flattened, base64 request/response decoded + capped
+  ├── burp_import.py       # import_burp_file(): one finding per issue type; merges every
+  │                        # instance on a host:port into one plugin_output row
   ├── cross_scan.py        # `cerno scan compare` / `scan history` data (v_scan_plugin_summary, v_host_scan_findings)
   ├── parsing.py           # Host:port parsing: parse_hosts_ports(), split_host_port()
   ├── analysis.py          # Identical host:port groups ([H]) and superset/overlap analysis ([O])
@@ -286,8 +293,9 @@ cerno_pkg/
   ├── logging_setup.py     # Loguru setup with rotation; log_info/log_debug/log_error
   ├── skills/cerno-assistant.md  # Claude Assistant system prompt
   ├── demo/                # Packaged copy of the demo scans + NetExec workspace (`cerno demo`)
-  │                        #   2 .nessus + 2 nuclei .json; kept byte-identical to docs/demo/
-  │                        #   (regenerate the nuclei pair: scripts/create_demo_nuclei_results.py)
+  │                        #   2 .nessus + 2 nuclei .json + 1 Burp .xml; byte-identical to docs/demo/
+  │                        #   (regenerate: scripts/create_demo_nuclei_results.py,
+  │                        #    scripts/create_demo_burp_report.py)
   └── _version.py          # Version resolution (importlib.metadata → pyproject.toml)
 ```
 
@@ -299,7 +307,7 @@ cerno_pkg/
 
 ### Core Data Flow
 
-1. **Import**: `.nessus` XML → `nessus_import.py` → SQLite (`scans`, `plugins`, `findings`, `finding_affected_hosts`); nuclei JSON/JSONL → `nuclei_parse.py` → `nuclei_import.py` → the same tables
+1. **Import**: `.nessus` XML → `nessus_import.py` → SQLite (`scans`, `plugins`, `findings`, `finding_affected_hosts`); nuclei JSON/JSONL → `nuclei_parse.py` → `nuclei_import.py` → the same tables; Burp XML → `burp_parse.py` → `burp_import.py` → the same tables
 2. **Review**: `Finding.get_by_scan_with_plugin()` → `(Finding, Plugin)` tuples → `render.py` tables → User actions → Update `review_state` column
 3. **Tools**: TUI menu → Pass `Plugin`/`Finding` objects → `tools.py` → Execute command → `tool_executions` + `artifacts` tables
 4. **Session**: Auto-save to `sessions` table (start time, duration, statistics)
@@ -330,7 +338,7 @@ no dispatch changes. See `docs/TOOL_SYSTEM_GUIDE.md`.
 
 **Foundation Tables**:
 - `severity_levels`: Normalized severity reference data (0-4, labels, colors)
-- `finding_sources`: Which scanner produced a plugin row (`nessus`=1, `nuclei`=2); seeded by `database.seed_lookup_tables()`, the single source shared with the test fixtures
+- `finding_sources`: Which scanner produced a plugin row (`nessus`=1, `nuclei`=2, `burp`=3); seeded by `database.seed_lookup_tables()`, the single source shared with the test fixtures. Seeding runs with `INSERT OR IGNORE` on **every** `initialize_database()`, so adding a source row reaches existing databases and needs no `SCHEMA_VERSION` bump — only a *table* change does
 - `artifact_types`: Artifact type definitions
 - `hosts`: Normalized host data across ALL scans (enables cross-scan tracking)
 - `ports`: Port metadata
@@ -339,7 +347,7 @@ no dispatch changes. See `docs/TOOL_SYSTEM_GUIDE.md`.
 **Core Tables**:
 - `scans`: Top-level scan metadata (scan_name, export_root, .nessus hash)
 - `plugins`: Finding-type metadata, global across scans (plugin_id **TEXT**, source_id, severity_int, CVSS, CVEs, Metasploit modules)
-  - `plugin_id` is namespaced for **every** source, Nessus included: `'nessus:57608'`, `'nuclei:apache-detect'`. No source is the default, so a bare token is not a valid plugin id anywhere. Helpers live in `parsing.py`: `plugin_source()` (returns `SOURCE_UNKNOWN`, never a guess, for an unprefixed id), `plugin_source_id()` (**raises** on one — the write-side guard), `plugin_ref()` (strips the prefix; this is what a details URL takes), `plugin_details_url()`
+  - `plugin_id` is namespaced for **every** source, Nessus included: `'nessus:57608'`, `'nuclei:apache-detect'`, `'burp:00200300'`. No source is the default, so a bare token is not a valid plugin id anywhere. Helpers live in `parsing.py`: `plugin_source()` (returns `SOURCE_UNKNOWN`, never a guess, for an unprefixed id), `plugin_source_id()` (**raises** on one — the write-side guard), `plugin_ref()` (strips the prefix; this is what a details URL takes), `plugin_details_url()`
   - `source_id` duplicates what the prefix implies; that is deliberate, so `FindingQuery.source` is an indexed SQL predicate rather than a `LIKE 'nuclei:%'` scan. `Plugin.save()` keeps them consistent
   - TEXT means `ORDER BY plugin_id` is lexicographic — use `database.plugin_id_order_sql()`, which sorts by prefix then by the **ref cast to an integer**. Casting the whole column is not equivalent: every namespaced id casts to 0, silently degrading to a text sort that puts `nessus:10114` before `nessus:9`
   - Note: `severity_label` accessed via `severity_levels` table JOIN
@@ -351,7 +359,7 @@ no dispatch changes. See `docs/TOOL_SYSTEM_GUIDE.md`.
   - **Virtual hosting is why these stay two numbers**: one IP legitimately serves many hostnames, each a distinct target that must be scanned separately. A target count exceeding a machine count is expected. Host *lists* must therefore keep emitting `scan_target` strings — that is what `<TARGET>` substitution (`workflow_prep.py`), the MCP target-line tools and clipboard payloads feed into tools, and a vhost is unreachable by IP alone
   - Classify an address by its **value** (`parsing.is_ipv4()` / `is_ipv6()`), never by `scan_target_type`: that column describes the *target string*, so a host reached by hostname is `'fqdn'` even when its resolved IP is a valid IPv4/IPv6 address. Bucketing the scan overview on it left such hosts in neither child row, so the IPv4/IPv6 breakdown did not sum to "Unique Hosts" and IPv6 silently read 0
 - `host_services`: Per-scan service discovery (scan_id, host_id, port_number, protocol, svc_name)
-  - Both importers populate it: Nessus from ReportItem `svc_name`/`protocol`; nuclei from the scheme in `matched-at` (so a nuclei-only scan still reports web services)
+  - All three importers populate it: Nessus from ReportItem `svc_name`/`protocol`; nuclei from the scheme in `matched-at`; Burp from the scheme of the `<host>` URL (so a nuclei-only or Burp-only scan still reports web services)
   - Uses foreign keys to `scans`, `hosts`, and `ports` tables
 - `sessions`: Review session tracking (start time, end time)
   - Note: Statistics computed via `v_session_stats` view
@@ -579,9 +587,10 @@ The user-facing reference is `docs/CONFIGURATION.md`, whose settings table is **
 - `custom_workflows_path` - Path to custom workflows YAML file; merged over bundled workflows everywhere in the MCP via `workflow_mapper.build_workflow_mapper(config)` (also the default in `query.run_finding_query` / `workflow_prep.prepare_workflow`)
 - `custom_workflows_exclusive` - Load ONLY `custom_workflows_path`, skipping the bundled set (default: `false`). Replaced `review --custom-workflows-only`. Handled in `build_workflow_mapper()`, so it reaches the TUI, `cerno workflow list` and the MCP alike. Set without a path it warns and falls back to bundled — an empty mapper reads as a load failure rather than a config mistake
 - `nuclei_min_severity` - Severity floor for `cerno import nuclei` (default: `0` = keep all). Replaced `--min-severity`. Also the default for MCP `import_nuclei`, whose explicit `min_severity` arg still wins. Validated at use (0-4), not at load: a hand-edited config.yaml can hold anything
+- `burp_min_severity` - Severity floor for `cerno import burp` (default: `0` = keep all), and the default for MCP `import_burp`. Same validate-at-use rule. Burp's scale stops at High (3), so a floor of 4 drops every issue — and issues the tester marked "False positive" in Burp are skipped regardless of this key
 - `claude_assistant_enabled` - Enable/disable Claude Assistant (default: `false`, opt-in). Pressing `[A]` while installed-but-disabled shows a data-path disclosure (`claude_assistant.CONSENT_DISCLOSURE`) and persists consent via `claude_assistant.ensure_enabled()`; `claude_assistant.claude_enabled(config)` is the single availability gate. `[A]` is hidden only when `claude` is not on PATH
 - `mcp_allow_execution` - Allow the `cerno mcp` server to execute tool commands via `execute_command` (default: `false`)
-- `mcp_allow_mutations` - Allow the `cerno mcp` server to mutate state (`set_review_state`, `add_note`, `import_nessus`, `import_nuclei`, `ingest_results`, `set_finding_verdict`) (default: `false`)
+- `mcp_allow_mutations` - Allow the `cerno mcp` server to mutate state (`set_review_state`, `add_note`, `import_nessus`, `import_nuclei`, `import_burp`, `ingest_results`, `set_finding_verdict`) (default: `false`)
 - `mcp_allow_cred_injection` - Allow `execute_command` to resolve `@cred:<ref>@` placeholders to real NetExec secrets server-side at run time (default: `false`). Independent of `mcp_allow_execution`; the resolved secret is never logged, returned, or written to an artifact (masked in `command_text`, scrubbed from stdout/stderr **and from registered `--log`/`-oA` artifact files**)
 - `mcp_allow_cred_reveal` - Allow the MCP `reveal_credential` tool to return a credential's **cleartext** secret to the caller (default: `false`). Strictly more sensitive than injection (reveal hands the secret back), gated independently — injection being on does NOT enable reveal. The local `cerno creds reveal <ref>` CLI works regardless of this flag; every reveal is audited to `tool_executions` (`tool_name='cred_reveal'`, ref only, never the value)
 - `mcp_exec_allowlist` - Glob patterns for the binaries the MCP `execute_command` tool may run, matched on the basename of the target binary after unwrapping `sudo`/`proxychains4` (default: `config.DEFAULT_MCP_EXEC_ALLOWLIST` = `nmap, nxc, netexec, msfconsole, nuclei` plus low-impact recon utilities: `curl, wget, dig, host, nslookup, whois, ping, traceroute, ssh-audit, sslscan, testssl*, whatweb, showmount, rpcinfo, snmpwalk, onesixtyone`; binaries with built-in command escapes such as `find`/`ssh`/`nc`/`smbclient` are deliberately excluded; `nuclei` is allowlisted despite running `code:` templates under `-code` and reading/writing local files via `-l`/`-o`, on the basis that this is the same risk class as the allowlisted `curl`/`wget`). `*` = any binary not denied; **empty list = deny all**. Only consulted when `mcp_allow_execution` is on. Set via CSV: `cerno config set mcp_exec_allowlist "nmap,nxc"`
@@ -789,7 +798,7 @@ sqlite3 ~/.cerno/cerno.db "SELECT COUNT(*) FROM artifact_types;"   # Expected: 6
 sqlite3 ~/.cerno/cerno.db "SELECT COUNT(*) FROM verdict_types;"    # Expected: 3
 sqlite3 ~/.cerno/cerno.db "SELECT COUNT(*) FROM nse_verdicts;"     # Expected: 4
 sqlite3 ~/.cerno/cerno.db "SELECT COUNT(*) FROM port_states;"      # Expected: 6
-sqlite3 ~/.cerno/cerno.db "SELECT COUNT(*) FROM finding_sources;"  # Expected: 2
+sqlite3 ~/.cerno/cerno.db "SELECT COUNT(*) FROM finding_sources;"  # Expected: 3
 sqlite3 ~/.cerno/cerno.db "PRAGMA user_version;"                   # Expected: 5
 ```
 

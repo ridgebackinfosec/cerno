@@ -51,46 +51,12 @@ from .nuclei_parse import (
     format_plugin_output,
     parse_nuclei_file,
 )
-from .parsing import detect_host_type
-
-#: Services derived from a real URL scheme, which outrank a bare record type.
-_SCHEME_SERVICES = frozenset({"http", "https"})
-
-
-def _prefer_service(current: Optional[str], candidate: str) -> str:
-    """Pick the more informative of two services seen on one host:port.
-
-    A host:port can be reported by several templates -- an http template gives
-    a URL scheme, an ssl template gives only its ``type``. ``host_services`` is
-    UNIQUE per host:port, so a winner must be chosen: an explicit
-    ``http``/``https`` scheme beats a bare record type, because it says what
-    the service actually is. Without this the winner would come down to the
-    order rows happen to be inserted in.
-    """
-    if current is None:
-        return candidate
-    if candidate in _SCHEME_SERVICES and current not in _SCHEME_SERVICES:
-        return candidate
-    return current
+from .parsing import prefer_service, scan_target_type, unbracket
 
 
 def _namespaced_plugin_id(template_id: str) -> str:
     """Return the global ``plugins.plugin_id`` for a nuclei template id."""
     return PLUGIN_ID_PREFIXES[SOURCE_NUCLEI] + template_id
-
-
-def _unbracket(host: str) -> str:
-    """Strip the brackets nuclei puts around a literal IPv6 target."""
-    if host.startswith("[") and host.endswith("]"):
-        return host[1:-1]
-    return host
-
-
-def _scan_target_type(host: str) -> str:
-    """Map a host to the ``hosts.scan_target_type`` CHECK vocabulary."""
-    detected = detect_host_type(_unbracket(host))
-    # detect_host_type says 'hostname'; the column's CHECK says 'fqdn'.
-    return "fqdn" if detected == "hostname" else detected
 
 
 def _group_by_target(
@@ -224,7 +190,7 @@ def _write_to_database(
 
             # host_services is UNIQUE(scan_id, host_id, port_number, protocol),
             # so one service wins per host:port. Keyed accordingly and resolved
-            # by _prefer_service rather than left to insertion order. Collected
+            # by prefer_service rather than left to insertion order. Collected
             # while walking the matches and inserted once at the end.
             service_records: Dict[tuple[int, int, str], str] = {}
             rows_written = 0
@@ -253,9 +219,9 @@ def _write_to_database(
                     if not host:
                         continue
                     host_id = Host.get_or_create(
-                        ip_address=_unbracket(ip_address),
-                        scan_target=_unbracket(host),
-                        scan_target_type=_scan_target_type(host),
+                        ip_address=unbracket(ip_address),
+                        scan_target=unbracket(host),
+                        scan_target_type=scan_target_type(host),
                         conn=conn,
                     )
                     if port is not None:
@@ -270,7 +236,7 @@ def _write_to_database(
                             svc_name = match.service_name
                             if svc_name:
                                 key = (host_id, port, "tcp")
-                                service_records[key] = _prefer_service(
+                                service_records[key] = prefer_service(
                                     service_records.get(key), svc_name
                                 )
                     conn.execute(

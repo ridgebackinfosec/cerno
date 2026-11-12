@@ -172,10 +172,43 @@ Cerno's importer discards ``request``/``response`` entirely, so this only
 bounds the size of the ``-je``/``-me`` artifacts the operator keeps.
 """
 
+BURP_KB_BASE: str = "https://portswigger.net/kb/issues/"
+"""Base URL for PortSwigger's issue-definition knowledge base.
+
+Keyed on the 8-digit hex type index, with no slug: PortSwigger publishes
+``.../kb/issues/00200300_cross-site-scripting-reflected`` but the bare
+``.../kb/issues/00200300`` resolves to the same page. That is why the hex type
+index -- not the decimal ``type`` the XML stores -- is Burp's ``plugin_ref``:
+it makes the details URL derivable from the id alone, exactly like the other
+two sources.
+"""
+
+BURP_REQUEST_MAX_BYTES: int = 4096
+"""Max decoded request bytes kept per Burp issue instance."""
+
+BURP_RESPONSE_MAX_BYTES: int = 4096
+"""Max decoded response bytes kept per Burp issue instance.
+
+Burp stores full HTTP exchanges; a single response can be megabytes. The whole
+exchange lands in one ``finding_affected_hosts.plugin_output`` cell, which the
+finding panel and the Claude assistant context both render in full.
+"""
+
+BURP_MAX_INSTANCES_RENDERED: int = 10
+"""Max Burp issue instances rendered into one host:port's ``plugin_output``.
+
+One issue type routinely fires on dozens of parameters of the same host:port,
+and ``finding_affected_hosts`` is UNIQUE per ``(finding_id, host_id,
+port_number)`` -- so every one of those instances merges into a single cell.
+Without this cap the per-instance byte caps alone still leave the panel
+unreadable. Instances beyond the cap are summarised by a trailing count.
+"""
+
 
 # ========== Finding sources (multi-source plugin identity) ==========
 SOURCE_NESSUS: str = "nessus"
 SOURCE_NUCLEI: str = "nuclei"
+SOURCE_BURP: str = "burp"
 
 SOURCE_UNKNOWN: str = "unknown"
 """Source of an id carrying no recognised namespace prefix.
@@ -187,7 +220,7 @@ known source" and render a finding without a details link rather than
 fabricating one.
 """
 
-SOURCE_IDS: dict[str, int] = {SOURCE_NESSUS: 1, SOURCE_NUCLEI: 2}
+SOURCE_IDS: dict[str, int] = {SOURCE_NESSUS: 1, SOURCE_NUCLEI: 2, SOURCE_BURP: 3}
 """``finding_sources.source_id`` per source name.
 
 Mirrors the ``finding_sources`` rows in ``database.LOOKUP_SEEDS``.
@@ -196,6 +229,7 @@ Mirrors the ``finding_sources`` rows in ``database.LOOKUP_SEEDS``.
 PLUGIN_ID_PREFIXES: dict[str, str] = {
     SOURCE_NESSUS: "nessus:",
     SOURCE_NUCLEI: "nuclei:",
+    SOURCE_BURP: "burp:",
 }
 """Namespace prefix applied to ``plugins.plugin_id`` per source.
 
@@ -213,17 +247,38 @@ the global ``plugins`` table collision-free: a nuclei template literally named
 PLUGIN_ID_LABELS: dict[str, str] = {
     SOURCE_NESSUS: "Nessus Plugin ID",
     SOURCE_NUCLEI: "Nuclei Template ID",
+    SOURCE_BURP: "Burp Issue Type",
 }
 """Label for the identifier row in the finding panel, per source."""
 
 PLUGIN_URL_TEMPLATES: dict[str, str] = {
     SOURCE_NESSUS: PLUGIN_DETAILS_BASE + "{ref}",
     SOURCE_NUCLEI: NUCLEI_TEMPLATE_URL_BASE + "{ref}",
+    SOURCE_BURP: BURP_KB_BASE + "{ref}",
 }
 """Details-page template per source, keyed on the source-native ``{ref}``.
 
 A source absent from this map has no known details page, and callers must
 render no link rather than fabricate one.
+
+Burp is a partial case: the template is right for a real issue type, but an
+extension-generated issue carries a :data:`BURP_GENERIC_TYPES` ref with a name
+slug appended and has no knowledge-base page at all. The importer stores
+``plugin_url=None`` for those, and that is not enough on its own --
+:func:`parsing.plugin_details_url` falls back to this template when no URL was
+stored -- so :func:`parsing.plugin_details_url` special-cases a slugged Burp
+ref. See :data:`BURP_GENERIC_TYPES`.
+"""
+
+BURP_GENERIC_TYPES: frozenset[str] = frozenset({"00000000", "08000000"})
+"""Burp type indexes that do not identify a specific issue type.
+
+``0x08000000`` is the type every Burp *extension*-generated issue reports, and
+``0x00000000`` is the unset value. Both are shared by unrelated issues, so using
+one as a ``plugin_id`` would merge, say, two different extensions' findings onto
+a single ``plugins`` row under whichever name was imported first. The importer
+appends a slug of the issue name for these (``burp:08000000-jwt-none-algorithm``)
+and records no details URL, since PortSwigger publishes no page for them.
 """
 
 

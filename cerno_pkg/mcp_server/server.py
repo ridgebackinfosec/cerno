@@ -758,6 +758,45 @@ def tool_import_nuclei(
     }
 
 
+def tool_import_burp(
+    burp_path: str,
+    scan_name: Optional[str] = None,
+    min_severity: Optional[int] = None,
+) -> dict:
+    """Import a Burp Suite XML report. Returns import statistics.
+
+    Expects the XML Burp's "Report issues" export writes; a file whose root
+    element is not ``<issues>`` is reported as not being a Burp report rather
+    than importing zero findings.
+
+    ``min_severity`` omitted falls back to the ``burp_min_severity`` config key
+    (default 0 = keep all), per the MCP precedence contract: explicit tool arg >
+    config > hardcoded default.
+    """
+    from ..burp_import import import_burp_file
+    from ..config import load_config
+    from ..constants import SCANS_ROOT
+
+    if min_severity is None:
+        min_severity = load_config().burp_min_severity
+
+    path = Path(burp_path).expanduser()
+    if not path.exists():
+        raise ValueError(f"No such file: {burp_path}")
+    if not 0 <= min_severity <= 4:
+        raise ValueError("min_severity must be between 0 and 4")
+
+    result = import_burp_file(
+        path, SCANS_ROOT, scan_name=scan_name, min_severity=min_severity
+    )
+    return {
+        "scan_name": result.scan_name,
+        "plugins_exported": result.plugins_exported,
+        "total_hosts": result.total_hosts,
+        "severities": result.severities,
+    }
+
+
 def tool_get_workflow(
     plugin_id: str, config: Optional[CernoConfig] = None
 ) -> Optional[dict]:
@@ -4006,16 +4045,36 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         def import_nuclei(
             nuclei_path: str,
             scan_name: Optional[str] = None,
-            min_severity: int = 0,
+            min_severity: Optional[int] = None,
         ) -> dict:
             """Import a nuclei JSON (-je) or JSONL (-jle/-jsonl) results file.
 
             scan_name defaults to the file's stem, since nuclei output carries no
             scan name of its own. min_severity (0-4) drops findings below that
-            severity; a typical nuclei run is dominated by Info results.
+            severity, defaulting to the nuclei_min_severity config key; a typical
+            nuclei run is dominated by Info results.
             """
             return tool_import_nuclei(
                 nuclei_path, scan_name=scan_name, min_severity=min_severity
+            )
+
+        @mcp.tool()
+        def import_burp(
+            burp_path: str,
+            scan_name: Optional[str] = None,
+            min_severity: Optional[int] = None,
+        ) -> dict:
+            """Import a Burp Suite XML report ("Report issues" export).
+
+            scan_name defaults to the file's stem, since a Burp report carries no
+            scan name of its own. One finding is created per issue type, with
+            every instance's evidence merged into the affected host's output.
+            Issues dismissed as false positives in Burp are skipped. min_severity
+            (0-4) defaults to the burp_min_severity config key; Burp's scale tops
+            out at High (3).
+            """
+            return tool_import_burp(
+                burp_path, scan_name=scan_name, min_severity=min_severity
             )
 
         @mcp.tool(annotations=_IDEMPOTENT_ANN)
@@ -4059,7 +4118,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
     else:
         log_info(
             "mcp: set_review_state/add_note/import_nessus/import_nuclei/"
-            "ingest_results/set_finding_verdict not registered "
+            "import_burp/ingest_results/set_finding_verdict not registered "
             "(mcp_allow_mutations=false)"
         )
 

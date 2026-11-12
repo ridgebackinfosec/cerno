@@ -1,0 +1,161 @@
+<?xml version="1.0"?>
+<!DOCTYPE issues [
+<!ELEMENT issues (issue*)>
+<!ATTLIST issues burpVersion CDATA "">
+<!ATTLIST issues exportTime CDATA "">
+]>
+<issues burpVersion="2024.9.2" exportTime="Tue Nov 11 09:14:02 EST 2026">
+
+  <!-- Two instances of one issue type on one host:port: the merge path. -->
+  <issue>
+    <serialNumber>7719320418842560512</serialNumber>
+    <type>2097920</type>
+    <name>Cross-site scripting (reflected)</name>
+    <host ip="10.0.0.21">https://web01.corp.local</host>
+    <path><![CDATA[/search]]></path>
+    <location><![CDATA[/search [q parameter]]]></location>
+    <severity>High</severity>
+    <confidence>Certain</confidence>
+    <issueBackground><![CDATA[<p>Reflected cross-site scripting vulnerabilities arise when data is copied from a request and echoed into the application's immediate response in an unsafe way.</p>]]></issueBackground>
+    <remediationBackground><![CDATA[<p>In most situations where user-controllable data is copied into application responses, the vulnerability can be prevented by HTML-encoding the data.</p>]]></remediationBackground>
+    <references><![CDATA[<ul><li><a href="https://portswigger.net/web-security/cross-site-scripting">Cross-site scripting</a></li></ul>]]></references>
+    <vulnerabilityClassifications><![CDATA[<ul><li><a href="https://cwe.mitre.org/data/definitions/79.html">CWE-79: Improper Neutralization of Input During Web Page Generation</a></li><li><a href="https://cwe.mitre.org/data/definitions/80.html">CWE-80: Improper Neutralization of Script-Related HTML Tags</a></li></ul>]]></vulnerabilityClassifications>
+    <issueDetail><![CDATA[The value of the <b>q</b> request parameter is copied into the HTML document as plain text between tags. The payload <b>&lt;script&gt;alert(1)&lt;/script&gt;</b> was submitted in the q parameter.]]></issueDetail>
+    <requestresponse>
+      <request method="GET" base64="true"><![CDATA[R0VUIC9zZWFyY2g/cT0lM0NzY3JpcHQlM0VhbGVydCgxKSUzQyUyRnNjcmlwdCUzRSBIVFRQLzEuMQ0KSG9zdDogd2ViMDEuY29ycC5sb2NhbA0KVXNlci1BZ2VudDogTW96aWxsYS81LjANCkFjY2VwdDogdGV4dC9odG1sDQpDb25uZWN0aW9uOiBjbG9zZQ0KDQo=]]></request>
+      <response base64="true"><![CDATA[SFRUUC8xLjEgMjAwIE9LDQpDb250ZW50LVR5cGU6IHRleHQvaHRtbDsgY2hhcnNldD11dGYtOA0KQ29udGVudC1MZW5ndGg6IDg2DQoNCjxodG1sPjxib2R5PjxoMT5SZXN1bHRzIGZvciA8c2NyaXB0PmFsZXJ0KDEpPC9zY3JpcHQ+PC9oMT48L2JvZHk+PC9odG1sPg0K]]></response>
+      <responseRedirected>false</responseRedirected>
+    </requestresponse>
+  </issue>
+
+  <issue>
+    <serialNumber>7719320418842560513</serialNumber>
+    <type>2097920</type>
+    <name>Cross-site scripting (reflected)</name>
+    <host ip="10.0.0.21">https://web01.corp.local</host>
+    <path><![CDATA[/search]]></path>
+    <location><![CDATA[/search [lang parameter]]]></location>
+    <severity>High</severity>
+    <confidence>Firm</confidence>
+    <issueDetail><![CDATA[The value of the <b>lang</b> request parameter is copied into the HTML document as plain text between tags.]]></issueDetail>
+  </issue>
+
+  <!-- Same issue type, different port: a second affected-host row. -->
+  <issue>
+    <serialNumber>7719320418842560514</serialNumber>
+    <type>2097920</type>
+    <name>Cross-site scripting (reflected)</name>
+    <host ip="10.0.0.21">http://web01.corp.local:8080</host>
+    <path><![CDATA[/legacy/search]]></path>
+    <location><![CDATA[/legacy/search [query parameter]]]></location>
+    <severity>Medium</severity>
+    <confidence>Tentative</confidence>
+    <issueDetail><![CDATA[The value of the <b>query</b> request parameter is copied into an HTML comment.]]></issueDetail>
+  </issue>
+
+  <!-- Plain-text (not base64) request/response, and a host with no ip attribute. -->
+  <issue>
+    <serialNumber>7719320418842560515</serialNumber>
+    <type>6292992</type>
+    <name>Robots.txt file</name>
+    <host ip="">http://web02.corp.local</host>
+    <path><![CDATA[/robots.txt]]></path>
+    <location><![CDATA[/robots.txt]]></location>
+    <severity>Information</severity>
+    <confidence>Certain</confidence>
+    <issueBackground><![CDATA[<p>The file robots.txt is used to give instructions to web robots.</p>]]></issueBackground>
+    <issueDetail><![CDATA[The web server contains a robots.txt file.]]></issueDetail>
+    <requestresponse>
+      <request method="GET" base64="false"><![CDATA[GET /robots.txt HTTP/1.1
+Host: web02.corp.local
+Connection: close
+
+]]></request>
+      <response base64="false"><![CDATA[HTTP/1.1 200 OK
+Content-Type: text/plain
+
+User-agent: *
+Disallow: /admin
+]]></response>
+      <responseRedirected>false</responseRedirected>
+    </requestresponse>
+  </issue>
+
+  <!-- No requestresponse element at all, and an IPv6 target. -->
+  <issue>
+    <serialNumber>7719320418842560516</serialNumber>
+    <type>16777472</type>
+    <name>TLS certificate</name>
+    <host ip="2001:db8::21">https://[2001:db8::21]:8443</host>
+    <path><![CDATA[/]]></path>
+    <location><![CDATA[/]]></location>
+    <severity>Low</severity>
+    <confidence>Certain</confidence>
+    <issueDetail><![CDATA[The server presented a self-signed certificate. See CVE-2021-44228 for an unrelated example reference.]]></issueDetail>
+    <references><![CDATA[<ul><li>CVE-2021-44228</li></ul>]]></references>
+  </issue>
+
+  <!-- Dismissed in Burp: skipped, not imported at severity 0. -->
+  <issue>
+    <serialNumber>7719320418842560517</serialNumber>
+    <type>5245360</type>
+    <name>Frameable response (potential Clickjacking)</name>
+    <host ip="10.0.0.21">https://web01.corp.local</host>
+    <path><![CDATA[/]]></path>
+    <location><![CDATA[/]]></location>
+    <severity>False positive</severity>
+    <confidence>Certain</confidence>
+    <issueDetail><![CDATA[Marked as a false positive by the tester.]]></issueDetail>
+  </issue>
+
+  <!-- Extension-generated: the shared 0x08000000 type, slugged by name. -->
+  <issue>
+    <serialNumber>7719320418842560518</serialNumber>
+    <type>134217728</type>
+    <name>JWT none algorithm accepted</name>
+    <host ip="10.0.0.21">https://web01.corp.local</host>
+    <path><![CDATA[/api/session]]></path>
+    <location><![CDATA[/api/session [Authorization header]]]></location>
+    <severity>High</severity>
+    <confidence>Firm</confidence>
+    <issueDetail><![CDATA[The application accepted a JWT signed with the "none" algorithm.]]></issueDetail>
+  </issue>
+
+  <!-- A second extension issue sharing that type: must not collide with the first. -->
+  <issue>
+    <serialNumber>7719320418842560519</serialNumber>
+    <type>134217728</type>
+    <name>Hardcoded API key in JavaScript</name>
+    <host ip="10.0.0.21">https://web01.corp.local</host>
+    <path><![CDATA[/static/app.js]]></path>
+    <location><![CDATA[/static/app.js]]></location>
+    <severity>Medium</severity>
+    <confidence>Tentative</confidence>
+    <issueDetail><![CDATA[An API key was found in a client-side script.]]></issueDetail>
+  </issue>
+
+  <!-- Unusable type: counted as malformed, never written. -->
+  <issue>
+    <serialNumber>7719320418842560520</serialNumber>
+    <type>not-a-number</type>
+    <name>Broken issue</name>
+    <host ip="10.0.0.21">https://web01.corp.local</host>
+    <path><![CDATA[/]]></path>
+    <severity>Low</severity>
+    <confidence>Certain</confidence>
+  </issue>
+
+  <!-- Rich markup in attacker-influenced fields: must survive to the database verbatim. -->
+  <issue>
+    <serialNumber>7719320418842560521</serialNumber>
+    <type>2097408</type>
+    <name>Stored XSS [/] in User-Agent [bold red]header[/bold red]</name>
+    <host ip="10.0.0.21">https://web01.corp.local</host>
+    <path><![CDATA[/]]></path>
+    <location><![CDATA[/ [User-Agent header]]]></location>
+    <severity>High</severity>
+    <confidence>Certain</confidence>
+    <issueDetail><![CDATA[The payload [/] was echoed into the response.]]></issueDetail>
+  </issue>
+
+</issues>

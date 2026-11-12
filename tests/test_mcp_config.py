@@ -541,6 +541,64 @@ def test_import_nuclei_unset_config_keeps_everything(captured_nuclei_import):
 
 
 # ---------------------------------------------------------------------------
+# burp_min_severity
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def captured_burp_import(tmp_path, monkeypatch):
+    """Capture the min_severity that reaches import_burp_file."""
+    import cerno_pkg.burp_import as burp_import
+
+    report = tmp_path / "report.xml"
+    report.write_text('<?xml version="1.0"?><issues></issues>', encoding="utf-8")
+    seen: dict = {}
+
+    class _Result:
+        scan_name = "stub"
+        plugins_exported = 0
+        total_hosts = 0
+        severities: dict = {}
+
+    def fake_import(path, scans_root, *, scan_name=None, min_severity=0):
+        seen["min_severity"] = min_severity
+        return _Result()
+
+    monkeypatch.setattr(burp_import, "import_burp_file", fake_import)
+    return report, seen
+
+
+def test_import_burp_defaults_min_severity_from_config(captured_burp_import):
+    """Omitted min_severity falls back to the config key, not to 0."""
+    report, seen = captured_burp_import
+    _set_config(burp_min_severity=3)
+
+    mcp.tool_import_burp(str(report), scan_name="cfg-gated")
+
+    assert seen["min_severity"] == 3
+
+
+def test_import_burp_explicit_arg_beats_config(captured_burp_import):
+    """An explicit min_severity wins over the config key (MCP precedence)."""
+    report, seen = captured_burp_import
+    _set_config(burp_min_severity=3)
+
+    mcp.tool_import_burp(str(report), scan_name="arg-wins", min_severity=0)
+
+    assert seen["min_severity"] == 0
+
+
+def test_import_burp_unset_config_keeps_everything(captured_burp_import):
+    """With no config key set the default is still keep-all."""
+    report, seen = captured_burp_import
+    _set_config()
+
+    mcp.tool_import_burp(str(report), scan_name="default")
+
+    assert seen["min_severity"] == 0
+
+
+# ---------------------------------------------------------------------------
 # Contract: every config key is either applied by the MCP or explicitly N/A
 # ---------------------------------------------------------------------------
 
@@ -555,6 +613,7 @@ MCP_APPLIED = {
     "custom_workflows_path",
     "custom_workflows_exclusive",
     "nuclei_min_severity",
+    "burp_min_severity",
     "nxc_workspace_path",
     "nxc_enrichment_enabled",
     "mcp_allow_execution",
