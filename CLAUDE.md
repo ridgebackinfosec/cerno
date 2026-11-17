@@ -57,15 +57,15 @@ Follow Python best practices (PEP 8, type hints, docstrings, SOLID, DRY, paramet
 4. **Type Affinity**: Be explicit with types (TEXT, INTEGER, REAL, BLOB) and use CHECK constraints to enforce
 5. **Query Planning**: Use `EXPLAIN QUERY PLAN` to optimize slow queries
 
-### Cross-Scan Data Tracking
-1. **Shared Entity Tables**: Create dedicated tables for entities that span multiple scans (hosts, plugins, CVEs)
+### Cross-Dataset Data Tracking
+1. **Shared Entity Tables**: Create dedicated tables for entities that span multiple datasets (hosts, finding_types, CVEs)
 2. **Junction Tables**: Use proper many-to-many junction tables with composite keys
-3. **Temporal Tracking**: Add `first_seen` / `last_seen` timestamps to track entity history across scans
-4. **Global Queries**: Design schema to enable "all findings for host X across all scans" type queries
+3. **Temporal Tracking**: Add `first_seen` / `last_seen` timestamps to track entity history across datasets
+4. **Global Queries**: Design schema to enable "all findings for host X across all datasets" type queries
 
 ### Schema Management
 - Database uses normalized structure created on initialization
-- Schema version tracked in `database.py:SCHEMA_VERSION` (current: 5), written to `PRAGMA user_version`; `initialize_database()` raises `SchemaVersionError` for older DBs (CLI prints re-import instructions to stderr)
+- Schema version tracked in `database.py:SCHEMA_VERSION` (current: 6), written to `PRAGMA user_version`; `initialize_database()` raises `SchemaVersionError` for older DBs (CLI prints re-import instructions to stderr)
 - Future schema changes will include migration system when needed
 - Always test schema changes with fresh database before release
 
@@ -136,16 +136,16 @@ cerno --help
 # Common commands
 cerno import nessus scan.nessus   # Import Nessus scan
 cerno import nuclei nuclei.json   # Import nuclei results (-je array or -jle/-jsonl)
-                                  #   --name <scan>; severity floor = nuclei_min_severity
+                                  #   --name <dataset>; severity floor = nuclei_min_severity
 cerno import burp report.xml      # Import a Burp Suite "Report issues" XML export
-                                  #   --name <scan>; severity floor = burp_min_severity
+                                  #   --name <dataset>; severity floor = burp_min_severity
 cerno review                      # Start interactive review (no flags: all config keys)
-                                  #   At scan prompt, enter "1-3" or "1,3,5" to review multiple scans merged
+                                  #   At scan prompt, enter "1-3" or "1,3,5" to review multiple datasets merged
 cerno check                       # External tool availability, then exit (was `review --check`)
-cerno scan list                   # List all scans (compact; scan_list_wide = all severities, --json = scripting)
-cerno scan delete <scan_name>     # Delete scan from database
-cerno scan compare <s1> <s2>      # Compare findings between two scans
-cerno scan history <host_ip>      # Show vulnerability timeline for a host
+cerno dataset list                   # List all datasets (compact; dataset_list_wide = all severities, --json = scripting)
+cerno dataset delete <dataset_name>     # Delete scan from database
+cerno dataset compare <s1> <s2>      # Compare findings between two datasets
+cerno dataset history <host_ip>      # Show vulnerability timeline for a host
 cerno creds list                  # List NetExec credential refs (never shows secret values)
 cerno creds reveal <ref>          # Reveal a credential's cleartext (SENSITIVE, local, audited)
 cerno mcp                         # Run the MCP server over stdio (launched by an MCP client)
@@ -206,8 +206,8 @@ pyright cerno_pkg/tui.py
 
 Cerno uses a **fully normalized database architecture** with SQLite as the source of truth:
 
-- **Location**: `~/.cerno/cerno.db` (global, cross-scan)
-- **Schema version**: Tracked in `database.py:SCHEMA_VERSION` (current: 5; v2/v3 renamed review states — shipped in 1.7.0 as a minor bump by explicit user decision; v4 added the execution→data loop tables/views — major bump, forces re-import; v5 widened `plugins.plugin_id` to TEXT + added `plugins.source_id`/`finding_sources` for multi-source findings — major bump, forces re-import)
+- **Location**: `~/.cerno/cerno.db` (global, cross-dataset)
+- **Schema version**: Tracked in `database.py:SCHEMA_VERSION` (current: 6; v2/v3 renamed review states — shipped in 1.7.0 as a minor bump by explicit user decision; v4 added the execution→data loop tables/views — major bump, forces re-import; v5 widened `finding_types.finding_type_id` to TEXT + added `finding_types.source_id`/`finding_sources` for multi-source findings — major bump, forces re-import; v6 renamed the vocabulary (`scans`→`datasets`, `plugins`→`finding_types`), added attribution (`findings.completed_by`, `finding_verdicts.created_by` as FKs to `finding_sources`), and dropped `audit_log` / `workflow_executions` / `finding_types.metadata_fetched_at` — all three were never written — major bump, forces re-import)
 - **Schema approach**: Normalized structure created on initialization
 - Import writes **no** per-plugin `.txt` files; all data lives in the database
 
@@ -215,40 +215,40 @@ Cerno uses a **fully normalized database architecture** with SQLite as the sourc
 - Database is source of truth for review state, host:port data, session state
 - File browsing queries database directly (no filesystem walks during review)
 - Review state tracked only in the `findings.review_state` column
-- CVEs are read from the `.nessus` file at import and stored in the `plugins.cves` JSON column
-- Normalized host/port tables enable cross-scan tracking
+- CVEs are read from the `.nessus` file at import and stored in the `finding_types.cves` JSON column
+- Normalized host/port tables enable cross-dataset tracking
 - SQL views compute statistics on-demand (no redundant cached data)
 
 ### Module Structure
 
 ```
-cerno.py                  # Typer CLI entry point: review/import/scan/config/workflow/creds/demo/mcp/reset
+cerno.py                  # Typer CLI entry point: review/import/dataset/check/config/workflow/creds/demo/mcp/reset
                           # Navigation: browse_file_list, browse_workflow_groups, show_session_statistics
                           # Claude chat: browse_claude_chat() (per-finding), browse_claude_chat_aggregate() (scope)
 cerno_pkg/
   ├── database.py          # SQLite connection, schema (SCHEMA_SQL_TABLES/VIEWS, SCHEMA_VERSION), db_transaction()
-  ├── models.py            # Data models: Scan, Plugin, Finding, Host, Port, ToolExecution, Artifact,
+  ├── models.py            # Data models: Scan, FindingType, Finding, Host, Port, ToolExecution, Artifact,
   │                        # lookup models, verdict/ingest models (FindingVerdict, VerifiedPort, …),
   │                        # ClaudeConversationTurn / ClaudeAggregateConversationTurn
-  │                        # Single-scan: Finding.get_by_scan_with_plugin(); multi-scan: get_by_scan_ids_merged()
+  │                        # Single-dataset: Finding.get_by_dataset_with_finding_type(); multi-dataset: get_by_dataset_ids_merged()
   ├── nessus_import.py     # .nessus XML parsing and database import (DB only; no files written)
   ├── nuclei_parse.py      # Pure nuclei JSON/JSONL parser (array -je + JSONL -jle; no DB)
   │                        # Sniffs shape, filters matcher-status=false, maps severity, merges nothing
   ├── nuclei_import.py     # import_nuclei_file(): namespaces template ids as 'nuclei:<id>' and
-  │                        # merges colliding host:port matches into one plugin_output row
+  │                        # merges colliding host:port matches into one evidence row
   ├── burp_parse.py        # Pure Burp Suite XML parser (<issues> root; iterparse; no DB)
   │                        # Hex type index is the ref (burp:00200300 -> the KB page);
   │                        # HTML prose flattened, base64 request/response decoded + capped
   ├── burp_import.py       # import_burp_file(): one finding per issue type; merges every
-  │                        # instance on a host:port into one plugin_output row
+  │                        # instance on a host:port into one evidence row
   ├── authored_findings.py # Hand-authored findings (no parser — they are created, not
   │                        # imported). Every entry point takes an explicit source:
   │                        # operator: (TUI) or agent: (MCP), never a default.
-  │                        # get_or_create_authored_scan(), next_authored_ref(),
+  │                        # get_or_create_authored_dataset(), next_authored_ref(),
   │                        # create_authored_finding(), update_authored_finding(),
   │                        # load_authored_finding(); shared by the TUI [+]/[U] and
   │                        # MCP create_finding/update_finding
-  ├── cross_scan.py        # `cerno scan compare` / `scan history` data (v_scan_plugin_summary, v_host_scan_findings)
+  ├── cross_dataset.py        # `cerno dataset compare` / `dataset history` data (v_dataset_finding_type_summary, v_host_dataset_findings)
   ├── parsing.py           # Host:port parsing: parse_hosts_ports(), split_host_port()
   ├── analysis.py          # Identical host:port groups ([H]) and superset/overlap analysis ([O])
   ├── query.py             # FindingQuery + run_finding_query(): AND-combined, parameterized predicates
@@ -278,7 +278,7 @@ cerno_pkg/
   ├── claude_assistant.py  # Claude Assistant: context builders, run_exchange()/run_aggregate_exchange(),
   │                        # consent (ensure_enabled, claude_enabled); load_skill_prompt() reads
   │                        # cerno_pkg/skills/cerno-assistant.md (inline fallback)
-  ├── session.py           # Review session persistence (sessions + session_scans), scan summary
+  ├── session.py           # Review session persistence (sessions + session_datasets), scan summary
   ├── onboarding.py        # First-run guided tour, post-scan-selection tips
   ├── tool_context.py      # ToolContext / CommandResult (workflow builder I/O); ReviewContext (exported, unused)
   ├── tool_registry.py     # Tool dataclass + TOOL_REGISTRY helpers
@@ -299,7 +299,7 @@ cerno_pkg/
   ├── banner.py            # Promotional startup banner (`show_banner: false` hides it)
   ├── logging_setup.py     # Loguru setup with rotation; log_info/log_debug/log_error
   ├── skills/cerno-assistant.md  # Claude Assistant system prompt
-  ├── demo/                # Packaged copy of the demo scans + NetExec workspace (`cerno demo`)
+  ├── demo/                # Packaged copy of the demo datasets + NetExec workspace (`cerno demo`)
   │                        #   2 .nessus + 2 nuclei .json + 1 Burp .xml; byte-identical to docs/demo/
   │                        #   (regenerate: scripts/create_demo_nuclei_results.py,
   │                        #    scripts/create_demo_burp_report.py)
@@ -310,18 +310,18 @@ cerno_pkg/
 - Modular design with clear separation of concerns
 - `ToolContext`/`CommandResult` give every tool workflow builder the same signature
 - Clear separation: `tui.py` handles navigation, `fs.py` handles file operations, `render.py` handles display
-- Database objects (`Plugin`, `Finding`) flow through entire call chain
+- Database objects (`FindingType`, `Finding`) flow through entire call chain
 
 ### Core Data Flow
 
-1. **Import**: `.nessus` XML → `nessus_import.py` → SQLite (`scans`, `plugins`, `findings`, `finding_affected_hosts`); nuclei JSON/JSONL → `nuclei_parse.py` → `nuclei_import.py` → the same tables; Burp XML → `burp_parse.py` → `burp_import.py` → the same tables. **Hand-authored findings skip this step**: `authored_findings.py` writes those tables directly from the TUI `[+]` action (`operator:`) or MCP `create_finding` (`agent:`)
-2. **Review**: `Finding.get_by_scan_with_plugin()` → `(Finding, Plugin)` tuples → `render.py` tables → User actions → Update `review_state` column
-3. **Tools**: TUI menu → Pass `Plugin`/`Finding` objects → `tools.py` → Execute command → `tool_executions` + `artifacts` tables
+1. **Import**: `.nessus` XML → `nessus_import.py` → SQLite (`datasets`, `finding_types`, `findings`, `finding_affected_hosts`); nuclei JSON/JSONL → `nuclei_parse.py` → `nuclei_import.py` → the same tables; Burp XML → `burp_parse.py` → `burp_import.py` → the same tables. **Hand-authored findings skip this step**: `authored_findings.py` writes those tables directly from the TUI `[+]` action (`operator:`) or MCP `create_finding` (`agent:`)
+2. **Review**: `Finding.get_by_dataset_with_finding_type()` → `(Finding, FindingType)` tuples → `render.py` tables → User actions → Update `review_state` column
+3. **Tools**: TUI menu → Pass `FindingType`/`Finding` objects → `tools.py` → Execute command → `tool_executions` + `artifacts` tables
 4. **Session**: Auto-save to `sessions` table (start time, duration, statistics)
-5. **Multi-scan review**: User selects multiple scans at prompt (e.g. `1,3` or `1-3`) → `Finding.get_by_scan_ids_merged(scan_ids)` deduplicates by `plugin_id` (one representative Finding per plugin, with sibling IDs from other scans in `extra_finding_ids` so all host/port queries and analyses span every selected scan) → "Scans" column shows `All N` or `M of N` → review-state changes broadcast to all selected scans → `session_scans` junction table records all scan IDs for the session
+5. **Multi-dataset review**: User selects multiple datasets at prompt (e.g. `1,3` or `1-3`) → `Finding.get_by_dataset_ids_merged(dataset_ids)` deduplicates by `finding_type_id` (one representative Finding per finding type, with sibling IDs from other datasets in `extra_finding_ids` so all host/port queries and analyses span every selected dataset) → "Datasets" column shows `All N` or `M of N` → review-state changes broadcast to all selected datasets → `session_datasets` junction table records all dataset IDs for the session
 6. **Claude Assistant**: `[A]` key → `browse_claude_chat()` (per-finding) or `browse_claude_chat_aggregate()` (scope-level) → `claude_assistant.py` builds context + calls `claude -p` → response persisted in `claude_conversations` (per-finding FK) or `claude_aggregate_conversations` (context_key string)
 
-**Key principle**: Plugin and Finding database objects flow through entire call chain. No filename parsing for plugin_id extraction - synthetic paths used only for display/directory structure.
+**Key principle**: FindingType and Finding database objects flow through entire call chain. No filename parsing for finding_type_id extraction - synthetic paths used only for display/directory structure.
 
 ### Parsing Architecture
 
@@ -345,41 +345,40 @@ no dispatch changes. See `docs/TOOL_SYSTEM_GUIDE.md`.
 
 **Foundation Tables**:
 - `severity_levels`: Normalized severity reference data (0-4, labels, colors)
-- `finding_sources`: Which source produced a plugin row (`nessus`=1, `nuclei`=2, `burp`=3, `operator`=4, `agent`=5 — the last two being hand-authored, not scanners, and split by the channel that wrote them: the TUI vs an MCP client); seeded by `database.seed_lookup_tables()`, the single source shared with the test fixtures. Seeding runs with `INSERT OR IGNORE` on **every** `initialize_database()`, so adding a source row reaches existing databases and needs no `SCHEMA_VERSION` bump — only a *table* change does
+- `finding_sources`: Which source produced a finding-type row (`nessus`=1, `nuclei`=2, `burp`=3, `operator`=4, `agent`=5 — the last two being hand-authored, not scanners, and split by the channel that wrote them: the TUI vs an MCP client); seeded by `database.seed_lookup_tables()`, the single source shared with the test fixtures. Seeding runs with `INSERT OR IGNORE` on **every** `initialize_database()`, so adding a source row reaches existing databases and needs no `SCHEMA_VERSION` bump — only a *table* change does
 - `artifact_types`: Artifact type definitions
-- `hosts`: Normalized host data across ALL scans (enables cross-scan tracking)
+- `hosts`: Normalized host data across ALL datasets (enables cross-dataset tracking)
 - `ports`: Port metadata
-- `audit_log`: Change tracking (reserved; nothing writes to it yet)
 
 **Core Tables**:
-- `scans`: Top-level scan metadata (scan_name, export_root, .nessus hash)
-- `plugins`: Finding-type metadata, global across scans (plugin_id **TEXT**, source_id, severity_int, CVSS, CVEs, Metasploit modules)
-  - `plugin_id` is namespaced for **every** source, Nessus included: `'nessus:57608'`, `'nuclei:apache-detect'`, `'burp:00200300'`, `'operator:3'`, `'agent:7'`. No source is the default, so a bare token is not a valid plugin id anywhere. Helpers live in `parsing.py`: `plugin_source()` (returns `SOURCE_UNKNOWN`, never a guess, for an unprefixed id), `plugin_source_id()` (**raises** on one — the write-side guard), `plugin_ref()` (strips the prefix; this is what a details URL takes), `plugin_details_url()`
-  - `source_id` duplicates what the prefix implies; that is deliberate, so `FindingQuery.source` is an indexed SQL predicate rather than a `LIKE 'nuclei:%'` scan. `Plugin.save()` keeps them consistent
-  - TEXT means `ORDER BY plugin_id` is lexicographic — use `database.plugin_id_order_sql()`, which sorts by prefix then by the **ref cast to an integer**. Casting the whole column is not equivalent: every namespaced id casts to 0, silently degrading to a text sort that puts `nessus:10114` before `nessus:9`
+- `datasets`: Top-level scan metadata (dataset_name, export_root, .nessus hash)
+- `finding_types`: Finding-type metadata, global across datasets (finding_type_id **TEXT**, source_id, severity_int, CVSS, CVEs, Metasploit modules)
+  - `finding_type_id` is namespaced for **every** source, Nessus included: `'nessus:57608'`, `'nuclei:apache-detect'`, `'burp:00200300'`, `'operator:3'`, `'agent:7'`. No source is the default, so a bare token is not a valid finding type id anywhere. Helpers live in `parsing.py`: `finding_type_source()` (returns `SOURCE_UNKNOWN`, never a guess, for an unprefixed id), `finding_type_source_id()` (**raises** on one — the write-side guard), `finding_type_ref()` (strips the prefix; this is what a details URL takes), `finding_type_details_url()`
+  - `source_id` duplicates what the prefix implies; that is deliberate, so `FindingQuery.source` is an indexed SQL predicate rather than a `LIKE 'nuclei:%'` scan. `FindingType.save()` keeps them consistent
+  - TEXT means `ORDER BY finding_type_id` is lexicographic — use `database.finding_type_id_order_sql()`, which sorts by prefix then by the **ref cast to an integer**. Casting the whole column is not equivalent: every namespaced id casts to 0, silently degrading to a text sort that puts `nessus:10114` before `nessus:9`
   - Note: `severity_label` accessed via `severity_levels` table JOIN
-- `findings`: Findings per scan (scan_id + plugin_id, review_state)
-  - Note: `host_count`, `port_count` computed via `v_finding_stats` view
-- `finding_affected_hosts`: Host:port combinations (finding_id, host_id FK, port_number FK, plugin_output)
+- `findings`: Findings per dataset (dataset_id + finding_type_id, review_state)
+  - Note: `target_count`, `port_count` computed via `v_finding_stats` view
+  - `completed_by`: `finding_sources.source_id` of the channel that moved the finding to `done` (4 = operator/TUI, 5 = agent/MCP), NULL whenever it is not done. Written only by `Finding.update_review_state()`, which takes the actor as a **required** argument and clears the column (with `reviewed_at`) on any move away from `done`
+- `finding_affected_hosts`: Host:port combinations (finding_id, host_id FK, port_number FK, evidence)
   - Uses foreign keys to normalized `hosts` and `ports` tables
-  - **Counting hosts: a *machine* is `hosts.ip_address`, a *scan target* is `hosts.scan_target`, and `host_id` is the right key for neither.** `host_id` keys the `(ip_address, scan_target)` pair, so `COUNT(DISTINCT host_id)` double-counts a machine recorded under both its IP and its hostname — that bug made `[V] View hosts (N)` read one higher than the list it opens. Machines are counted by the scan overview, `cerno scan list` and MCP `list_scans.unique_hosts`; targets by the findings-list "Hosts" column, the `[V]` footer, `Finding.count_targets()`, `v_finding_stats.host_count` and `v_scan_plugin_summary.affected_hosts`. `host_id` is correct for *listing* (MCP `list_hosts` returns one row per pair and loses nothing), never for a headline count
+  - **Counting hosts: a *machine* is `hosts.ip_address`, a *scan target* is `hosts.scan_target`, and `host_id` is the right key for neither.** `host_id` keys the `(ip_address, scan_target)` pair, so `COUNT(DISTINCT host_id)` double-counts a machine recorded under both its IP and its hostname — that bug made `[V] View hosts (N)` read one higher than the list it opens. Machines are counted by the dataset overview, `cerno dataset list` and MCP `list_datasets.unique_hosts`; targets by the findings-list "Hosts" column, the `[V]` footer, `Finding.count_targets()`, `v_finding_stats.target_count` and `v_dataset_finding_type_summary.affected_targets`. `host_id` is correct for *listing* (MCP `list_hosts` returns one row per pair and loses nothing), never for a headline count
   - **Virtual hosting is why these stay two numbers**: one IP legitimately serves many hostnames, each a distinct target that must be scanned separately. A target count exceeding a machine count is expected. Host *lists* must therefore keep emitting `scan_target` strings — that is what `<TARGET>` substitution (`workflow_prep.py`), the MCP target-line tools and clipboard payloads feed into tools, and a vhost is unreachable by IP alone
-  - Classify an address by its **value** (`parsing.is_ipv4()` / `is_ipv6()`), never by `scan_target_type`: that column describes the *target string*, so a host reached by hostname is `'fqdn'` even when its resolved IP is a valid IPv4/IPv6 address. Bucketing the scan overview on it left such hosts in neither child row, so the IPv4/IPv6 breakdown did not sum to "Unique Hosts" and IPv6 silently read 0
-- `host_services`: Per-scan service discovery (scan_id, host_id, port_number, protocol, svc_name)
+  - Classify an address by its **value** (`parsing.is_ipv4()` / `is_ipv6()`), never by `scan_target_type`: that column describes the *target string*, so a host reached by hostname is `'fqdn'` even when its resolved IP is a valid IPv4/IPv6 address. Bucketing the dataset overview on it left such hosts in neither child row, so the IPv4/IPv6 breakdown did not sum to "Unique Hosts" and IPv6 silently read 0
+- `host_services`: Per-scan service discovery (dataset_id, host_id, port_number, protocol, svc_name)
   - All three importers populate it: Nessus from ReportItem `svc_name`/`protocol`; nuclei from the scheme in `matched-at`; Burp from the scheme of the `<host>` URL (so a nuclei-only or Burp-only scan still reports web services)
-  - Uses foreign keys to `scans`, `hosts`, and `ports` tables
+  - Uses foreign keys to `datasets`, `hosts`, and `ports` tables
 - `sessions`: Review session tracking (start time, end time)
   - Note: Statistics computed via `v_session_stats` view
-- `session_scans`: Junction table linking sessions to their scans in multi-scan mode (session_id FK, scan_id FK; composite PK)
+- `session_datasets`: Junction table linking sessions to their datasets in multi-dataset mode (session_id FK, dataset_id FK; composite PK)
 - `tool_executions`: Command history (tool_name, command_text, exit_code, duration, sudo usage)
 - `artifacts`: Generated files (artifact_path, artifact_type_id FK, file_hash, file_size, metadata JSON)
   - Uses `artifact_type_id` foreign key to `artifact_types` table
-- `workflow_executions`: Workflow tracking (reserved; nothing writes to it yet)
 - `claude_conversations`: Per-finding Claude Assistant chat history (finding_id FK → findings, CASCADE delete)
   - Keyed to `finding_id`; each row is one turn (role: user|assistant, content, created_at)
   - Used by `browse_claude_chat()` / `ClaudeConversationTurn` model
 - `claude_aggregate_conversations`: Scope-level Claude Assistant chat history (no FK — free-form context_key)
-  - context_key format: `"sev_menu:{scan_ids}[:{host_filter}]"` (sorted, comma-joined IDs) or `"findings_list:{scan_ids}:{scope_hash}"`
+  - context_key format: `"sev_menu:{dataset_ids}[:{host_filter}]"` (sorted, comma-joined IDs) or `"findings_list:{dataset_ids}:{scope_hash}"`
   - Used by `browse_claude_chat_aggregate()` / `ClaudeAggregateConversationTurn` model
 
 **Execution→Data Loop Tables** (schema v4):
@@ -392,15 +391,15 @@ no dispatch changes. See `docs/TOOL_SYSTEM_GUIDE.md`.
 - `verdict_evidence`: evidence backing a verdict (FK `verdict_id` CASCADE; `execution_id`/`artifact_id`/`nse_result_id` SET NULL)
 
 **SQL Views** (Computed Statistics):
-- `v_finding_stats`: Host/port counts per finding
-- `v_session_stats`: Session duration and statistics
-- `v_plugins_with_severity`: Plugins with severity labels
-- `v_host_findings`: Cross-scan host analysis
+- `v_finding_stats`: Target/port counts per finding (`target_count`, not `host_count` — it counts `hosts.scan_target`)
+- `v_session_stats`: Session duration and statistics (`findings_in_progress` / `findings_done` — findings, not files)
+- `v_finding_types_with_severity`: Finding types with severity labels
+- `v_host_findings`: Cross-dataset host analysis
 - `v_artifacts_with_types`: Artifacts with type names
-- `v_scan_plugin_summary`: Plugin presence + host/port counts per scan (`cerno scan compare`)
-- `v_host_scan_findings`: Per-host stats by scan (`cerno scan history`)
-- `v_http_services`: HTTP/HTTPS services per scan (identifies web services by svc_name heuristics)
-- `v_finding_current_verdict`: latest verification verdict per finding (joined to `verdict_types`)
+- `v_dataset_finding_type_summary`: FindingType presence + host/port counts per dataset (`cerno dataset compare`)
+- `v_host_dataset_findings`: Per-host stats by scan (`cerno dataset history`)
+- `v_http_services`: HTTP/HTTPS services per dataset (identifies web services by svc_name heuristics)
+- `v_finding_current_verdict`: latest verification verdict per finding (joined to `verdict_types`, plus `created_by_name` resolved from `finding_sources`)
 - `v_nse_results_with_verdict`: `nse_script_results` with resolved verdict label
 - `v_nuclei_observations`: `nuclei_match_observations` with resolved severity label and host IP
 - `v_finding_verified_stats`: per-finding verified_port/nse_result/vulnerable counts (via `tool_executions.finding_id`)
@@ -574,7 +573,7 @@ The user-facing reference is `docs/CONFIGURATION.md`, whose settings table is **
 
 **Note**: Environment variables are not used for configuration. Use `config.yaml` for all settings including:
 - `results_root` - Artifact storage path (default: `~/.cerno/artifacts`)
-- `top_ports_count` - Top ports shown in the scan overview (default `5`, capped at 100)
+- `top_ports_count` - Top ports shown in the dataset overview (default `5`, capped at 100)
 - `term_override` - Force a terminal type (`dumb` disables colors)
 - `nxc_workspace_path` - NetExec workspace (default `~/.nxc/workspaces/default`; `""` disables)
 - `nxc_enrichment_enabled` - NetExec enrichment (default `true`); when off, `get_nxc_manager()` returns None, which also disables `cerno creds`, MCP credential tools/injection/reveal and nxc ingest
@@ -584,7 +583,7 @@ The user-facing reference is `docs/CONFIGURATION.md`, whose settings table is **
 - `debug_logging` - Enable DEBUG level logging (default: `false`)
 - `no_color` - Disable ANSI color output (default: `false`)
 - `show_banner` - Show the startup banner in `cerno review` (default: `true`). Replaced `review -q/--quiet`
-- `scan_list_wide` - `cerno scan list` renders every severity column (default: `false`). Replaced `--wide`/`--details`. `--json` is unaffected: it short-circuits before any table is built
+- `dataset_list_wide` - `cerno dataset list` renders every severity column (default: `false`). Replaced `--wide`/`--details`. `--json` is unaffected: it short-circuits before any table is built
 - `tools_enabled` - Offer tool runs in the review TUI (default: `true`). Off hides `[T]`, refuses an explicit `t` in `fs.handle_finding_view()`, and skips the startup availability table. Replaced `review --no-tools`. **TUI-only**: the MCP execution gate is `mcp_allow_execution`, and honoring this key there too would let a display preference weaken an MCP policy
 - `color_scheme` - Terminal background the colors are tuned for: `light` (default) or `dark`. Light remaps every named color via `constants.LIGHT_BG_COLOR_MAP` in one place: `ansi.CernoConsole.get_style()` (all Rich string styles + Rich's built-in theme; also installed as Rich's global console so `Prompt`/`Progress` match) and `ansi.initialize_colors()` (raw ANSI `C.*` codes). Dark = classic named colors, unchanged. Keep using plain color names in new code; don't hardcode light-only variants. `config set` rejects values outside a field's `choices` metadata
 - `default_tool` - Pre-select tool in menu (e.g., `nmap`, `netexec`)
@@ -606,10 +605,10 @@ The user-facing reference is `docs/CONFIGURATION.md`, whose settings table is **
 - `mcp_batch_concurrency` - Max commands `execute_batch` runs concurrently (default: `3`; config value and per-call `concurrency` arg clamped to [1, 8] by `batch._batch_cap()`; lower to `1` through a single SOCKS pivot, since nmap/nxc are already internally parallel). Implemented via a shared `asyncio.Semaphore` gate awaited in the event loop by `JobRegistry.start()`, so queued jobs hold no executor threads
 - `mcp_batch_timeout` - Per-command timeout in seconds for each `execute_batch` command (default: `300`), clamped to the same [1, 3600] ceiling as `execute_command`
 - `contribution_export_dir` - Where the MCP `export_workflow_contribution` tool writes sanitized, PR-ready workflow YAML files (default: `None` = `<results_root>/contributions`). Local file only; nothing is submitted
-- `mcp_enforce_scope` - Refuse `execute_command` / `start_execution` / `execute_batch` runs whose IP or CIDR targets fall outside the engagement scope (default: `true`). In scope = every host in imported scans plus any range in `mcp_scope_extra`; out-of-scope IP/CIDR literals (positional args, URL hosts, `-iL` file entries) are refused, while an unresolved bare hostname is allowed with a `scope_warnings` note. Only consulted when `mcp_allow_execution` is on; set `false` to disable
-- `mcp_scope_extra` - Additional in-scope CIDRs / IPs / hostnames beyond the imported scan hosts (default: empty), via `config.coerce_str_list()`. Ignored when `mcp_enforce_scope` is `false`
+- `mcp_enforce_scope` - Refuse `execute_command` / `start_execution` / `execute_batch` runs whose IP or CIDR targets fall outside the engagement scope (default: `true`). In scope = every host in imported datasets plus any range in `mcp_scope_extra`; out-of-scope IP/CIDR literals (positional args, URL hosts, `-iL` file entries) are refused, while an unresolved bare hostname is allowed with a `scope_warnings` note. Only consulted when `mcp_allow_execution` is on; set `false` to disable
+- `mcp_scope_extra` - Additional in-scope CIDRs / IPs / hostnames beyond the imported dataset hosts (default: empty), via `config.coerce_str_list()`. Ignored when `mcp_enforce_scope` is `false`
 
-**MCP config contract**: the MCP server honors every config key with precedence explicit tool arg > config > hardcoded default (`default_page_size` → default `limit` for `list_findings`/`query_findings`/`search_findings`, min 8, else 500), except the TUI-only keys in `config.MCP_NOT_APPLICABLE_KEYS` (`no_color`, `color_scheme`, `term_override`, `default_tool`, `claude_assistant_enabled`, `pivot_interface`, `pivot_http_port`, `top_ports_count`, `show_banner`, `scan_list_wide`, `tools_enabled`, `nuclei_templates_path`, `nuclei_profile`, `nuclei_user_agent`, `nuclei_concurrency`). `tests/test_mcp_config.py` fails when a new key is added without classifying it. Tests isolate `config.get_config_path()` to a temp file (autouse `conftest.reset_environment`), so the developer's real config never leaks in.
+**MCP config contract**: the MCP server honors every config key with precedence explicit tool arg > config > hardcoded default (`default_page_size` → default `limit` for `list_findings`/`query_findings`/`search_findings`, min 8, else 500), except the TUI-only keys in `config.MCP_NOT_APPLICABLE_KEYS` (`no_color`, `color_scheme`, `term_override`, `default_tool`, `claude_assistant_enabled`, `pivot_interface`, `pivot_http_port`, `top_ports_count`, `show_banner`, `dataset_list_wide`, `tools_enabled`, `nuclei_templates_path`, `nuclei_profile`, `nuclei_user_agent`, `nuclei_concurrency`). `tests/test_mcp_config.py` fails when a new key is added without classifying it. Tests isolate `config.get_config_path()` to a temp file (autouse `conftest.reset_environment`), so the developer's real config never leaks in.
 
 **NSE profiles** (`constants.py:NSE_PROFILES`): Pre-configured nmap script sets (SMB, SSL, HTTP, etc.)
 
@@ -652,12 +651,12 @@ ignored there.
 
 ### Rendering Untrusted Scan Text (Required)
 
-Plugin names, hostnames, scan names, workflow step titles, NetExec values and tool output are **attacker-influenced** — they come from third-party `.nessus` files, user-supplied workflow YAML and captured command output. A value containing `[/]` raises `MarkupError` and aborts rendering; one containing a style word (e.g. `[deprecated]`) is silently swallowed, which is worse — text disappears with no error at all.
+FindingType names, hostnames, dataset names, workflow step titles, NetExec values and tool output are **attacker-influenced** — they come from third-party `.nessus` files, user-supplied workflow YAML and captured command output. A value containing `[/]` raises `MarkupError` and aborts rendering; one containing a style word (e.g. `[deprecated]`) is silently swallowed, which is worse — text disappears with no error at all.
 
 **The rule is about where the value lands, not what the source line looks like.** Rich markup-parses *any* bare `str` it is handed, so all of these are exposed even with no tag syntax in sight:
 
 ```python
-table.add_row(plugin.plugin_name)        # a cell is parsed
+table.add_row(plugin.finding_type_name)        # a cell is parsed
 Panel(text), Panel(title=name)           # body and title are parsed
 console.print(value)                     # parsed
 f"[bold]{name}[/bold]"                   # parsed (the obvious one)
@@ -686,7 +685,7 @@ Regression tests live in `tests/test_markup_injection.py` — add a case there w
 
 **States** (`constants.py:REVIEW_STATES`): `unreviewed` → `in_progress` → `done`, and `done` → `unreviewed`
 - Transitions are defined once in `constants.py:REVIEW_TRANSITIONS` and enforced by `Finding.transition_review_state()` (raises `InvalidReviewTransition`) — used by the TUI and MCP `set_review_state`
-- `Finding.update_review_state()` is the raw setter with no check; use it only to sync multi-scan siblings to an already-validated state
+- `Finding.update_review_state()` is the raw setter with no check; use it only to sync multi-dataset siblings to an already-validated state
 - All TUI status changes go through `fs.py:move_review_state(finding, target=None)` (default = next status in the cycle)
 - UI wording/colours come from `constants.py` (`REVIEW_STATE_LABELS`, `REVIEW_STATE_STYLES`, `REVIEW_STATE_ICONS`, `REVIEW_MOVE_LABELS`): users see "status" and the verb "Move" ("Move to In Progress", "Move to Done", "Move back to Unreviewed", bulk "Move to next status") — reuse these rather than hardcoding strings
 - Finding view `[M]` moves one step; findings list `[M]` moves every filtered finding one step, which under the `[D]` Done-only filter means Done → Unreviewed for everything shown
@@ -698,16 +697,17 @@ Regression tests live in `tests/test_markup_injection.py` — add a case there w
 `authored_findings.py` holds the two sources Cerno **creates** rather than imports, and is the single writer both interfaces go through, so the TUI and the MCP cannot drift.
 
 - **The source is the channel, and it is never defaulted.** `create_authored_finding(data, source)` takes `source` as a **required positional**: `SOURCE_OPERATOR` from the TUI's `[+]`, `SOURCE_AGENT` from MCP `create_finding`. This exists because an agent asserting a finding and a tester verifying one by hand are different claims, and on an engagement the difference carries evidentiary weight. A default would let a new caller silently inherit the operator's name for something an agent wrote — which is the whole failure the split prevents. `_require_authored_source()` also refuses a scanner source, so nothing hand-written can be filed as `nessus:`/`nuclei:`/`burp:`
+- **The same rule governs attribution, not just authorship.** `findings.completed_by` and `finding_verdicts.created_by` record *which channel acted*, and both are derived server-side from the channel — `Finding.transition_review_state(state, actor)`, `Finding.update_review_state(state, actor)` and `FindingVerdict.set(fid, label, actor)` all take the actor as a **required** argument, validated by `parsing.channel_source_id()` (which refuses a scanner source). The MCP `set_finding_verdict` tool deliberately exposes **no** author parameter: a self-reported actor reads as provenance while guaranteeing nothing, which is worse than recording none. Multi-dataset sibling syncs pass the *same* actor rather than deriving a new one, and `completed_by` is cleared (with `reviewed_at`) on any move away from `done` — including the findings-list bulk `[M]` under the `[D]` filter — so the column never claims someone completed a finding that is back in review
 - **`constants.AUTHORED_SOURCES`** is the one membership set every "can this be edited?" test uses (`fs.py` `[U]` footer, the explicit-`u` refusal, the zero-host exception, and both guards in the module). Use it rather than `== SOURCE_OPERATOR`: forgetting one value leaves that channel's findings uneditable by any interface
 - **Findings list `[+]`** prompts (`tui.py:prompt_new_finding()`) and writes via `create_authored_finding(drafted, SOURCE_OPERATOR)`. Intercepted in `cerno.py:browse_file_list` **before** `tui.handle_finding_list_actions`, like `[I]`/`[D]`, because a create can pull a second scan into the session
 - **Finding view `[U]`** edits one (`fs.py:update_authored_finding_interactive()` → `update_authored_finding()`), rendered when `plugin.source in AUTHORED_SOURCES`; `fs.handle_finding_view()` refuses an explicit `u` on a scanner finding, which is a record of what the scanner reported. There is deliberately no delete: a wrong finding is corrected in place or retracted with a `false_positive` verdict
-- **Edits are symmetric, and never reattribute.** Either channel may edit either namespace — the operator owns the engagement and must be able to correct what an agent asserted; an agent refining a dictated finding is ordinary collaboration. The `plugin_id` never moves, so the namespace records the finding's **creator, not its last editor**: an edited `agent:` finding stays `agent:`
-- **One scan per source per database** (`constants.AUTHORED_SCAN_NAMES` → `Operator`, `Agent`), created on first use. That is what keeps every scanner scan single-source, so `cross_scan.py` — which refuses to compare scans whose sources differ — keeps working on the scans around them. Comparing `Operator` against `Agent` is refused for the same reason Nessus against nuclei is: namespaced ids share nothing, so every finding would read as unique to its side. One scan per *database*, so each accumulates across engagements
-- **The ref is sequential per source** (`operator:1`, `agent:1` coexist), allocated as `MAX(ref)+1` over that source's ids **inside** the write transaction so a TUI and an MCP client cannot collide. The `source_id` filter is what keeps the two counters independent. Deliberately not derived from the title: `Plugin.save()` is `INSERT OR REPLACE` against a table global to every scan, so a title-derived id would let a second finding silently overwrite an earlier one's name and severity, and renaming would move the identity
-- **The description is stored per affected host** in `finding_affected_hosts.plugin_output` (the same text on each row) because `plugins` has no description column — that is where all three importers put their evidence too
+- **Edits are symmetric, and never reattribute.** Either channel may edit either namespace — the operator owns the engagement and must be able to correct what an agent asserted; an agent refining a dictated finding is ordinary collaboration. The `finding_type_id` never moves, so the namespace records the finding's **creator, not its last editor**: an edited `agent:` finding stays `agent:`
+- **One scan per source per database** (`constants.AUTHORED_DATASET_NAMES` → `Operator`, `Agent`), created on first use. That is what keeps every scanner scan single-source, so `cross_dataset.py` — which refuses to compare datasets whose sources differ — keeps working on the datasets around them. Comparing `Operator` against `Agent` is refused for the same reason Nessus against nuclei is: namespaced ids share nothing, so every finding would read as unique to its side. One scan per *database*, so each accumulates across engagements
+- **The ref is sequential per source** (`operator:1`, `agent:1` coexist), allocated as `MAX(ref)+1` over that source's ids **inside** the write transaction so a TUI and an MCP client cannot collide. The `source_id` filter is what keeps the two counters independent. Deliberately not derived from the title: `FindingType.save()` is `INSERT OR REPLACE` against a table global to every scan, so a title-derived id would let a second finding silently overwrite an earlier one's name and severity, and renaming would move the identity
+- **The description is stored per affected host** in `finding_affected_hosts.evidence` (the same text on each row) because `finding_types` has no description column — that is where all three importers put their evidence too
 - **No `host_services` rows are written.** The author is describing a finding, not reporting what is listening; an invented `svc_name` would put guesses into `v_http_services` and the web-target lists
 - A finding may name **zero hosts** (an engagement-level observation has none). `fs.view_finding_file()` special-cases that for these sources so the finding can still be opened and edited; for a scanner finding the "no affected hosts" early return stands
-- `validate_authored_input()` is the one validator both interfaces call, returning **every** problem at once so the TUI re-prompts with what was typed still in place. The reference URL is held to the same `^https?://\S+$` rule as a nuclei template URL, because `plugin_url` is interpolated into a Rich *style* string to build the panel's OSC-8 link
+- `validate_authored_input()` is the one validator both interfaces call, returning **every** problem at once so the TUI re-prompts with what was typed still in place. The reference URL is held to the same `^https?://\S+$` rule as a nuclei template URL, because `details_url` is interpolated into a Rich *style* string to build the panel's OSC-8 link
 - **Known gap**: the `import_*` MCP tools remain a second route to writing findings, and an agent asked for several at once can author a scanner export file and import it — landing under `nessus:` with no trace of its real origin (this is how `Fabricated_Demo_Scan` came about). The namespace split does not close that; doing so means stating in the `import_*` descriptions that they take genuine scanner output, and adding batch creation so `create_finding` is no less convenient
 
 **Database-only**: `findings.review_state` is the sole record (no filename prefixes).
@@ -718,9 +718,9 @@ Regression tests live in `tests/test_markup_injection.py` — add a case there w
 
 **Resume prompt**: On startup, shows session details (in-progress/done counts, session start time).
 
-**Cleanup**: `session.delete_session()` marks the session ended (stamps `session_end`) — despite the name it does **not** remove the row, and that is deliberate: the surviving row is what makes `onboarding.show_workflow_guidance()` treat the scan as already reviewed, so first-run guidance stays suppressed on re-entry.
+**Cleanup**: `session.delete_session()` marks the session ended (stamps `session_end`) — despite the name it does **not** remove the row, and that is deliberate: the surviving row is what makes `onboarding.show_workflow_guidance()` treat the dataset as already reviewed, so first-run guidance stays suppressed on re-entry.
 
-**Multi-scan sessions**: When reviewing multiple scans, all selected scan IDs are recorded in `session_scans` (junction table). On resume, the same set of scans is restored automatically.
+**Multi-dataset sessions**: When reviewing multiple datasets, all selected dataset IDs are recorded in `session_datasets` (junction table). On resume, the same set of datasets is restored automatically.
 
 ### Terminal Responsiveness
 
@@ -735,7 +735,7 @@ Regression tests live in `tests/test_markup_injection.py` — add a case there w
   - Medium terminal (80-119 chars): Two-line layout
   - Narrow terminal (<80 chars): Multi-line layout (one item per line)
 
-**Group filter descriptions**: Enhanced `group_filter` tuple from `(index, plugin_ids)` to `(index, plugin_ids, description)` to provide context in status line (e.g., "Group #1: Identical host:port combinations").
+**Group filter descriptions**: Enhanced `group_filter` tuple from `(index, finding_type_ids)` to `(index, finding_type_ids, description)` to provide context in status line (e.g., "Group #1: Identical host:port combinations").
 
 **Page size configuration**: Users can override auto-detected page size via `config.yaml`:
 ```yaml
@@ -758,7 +758,7 @@ Set to `null` or omit for automatic detection from terminal height. Falls back t
 
 **Filesystem**: Use `temp_dir` (auto-cleanup).
 
-**Nessus data**: `goad_nessus_fixture` (74 plugins, 755 hosts; conftest) for slow tests, `sample_nessus_xml` (conftest) or the module-local `minimal_nessus_fixture` (3 plugins, 3 hosts; `tests/test_nessus_import.py`) for fast ones.
+**Nessus data**: `goad_nessus_fixture` (74 finding_types, 755 hosts; conftest) for slow tests, `sample_nessus_xml` (conftest) or the module-local `minimal_nessus_fixture` (3 finding_types, 3 hosts; `tests/test_nessus_import.py`) for fast ones.
 
 **Isolation**: the autouse `reset_environment` fixture points `config.get_config_path()` at a temp file, so tests never touch the real `~/.cerno/config.yaml`. Code that uses `Path.home()` (e.g. `cerno reset`) must still be monkeypatched explicitly.
 
@@ -771,7 +771,7 @@ Set to `null` or omit for automatic detection from terminal height. Falls back t
 ### TUI ↔ MCP contract
 
 The MCP server (`cerno_pkg/mcp_server/server.py`) is thin adapters over the same
-functions the TUI uses (`models.py`, `database.py`, `cross_scan.py`, `tools.py`,
+functions the TUI uses (`models.py`, `database.py`, `cross_dataset.py`, `tools.py`,
 `nxc_db.py`, `workflow_mapper.py`, `claude_assistant.py`), so changing a shared
 function can break the other interface. Note `analysis.py` is **TUI-only**
 (`__init__.py`, `session.py`, `tui.py`), and `query.py` / `batch.py` /
@@ -792,7 +792,7 @@ that test's `EXPECTED_*` sets in the same change. See `CONTRIBUTING.md`.
 
 ### Adding a New Database Column
 
-**Note**: Database schema changes currently require bumping the major version and having users re-import scans. A proper migration system will be implemented in a future release.
+**Note**: Database schema changes currently require bumping the major version and having users re-import their data. A proper migration system will be implemented in a future release.
 
 1. Update `database.py:SCHEMA_SQL_TABLES` with new column
 2. Update `schema.sql` (reference copy; `tests/test_database.py` checks parity) and `docs/DATABASE.md`
@@ -803,7 +803,7 @@ that test's `EXPECTED_*` sets in the same change. See `CONTRIBUTING.md`.
 
 ### Database Schema Management
 
-**Current approach**: No migration system — database created directly in final normalized structure. Schema changes require major version bump and users re-importing scans.
+**Current approach**: No migration system — database created directly in final normalized structure. Schema changes require major version bump and users re-importing datasets.
 
 **Testing the schema**:
 ```bash
@@ -811,7 +811,7 @@ that test's `EXPECTED_*` sets in the same change. See `CONTRIBUTING.md`.
 rm ~/.cerno/cerno.db
 
 # Run cerno (creates fresh database)
-cerno scan list
+cerno dataset list
 
 # Verify schema
 sqlite3 ~/.cerno/cerno.db ".schema"
@@ -823,7 +823,7 @@ sqlite3 ~/.cerno/cerno.db "SELECT COUNT(*) FROM verdict_types;"    # Expected: 3
 sqlite3 ~/.cerno/cerno.db "SELECT COUNT(*) FROM nse_verdicts;"     # Expected: 4
 sqlite3 ~/.cerno/cerno.db "SELECT COUNT(*) FROM port_states;"      # Expected: 6
 sqlite3 ~/.cerno/cerno.db "SELECT COUNT(*) FROM finding_sources;"  # Expected: 5
-sqlite3 ~/.cerno/cerno.db "PRAGMA user_version;"                   # Expected: 5
+sqlite3 ~/.cerno/cerno.db "PRAGMA user_version;"                   # Expected: 6
 ```
 
 ### Adding a New Tool
@@ -852,7 +852,7 @@ tail -f ~/.cerno/cerno.log
 # Inspect database directly
 sqlite3 ~/.cerno/cerno.db
 sqlite> .schema
-sqlite> SELECT * FROM scans;
+sqlite> SELECT * FROM datasets;
 sqlite> SELECT review_state, COUNT(*) FROM findings GROUP BY review_state;
 ```
 
@@ -861,7 +861,7 @@ sqlite> SELECT review_state, COUNT(*) FROM findings GROUP BY review_state;
 - **Schema changes**: no migration system. Verify an older DB is rejected with `SchemaVersionError` and a fresh DB initializes before release
 - **Version bumps**: Update `pyproject.toml` version only; the release workflow tags and publishes when it reaches `main`
 - **Breaking changes**: Document in CHANGELOG.md (and README if users must act, e.g. re-import)
-- **No per-plugin files**: import writes nothing but the database (and `scans/<name>/http_urls.txt` when web services exist)
+- **No per-plugin files**: import writes nothing but the database (and `datasets/<name>/http_urls.txt` when web services exist)
 - **CI/CD**: GitHub Actions runs tests on Python 3.11/3.12/3.13 (3.13 allowed to fail), Ubuntu/Windows/macOS (see `.github/workflows/test.yml`)
 - **Dependencies**: Keep `requirements.txt` and `pyproject.toml:dependencies` in sync
 - **Nessus XML parsing**: Based on DefensiveOrigins/NessusPluginHosts (respect attribution)

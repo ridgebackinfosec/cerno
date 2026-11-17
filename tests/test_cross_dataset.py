@@ -1,45 +1,47 @@
-"""Tests for cerno_pkg.cross_scan module."""
+"""Tests for cerno_pkg.cross_dataset module."""
 
 import pytest
 
-from cerno_pkg.cross_scan import (
-    compare_scans,
+from cerno_pkg.cross_dataset import (
+    compare_datasets,
     get_host_vulnerability_history,
-    get_scan_by_name,
-    ScanComparisonResult,
+    get_dataset_by_name,
+    DatasetComparisonResult,
     HostVulnerabilityHistory,
-    ScanSnapshot,
+    DatasetSnapshot,
 )
-from cerno_pkg.models import Scan, Plugin, Finding, Host
+from cerno_pkg.models import Dataset, FindingType, Finding, Host
 
 
-def _create_test_scan(conn, scan_name: str, plugins_data: list[dict]) -> int:
-    """Helper to create a scan with plugins, findings, and hosts.
+def _create_test_dataset(
+    conn, dataset_name: str, finding_types_data: list[dict]
+) -> int:
+    """Helper to create a dataset with finding_types, findings, and hosts.
 
     Args:
         conn: Database connection
-        scan_name: Name for the scan
-        plugins_data: List of dicts with plugin_id, plugin_name, severity_int, hosts
+        dataset_name: Name for the dataset
+        finding_types_data: List of dicts with finding_type_id, finding_type_name, severity_int, hosts
 
     Returns:
-        scan_id
+        dataset_id
     """
     # Create scan
-    scan = Scan(scan_name=scan_name, export_root="/tmp/test")
-    scan_id = scan.save(conn)
-    assert scan_id is not None
+    dataset = Dataset(dataset_name=dataset_name, export_root="/tmp/test")
+    dataset_id = dataset.save(conn)
+    assert dataset_id is not None
 
-    for pd in plugins_data:
-        # Create or get plugin
-        plugin = Plugin(
-            plugin_id=pd["plugin_id"],
-            plugin_name=pd["plugin_name"],
+    for pd in finding_types_data:
+        # Create or get finding_type
+        finding_type = FindingType(
+            finding_type_id=pd["finding_type_id"],
+            finding_type_name=pd["finding_type_name"],
             severity_int=pd["severity_int"],
         )
-        plugin.save(conn)
+        finding_type.save(conn)
 
         # Create finding
-        finding = Finding(scan_id=scan_id, plugin_id=pd["plugin_id"])
+        finding = Finding(dataset_id=dataset_id, finding_type_id=pd["finding_type_id"])
         finding_id = finding.save(conn)
         assert finding_id is not None
 
@@ -57,41 +59,41 @@ def _create_test_scan(conn, scan_name: str, plugins_data: list[dict]) -> int:
             conn.execute(
                 """
                 INSERT OR IGNORE INTO finding_affected_hosts
-                (finding_id, host_id, port_number, plugin_output)
+                (finding_id, host_id, port_number, evidence)
                 VALUES (?, ?, NULL, 'Test output')
                 """,
                 (finding_id, host_id),
             )
 
     conn.commit()
-    return scan_id
+    return dataset_id
 
 
 class TestCompareScan:
-    """Tests for compare_scans function."""
+    """Tests for compare_datasets function."""
 
-    def test_compare_identical_scans(self, temp_db):
+    def test_compare_identical_datasets(self, temp_db):
         """Comparing same scan should show all persistent."""
-        scan_id = _create_test_scan(
+        dataset_id = _create_test_dataset(
             temp_db,
-            "test_scan",
+            "test_dataset",
             [
                 {
-                    "plugin_id": "nessus:100",
-                    "plugin_name": "Plugin A",
+                    "finding_type_id": "nessus:100",
+                    "finding_type_name": "FindingType A",
                     "severity_int": 3,
                     "hosts": ["192.168.1.1"],
                 },
                 {
-                    "plugin_id": "nessus:101",
-                    "plugin_name": "Plugin B",
+                    "finding_type_id": "nessus:101",
+                    "finding_type_name": "FindingType B",
                     "severity_int": 2,
                     "hosts": ["192.168.1.2"],
                 },
             ],
         )
 
-        result = compare_scans(scan_id, scan_id, conn=temp_db)
+        result = compare_datasets(dataset_id, dataset_id, conn=temp_db)
 
         assert result is not None
         assert result.total_new == 0
@@ -100,53 +102,53 @@ class TestCompareScan:
 
     def test_compare_finds_new_findings(self, temp_db):
         """New findings in scan2 detected correctly."""
-        # Scan 1: plugins 100, 101
-        scan1_id = _create_test_scan(
+        # Dataset 1: finding_types 100, 101
+        dataset1_id = _create_test_dataset(
             temp_db,
             "scan1",
             [
                 {
-                    "plugin_id": "nessus:100",
-                    "plugin_name": "Plugin A",
+                    "finding_type_id": "nessus:100",
+                    "finding_type_name": "FindingType A",
                     "severity_int": 3,
                     "hosts": ["192.168.1.1"],
                 },
                 {
-                    "plugin_id": "nessus:101",
-                    "plugin_name": "Plugin B",
+                    "finding_type_id": "nessus:101",
+                    "finding_type_name": "FindingType B",
                     "severity_int": 2,
                     "hosts": ["192.168.1.1"],
                 },
             ],
         )
 
-        # Scan 2: plugins 100, 101, 102 (102 is new)
-        scan2_id = _create_test_scan(
+        # Dataset 2: finding_types 100, 101, 102 (102 is new)
+        dataset2_id = _create_test_dataset(
             temp_db,
             "scan2",
             [
                 {
-                    "plugin_id": "nessus:100",
-                    "plugin_name": "Plugin A",
+                    "finding_type_id": "nessus:100",
+                    "finding_type_name": "FindingType A",
                     "severity_int": 3,
                     "hosts": ["192.168.1.1"],
                 },
                 {
-                    "plugin_id": "nessus:101",
-                    "plugin_name": "Plugin B",
+                    "finding_type_id": "nessus:101",
+                    "finding_type_name": "FindingType B",
                     "severity_int": 2,
                     "hosts": ["192.168.1.1"],
                 },
                 {
-                    "plugin_id": "nessus:102",
-                    "plugin_name": "Plugin C",
+                    "finding_type_id": "nessus:102",
+                    "finding_type_name": "FindingType C",
                     "severity_int": 4,
                     "hosts": ["192.168.1.1"],
                 },
             ],
         )
 
-        result = compare_scans(scan1_id, scan2_id, conn=temp_db)
+        result = compare_datasets(dataset1_id, dataset2_id, conn=temp_db)
 
         assert result is not None
         assert result.total_new == 1
@@ -154,58 +156,58 @@ class TestCompareScan:
         assert result.total_persistent == 2
 
         # Check the new finding
-        new_plugin_ids = [f["plugin_id"] for f in result.new_findings]
-        assert "nessus:102" in new_plugin_ids
+        new_finding_type_ids = [f["finding_type_id"] for f in result.new_findings]
+        assert "nessus:102" in new_finding_type_ids
 
     def test_compare_finds_resolved_findings(self, temp_db):
         """Resolved findings (in scan1 only) detected correctly."""
-        # Scan 1: plugins 100, 101, 102
-        scan1_id = _create_test_scan(
+        # Dataset 1: finding_types 100, 101, 102
+        dataset1_id = _create_test_dataset(
             temp_db,
             "scan1",
             [
                 {
-                    "plugin_id": "nessus:100",
-                    "plugin_name": "Plugin A",
+                    "finding_type_id": "nessus:100",
+                    "finding_type_name": "FindingType A",
                     "severity_int": 3,
                     "hosts": ["192.168.1.1"],
                 },
                 {
-                    "plugin_id": "nessus:101",
-                    "plugin_name": "Plugin B",
+                    "finding_type_id": "nessus:101",
+                    "finding_type_name": "FindingType B",
                     "severity_int": 2,
                     "hosts": ["192.168.1.1"],
                 },
                 {
-                    "plugin_id": "nessus:102",
-                    "plugin_name": "Plugin C",
+                    "finding_type_id": "nessus:102",
+                    "finding_type_name": "FindingType C",
                     "severity_int": 4,
                     "hosts": ["192.168.1.1"],
                 },
             ],
         )
 
-        # Scan 2: plugins 100, 101 (102 is resolved)
-        scan2_id = _create_test_scan(
+        # Dataset 2: finding_types 100, 101 (102 is resolved)
+        dataset2_id = _create_test_dataset(
             temp_db,
             "scan2",
             [
                 {
-                    "plugin_id": "nessus:100",
-                    "plugin_name": "Plugin A",
+                    "finding_type_id": "nessus:100",
+                    "finding_type_name": "FindingType A",
                     "severity_int": 3,
                     "hosts": ["192.168.1.1"],
                 },
                 {
-                    "plugin_id": "nessus:101",
-                    "plugin_name": "Plugin B",
+                    "finding_type_id": "nessus:101",
+                    "finding_type_name": "FindingType B",
                     "severity_int": 2,
                     "hosts": ["192.168.1.1"],
                 },
             ],
         )
 
-        result = compare_scans(scan1_id, scan2_id, conn=temp_db)
+        result = compare_datasets(dataset1_id, dataset2_id, conn=temp_db)
 
         assert result is not None
         assert result.total_new == 0
@@ -213,57 +215,59 @@ class TestCompareScan:
         assert result.total_persistent == 2
 
         # Check the resolved finding
-        resolved_plugin_ids = [f["plugin_id"] for f in result.resolved_findings]
-        assert "nessus:102" in resolved_plugin_ids
+        resolved_finding_type_ids = [
+            f["finding_type_id"] for f in result.resolved_findings
+        ]
+        assert "nessus:102" in resolved_finding_type_ids
 
     def test_compare_severity_filter(self, temp_db):
         """Minimum severity filter works correctly."""
-        # Scan 1: plugins at various severities
-        scan1_id = _create_test_scan(
+        # Dataset 1: finding_types at various severities
+        dataset1_id = _create_test_dataset(
             temp_db,
             "scan1",
             [
                 {
-                    "plugin_id": "nessus:100",
-                    "plugin_name": "Low Plugin",
+                    "finding_type_id": "nessus:100",
+                    "finding_type_name": "Low FindingType",
                     "severity_int": 1,
                     "hosts": ["192.168.1.1"],
                 },
                 {
-                    "plugin_id": "nessus:101",
-                    "plugin_name": "Medium Plugin",
+                    "finding_type_id": "nessus:101",
+                    "finding_type_name": "Medium FindingType",
                     "severity_int": 2,
                     "hosts": ["192.168.1.1"],
                 },
                 {
-                    "plugin_id": "nessus:102",
-                    "plugin_name": "High Plugin",
+                    "finding_type_id": "nessus:102",
+                    "finding_type_name": "High FindingType",
                     "severity_int": 3,
                     "hosts": ["192.168.1.1"],
                 },
             ],
         )
 
-        # Scan 2: same plugins
-        scan2_id = _create_test_scan(
+        # Dataset 2: same finding_types
+        dataset2_id = _create_test_dataset(
             temp_db,
             "scan2",
             [
                 {
-                    "plugin_id": "nessus:100",
-                    "plugin_name": "Low Plugin",
+                    "finding_type_id": "nessus:100",
+                    "finding_type_name": "Low FindingType",
                     "severity_int": 1,
                     "hosts": ["192.168.1.1"],
                 },
                 {
-                    "plugin_id": "nessus:101",
-                    "plugin_name": "Medium Plugin",
+                    "finding_type_id": "nessus:101",
+                    "finding_type_name": "Medium FindingType",
                     "severity_int": 2,
                     "hosts": ["192.168.1.1"],
                 },
                 {
-                    "plugin_id": "nessus:102",
-                    "plugin_name": "High Plugin",
+                    "finding_type_id": "nessus:102",
+                    "finding_type_name": "High FindingType",
                     "severity_int": 3,
                     "hosts": ["192.168.1.1"],
                 },
@@ -271,46 +275,50 @@ class TestCompareScan:
         )
 
         # Filter to High and above (severity >= 3)
-        result = compare_scans(scan1_id, scan2_id, min_severity=3, conn=temp_db)
+        result = compare_datasets(
+            dataset1_id, dataset2_id, min_severity=3, conn=temp_db
+        )
 
         assert result is not None
-        assert result.total_persistent == 1  # Only the High plugin
-        persistent_plugin_ids = [f["plugin_id"] for f in result.persistent_findings]
-        assert "nessus:102" in persistent_plugin_ids
-        assert 100 not in persistent_plugin_ids
-        assert 101 not in persistent_plugin_ids
+        assert result.total_persistent == 1  # Only the High finding_type
+        persistent_finding_type_ids = [
+            f["finding_type_id"] for f in result.persistent_findings
+        ]
+        assert "nessus:102" in persistent_finding_type_ids
+        assert 100 not in persistent_finding_type_ids
+        assert 101 not in persistent_finding_type_ids
 
     def test_compare_host_changes(self, temp_db):
         """Host changes detected correctly."""
-        # Scan 1: hosts 1.1, 1.2
-        scan1_id = _create_test_scan(
+        # Dataset 1: hosts 1.1, 1.2
+        dataset1_id = _create_test_dataset(
             temp_db,
             "scan1",
             [
                 {
-                    "plugin_id": "nessus:100",
-                    "plugin_name": "Plugin A",
+                    "finding_type_id": "nessus:100",
+                    "finding_type_name": "FindingType A",
                     "severity_int": 3,
                     "hosts": ["192.168.1.1", "192.168.1.2"],
                 },
             ],
         )
 
-        # Scan 2: hosts 1.1, 1.3 (1.2 removed, 1.3 new)
-        scan2_id = _create_test_scan(
+        # Dataset 2: hosts 1.1, 1.3 (1.2 removed, 1.3 new)
+        dataset2_id = _create_test_dataset(
             temp_db,
             "scan2",
             [
                 {
-                    "plugin_id": "nessus:100",
-                    "plugin_name": "Plugin A",
+                    "finding_type_id": "nessus:100",
+                    "finding_type_name": "FindingType A",
                     "severity_int": 3,
                     "hosts": ["192.168.1.1", "192.168.1.3"],
                 },
             ],
         )
 
-        result = compare_scans(scan1_id, scan2_id, conn=temp_db)
+        result = compare_datasets(dataset1_id, dataset2_id, conn=temp_db)
 
         assert result is not None
         assert len(result.new_hosts) == 1
@@ -325,46 +333,46 @@ class TestCompareScan:
         assert "192.168.1.2" in removed_host_ips
         assert "192.168.1.1" in persistent_host_ips
 
-    def test_compare_nonexistent_scan_returns_none(self, temp_db):
+    def test_compare_nonexistent_dataset_returns_none(self, temp_db):
         """Comparing with non-existent scan returns None."""
-        scan_id = _create_test_scan(
+        dataset_id = _create_test_dataset(
             temp_db,
-            "test_scan",
+            "test_dataset",
             [
                 {
-                    "plugin_id": "nessus:100",
-                    "plugin_name": "Plugin A",
+                    "finding_type_id": "nessus:100",
+                    "finding_type_name": "FindingType A",
                     "severity_int": 3,
                     "hosts": ["192.168.1.1"],
                 }
             ],
         )
 
-        result = compare_scans(scan_id, 99999, conn=temp_db)
+        result = compare_datasets(dataset_id, 99999, conn=temp_db)
         assert result is None
 
-        result = compare_scans(99999, scan_id, conn=temp_db)
+        result = compare_datasets(99999, dataset_id, conn=temp_db)
         assert result is None
 
 
 class TestHostVulnerabilityHistory:
     """Tests for host vulnerability history functions."""
 
-    def test_host_history_single_scan(self, temp_db):
-        """Host history for single scan returns one entry."""
-        _create_test_scan(
+    def test_host_history_single_dataset(self, temp_db):
+        """Host history for single dataset returns one entry."""
+        _create_test_dataset(
             temp_db,
             "scan1",
             [
                 {
-                    "plugin_id": "nessus:100",
-                    "plugin_name": "Critical",
+                    "finding_type_id": "nessus:100",
+                    "finding_type_name": "Critical",
                     "severity_int": 4,
                     "hosts": ["192.168.1.1"],
                 },
                 {
-                    "plugin_id": "nessus:101",
-                    "plugin_name": "High",
+                    "finding_type_id": "nessus:101",
+                    "finding_type_name": "High",
                     "severity_int": 3,
                     "hosts": ["192.168.1.1"],
                 },
@@ -375,54 +383,54 @@ class TestHostVulnerabilityHistory:
 
         assert history is not None
         assert history.ip_address == "192.168.1.1"
-        assert history.scan_count == 1
-        assert len(history.scans) == 1
-        assert history.scans[0].finding_count == 2
-        assert history.scans[0].critical_count == 1
-        assert history.scans[0].high_count == 1
+        assert history.dataset_count == 1
+        assert len(history.datasets) == 1
+        assert history.datasets[0].finding_count == 2
+        assert history.datasets[0].critical_count == 1
+        assert history.datasets[0].high_count == 1
 
-    def test_host_history_multiple_scans(self, temp_db):
-        """Host history spans multiple scans correctly."""
-        # Scan 1: 3 findings
-        _create_test_scan(
+    def test_host_history_multiple_datasets(self, temp_db):
+        """Host history spans multiple datasets correctly."""
+        # Dataset 1: 3 findings
+        _create_test_dataset(
             temp_db,
             "scan1",
             [
                 {
-                    "plugin_id": "nessus:100",
-                    "plugin_name": "Critical",
+                    "finding_type_id": "nessus:100",
+                    "finding_type_name": "Critical",
                     "severity_int": 4,
                     "hosts": ["192.168.1.1"],
                 },
                 {
-                    "plugin_id": "nessus:101",
-                    "plugin_name": "High",
+                    "finding_type_id": "nessus:101",
+                    "finding_type_name": "High",
                     "severity_int": 3,
                     "hosts": ["192.168.1.1"],
                 },
                 {
-                    "plugin_id": "nessus:102",
-                    "plugin_name": "Medium",
+                    "finding_type_id": "nessus:102",
+                    "finding_type_name": "Medium",
                     "severity_int": 2,
                     "hosts": ["192.168.1.1"],
                 },
             ],
         )
 
-        # Scan 2: 2 findings (one resolved)
-        _create_test_scan(
+        # Dataset 2: 2 findings (one resolved)
+        _create_test_dataset(
             temp_db,
             "scan2",
             [
                 {
-                    "plugin_id": "nessus:100",
-                    "plugin_name": "Critical",
+                    "finding_type_id": "nessus:100",
+                    "finding_type_name": "Critical",
                     "severity_int": 4,
                     "hosts": ["192.168.1.1"],
                 },
                 {
-                    "plugin_id": "nessus:101",
-                    "plugin_name": "High",
+                    "finding_type_id": "nessus:101",
+                    "finding_type_name": "High",
                     "severity_int": 3,
                     "hosts": ["192.168.1.1"],
                 },
@@ -432,20 +440,20 @@ class TestHostVulnerabilityHistory:
         history = get_host_vulnerability_history("192.168.1.1", conn=temp_db)
 
         assert history is not None
-        assert history.scan_count == 2
-        assert len(history.scans) == 2
-        assert history.scans[0].finding_count == 3
-        assert history.scans[1].finding_count == 2
+        assert history.dataset_count == 2
+        assert len(history.datasets) == 2
+        assert history.datasets[0].finding_count == 3
+        assert history.datasets[1].finding_count == 2
 
     def test_host_not_found_returns_none(self, temp_db):
         """Non-existent host returns None."""
-        _create_test_scan(
+        _create_test_dataset(
             temp_db,
             "scan1",
             [
                 {
-                    "plugin_id": "nessus:100",
-                    "plugin_name": "Plugin",
+                    "finding_type_id": "nessus:100",
+                    "finding_type_name": "FindingType",
                     "severity_int": 3,
                     "hosts": ["192.168.1.1"],
                 }
@@ -455,21 +463,21 @@ class TestHostVulnerabilityHistory:
         history = get_host_vulnerability_history("10.0.0.99", conn=temp_db)
         assert history is None
 
-    def test_host_history_plugin_ids(self, temp_db):
-        """Host history includes plugin IDs."""
-        _create_test_scan(
+    def test_host_history_finding_type_ids(self, temp_db):
+        """Host history includes finding_type IDs."""
+        _create_test_dataset(
             temp_db,
             "scan1",
             [
                 {
-                    "plugin_id": "nessus:100",
-                    "plugin_name": "Plugin A",
+                    "finding_type_id": "nessus:100",
+                    "finding_type_name": "FindingType A",
                     "severity_int": 4,
                     "hosts": ["192.168.1.1"],
                 },
                 {
-                    "plugin_id": "nessus:101",
-                    "plugin_name": "Plugin B",
+                    "finding_type_id": "nessus:101",
+                    "finding_type_name": "FindingType B",
                     "severity_int": 3,
                     "hosts": ["192.168.1.1"],
                 },
@@ -479,49 +487,52 @@ class TestHostVulnerabilityHistory:
         history = get_host_vulnerability_history("192.168.1.1", conn=temp_db)
 
         assert history is not None
-        assert len(history.scans[0].plugin_ids) == 2
-        assert "nessus:100" in history.scans[0].plugin_ids
-        assert "nessus:101" in history.scans[0].plugin_ids
+        assert len(history.datasets[0].finding_type_ids) == 2
+        assert "nessus:100" in history.datasets[0].finding_type_ids
+        assert "nessus:101" in history.datasets[0].finding_type_ids
 
 
 class TestGetScanByName:
-    """Tests for get_scan_by_name helper."""
+    """Tests for get_dataset_by_name helper."""
 
-    def test_get_scan_by_name_found(self, temp_db):
+    def test_get_dataset_by_name_found(self, temp_db):
         """Returns scan data when found."""
-        scan = Scan(scan_name="test_scan", export_root="/tmp")
-        scan.save(temp_db)
+        dataset = Dataset(dataset_name="test_dataset", export_root="/tmp")
+        dataset.save(temp_db)
         temp_db.commit()
 
-        result = get_scan_by_name("test_scan", conn=temp_db)
+        result = get_dataset_by_name("test_dataset", conn=temp_db)
 
         assert result is not None
-        assert result["scan_name"] == "test_scan"
+        assert result["dataset_name"] == "test_dataset"
 
-    def test_get_scan_by_name_not_found(self, temp_db):
+    def test_get_dataset_by_name_not_found(self, temp_db):
         """Returns None when scan not found."""
-        result = get_scan_by_name("nonexistent", conn=temp_db)
+        result = get_dataset_by_name("nonexistent", conn=temp_db)
         assert result is None
 
 
 class TestDataclasses:
     """Tests for dataclass properties and methods."""
 
-    def test_scan_comparison_result_properties(self):
-        """ScanComparisonResult properties calculate correctly."""
-        result = ScanComparisonResult(
-            scan1_id=1,
-            scan1_name="scan1",
-            scan1_date="2024-01-01",
-            scan2_id=2,
-            scan2_name="scan2",
-            scan2_date="2024-02-01",
-            new_findings=[{"plugin_id": "nessus:100"}, {"plugin_id": "nessus:101"}],
-            resolved_findings=[{"plugin_id": "nessus:102"}],
+    def test_dataset_comparison_result_properties(self):
+        """DatasetComparisonResult properties calculate correctly."""
+        result = DatasetComparisonResult(
+            dataset1_id=1,
+            dataset1_name="scan1",
+            dataset1_date="2024-01-01",
+            dataset2_id=2,
+            dataset2_name="scan2",
+            dataset2_date="2024-02-01",
+            new_findings=[
+                {"finding_type_id": "nessus:100"},
+                {"finding_type_id": "nessus:101"},
+            ],
+            resolved_findings=[{"finding_type_id": "nessus:102"}],
             persistent_findings=[
-                {"plugin_id": "nessus:103"},
-                {"plugin_id": "nessus:104"},
-                {"plugin_id": "nessus:105"},
+                {"finding_type_id": "nessus:103"},
+                {"finding_type_id": "nessus:104"},
+                {"finding_type_id": "nessus:105"},
             ],
         )
 
@@ -529,8 +540,8 @@ class TestDataclasses:
         assert result.total_resolved == 1
         assert result.total_persistent == 3
 
-    def test_host_vulnerability_history_scan_count(self):
-        """HostVulnerabilityHistory.scan_count property."""
+    def test_host_vulnerability_history_dataset_count(self):
+        """HostVulnerabilityHistory.dataset_count property."""
         history = HostVulnerabilityHistory(
             host_id=1,
             ip_address="192.168.1.1",
@@ -538,11 +549,11 @@ class TestDataclasses:
             scan_target_type="ipv4",
             first_seen="2024-01-01",
             last_seen="2024-03-01",
-            scans=[
-                ScanSnapshot(
-                    scan_id=1,
-                    scan_name="scan1",
-                    scan_date="2024-01-01",
+            datasets=[
+                DatasetSnapshot(
+                    dataset_id=1,
+                    dataset_name="scan1",
+                    dataset_date="2024-01-01",
                     finding_count=5,
                     max_severity=4,
                     critical_count=1,
@@ -551,10 +562,10 @@ class TestDataclasses:
                     low_count=1,
                     info_count=0,
                 ),
-                ScanSnapshot(
-                    scan_id=2,
-                    scan_name="scan2",
-                    scan_date="2024-02-01",
+                DatasetSnapshot(
+                    dataset_id=2,
+                    dataset_name="scan2",
+                    dataset_date="2024-02-01",
                     finding_count=3,
                     max_severity=3,
                     critical_count=0,
@@ -566,81 +577,93 @@ class TestDataclasses:
             ],
         )
 
-        assert history.scan_count == 2
+        assert history.dataset_count == 2
 
 
 @pytest.mark.integration
 class TestMixedSourceComparisonRefused:
-    """A Nessus scan and a nuclei scan share no plugin ids, so comparing them
+    """A Nessus scan and a nuclei scan share no finding_type ids, so comparing them
     would report every finding as both new and resolved."""
 
     @staticmethod
     def _seed(temp_db):
-        from cerno_pkg.models import Finding, Plugin, Scan
+        from cerno_pkg.models import Finding, FindingType, Dataset
 
-        nessus_scan = Scan(scan_name="nessus-scan", export_root="/tmp").save(temp_db)
-        nuclei_scan = Scan(scan_name="nuclei-scan", export_root="/tmp").save(temp_db)
-        Plugin(
-            plugin_id="nessus:57608", plugin_name="SMB Signing", severity_int=3
-        ).save(temp_db)
-        Plugin(
-            plugin_id="nuclei:tech-detect",
-            plugin_name="Technology Detection",
+        nessus_dataset = Dataset(dataset_name="nessus-scan", export_root="/tmp").save(
+            temp_db
+        )
+        nuclei_dataset = Dataset(dataset_name="nuclei-scan", export_root="/tmp").save(
+            temp_db
+        )
+        FindingType(
+            finding_type_id="nessus:57608",
+            finding_type_name="SMB Signing",
             severity_int=3,
         ).save(temp_db)
-        Finding(scan_id=nessus_scan, plugin_id="nessus:57608").save(temp_db)
-        Finding(scan_id=nuclei_scan, plugin_id="nuclei:tech-detect").save(temp_db)
-        return nessus_scan, nuclei_scan
+        FindingType(
+            finding_type_id="nuclei:tech-detect",
+            finding_type_name="Technology Detection",
+            severity_int=3,
+        ).save(temp_db)
+        Finding(dataset_id=nessus_dataset, finding_type_id="nessus:57608").save(temp_db)
+        Finding(dataset_id=nuclei_dataset, finding_type_id="nuclei:tech-detect").save(
+            temp_db
+        )
+        return nessus_dataset, nuclei_dataset
 
     def test_cross_source_comparison_raises(self, temp_db):
-        from cerno_pkg.cross_scan import MixedSourceComparisonError, compare_scans
+        from cerno_pkg.cross_dataset import MixedSourceComparisonError, compare_datasets
 
-        nessus_scan, nuclei_scan = self._seed(temp_db)
+        nessus_dataset, nuclei_dataset = self._seed(temp_db)
         with pytest.raises(MixedSourceComparisonError) as exc:
-            compare_scans(nessus_scan, nuclei_scan, conn=temp_db)
+            compare_datasets(nessus_dataset, nuclei_dataset, conn=temp_db)
         message = str(exc.value)
         assert "nessus-scan" in message and "nuclei-scan" in message
         assert "same source" in message
 
     def test_error_is_a_valueerror_so_mcp_surfaces_it(self, temp_db):
-        from cerno_pkg.cross_scan import MixedSourceComparisonError
+        from cerno_pkg.cross_dataset import MixedSourceComparisonError
 
         assert issubclass(MixedSourceComparisonError, ValueError)
 
     def test_same_source_comparison_still_works(self, temp_db):
-        from cerno_pkg.cross_scan import compare_scans
-        from cerno_pkg.models import Finding, Plugin, Scan
+        from cerno_pkg.cross_dataset import compare_datasets
+        from cerno_pkg.models import Finding, FindingType, Dataset
 
-        a = Scan(scan_name="nuclei-a", export_root="/tmp").save(temp_db)
-        b = Scan(scan_name="nuclei-b", export_root="/tmp").save(temp_db)
-        Plugin(plugin_id="nuclei:x", plugin_name="X", severity_int=2).save(temp_db)
-        Plugin(plugin_id="nuclei:y", plugin_name="Y", severity_int=2).save(temp_db)
-        Finding(scan_id=a, plugin_id="nuclei:x").save(temp_db)
-        Finding(scan_id=b, plugin_id="nuclei:y").save(temp_db)
+        a = Dataset(dataset_name="nuclei-a", export_root="/tmp").save(temp_db)
+        b = Dataset(dataset_name="nuclei-b", export_root="/tmp").save(temp_db)
+        FindingType(
+            finding_type_id="nuclei:x", finding_type_name="X", severity_int=2
+        ).save(temp_db)
+        FindingType(
+            finding_type_id="nuclei:y", finding_type_name="Y", severity_int=2
+        ).save(temp_db)
+        Finding(dataset_id=a, finding_type_id="nuclei:x").save(temp_db)
+        Finding(dataset_id=b, finding_type_id="nuclei:y").save(temp_db)
 
-        result = compare_scans(a, b, conn=temp_db)
+        result = compare_datasets(a, b, conn=temp_db)
         assert result is not None
-        assert [f["plugin_id"] for f in result.new_findings] == ["nuclei:y"]
-        assert [f["plugin_id"] for f in result.resolved_findings] == ["nuclei:x"]
+        assert [f["finding_type_id"] for f in result.new_findings] == ["nuclei:y"]
+        assert [f["finding_type_id"] for f in result.resolved_findings] == ["nuclei:x"]
 
 
 @pytest.mark.unit
 class TestScanSnapshotSource:
-    """A snapshot knows its scanner, derived from its namespaced plugin ids."""
+    """A snapshot knows its scanner, derived from its namespaced finding_type ids."""
 
-    def _snap(self, plugin_ids):
-        return ScanSnapshot(
-            scan_id=1,
-            scan_name="s",
-            scan_date="2026-01-01",
-            finding_count=len(plugin_ids),
+    def _snap(self, finding_type_ids):
+        return DatasetSnapshot(
+            dataset_id=1,
+            dataset_name="s",
+            dataset_date="2026-01-01",
+            finding_count=len(finding_type_ids),
             max_severity=2,
             critical_count=0,
             high_count=0,
             medium_count=0,
             low_count=0,
             info_count=0,
-            plugin_ids=list(plugin_ids),
+            finding_type_ids=list(finding_type_ids),
         )
 
     def test_single_source(self):
@@ -656,7 +679,7 @@ class TestScanSnapshotSource:
 
 @pytest.mark.integration
 class TestHostHistoryTrendAcrossSources:
-    """`scan history` must not claim remediation across two scanners.
+    """`dataset history` must not claim remediation across two scanners.
 
     A 30-finding Nessus scan followed by a 3-finding nuclei scan is not 27
     findings fixed -- the two tools count different things. Before this, the
@@ -665,26 +688,26 @@ class TestHostHistoryTrendAcrossSources:
     """
 
     def _history(self, conn):
-        _create_test_scan(
+        _create_test_dataset(
             conn,
             "nessus-scan",
             [
                 {
-                    "plugin_id": f"nessus:{100 + i}",
-                    "plugin_name": f"N{i}",
+                    "finding_type_id": f"nessus:{100 + i}",
+                    "finding_type_name": f"N{i}",
                     "severity_int": 3,
                     "hosts": ["10.0.0.1"],
                 }
                 for i in range(5)
             ],
         )
-        _create_test_scan(
+        _create_test_dataset(
             conn,
             "nuclei-scan",
             [
                 {
-                    "plugin_id": "nuclei:tech-detect",
-                    "plugin_name": "Tech Detect",
+                    "finding_type_id": "nuclei:tech-detect",
+                    "finding_type_name": "Tech Detect",
                     "severity_int": 0,
                     "hosts": ["10.0.0.1"],
                 }
@@ -694,7 +717,7 @@ class TestHostHistoryTrendAcrossSources:
 
     def test_snapshots_report_their_own_source(self, temp_db):
         history = self._history(temp_db)
-        assert {s.source for s in history.scans} == {"nessus", "nuclei"}
+        assert {s.source for s in history.datasets} == {"nessus", "nuclei"}
 
     def test_no_overall_trend_claim_across_sources(self, temp_db, capsys):
         from cerno_pkg.render import render_host_history
@@ -717,31 +740,31 @@ class TestHostHistoryTrendAcrossSources:
     def test_single_source_history_still_reports_a_trend(self, temp_db, capsys):
         from cerno_pkg.render import render_host_history
 
-        _create_test_scan(
+        _create_test_dataset(
             temp_db,
             "first",
             [
                 {
-                    "plugin_id": "nessus:100",
-                    "plugin_name": "N",
+                    "finding_type_id": "nessus:100",
+                    "finding_type_name": "N",
                     "severity_int": 3,
                     "hosts": ["10.9.9.9"],
                 },
                 {
-                    "plugin_id": "nessus:101",
-                    "plugin_name": "N2",
+                    "finding_type_id": "nessus:101",
+                    "finding_type_name": "N2",
                     "severity_int": 3,
                     "hosts": ["10.9.9.9"],
                 },
             ],
         )
-        _create_test_scan(
+        _create_test_dataset(
             temp_db,
             "second",
             [
                 {
-                    "plugin_id": "nessus:100",
-                    "plugin_name": "N",
+                    "finding_type_id": "nessus:100",
+                    "finding_type_name": "N",
                     "severity_int": 3,
                     "hosts": ["10.9.9.9"],
                 }

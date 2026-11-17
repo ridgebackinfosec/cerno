@@ -5,7 +5,7 @@ from unittest.mock import patch
 import pytest
 
 from cerno_pkg.claude_assistant import build_aggregate_context, build_finding_context
-from cerno_pkg.models import Finding, Plugin
+from cerno_pkg.models import Finding, FindingType
 from cerno_pkg.workflow_mapper import Workflow, WorkflowStep
 
 
@@ -13,30 +13,37 @@ from cerno_pkg.workflow_mapper import Workflow, WorkflowStep
 class TestBuildAggregateContext:
     """Tests for build_aggregate_context()."""
 
-    def _make_plugin(
-        self, plugin_id: int = 12345, name: str = "Test Plugin", severity: int = 2
-    ) -> Plugin:
-        return Plugin(plugin_id=plugin_id, plugin_name=name, severity_int=severity)
+    def _make_finding_type(
+        self,
+        finding_type_id: int = 12345,
+        name: str = "Test FindingType",
+        severity: int = 2,
+    ) -> FindingType:
+        return FindingType(
+            finding_type_id=finding_type_id,
+            finding_type_name=name,
+            severity_int=severity,
+        )
 
     def _make_finding(
-        self, finding_id: int = 1, scan_id: int = 1, plugin_id: int = 12345
+        self, finding_id: int = 1, dataset_id: int = 1, finding_type_id: int = 12345
     ) -> Finding:
-        f = Finding(scan_id=scan_id, plugin_id=plugin_id)
+        f = Finding(dataset_id=dataset_id, finding_type_id=finding_type_id)
         f.finding_id = finding_id
         return f
 
     def test_no_attribute_error_on_host_count(self):
         """Regression: Finding has no host_count attribute — must use get_hosts_and_ports()."""
         finding = self._make_finding()
-        plugin = self._make_plugin()
+        finding_type = self._make_finding_type()
 
         with patch.object(
             Finding, "get_hosts_and_ports", return_value=(["192.168.1.1"], "80")
         ):
             result = build_aggregate_context(
-                scan_names=["test_scan"],
+                dataset_names=["test_dataset"],
                 scope_description="All findings",
-                findings_with_plugins=[(finding, plugin)],
+                findings_with_finding_types=[(finding, finding_type)],
             )
 
         assert "1 hosts" in result
@@ -44,21 +51,21 @@ class TestBuildAggregateContext:
     def test_host_count_zero_when_no_hosts(self):
         """Finding with no affected hosts shows 0 hosts in context."""
         finding = self._make_finding()
-        plugin = self._make_plugin()
+        finding_type = self._make_finding_type()
 
         with patch.object(Finding, "get_hosts_and_ports", return_value=([], "")):
             result = build_aggregate_context(
-                scan_names=["test_scan"],
+                dataset_names=["test_dataset"],
                 scope_description="All findings",
-                findings_with_plugins=[(finding, plugin)],
+                findings_with_finding_types=[(finding, finding_type)],
             )
 
         assert "0 hosts" in result
 
-    def test_context_includes_plugin_name(self):
-        """Context output includes plugin name and severity."""
+    def test_context_includes_finding_type_name(self):
+        """Context output includes finding_type name and severity."""
         finding = self._make_finding()
-        plugin = self._make_plugin(name="MS17-010 EternalBlue", severity=4)
+        finding_type = self._make_finding_type(name="MS17-010 EternalBlue", severity=4)
 
         with patch.object(
             Finding,
@@ -66,9 +73,9 @@ class TestBuildAggregateContext:
             return_value=(["10.0.0.1", "10.0.0.2"], "445"),
         ):
             result = build_aggregate_context(
-                scan_names=["corp_scan"],
+                dataset_names=["corp_dataset"],
                 scope_description="Critical findings",
-                findings_with_plugins=[(finding, plugin)],
+                findings_with_finding_types=[(finding, finding_type)],
             )
 
         assert "MS17-010 EternalBlue" in result
@@ -80,31 +87,33 @@ class TestBuildAggregateContext:
 class TestBuildFindingContextWorkflow:
     """Tests for workflow section in build_finding_context()."""
 
-    def _make_plugin(
+    def _make_finding_type(
         self,
-        plugin_id: int = 11011,
-        plugin_name: str = "MS17-010",
+        finding_type_id: int = 11011,
+        finding_type_name: str = "MS17-010",
         severity_int: int = 4,
-    ) -> Plugin:
-        return Plugin(
-            plugin_id=plugin_id, plugin_name=plugin_name, severity_int=severity_int
+    ) -> FindingType:
+        return FindingType(
+            finding_type_id=finding_type_id,
+            finding_type_name=finding_type_name,
+            severity_int=severity_int,
         )
 
     def _make_finding(
-        self, finding_id: int = 1, scan_id: int = 1, plugin_id: int = 11011
+        self, finding_id: int = 1, dataset_id: int = 1, finding_type_id: int = 11011
     ) -> Finding:
-        f = Finding(scan_id=scan_id, plugin_id=plugin_id)
+        f = Finding(dataset_id=dataset_id, finding_type_id=finding_type_id)
         f.finding_id = finding_id
         return f
 
     def _make_workflow(self) -> Workflow:
         return Workflow(
-            finding_id="nessus:11011",
+            finding_type_id="nessus:11011",
             workflow_name="EternalBlue Check",
             description="Verify MS17-010 exploitability on affected hosts.",
             steps=[
                 WorkflowStep(
-                    title="Scan with Nmap NSE",
+                    title="Dataset with Nmap NSE",
                     commands=["nmap -p 445 --script smb-vuln-ms17-010 {hosts}"],
                     notes="Look for 'VULNERABLE' in output.",
                 ),
@@ -123,16 +132,18 @@ class TestBuildFindingContextWorkflow:
 
     def test_workflow_section_included_when_present(self):
         """When a Workflow is passed, context includes the full workflow section."""
-        plugin = self._make_plugin()
+        finding_type = self._make_finding_type()
         finding = self._make_finding()
         workflow = self._make_workflow()
 
-        result = build_finding_context(plugin, finding, hosts=[], workflow=workflow)
+        result = build_finding_context(
+            finding_type, finding, hosts=[], workflow=workflow
+        )
 
         assert "=== Verification Workflow ===" in result
         assert "EternalBlue Check" in result
         assert "Verify MS17-010 exploitability" in result
-        assert "Scan with Nmap NSE" in result
+        assert "Dataset with Nmap NSE" in result
         assert "nmap -p 445 --script smb-vuln-ms17-010 {hosts}" in result
         assert "Look for 'VULNERABLE'" in result
         assert "Attempt exploitation" in result
@@ -145,20 +156,20 @@ class TestBuildFindingContextWorkflow:
 
     def test_no_workflow_section_when_none(self):
         """When workflow=None, no workflow section appears in context."""
-        plugin = self._make_plugin()
+        finding_type = self._make_finding_type()
         finding = self._make_finding()
 
-        result = build_finding_context(plugin, finding, hosts=[], workflow=None)
+        result = build_finding_context(finding_type, finding, hosts=[], workflow=None)
 
         assert "=== Verification Workflow ===" not in result
         assert "=== End Workflow ===" not in result
 
     def test_no_workflow_section_when_omitted(self):
         """Omitting workflow= defaults to no workflow section (backward compat)."""
-        plugin = self._make_plugin()
+        finding_type = self._make_finding_type()
         finding = self._make_finding()
 
-        result = build_finding_context(plugin, finding, hosts=[])
+        result = build_finding_context(finding_type, finding, hosts=[])
 
         assert "=== Verification Workflow ===" not in result
 

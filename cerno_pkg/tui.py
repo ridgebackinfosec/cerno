@@ -1,7 +1,7 @@
 """Terminal User Interface (TUI) components for cerno.
 
 This module handles interactive menus and findings-list action handling:
-- Generic menu selectors (choose_from_list, parse_severity_selection, parse_scan_selection)
+- Generic menu selectors (choose_from_list, parse_severity_selection, parse_dataset_selection)
 - Findings-list actions: filtering, sorting, pagination, grouping
   (the [I] / [D] status-filter toggles are handled by browse_file_list, not here)
 - Multi-line free-text input (Claude Assistant, authored finding descriptions)
@@ -50,7 +50,9 @@ _console_global = get_console()
 ActionResult = Tuple[
     Optional[str],  # action_type: None, "back", "file_selected", "help", "mark_all"
     str,  # file_filter
-    Optional[Tuple[int, set, str]],  # group_filter: (index, plugin_ids, description)
+    Optional[
+        Tuple[int, set, str]
+    ],  # group_filter: (index, finding_type_ids, description)
     str,  # sort_mode
     int,  # page_idx
 ]
@@ -141,7 +143,7 @@ def parse_severity_selection(
     )
 
 
-def parse_scan_selection(selection: str, max_index: int) -> Optional[list[int]]:
+def parse_dataset_selection(selection: str, max_index: int) -> Optional[list[int]]:
     """Parse user scan selection into a list of 1-based indices.
 
     Supports:
@@ -152,7 +154,7 @@ def parse_scan_selection(selection: str, max_index: int) -> Optional[list[int]]:
 
     Args:
         selection: User input string
-        max_index: Maximum valid scan index (number of available scans)
+        max_index: Maximum valid scan index (number of available datasets)
 
     Returns:
         Sorted list of 1-based indices, or None if input is invalid
@@ -266,7 +268,7 @@ def choose_from_list(
 
 
 def filter_finding_candidates(
-    records: List[Any],  # List of (Finding, Plugin) tuples
+    records: List[Any],  # List of (Finding, FindingType) tuples
     file_filter: str,
     group_filter: Optional[Tuple[int, set, str]],
     status_filter: Optional[str],
@@ -274,9 +276,9 @@ def filter_finding_candidates(
     """Apply the findings-list name, group, and status filters.
 
     Args:
-        records: (Finding, Plugin) tuples to filter (open findings)
-        file_filter: Case-insensitive plugin-name substring ("" = no filter)
-        group_filter: Optional group filter tuple (index, plugin labels, description)
+        records: (Finding, FindingType) tuples to filter (open findings)
+        file_filter: Case-insensitive finding_type-name substring ("" = no filter)
+        group_filter: Optional group filter tuple (index, finding_type labels, description)
         status_filter: Review state to keep (e.g. "in_progress"), or None for all
 
     Returns:
@@ -286,7 +288,7 @@ def filter_finding_candidates(
     return [
         (pf, p)
         for (pf, p) in records
-        if needle in p.plugin_name.lower()
+        if needle in p.finding_type_name.lower()
         and (group_filter is None or finding_label(pf, p) in group_filter[1])
         and (status_filter is None or pf.review_state == status_filter)
     ]
@@ -294,9 +296,9 @@ def filter_finding_candidates(
 
 def handle_finding_list_actions(
     ans: str,
-    candidates: List[Any],  # List of (Finding, Plugin) tuples
-    page_items: List[Any],  # List of (Finding, Plugin) tuples
-    display: List[Any],  # List of (Finding, Plugin) tuples
+    candidates: List[Any],  # List of (Finding, FindingType) tuples
+    page_items: List[Any],  # List of (Finding, FindingType) tuples
+    display: List[Any],  # List of (Finding, FindingType) tuples
     file_filter: str,
     group_filter: Optional[Tuple[int, set, str]],
     sort_mode: str,
@@ -316,13 +318,13 @@ def handle_finding_list_actions(
 
     Args:
         ans: User input command
-        candidates: Filtered candidate records (Finding, Plugin) tuples
+        candidates: Filtered candidate records (Finding, FindingType) tuples
         page_items: Records on current page
         display: All records to display (after sort)
         file_filter: Current name filter string
         group_filter: Optional group filter tuple (index, set of
-            "Plugin <id>: <name>" labels, description)
-        sort_mode: Current sort mode ("severity", "plugin_id", "name" or "hosts")
+            "FindingType <id>: <name>" labels, description)
+        sort_mode: Current sort mode ("severity", "finding_type_id", "name" or "hosts")
         page_idx: Current page index
         total_pages: Total number of pages
         get_counts_for: Function to get host counts for a Finding (database-driven)
@@ -383,10 +385,10 @@ def handle_finding_list_actions(
         return None, file_filter, group_filter, sort_mode, page_idx
 
     if ans == "s":
-        # Cycle through sort modes: severity -> plugin_id -> name -> hosts -> severity
+        # Cycle through sort modes: severity -> finding_type_id -> name -> hosts -> severity
         if sort_mode == "severity":
-            sort_mode = "plugin_id"
-        elif sort_mode == "plugin_id":
+            sort_mode = "finding_type_id"
+        elif sort_mode == "finding_type_id":
             sort_mode = "name"
         elif sort_mode == "name":
             sort_mode = "hosts"
@@ -395,7 +397,7 @@ def handle_finding_list_actions(
 
         sort_label = {
             "severity": "Severity ↓",
-            "plugin_id": "Finding ID ↑",
+            "finding_type_id": "Finding ID ↑",
             "hosts": "Host count ↓",
             "name": "Name A↑Z",
         }.get(sort_mode, "Severity ↓")
@@ -423,12 +425,14 @@ def handle_finding_list_actions(
                 page_idx,
             )
 
-        # Extract plugin info from (Finding, Plugin) tuples for CVE extraction
-        # Pass list of (plugin_id, plugin_name) tuples instead of file paths
-        from .render import bulk_extract_cves_for_plugins
+        # Extract finding_type info from (Finding, FindingType) tuples for CVE extraction
+        # Pass list of (finding_type_id, finding_type_name) tuples instead of file paths
+        from .render import bulk_extract_cves_for_finding_types
 
-        plugin_info_list = [(p.plugin_id, p.plugin_name) for _pf, p in candidates]
-        bulk_extract_cves_for_plugins(plugin_info_list)
+        finding_type_info_list = [
+            (p.finding_type_id, p.finding_type_name) for _pf, p in candidates
+        ]
+        bulk_extract_cves_for_finding_types(finding_type_info_list)
         return None, file_filter, group_filter, sort_mode, page_idx
 
     if ans == "m":
@@ -463,7 +467,7 @@ def handle_finding_list_actions(
                 page_idx,
             )
 
-        # Pass (Finding, Plugin) tuples for database queries with plugin info
+        # Pass (Finding, FindingType) tuples for database queries with finding_type info
         from .analysis import compare_filtered
 
         groups = compare_filtered(candidates)
@@ -502,7 +506,7 @@ def handle_finding_list_actions(
                 page_idx,
             )
 
-        # Pass full (Finding, Plugin) tuples to preserve display names
+        # Pass full (Finding, FindingType) tuples to preserve display names
         from .analysis import analyze_inclusions
 
         groups = analyze_inclusions(candidates)

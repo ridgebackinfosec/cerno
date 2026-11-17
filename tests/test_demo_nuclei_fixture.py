@@ -3,7 +3,7 @@
 These pin what `cerno demo` loads, mirroring the demo `.nessus` coverage in
 `test_nessus_import.py`. The important one is
 `test_nuclei_import_reuses_nessus_hosts`: the whole point of the demo nuclei
-data is that it lands on the *same* host rows as the Nessus scans, so the two
+data is that it lands on the *same* host rows as the Nessus datasets, so the two
 sources can be reviewed side by side. If the fixture's `host`/`ip` values drift
 away from the `.nessus` `ReportHost@name`/`host-ip` values, that silently stops
 being true and the demo quietly loses its reason to exist.
@@ -54,9 +54,9 @@ class TestDemoNucleiFixtures:
 
     def test_initial_fixture_imports_expected_baseline(self, temp_db, temp_dir):
         result = import_nuclei_file(
-            INITIAL_NUCLEI, temp_dir, scan_name="Cerno_Demo_Nuclei_Initial_Scan"
+            INITIAL_NUCLEI, temp_dir, dataset_name="Cerno_Demo_Nuclei_Initial"
         )
-        assert result.plugins_exported == 9
+        assert result.finding_types_exported == 9
         # Quiet baseline: 8 info templates plus weak-cipher-suites (low).
         # Counts are per template, not per match, so a template matching two
         # targets still contributes one finding.
@@ -65,9 +65,9 @@ class TestDemoNucleiFixtures:
 
     def test_expanded_fixture_imports_expected_data(self, temp_db, temp_dir):
         result = import_nuclei_file(
-            EXPANDED_NUCLEI, temp_dir, scan_name="Cerno_Demo_Nuclei_Expanded_Scan"
+            EXPANDED_NUCLEI, temp_dir, dataset_name="Cerno_Demo_Nuclei_Expanded"
         )
-        assert result.plugins_exported == 17
+        assert result.finding_types_exported == 17
         # A real severity spread, so the demo exercises severity filtering.
         assert result.severities[4] == 1  # Log4Shell
         assert result.severities[3] == 2  # path traversal + Tomcat default login
@@ -76,21 +76,27 @@ class TestDemoNucleiFixtures:
     def test_expanded_carries_the_nuclei_only_findings(self, temp_db, temp_dir):
         """The point of a second scanner: things Nessus did not report."""
         import_nuclei_file(
-            EXPANDED_NUCLEI, temp_dir, scan_name="Cerno_Demo_Nuclei_Expanded_Scan"
+            EXPANDED_NUCLEI, temp_dir, dataset_name="Cerno_Demo_Nuclei_Expanded"
         )
         ids = {
-            r[0] for r in temp_db.execute("SELECT plugin_id FROM plugins").fetchall()
+            r[0]
+            for r in temp_db.execute(
+                "SELECT finding_type_id FROM finding_types"
+            ).fetchall()
         }
         assert "nuclei:CVE-2021-44228" in ids  # critical, Log4Shell
         assert "nuclei:CVE-2021-41773" in ids  # high, Apache path traversal
         assert "nuclei:tomcat-default-login" in ids  # high, default credentials
 
-    def test_all_plugin_ids_are_namespaced(self, temp_db, temp_dir):
+    def test_all_finding_type_ids_are_namespaced(self, temp_db, temp_dir):
         import_nuclei_file(
-            EXPANDED_NUCLEI, temp_dir, scan_name="Cerno_Demo_Nuclei_Expanded_Scan"
+            EXPANDED_NUCLEI, temp_dir, dataset_name="Cerno_Demo_Nuclei_Expanded"
         )
         ids = [
-            r[0] for r in temp_db.execute("SELECT plugin_id FROM plugins").fetchall()
+            r[0]
+            for r in temp_db.execute(
+                "SELECT finding_type_id FROM finding_types"
+            ).fetchall()
         ]
         assert ids and all(pid.startswith("nuclei:") for pid in ids)
 
@@ -101,14 +107,14 @@ class TestDemoNucleiFixtures:
         import_nessus_file(
             EXPANDED_NESSUS,
             temp_dir,
-            scan_name="Cerno_Demo_Expanded_Scan",
+            dataset_name="Cerno_Demo_Expanded",
             include_ports=True,
         )
         hosts_after_nessus = temp_db.execute("SELECT COUNT(*) FROM hosts").fetchone()[0]
         assert hosts_after_nessus == 42
 
         import_nuclei_file(
-            EXPANDED_NUCLEI, temp_dir, scan_name="Cerno_Demo_Nuclei_Expanded_Scan"
+            EXPANDED_NUCLEI, temp_dir, dataset_name="Cerno_Demo_Nuclei_Expanded"
         )
         hosts_after_nuclei = temp_db.execute("SELECT COUNT(*) FROM hosts").fetchone()[0]
         assert hosts_after_nuclei == hosts_after_nessus
@@ -118,11 +124,11 @@ class TestDemoNucleiFixtures:
         import_nessus_file(
             EXPANDED_NESSUS,
             temp_dir,
-            scan_name="Cerno_Demo_Expanded_Scan",
+            dataset_name="Cerno_Demo_Expanded",
             include_ports=True,
         )
         import_nuclei_file(
-            EXPANDED_NUCLEI, temp_dir, scan_name="Cerno_Demo_Nuclei_Expanded_Scan"
+            EXPANDED_NUCLEI, temp_dir, dataset_name="Cerno_Demo_Nuclei_Expanded"
         )
         rows = temp_db.execute(
             "SELECT host_id, ip_address FROM hosts WHERE scan_target = ?",
@@ -136,17 +142,17 @@ class TestDemoNucleiFixtures:
         import_nessus_file(
             EXPANDED_NESSUS,
             temp_dir,
-            scan_name="Cerno_Demo_Expanded_Scan",
+            dataset_name="Cerno_Demo_Expanded",
             include_ports=True,
         )
         import_nuclei_file(
-            EXPANDED_NUCLEI, temp_dir, scan_name="Cerno_Demo_Nuclei_Expanded_Scan"
+            EXPANDED_NUCLEI, temp_dir, dataset_name="Cerno_Demo_Nuclei_Expanded"
         )
         sources = {r[0] for r in temp_db.execute("""
                 SELECT p.source_id
                 FROM finding_affected_hosts fah
                 JOIN findings f ON f.finding_id = fah.finding_id
-                JOIN plugins p ON p.plugin_id = f.plugin_id
+                JOIN finding_types p ON p.finding_type_id = f.finding_type_id
                 JOIN hosts h ON h.host_id = fah.host_id
                 WHERE h.scan_target = '203.0.113.80' AND fah.port_number = 443
                 """).fetchall()}
@@ -155,16 +161,16 @@ class TestDemoNucleiFixtures:
     # ---------- the merged-evidence centrepiece ----------
 
     def test_missing_headers_merge_into_one_finding(self, temp_db, temp_dir):
-        """Nessus splits these into 3 plugins; nuclei reports 3 matchers on 1."""
+        """Nessus splits these into 3 finding_types; nuclei reports 3 matchers on 1."""
         import_nuclei_file(
-            EXPANDED_NUCLEI, temp_dir, scan_name="Cerno_Demo_Nuclei_Expanded_Scan"
+            EXPANDED_NUCLEI, temp_dir, dataset_name="Cerno_Demo_Nuclei_Expanded"
         )
         rows = temp_db.execute("""
-            SELECT fah.plugin_output
+            SELECT fah.evidence
             FROM finding_affected_hosts fah
             JOIN findings f ON f.finding_id = fah.finding_id
             JOIN hosts h ON h.host_id = fah.host_id
-            WHERE f.plugin_id = 'nuclei:http-missing-security-headers'
+            WHERE f.finding_type_id = 'nuclei:http-missing-security-headers'
               AND h.scan_target = '203.0.113.80'
             """).fetchall()
         assert len(rows) == 1, "the three matches must merge into one row"
@@ -181,14 +187,14 @@ class TestDemoNucleiFixtures:
     ):
         """self-signed-ssl must sit on the same host:port as Nessus plugin 11219."""
         import_nuclei_file(
-            EXPANDED_NUCLEI, temp_dir, scan_name="Cerno_Demo_Nuclei_Expanded_Scan"
+            EXPANDED_NUCLEI, temp_dir, dataset_name="Cerno_Demo_Nuclei_Expanded"
         )
         target, port = temp_db.execute("""
             SELECT h.scan_target, fah.port_number
             FROM finding_affected_hosts fah
             JOIN findings f ON f.finding_id = fah.finding_id
             JOIN hosts h ON h.host_id = fah.host_id
-            WHERE f.plugin_id = 'nuclei:self-signed-ssl'
+            WHERE f.finding_type_id = 'nuclei:self-signed-ssl'
             """).fetchone()
         assert (target, port) == ("198.51.100.12", 443)
 

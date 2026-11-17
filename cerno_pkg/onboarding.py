@@ -31,7 +31,7 @@ def show_guided_tour() -> str:
     """Show interactive guided tour for first-time users.
 
     Displays a 4-step walkthrough covering:
-    1. Importing scans
+    1. Importing datasets
     2. Reviewing findings by severity
     3. Running tools
     4. Tracking progress
@@ -44,11 +44,11 @@ def show_guided_tour() -> str:
     print()  # Blank line for spacing
     header("Welcome to Cerno! 🎯")
     info("")
-    info("Cerno helps you review findings from Nessus and nuclei, and run")
+    info("Cerno helps you review findings from Nessus, nuclei and Burp, and run")
     info("security tools (nmap, NetExec, Metasploit) against findings.")
     info("")
     info("This quick tour covers:")
-    info("  1. Importing scans")
+    info("  1. Importing datasets")
     info("  2. Reviewing findings by severity")
     info("  3. Running tools against vulnerable hosts")
     info("  4. Tracking your progress")
@@ -58,7 +58,7 @@ def show_guided_tour() -> str:
         Prompt.ask("[Enter] Start tour | [S] Skip tour", default="").strip().lower()
     )
     if choice == "s":
-        ok("Tour skipped. To get started, import a scan:")
+        ok("Tour skipped. To get started, import findings:")
         info("  cerno import nessus /path/to/scan.nessus")
         info("  cerno import nuclei /path/to/nuclei.json")
         info("")
@@ -86,7 +86,7 @@ def show_guided_tour() -> str:
         elif choice in ("b", "back"):
             current_step = max(1, current_step - 1)
         elif choice in ("q", "skip", "quit"):
-            ok("Tour skipped. To get started, import a scan:")
+            ok("Tour skipped. To get started, import findings:")
             info("  cerno import nessus /path/to/scan.nessus")
             info("  cerno import nuclei /path/to/nuclei.json")
             info("")
@@ -108,7 +108,7 @@ def show_tour_step(step: int) -> None:
     print()  # Blank line for spacing
 
     if step == 1:
-        header("Step 1/4: Importing Scans")
+        header("Step 1/4: Importing Datasets")
         info("─" * 60)
         info("")
         info("First, import a .nessus file:")
@@ -117,7 +117,7 @@ def show_tour_step(step: int) -> None:
         info("  $ cerno import nuclei /path/to/nuclei.json")
         info("")
         info("This parses findings and stores them in ~/.cerno/cerno.db")
-        info("You can import multiple scans and switch between them.")
+        info("You can import multiple datasets and switch between them.")
         info("")
 
     elif step == 2:
@@ -163,44 +163,47 @@ def show_tour_step(step: int) -> None:
 
 
 def show_workflow_guidance(
-    scan_name: str,
-    scan_id: int,
-    scan_ids: Optional[list[int]] = None,
-    scan_names: Optional[list[str]] = None,
+    dataset_name: str,
+    dataset_id: int,
+    dataset_ids: Optional[list[int]] = None,
+    dataset_names: Optional[list[str]] = None,
 ) -> None:
     """Show workflow guidance with context-aware tips.
 
-    Only displays for first-time users of a scan. Skips if any session
-    exists for the scan (indicating previous review activity).
+    Only displays for first-time users of a dataset. Skips if any session
+    exists for the dataset (indicating previous review activity).
 
     Args:
-        scan_name: Name of the primary selected scan
-        scan_id: Database scan ID of the primary scan
-        scan_ids: All selected scan IDs (multi-scan mode); if None, single-scan
-        scan_names: All selected scan names (multi-scan mode)
+        dataset_name: Name of the primary selected dataset
+        dataset_id: Database dataset ID of the primary dataset
+        dataset_ids: All selected dataset IDs (multi-dataset mode); if None, single-dataset
+        dataset_names: All selected dataset names (multi-dataset mode)
     """
     from .database import get_connection
 
-    # Narrow scan_ids inline so the Optional is discharged for type checkers;
+    # Narrow dataset_ids inline so the Optional is discharged for type checkers;
     # is_multi then follows from the result rather than being computed twice.
-    effective_scan_ids = (
-        scan_ids if scan_ids is not None and len(scan_ids) > 1 else [scan_id]
+    effective_dataset_ids = (
+        dataset_ids
+        if dataset_ids is not None and len(dataset_ids) > 1
+        else [dataset_id]
     )
-    is_multi = len(effective_scan_ids) > 1
+    is_multi = len(effective_dataset_ids) > 1
 
     # Query scan statistics
     with get_connection() as conn:
-        # Check if user has reviewed this scan before (use primary scan_id)
+        # Check if user has reviewed this dataset before (use primary dataset_id)
         cursor = conn.execute(
-            "SELECT session_id FROM sessions WHERE scan_id = ? LIMIT 1", (scan_id,)
+            "SELECT session_id FROM sessions WHERE dataset_id = ? LIMIT 1",
+            (dataset_id,),
         )
         existing_session = cursor.fetchone()
 
-        # Skip guidance if user has seen this scan before
+        # Skip guidance if user has seen this dataset before
         if existing_session:
             return
 
-        placeholders = ",".join("?" * len(effective_scan_ids))
+        placeholders = ",".join("?" * len(effective_dataset_ids))
         cursor = conn.execute(
             f"""
             SELECT
@@ -209,9 +212,9 @@ def show_workflow_guidance(
                 SUM(CASE WHEN review_state = 'in_progress' THEN 1 ELSE 0 END) as in_progress,
                 SUM(CASE WHEN review_state = 'done' THEN 1 ELSE 0 END) as done
             FROM findings
-            WHERE scan_id IN ({placeholders})
+            WHERE dataset_id IN ({placeholders})
             """,
-            effective_scan_ids,
+            effective_dataset_ids,
         )
         stats = cursor.fetchone()
 
@@ -222,19 +225,19 @@ def show_workflow_guidance(
         return
 
     # Build display name
-    if is_multi and scan_names:
-        if len(scan_names) == 2:
-            display_name = f"{scan_names[0]} + {scan_names[1]}"
+    if is_multi and dataset_names:
+        if len(dataset_names) == 2:
+            display_name = f"{dataset_names[0]} + {dataset_names[1]}"
         else:
-            display_name = f"{len(scan_names)} scans"
+            display_name = f"{len(dataset_names)} datasets"
     else:
-        display_name = scan_name
+        display_name = dataset_name
 
     # Build main content as Text object
     content = Text()
 
-    # Scan info section with styled labels
-    content.append("Scan: ", style="bold")
+    # Dataset info section with styled labels
+    content.append("Dataset: ", style="bold")
     content.append(f"{display_name}\n\n")
 
     # Statistics with colored labels
@@ -284,7 +287,7 @@ def show_workflow_guidance(
     print()  # Blank line for spacing
     panel = Panel(
         combined,
-        title="[bold cyan]Getting Started with This Scan[/]",
+        title="[bold cyan]Getting Started with This Dataset[/]",
         border_style=style_if_enabled("cyan"),
         padding=(1, 2),
         expand=False,
@@ -293,7 +296,7 @@ def show_workflow_guidance(
 
     # Context-aware tips
     tips_panel = _show_context_aware_tips(
-        scan_id, total, unreviewed, completed, scan_ids=scan_ids
+        dataset_id, total, unreviewed, completed, dataset_ids=dataset_ids
     )
     if tips_panel:
         console.print(tips_panel)
@@ -312,33 +315,35 @@ def show_workflow_guidance(
 
 
 def _show_context_aware_tips(
-    scan_id: int,
+    dataset_id: int,
     total: int,
     unreviewed: int,
     completed: int,
-    scan_ids: Optional[list[int]] = None,
+    dataset_ids: Optional[list[int]] = None,
 ) -> Panel | None:
     """Build context-aware tips panel based on scan state.
 
     Args:
-        scan_id: Database scan ID of the primary scan
-        total: Total finding count (already aggregated across scan_ids if multi)
+        dataset_id: Database dataset ID of the primary dataset
+        total: Total finding count (already aggregated across dataset_ids if multi)
         unreviewed: Unreviewed finding count
         completed: Done finding count
-        scan_ids: All selected scan IDs (multi-scan mode); if None, single-scan
+        dataset_ids: All selected dataset IDs (multi-dataset mode); if None, single-dataset
 
     Returns:
         Panel with tips, or None if no tips to show
     """
     from .database import get_connection
 
-    # Narrow scan_ids inline so the Optional is discharged for type checkers;
+    # Narrow dataset_ids inline so the Optional is discharged for type checkers;
     # is_multi then follows from the result rather than being computed twice.
-    effective_scan_ids = (
-        scan_ids if scan_ids is not None and len(scan_ids) > 1 else [scan_id]
+    effective_dataset_ids = (
+        dataset_ids
+        if dataset_ids is not None and len(dataset_ids) > 1
+        else [dataset_id]
     )
-    is_multi = len(effective_scan_ids) > 1
-    placeholders = ",".join("?" * len(effective_scan_ids))
+    is_multi = len(effective_dataset_ids) > 1
+    placeholders = ",".join("?" * len(effective_dataset_ids))
 
     tips = []  # Collect tips as Text objects
 
@@ -347,18 +352,18 @@ def _show_context_aware_tips(
         cursor = conn.execute(
             f"""
             SELECT COUNT(*) FROM findings f
-            JOIN plugins p ON f.plugin_id = p.plugin_id
-            WHERE f.scan_id IN ({placeholders}) AND p.severity_int = 4
+            JOIN finding_types p ON f.finding_type_id = p.finding_type_id
+            WHERE f.dataset_id IN ({placeholders}) AND p.severity_int = 4
             """,
-            effective_scan_ids,
+            effective_dataset_ids,
         )
         critical_count = cursor.fetchone()[0]
 
     if critical_count > 0:
         tip = Text()
-        scan_label = "These scans have" if is_multi else "This scan has"
+        dataset_label = "These datasets have" if is_multi else "This dataset has"
         tip.append(
-            f"{scan_label} {critical_count} Critical finding(s) - prioritize these first!"
+            f"{dataset_label} {critical_count} Critical finding(s) - prioritize these first!"
         )
         tips.append(tip)
 
@@ -368,10 +373,10 @@ def _show_context_aware_tips(
             f"""
             SELECT COUNT(DISTINCT f.finding_id)
             FROM findings f
-            JOIN plugins p ON f.plugin_id = p.plugin_id
-            WHERE f.scan_id IN ({placeholders}) AND p.metasploit_names IS NOT NULL AND p.metasploit_names != '[]'
+            JOIN finding_types p ON f.finding_type_id = p.finding_type_id
+            WHERE f.dataset_id IN ({placeholders}) AND p.metasploit_names IS NOT NULL AND p.metasploit_names != '[]'
             """,
-            effective_scan_ids,
+            effective_dataset_ids,
         )
         msf_count = cursor.fetchone()[0]
 
