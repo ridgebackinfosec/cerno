@@ -20,68 +20,68 @@ class SessionState:
     from the findings table review_state field.
 
     Attributes:
-        scan_name: Name of the scan (for display)
+        dataset_name: Name of the dataset (for display)
         session_start: ISO format timestamp of session start
         in_progress_count: Count of findings viewed but not marked done
         done_count: Count of findings marked done
         tool_executions: Count of tool executions
         cve_extractions: Count of CVE extractions performed
-        additional_scan_ids: List of additional scan IDs included in a multi-scan session
+        additional_dataset_ids: List of additional dataset IDs included in a multi-dataset session
     """
 
-    scan_name: str
+    dataset_name: str
     session_start: str
     in_progress_count: int
     done_count: int
     tool_executions: int
     cve_extractions: int
-    additional_scan_ids: list[int] = field(default_factory=list)
+    additional_dataset_ids: list[int] = field(default_factory=list)
 
 
 def save_session(
-    scan_id: int,
+    dataset_id: int,
     session_start: datetime,
     in_progress_count: int = 0,
     done_count: int = 0,
     tool_executions: int = 0,
     cve_extractions: int = 0,
-    additional_scan_ids: Optional[list[int]] = None,
+    additional_dataset_ids: Optional[list[int]] = None,
 ) -> Optional[int]:
     """
     Save session state to database.
 
     Args:
-        scan_id: Scan ID
+        dataset_id: Dataset ID
         session_start: Session start datetime
         in_progress_count: Accepted for compatibility; not stored (counts come
             from the v_session_stats view)
         done_count: Accepted for compatibility; not stored
         tool_executions: Accepted for compatibility; not stored
         cve_extractions: Accepted for compatibility; not stored
-        additional_scan_ids: Additional scan IDs for multi-scan sessions
+        additional_dataset_ids: Additional dataset IDs for multi-dataset sessions
 
     Returns:
         session_id if successful, None otherwise
     """
     session_id = _db_save_session(
-        scan_id,
+        dataset_id,
         session_start,
         in_progress_count,
         done_count,
         tool_executions,
         cve_extractions,
-        additional_scan_ids=additional_scan_ids,
+        additional_dataset_ids=additional_dataset_ids,
     )
 
     if session_id:
         log_info(f"Session saved to database (ID: {session_id})")
-        if additional_scan_ids:
-            _db_save_session_scans(session_id, scan_id, additional_scan_ids)
+        if additional_dataset_ids:
+            _db_save_session_datasets(session_id, dataset_id, additional_dataset_ids)
 
     return session_id
 
 
-def load_session(scan_id: int) -> Optional[SessionState]:
+def load_session(dataset_id: int) -> Optional[SessionState]:
     """
     Load active session state from database.
 
@@ -89,7 +89,7 @@ def load_session(scan_id: int) -> Optional[SessionState]:
     and retrieves finding counts by querying the findings review_state field.
 
     Args:
-        scan_id: Scan ID
+        dataset_id: Dataset ID
 
     Returns:
         SessionState object with counts from database, or None if no active session
@@ -107,38 +107,38 @@ def load_session(scan_id: int) -> Optional[SessionState]:
                     vs.session_start,
                     vs.tools_executed,
                     vs.cves_extracted,
-                    vs.files_in_progress as in_progress_count,
-                    vs.files_done as done_count,
-                    sc.scan_name
+                    vs.findings_in_progress as in_progress_count,
+                    vs.findings_done as done_count,
+                    sc.dataset_name
                 FROM v_session_stats vs
                 JOIN sessions s ON vs.session_id = s.session_id
-                JOIN scans sc ON vs.scan_id = sc.scan_id
-                WHERE vs.scan_id = ? AND vs.session_end IS NULL
+                JOIN datasets sc ON vs.dataset_id = sc.dataset_id
+                WHERE vs.dataset_id = ? AND vs.session_end IS NULL
                 ORDER BY vs.session_start DESC
                 LIMIT 1
                 """,
-                (scan_id,),
+                (dataset_id,),
             )
 
             if not row:
                 return None
 
-            # Load additional scan IDs for multi-scan sessions
+            # Load additional dataset IDs for multi-dataset sessions
             additional_ids_rows = query_all(
                 conn,
-                "SELECT scan_id FROM session_scans WHERE session_id = ? AND scan_id != ?",
-                (row["session_id"], scan_id),
+                "SELECT dataset_id FROM session_datasets WHERE session_id = ? AND dataset_id != ?",
+                (row["session_id"], dataset_id),
             )
-            additional_scan_ids = [r["scan_id"] for r in additional_ids_rows]
+            additional_dataset_ids = [r["dataset_id"] for r in additional_ids_rows]
 
             return SessionState(
-                scan_name=row["scan_name"],
+                dataset_name=row["dataset_name"],
                 session_start=row["session_start"],
                 in_progress_count=row["in_progress_count"],
                 done_count=row["done_count"],
                 tool_executions=row["tools_executed"],
                 cve_extractions=row["cves_extracted"],
-                additional_scan_ids=additional_scan_ids,
+                additional_dataset_ids=additional_dataset_ids,
             )
 
     except Exception as e:
@@ -146,46 +146,46 @@ def load_session(scan_id: int) -> Optional[SessionState]:
         return None
 
 
-def delete_session(scan_id: int) -> None:
+def delete_session(dataset_id: int) -> None:
     """
-    Mark the scan's active session as ended.
+    Mark the dataset's active session as ended.
 
     Despite the name, this does **not** delete the row: it stamps
     ``session_end`` and leaves the record in place. That is deliberate — the
-    surviving row is what tells ``onboarding.show_workflow_guidance()`` the scan
+    surviving row is what tells ``onboarding.show_workflow_guidance()`` the dataset
     has been reviewed before, so first-run guidance stays suppressed on
     re-entry. The name is kept because it is part of the public API
     (``cerno_pkg.__all__``).
 
     Args:
-        scan_id: Scan ID
+        dataset_id: Dataset ID
     """
-    _db_end_session(scan_id)
+    _db_end_session(dataset_id)
 
 
 # ========== Database Integration ==========
 
 
 def _db_save_session(
-    scan_id: int,
+    dataset_id: int,
     session_start: datetime,
     in_progress_count: int,
     done_count: int,
     tool_executions: int,
     cve_extractions: int,
-    additional_scan_ids: Optional[list[int]] = None,
+    additional_dataset_ids: Optional[list[int]] = None,
 ) -> Optional[int]:
     """Save session to database (internal helper).
 
     Args:
-        scan_id: Scan ID
+        dataset_id: Dataset ID
         session_start: Session start datetime
         in_progress_count: Not stored (see v_session_stats)
         done_count: Not stored
         tool_executions: Not stored
         cve_extractions: Not stored
-        additional_scan_ids: Additional scan IDs in a multi-scan session; their
-            last_reviewed_at is stamped alongside the primary scan
+        additional_dataset_ids: Additional dataset IDs in a multi-dataset session; their
+            last_reviewed_at is stamped alongside the primary dataset
 
     Returns:
         session_id if successful, None otherwise
@@ -196,18 +196,18 @@ def _db_save_session(
 
         with db_transaction() as conn:
             # Update last_reviewed_at for every scan in the session
-            stamp_ids = [scan_id] + (additional_scan_ids or [])
+            stamp_ids = [dataset_id] + (additional_dataset_ids or [])
             placeholders = ",".join("?" * len(stamp_ids))
             conn.execute(
-                f"UPDATE scans SET last_reviewed_at = ? WHERE scan_id IN ({placeholders})",
+                f"UPDATE datasets SET last_reviewed_at = ? WHERE dataset_id IN ({placeholders})",
                 (now_iso(), *stamp_ids),
             )
 
             # Check for active session
             row = query_one(
                 conn,
-                "SELECT session_id FROM sessions WHERE scan_id = ? AND session_end IS NULL ORDER BY session_start DESC LIMIT 1",
-                (scan_id,),
+                "SELECT session_id FROM sessions WHERE dataset_id = ? AND session_end IS NULL ORDER BY session_start DESC LIMIT 1",
+                (dataset_id,),
             )
 
             session_id: int | None
@@ -219,10 +219,10 @@ def _db_save_session(
                 # Create new session
                 cursor = conn.execute(
                     """
-                    INSERT INTO sessions (scan_id, session_start)
+                    INSERT INTO sessions (dataset_id, session_start)
                     VALUES (?, ?)
                     """,
-                    (scan_id, session_start.isoformat()),
+                    (dataset_id, session_start.isoformat()),
                 )
                 session_id = cursor.lastrowid
 
@@ -233,40 +233,40 @@ def _db_save_session(
         return None
 
 
-def _db_save_session_scans(
+def _db_save_session_datasets(
     session_id: int,
-    primary_scan_id: int,
-    additional_scan_ids: list[int],
+    primary_dataset_id: int,
+    additional_dataset_ids: list[int],
 ) -> None:
-    """Upsert scan associations for a multi-scan session.
+    """Upsert scan associations for a multi-dataset session.
 
-    Stores all scan_ids (primary + additional) in session_scans table.
+    Stores all dataset_ids (primary + additional) in session_datasets table.
     Uses INSERT OR IGNORE to be idempotent (safe to call multiple times).
 
     Args:
-        session_id: Session ID to associate scans with
-        primary_scan_id: Primary scan ID for the session
-        additional_scan_ids: Additional scan IDs included in the session
+        session_id: Session ID to associate datasets with
+        primary_dataset_id: Primary dataset ID for the session
+        additional_dataset_ids: Additional dataset IDs included in the session
     """
     try:
         from .database import db_transaction
 
-        all_scan_ids = [primary_scan_id] + additional_scan_ids
+        all_dataset_ids = [primary_dataset_id] + additional_dataset_ids
         with db_transaction() as conn:
-            for sid in all_scan_ids:
+            for sid in all_dataset_ids:
                 conn.execute(
-                    "INSERT OR IGNORE INTO session_scans (session_id, scan_id) VALUES (?, ?)",
+                    "INSERT OR IGNORE INTO session_datasets (session_id, dataset_id) VALUES (?, ?)",
                     (session_id, sid),
                 )
     except Exception as e:
-        log_error(f"Failed to save session_scans: {e}")
+        log_error(f"Failed to save session_datasets: {e}")
 
 
-def _db_end_session(scan_id: int) -> None:
+def _db_end_session(dataset_id: int) -> None:
     """Mark active session as ended in database (internal helper).
 
     Args:
-        scan_id: Scan ID
+        dataset_id: Dataset ID
     """
     try:
         from .database import db_transaction
@@ -278,9 +278,9 @@ def _db_end_session(scan_id: int) -> None:
                 """
                 UPDATE sessions
                 SET session_end = ?
-                WHERE scan_id = ? AND session_end IS NULL
+                WHERE dataset_id = ? AND session_end IS NULL
                 """,
-                (now, scan_id),
+                (now, dataset_id),
             )
 
     except Exception as e:
@@ -288,58 +288,60 @@ def _db_end_session(scan_id: int) -> None:
 
 
 # ===================================================================
-# Scan Summary and Statistics Display (moved from cerno.py)
+# Dataset Summary and Statistics Display (moved from cerno.py)
 # ===================================================================
 
 
-def show_scan_summary(
-    scan_dir: Path,
+def show_dataset_summary(
+    dataset_dir: Path,
     top_ports_n: int = 25,
-    scan_id: Optional[int] = None,
-    scan_ids: Optional[list[int]] = None,
-    scan_names: Optional[list[str]] = None,
+    dataset_id: Optional[int] = None,
+    dataset_ids: Optional[list[int]] = None,
+    dataset_names: Optional[list[str]] = None,
 ) -> None:
     """
-    Display comprehensive scan overview with host/port statistics.
+    Display comprehensive dataset overview with host/port statistics.
 
     Database-only mode: queries all statistics from database.
 
     Args:
-        scan_dir: Scan directory (used for display name only in single-scan mode)
+        dataset_dir: Dataset directory (used for display name only in single-dataset mode)
         top_ports_n: Number of top ports to display
-        scan_id: Scan ID (required for database queries in single-scan mode)
-        scan_ids: Optional list of scan IDs for multi-scan queries (overrides scan_id)
-        scan_names: Optional list of scan names for multi-scan header display
+        dataset_id: Dataset ID (required for database queries in single-dataset mode)
+        dataset_ids: Optional list of dataset IDs for multi-dataset queries (overrides dataset_id)
+        dataset_names: Optional list of dataset names for multi-dataset header display
     """
     from collections import Counter
     from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
     from rich.table import Table
     from rich import box
     from .ansi import header, err, get_console, style_if_enabled
-    from .analysis import count_reviewed_in_scan
+    from .analysis import count_reviewed_in_dataset
     from .database import db_transaction, query_all
     from .parsing import is_ipv4, is_ipv6
 
-    if scan_id is None and not scan_ids:
-        err("Database scan_id is required for scan summary")
+    if dataset_id is None and not dataset_ids:
+        err("Database dataset_id is required for dataset summary")
         return
 
     _console_global = get_console()
 
-    # Build title: single scan uses scan_dir.name, multi-scan lists all names
-    is_multi = scan_ids and len(scan_ids) > 1
-    if is_multi and scan_names:
-        if len(scan_names) == 2:
-            title_names = f"{scan_names[0]} + {scan_names[1]}"
+    # Build title: single dataset uses dataset_dir.name, multi-dataset lists all names
+    is_multi = dataset_ids and len(dataset_ids) > 1
+    if is_multi and dataset_names:
+        if len(dataset_names) == 2:
+            title_names = f"{dataset_names[0]} + {dataset_names[1]}"
         else:
-            title_names = ", ".join(scan_names)
-        header(f"Scan Overview — {title_names}")
+            title_names = ", ".join(dataset_names)
+        header(f"Dataset Overview — {title_names}")
     else:
-        header(f"Scan Overview — {scan_dir.name}")
+        header(f"Dataset Overview — {dataset_dir.name}")
 
-    effective_scan_id = scan_id or (scan_ids[0] if scan_ids else 0)
-    total_files, reviewed_files = count_reviewed_in_scan(
-        scan_dir, scan_id=effective_scan_id, scan_ids=scan_ids if is_multi else None
+    effective_dataset_id = dataset_id or (dataset_ids[0] if dataset_ids else 0)
+    total_files, reviewed_files = count_reviewed_in_dataset(
+        dataset_dir,
+        dataset_id=effective_dataset_id,
+        dataset_ids=dataset_ids if is_multi else None,
     )
 
     # Query all host/port data from database
@@ -361,9 +363,9 @@ def show_scan_summary(
         task = progress.add_task("Querying database for overview...", total=None)
 
         with db_transaction() as conn:
-            # Get all host/port combinations for this scan (or all selected scans)
-            if is_multi and scan_ids:
-                id_placeholders = ",".join("?" * len(scan_ids))
+            # Get all host/port combinations for this dataset (or all selected datasets)
+            if is_multi and dataset_ids:
+                id_placeholders = ",".join("?" * len(dataset_ids))
                 rows = query_all(
                     conn,
                     f"""
@@ -371,19 +373,19 @@ def show_scan_summary(
                     FROM finding_affected_hosts fah
                     JOIN findings f ON fah.finding_id = f.finding_id
                     JOIN hosts h ON fah.host_id = h.host_id
-                    WHERE f.scan_id IN ({id_placeholders})
+                    WHERE f.dataset_id IN ({id_placeholders})
                     """,
-                    tuple(scan_ids),
+                    tuple(dataset_ids),
                 )
                 empty_files = query_all(
                     conn,
                     f"""
-                    SELECT DISTINCT f.plugin_id
+                    SELECT DISTINCT f.finding_type_id
                     FROM findings f
                     LEFT JOIN finding_affected_hosts fah ON f.finding_id = fah.finding_id
-                    WHERE f.scan_id IN ({id_placeholders}) AND fah.finding_id IS NULL
+                    WHERE f.dataset_id IN ({id_placeholders}) AND fah.finding_id IS NULL
                     """,
-                    tuple(scan_ids),
+                    tuple(dataset_ids),
                 )
             else:
                 rows = query_all(
@@ -393,9 +395,9 @@ def show_scan_summary(
                     FROM finding_affected_hosts fah
                     JOIN findings f ON fah.finding_id = f.finding_id
                     JOIN hosts h ON fah.host_id = h.host_id
-                    WHERE f.scan_id = ?
+                    WHERE f.dataset_id = ?
                     """,
-                    (effective_scan_id,),
+                    (effective_dataset_id,),
                 )
                 empty_files = query_all(
                     conn,
@@ -403,9 +405,9 @@ def show_scan_summary(
                     SELECT f.finding_id
                     FROM findings f
                     LEFT JOIN finding_affected_hosts fah ON f.finding_id = fah.finding_id
-                    WHERE f.scan_id = ? AND fah.finding_id IS NULL
+                    WHERE f.dataset_id = ? AND fah.finding_id IS NULL
                     """,
-                    (effective_scan_id,),
+                    (effective_dataset_id,),
                 )
             empties = len(empty_files)
 

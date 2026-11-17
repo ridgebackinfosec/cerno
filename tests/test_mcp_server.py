@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from cerno_pkg.config import CernoConfig
-from cerno_pkg.models import Finding, Host, Plugin, Port, Scan
+from cerno_pkg.models import Finding, Host, FindingType, Port, Dataset
 from cerno_pkg.mcp_server import build_server, server as mcp
 
 # ---------------------------------------------------------------------------
@@ -18,14 +18,18 @@ from cerno_pkg.mcp_server import build_server, server as mcp
 # ---------------------------------------------------------------------------
 
 
-def _seed_finding(conn, scan_id, plugin_id, hosts, ports, *, has_msf=False, severity=2):
-    Plugin(
-        plugin_id=plugin_id,
-        plugin_name=f"Plugin {plugin_id}",
+def _seed_finding(
+    conn, dataset_id, finding_type_id, hosts, ports, *, has_msf=False, severity=2
+):
+    FindingType(
+        finding_type_id=finding_type_id,
+        finding_type_name=f"FindingType {finding_type_id}",
         severity_int=severity,
         has_metasploit=has_msf,
     ).save(conn)
-    finding_id = Finding(scan_id=scan_id, plugin_id=plugin_id).save(conn)
+    finding_id = Finding(dataset_id=dataset_id, finding_type_id=finding_type_id).save(
+        conn
+    )
     for ip in hosts:
         host_id = Host.get_or_create(
             ip_address=ip, scan_target=ip, scan_target_type="ipv4", conn=conn
@@ -34,7 +38,7 @@ def _seed_finding(conn, scan_id, plugin_id, hosts, ports, *, has_msf=False, seve
             Port.get_or_create(port, conn=conn)
             conn.execute(
                 "INSERT OR IGNORE INTO finding_affected_hosts "
-                "(finding_id, host_id, port_number, plugin_output) VALUES (?, ?, ?, 'out')",
+                "(finding_id, host_id, port_number, evidence) VALUES (?, ?, ?, 'out')",
                 (finding_id, host_id, port),
             )
     conn.commit()
@@ -44,18 +48,20 @@ def _seed_finding(conn, scan_id, plugin_id, hosts, ports, *, has_msf=False, seve
 @pytest.fixture
 def seeded(temp_db):
     """One scan, two findings with hosts/ports."""
-    scan_id = Scan(scan_name="engagement", export_root="/tmp").save(temp_db)
+    dataset_id = Dataset(dataset_name="engagement", export_root="/tmp").save(temp_db)
     f1 = _seed_finding(
         temp_db,
-        scan_id,
+        dataset_id,
         "nessus:100",
         ["10.0.0.1", "10.0.0.2"],
         [445],
         has_msf=True,
         severity=4,
     )
-    f2 = _seed_finding(temp_db, scan_id, "nessus:200", ["10.0.0.1"], [22], severity=1)
-    return {"conn": temp_db, "scan_id": scan_id, "f1": f1, "f2": f2}
+    f2 = _seed_finding(
+        temp_db, dataset_id, "nessus:200", ["10.0.0.1"], [22], severity=1
+    )
+    return {"conn": temp_db, "dataset_id": dataset_id, "f1": f1, "f2": f2}
 
 
 # ---------------------------------------------------------------------------
@@ -76,7 +82,7 @@ def test_readonly_omits_execution_and_mutation_tools():
     assert "set_review_state" not in names
     assert "import_nessus" not in names
     assert "import_nuclei" not in names
-    assert "list_scans" in names
+    assert "list_datasets" in names
     assert "generate_nmap_cmd" in names
 
 
@@ -141,34 +147,34 @@ def test_gating_summary_reports_cred_and_batch_gates():
 
 
 @pytest.mark.integration
-def test_list_scans(seeded):
-    scans = mcp.tool_list_scans(conn=seeded["conn"])
-    assert len(scans) == 1
-    assert scans[0]["scan_name"] == "engagement"
-    assert scans[0]["total_findings"] == 2
+def test_list_datasets(seeded):
+    datasets = mcp.tool_list_datasets(conn=seeded["conn"])
+    assert len(datasets) == 1
+    assert datasets[0]["dataset_name"] == "engagement"
+    assert datasets[0]["total_findings"] == 2
 
 
 @pytest.mark.integration
 def test_list_findings_all(seeded):
-    findings = mcp.tool_list_findings([seeded["scan_id"]], conn=seeded["conn"])
-    assert {f["plugin_id"] for f in findings} == {"nessus:100", "nessus:200"}
+    findings = mcp.tool_list_findings([seeded["dataset_id"]], conn=seeded["conn"])
+    assert {f["finding_type_id"] for f in findings} == {"nessus:100", "nessus:200"}
 
 
 @pytest.mark.integration
 def test_list_findings_severity_filter(seeded):
     crit = mcp.tool_list_findings(
-        [seeded["scan_id"]], severity_int=4, conn=seeded["conn"]
+        [seeded["dataset_id"]], severity_int=4, conn=seeded["conn"]
     )
-    assert [f["plugin_id"] for f in crit] == ["nessus:100"]
+    assert [f["finding_type_id"] for f in crit] == ["nessus:100"]
     assert crit[0]["has_metasploit"] is True
 
 
 @pytest.mark.integration
 def test_list_findings_metasploit_filter(seeded):
     msf = mcp.tool_list_findings(
-        [seeded["scan_id"]], has_metasploit=True, conn=seeded["conn"]
+        [seeded["dataset_id"]], has_metasploit=True, conn=seeded["conn"]
     )
-    assert [f["plugin_id"] for f in msf] == ["nessus:100"]
+    assert [f["finding_type_id"] for f in msf] == ["nessus:100"]
 
 
 @pytest.mark.integration
@@ -291,23 +297,23 @@ def test_set_review_state_invalid_raises(seeded, state):
 
 @pytest.mark.integration
 def test_list_workflow_gaps_returns_unmapped_worst_first(seeded):
-    # Plugins 100 (Critical+MSF) and 200 (Low) are synthetic -- neither is in the
+    # Finding types 100 (Critical+MSF) and 200 (Low) are synthetic -- neither is in the
     # bundled workflow map, so both are gaps, worst-first.
     rows = mcp.tool_list_workflow_gaps(
-        scan_ids=[seeded["scan_id"]], conn=seeded["conn"]
+        dataset_ids=[seeded["dataset_id"]], conn=seeded["conn"]
     )
-    plugin_ids = [r["plugin_id"] for r in rows]
-    assert plugin_ids == ["nessus:100", "nessus:200"]
+    finding_type_ids = [r["finding_type_id"] for r in rows]
+    assert finding_type_ids == ["nessus:100", "nessus:200"]
     assert rows[0]["has_metasploit"] is True
-    assert rows[0]["scan_name"] == "engagement"
+    assert rows[0]["dataset_name"] == "engagement"
 
 
 @pytest.mark.integration
 def test_list_workflow_gaps_severity_min_filters(seeded):
     rows = mcp.tool_list_workflow_gaps(
-        scan_ids=[seeded["scan_id"]], severity_min=4, conn=seeded["conn"]
+        dataset_ids=[seeded["dataset_id"]], severity_min=4, conn=seeded["conn"]
     )
-    assert [r["plugin_id"] for r in rows] == ["nessus:100"]
+    assert [r["finding_type_id"] for r in rows] == ["nessus:100"]
 
 
 # ---------------------------------------------------------------------------
@@ -429,7 +435,7 @@ def test_execute_command_records_host_count_and_ports(seeded, tmp_path):
         tool_name="nmap",
         finding_id=seeded["f1"],
         # host_count is about line counting, not scope; 10.0.0.3 is outside the
-        # seeded scan hosts, so disable the scope guard for this focused test.
+        # seeded dataset hosts, so disable the scope guard for this focused test.
         config=CernoConfig(mcp_exec_allowlist=["python3"], mcp_enforce_scope=False),
         conn=seeded["conn"],
     )
@@ -504,12 +510,12 @@ def test_execute_command_no_output_flag_registers_nothing(seeded):
 @pytest.mark.integration
 def test_get_finding_detail(seeded):
     detail = mcp.tool_get_finding_detail(seeded["f1"], conn=seeded["conn"])
-    assert detail["plugin_id"] == "nessus:100"
+    assert detail["finding_type_id"] == "nessus:100"
     assert detail["severity_label"] == "Critical"
     assert detail["has_metasploit"] is True
-    # per-host plugin output present
+    # per-host finding_type output present
     assert detail["affected"]
-    assert all("plugin_output" in a for a in detail["affected"])
+    assert all("evidence" in a for a in detail["affected"])
     hosts = {a["host"] for a in detail["affected"]}
     assert hosts == {"10.0.0.1", "10.0.0.2"}
 
@@ -521,7 +527,7 @@ def test_get_finding_detail_unknown_raises(seeded):
 
 
 @pytest.mark.integration
-def test_list_hosts_cross_scan(seeded):
+def test_list_hosts_cross_dataset(seeded):
     hosts = mcp.tool_list_hosts(conn=seeded["conn"])
     ips = {h["ip_address"] for h in hosts}
     assert {"10.0.0.1", "10.0.0.2"} <= ips
@@ -532,8 +538,8 @@ def test_list_hosts_cross_scan(seeded):
 
 
 @pytest.mark.integration
-def test_list_hosts_scoped_to_scan(seeded):
-    hosts = mcp.tool_list_hosts(scan_id=seeded["scan_id"], conn=seeded["conn"])
+def test_list_hosts_scoped_to_dataset(seeded):
+    hosts = mcp.tool_list_hosts(dataset_id=seeded["dataset_id"], conn=seeded["conn"])
     assert {h["ip_address"] for h in hosts} == {"10.0.0.1", "10.0.0.2"}
 
 
@@ -586,47 +592,50 @@ def test_list_executions_and_artifacts(seeded):
 
 @pytest.mark.integration
 def test_list_cves(temp_db):
-    scan_id = Scan(scan_name="s", export_root="/tmp").save(temp_db)
-    Plugin(
-        plugin_id="nessus:1",
-        plugin_name="A",
+    dataset_id = Dataset(dataset_name="s", export_root="/tmp").save(temp_db)
+    FindingType(
+        finding_type_id="nessus:1",
+        finding_type_name="A",
         severity_int=4,
         cves=["CVE-2021-1", "CVE-2021-2"],
     ).save(temp_db)
-    Plugin(
-        plugin_id="nessus:2", plugin_name="B", severity_int=2, cves=["CVE-2021-2"]
+    FindingType(
+        finding_type_id="nessus:2",
+        finding_type_name="B",
+        severity_int=2,
+        cves=["CVE-2021-2"],
     ).save(temp_db)
-    Finding(scan_id=scan_id, plugin_id="nessus:1").save(temp_db)
-    Finding(scan_id=scan_id, plugin_id="nessus:2").save(temp_db)
+    Finding(dataset_id=dataset_id, finding_type_id="nessus:1").save(temp_db)
+    Finding(dataset_id=dataset_id, finding_type_id="nessus:2").save(temp_db)
     temp_db.commit()
 
-    cves = mcp.tool_list_cves([scan_id], conn=temp_db)
+    cves = mcp.tool_list_cves([dataset_id], conn=temp_db)
     by_cve = {c["cve"]: c for c in cves}
     assert set(by_cve) == {"CVE-2021-1", "CVE-2021-2"}
-    # CVE-2021-2 shared by both plugins
-    assert {p["plugin_id"] for p in by_cve["CVE-2021-2"]["plugins"]} == {
+    # CVE-2021-2 shared by both finding_types
+    assert {p["finding_type_id"] for p in by_cve["CVE-2021-2"]["finding_types"]} == {
         "nessus:1",
         "nessus:2",
     }
-    # severity filter keeps only critical plugin's CVEs
-    crit = mcp.tool_list_cves([scan_id], severity_int=4, conn=temp_db)
+    # severity filter keeps only critical finding_type's CVEs
+    crit = mcp.tool_list_cves([dataset_id], severity_int=4, conn=temp_db)
     assert {c["cve"] for c in crit} == {"CVE-2021-1", "CVE-2021-2"}
-    assert all(all(p["severity_int"] == 4 for p in c["plugins"]) for c in crit)
+    assert all(all(p["severity_int"] == 4 for p in c["finding_types"]) for c in crit)
 
 
 @pytest.mark.integration
 def test_list_services(temp_db):
-    scan_id = Scan(scan_name="s", export_root="/tmp").save(temp_db)
+    dataset_id = Dataset(dataset_name="s", export_root="/tmp").save(temp_db)
     host_id = Host.get_or_create("10.0.0.1", "10.0.0.1", "ipv4", conn=temp_db)
     Port.get_or_create(445, conn=temp_db)
     temp_db.execute(
-        "INSERT INTO host_services (scan_id, host_id, port_number, protocol, svc_name) "
+        "INSERT INTO host_services (dataset_id, host_id, port_number, protocol, svc_name) "
         "VALUES (?, ?, ?, 'tcp', 'cifs')",
-        (scan_id, host_id, 445),
+        (dataset_id, host_id, 445),
     )
     temp_db.commit()
 
-    services = mcp.tool_list_services(scan_id, conn=temp_db)
+    services = mcp.tool_list_services(dataset_id, conn=temp_db)
     assert services == [
         {"host": "10.0.0.1", "port": 445, "protocol": "tcp", "svc_name": "cifs"}
     ]
@@ -634,15 +643,15 @@ def test_list_services(temp_db):
 
 @pytest.mark.integration
 def test_generate_msf_search_uses_module_name(temp_db):
-    scan_id = Scan(scan_name="s", export_root="/tmp").save(temp_db)
-    Plugin(
-        plugin_id="nessus:5",
-        plugin_name="EternalBlue",
+    dataset_id = Dataset(dataset_name="s", export_root="/tmp").save(temp_db)
+    FindingType(
+        finding_type_id="nessus:5",
+        finding_type_name="EternalBlue",
         severity_int=4,
         has_metasploit=True,
         metasploit_names=["ms17_010_eternalblue"],
     ).save(temp_db)
-    fid = Finding(scan_id=scan_id, plugin_id="nessus:5").save(temp_db)
+    fid = Finding(dataset_id=dataset_id, finding_type_id="nessus:5").save(temp_db)
     temp_db.commit()
 
     out = mcp.tool_generate_msf_search(fid, conn=temp_db)
@@ -652,10 +661,12 @@ def test_generate_msf_search_uses_module_name(temp_db):
 
 
 @pytest.mark.integration
-def test_generate_msf_search_falls_back_to_plugin_name(temp_db):
-    scan_id = Scan(scan_name="s", export_root="/tmp").save(temp_db)
-    Plugin(plugin_id="nessus:6", plugin_name="SomePlugin", severity_int=2).save(temp_db)
-    fid = Finding(scan_id=scan_id, plugin_id="nessus:6").save(temp_db)
+def test_generate_msf_search_falls_back_to_finding_type_name(temp_db):
+    dataset_id = Dataset(dataset_name="s", export_root="/tmp").save(temp_db)
+    FindingType(
+        finding_type_id="nessus:6", finding_type_name="SomePlugin", severity_int=2
+    ).save(temp_db)
+    fid = Finding(dataset_id=dataset_id, finding_type_id="nessus:6").save(temp_db)
     temp_db.commit()
 
     out = mcp.tool_generate_msf_search(fid, conn=temp_db)
@@ -668,24 +679,24 @@ def test_generate_msf_search_falls_back_to_plugin_name(temp_db):
 
 
 @pytest.mark.integration
-def test_resource_scans_is_json(seeded):
+def test_resource_datasets_is_json(seeded):
     import json
 
-    data = json.loads(mcp.resource_scans(conn=seeded["conn"]))
-    assert data[0]["scan_name"] == "engagement"
+    data = json.loads(mcp.resource_datasets(conn=seeded["conn"]))
+    assert data[0]["dataset_name"] == "engagement"
 
 
 @pytest.mark.integration
 def test_resource_finding_output(seeded):
     text = mcp.resource_finding_output(seeded["f1"], conn=seeded["conn"])
-    assert "Plugin nessus:100" in text
+    assert "FindingType nessus:100" in text
     assert "10.0.0.1:445" in text
-    assert "out" in text  # the seeded plugin_output value
+    assert "out" in text  # the seeded evidence value
 
 
 @pytest.mark.integration
 def test_resource_finding_workflow_none(seeded):
-    # No workflow mapped for plugin 100 in the bundled YAML -> notice string.
+    # No workflow mapped for finding_type 100 in the bundled YAML -> notice string.
     text = mcp.resource_finding_workflow(seeded["f1"], conn=seeded["conn"])
     assert "No verification workflow" in text
 
@@ -697,16 +708,19 @@ def test_resource_finding_output_unknown_raises(seeded):
 
 
 @pytest.mark.integration
-def test_resource_scan_cves(temp_db):
+def test_resource_dataset_cves(temp_db):
     import json
 
-    scan_id = Scan(scan_name="s", export_root="/tmp").save(temp_db)
-    Plugin(
-        plugin_id="nessus:1", plugin_name="A", severity_int=4, cves=["CVE-2021-1"]
+    dataset_id = Dataset(dataset_name="s", export_root="/tmp").save(temp_db)
+    FindingType(
+        finding_type_id="nessus:1",
+        finding_type_name="A",
+        severity_int=4,
+        cves=["CVE-2021-1"],
     ).save(temp_db)
-    Finding(scan_id=scan_id, plugin_id="nessus:1").save(temp_db)
+    Finding(dataset_id=dataset_id, finding_type_id="nessus:1").save(temp_db)
     temp_db.commit()
-    data = json.loads(mcp.resource_scan_cves(scan_id, conn=temp_db))
+    data = json.loads(mcp.resource_dataset_cves(dataset_id, conn=temp_db))
     assert data[0]["cve"] == "CVE-2021-1"
 
 
@@ -718,7 +732,7 @@ def test_resource_scan_cves(temp_db):
 @pytest.mark.integration
 def test_prompt_triage_finding(seeded):
     text = mcp.prompt_triage_finding(seeded["f1"], conn=seeded["conn"])
-    assert "Plugin nessus:100" in text  # finding context
+    assert "FindingType nessus:100" in text  # finding context
     assert "10.0.0.1" in text  # affected host
     assert "past tense" in text  # REPORT_BRIEF_QUERY snippet
 
@@ -726,14 +740,14 @@ def test_prompt_triage_finding(seeded):
 @pytest.mark.integration
 def test_prompt_exploit_plan(seeded):
     text = mcp.prompt_exploit_plan(seeded["f1"], conn=seeded["conn"])
-    assert "Plugin nessus:100" in text
+    assert "FindingType nessus:100" in text
     assert "fastest viable path" in text
 
 
 @pytest.mark.integration
 def test_prompt_triage_scope(seeded):
-    text = mcp.prompt_triage_scope(seeded["scan_id"], conn=seeded["conn"])
-    assert "engagement" in text  # scope description names the scan
+    text = mcp.prompt_triage_scope(seeded["dataset_id"], conn=seeded["conn"])
+    assert "engagement" in text  # scope description names the dataset
     assert "past tense" in text
 
 
@@ -760,7 +774,7 @@ def test_resources_and_prompts_registered():
     }
     prompts = {p.name for p in loop.run_until_complete(s.list_prompts())}
 
-    assert "cerno://scans" in static
+    assert "cerno://datasets" in static
     assert "cerno://finding/{finding_id}/output" in templates
     assert {"triage_finding", "exploit_plan", "triage_scope"} <= prompts
 
@@ -772,19 +786,25 @@ def test_resources_and_prompts_registered():
 
 @pytest.mark.integration
 def test_find_affected_by_cve_exact_match(temp_db):
-    scan_id = Scan(scan_name="s", export_root="/tmp").save(temp_db)
-    Plugin(
-        plugin_id="nessus:1", plugin_name="A", severity_int=4, cves=["CVE-2021-1"]
+    dataset_id = Dataset(dataset_name="s", export_root="/tmp").save(temp_db)
+    FindingType(
+        finding_type_id="nessus:1",
+        finding_type_name="A",
+        severity_int=4,
+        cves=["CVE-2021-1"],
     ).save(temp_db)
-    Plugin(
-        plugin_id="nessus:2", plugin_name="B", severity_int=2, cves=["CVE-2021-10"]
+    FindingType(
+        finding_type_id="nessus:2",
+        finding_type_name="B",
+        severity_int=2,
+        cves=["CVE-2021-10"],
     ).save(temp_db)
-    f1 = Finding(scan_id=scan_id, plugin_id="nessus:1").save(temp_db)
-    Finding(scan_id=scan_id, plugin_id="nessus:2").save(temp_db)
+    f1 = Finding(dataset_id=dataset_id, finding_type_id="nessus:1").save(temp_db)
+    Finding(dataset_id=dataset_id, finding_type_id="nessus:2").save(temp_db)
     host_id = Host.get_or_create("10.0.0.9", "10.0.0.9", "ipv4", conn=temp_db)
     Port.get_or_create(443, conn=temp_db)
     temp_db.execute(
-        "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, plugin_output) "
+        "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, evidence) "
         "VALUES (?, ?, 443, 'x')",
         (f1, host_id),
     )
@@ -792,22 +812,25 @@ def test_find_affected_by_cve_exact_match(temp_db):
 
     # Case-insensitive, and must NOT match CVE-2021-10
     res = mcp.tool_find_affected_by_cve("cve-2021-1", conn=temp_db)
-    assert [r["plugin_id"] for r in res] == ["nessus:1"]
+    assert [r["finding_type_id"] for r in res] == ["nessus:1"]
     assert "10.0.0.9:443" in res[0]["hosts"]
 
 
 @pytest.mark.integration
-def test_find_affected_by_cve_scan_filter(temp_db):
-    s1 = Scan(scan_name="s1", export_root="/tmp").save(temp_db)
-    s2 = Scan(scan_name="s2", export_root="/tmp").save(temp_db)
-    Plugin(
-        plugin_id="nessus:1", plugin_name="A", severity_int=4, cves=["CVE-2021-1"]
+def test_find_affected_by_cve_dataset_filter(temp_db):
+    s1 = Dataset(dataset_name="s1", export_root="/tmp").save(temp_db)
+    s2 = Dataset(dataset_name="s2", export_root="/tmp").save(temp_db)
+    FindingType(
+        finding_type_id="nessus:1",
+        finding_type_name="A",
+        severity_int=4,
+        cves=["CVE-2021-1"],
     ).save(temp_db)
-    Finding(scan_id=s1, plugin_id="nessus:1").save(temp_db)
-    Finding(scan_id=s2, plugin_id="nessus:1").save(temp_db)
+    Finding(dataset_id=s1, finding_type_id="nessus:1").save(temp_db)
+    Finding(dataset_id=s2, finding_type_id="nessus:1").save(temp_db)
     temp_db.commit()
-    res = mcp.tool_find_affected_by_cve("CVE-2021-1", scan_ids=[s2], conn=temp_db)
-    assert [r["scan_id"] for r in res] == [s2]
+    res = mcp.tool_find_affected_by_cve("CVE-2021-1", dataset_ids=[s2], conn=temp_db)
+    assert [r["dataset_id"] for r in res] == [s2]
 
 
 # ---------------------------------------------------------------------------
@@ -940,7 +963,7 @@ def test_core_read_tools_have_output_schema():
     loop = asyncio.new_event_loop()
     tools = {t.name: t for t in loop.run_until_complete(s.list_tools())}
     for name in [
-        "list_scans",
+        "list_datasets",
         "list_findings",
         "get_finding_detail",
         "list_services",
@@ -956,27 +979,142 @@ def test_core_read_tools_have_output_schema():
 
 @pytest.mark.integration
 def test_list_findings_limit_and_offset(seeded):
-    first = mcp.tool_list_findings([seeded["scan_id"]], limit=1, conn=seeded["conn"])
+    first = mcp.tool_list_findings([seeded["dataset_id"]], limit=1, conn=seeded["conn"])
     assert len(first) == 1
     second = mcp.tool_list_findings(
-        [seeded["scan_id"]], limit=1, offset=1, conn=seeded["conn"]
+        [seeded["dataset_id"]], limit=1, offset=1, conn=seeded["conn"]
     )
     assert len(second) == 1
-    assert first[0]["plugin_id"] != second[0]["plugin_id"]
+    assert first[0]["finding_type_id"] != second[0]["finding_type_id"]
 
 
 @pytest.mark.integration
-def test_list_findings_merged_dedups_by_plugin(temp_db):
-    # Same plugin present in two scans → merged yields one representative row.
-    s1 = Scan(scan_name="s1", export_root="/tmp").save(temp_db)
-    s2 = Scan(scan_name="s2", export_root="/tmp").save(temp_db)
+def test_list_findings_merged_dedups_by_finding_type(temp_db):
+    # Same finding_type present in two datasets → merged yields one representative row.
+    s1 = Dataset(dataset_name="s1", export_root="/tmp").save(temp_db)
+    s2 = Dataset(dataset_name="s2", export_root="/tmp").save(temp_db)
     _seed_finding(temp_db, s1, "nessus:500", ["10.0.0.1"], [445], severity=4)
     _seed_finding(temp_db, s2, "nessus:500", ["10.0.0.2"], [445], severity=4)
     concat = mcp.tool_list_findings([s1, s2], conn=temp_db)
     assert len(concat) == 2  # two distinct finding_ids
     merged = mcp.tool_list_findings([s1, s2], merged=True, conn=temp_db)
     assert len(merged) == 1
-    assert merged[0]["plugin_id"] == "nessus:500"
+    assert merged[0]["finding_type_id"] == "nessus:500"
+
+
+@pytest.mark.integration
+def test_list_workflow_gaps_default_scope_dedups_by_finding_type(temp_db):
+    """The default scope is None, and this tool hardcodes ``merged=True``.
+
+    Its description promises "one representative row per unmapped
+    finding_type", and both tests above it pass an explicit single-dataset
+    scope -- so the path every agent actually takes was covered by nothing and
+    returned one row per dataset. On the demo data that was 55 rows for 48
+    finding types.
+    """
+    s1 = Dataset(dataset_name="s1", export_root="/tmp").save(temp_db)
+    s2 = Dataset(dataset_name="s2", export_root="/tmp").save(temp_db)
+    _seed_finding(temp_db, s1, "nessus:500", ["10.0.0.1"], [445], severity=4)
+    _seed_finding(temp_db, s2, "nessus:500", ["10.0.0.2"], [445], severity=4)
+    rows = mcp.tool_list_workflow_gaps(conn=temp_db)
+    assert [r["finding_type_id"] for r in rows] == ["nessus:500"]
+
+
+@pytest.mark.integration
+def test_list_findings_keeps_the_worst_on_the_first_page(temp_db):
+    """A page cut short by ``limit`` must keep the Criticals.
+
+    Rows came back ordered by finding type id, and prefixes sort
+    alphabetically, so ``burp:`` outranked ``nessus:`` and ``nuclei:``
+    regardless of severity: on the demo data list_findings(limit=8) returned
+    eight burp rows and none of the six Criticals that query_findings returned
+    for the same scope, merged and limit.
+    """
+    dataset_id = Dataset(dataset_name="s1", export_root="/tmp").save(temp_db)
+    for ref in ("00100200", "00200300", "00300100"):
+        _seed_finding(
+            temp_db, dataset_id, f"burp:{ref}", ["10.0.0.1"], [443], severity=0
+        )
+    _seed_finding(
+        temp_db, dataset_id, "nuclei:CVE-2021-44228", ["10.0.0.2"], [8080], severity=4
+    )
+
+    page = mcp.tool_list_findings([dataset_id], limit=2, conn=temp_db)
+    assert [r["severity_int"] for r in page] == [4, 0]
+    assert page[0]["finding_type_id"] == "nuclei:CVE-2021-44228"
+
+
+@pytest.mark.integration
+def test_search_findings_keeps_the_worst_on_the_first_page(temp_db):
+    """Same defect, worse: this one truncated by dataset-iteration order.
+
+    It returned from inside the per-dataset loop as soon as it had ``limit``
+    rows, so the page held whichever findings the first dataset happened to
+    yield -- on the demo data, five Info and Low rows out of a result whose
+    highest severity was High.
+
+    The Critical goes in the dataset visited **last**: ``get_all_with_stats``
+    orders by ``dataset_id DESC``, so seeding it in the first-visited dataset
+    hides the defect by accident, which is how the first draft of this test
+    passed against the unfixed code.
+    """
+    s1 = Dataset(dataset_name="s1", export_root="/tmp").save(temp_db)
+    s2 = Dataset(dataset_name="s2", export_root="/tmp").save(temp_db)
+    for ref in ("00100200", "00200300"):
+        _seed_finding(temp_db, s2, f"burp:{ref}", ["10.0.0.2"], [443], severity=0)
+    _seed_finding(temp_db, s1, "nessus:11936", ["10.0.0.1"], [445], severity=4)
+
+    page = mcp.tool_search_findings(limit=1, conn=temp_db)
+    assert [r["finding_type_id"] for r in page] == ["nessus:11936"]
+
+
+@pytest.mark.integration
+def test_list_and_query_findings_agree_page_for_page(temp_db):
+    """Two routes to the same page must agree in sequence, not just as sets.
+
+    The set-equality test below passed while the two tools' first pages had
+    nothing in common, because only query_findings ordered worst-first. The
+    sequence is the invariant that catches an ordering divergence.
+    """
+    s1 = Dataset(dataset_name="s1", export_root="/tmp").save(temp_db)
+    s2 = Dataset(dataset_name="s2", export_root="/tmp").save(temp_db)
+    _seed_finding(temp_db, s1, "burp:00100200", ["10.0.0.1"], [443], severity=0)
+    _seed_finding(temp_db, s1, "nessus:9", ["10.0.0.1"], [445], severity=3)
+    _seed_finding(temp_db, s1, "nessus:10114", ["10.0.0.1"], [445], severity=3)
+    _seed_finding(temp_db, s2, "nessus:9", ["10.0.0.2"], [445], severity=3)
+    _seed_finding(
+        temp_db, s2, "nuclei:CVE-2021-44228", ["10.0.0.2"], [8080], severity=4
+    )
+
+    for limit in (1, 2, 3, 500):
+        listed = mcp.tool_list_findings(
+            [s1, s2], merged=True, limit=limit, conn=temp_db
+        )
+        queried = mcp.tool_query_findings(merged=True, limit=limit, conn=temp_db)
+        assert [r["finding_type_id"] for r in listed] == [
+            r["finding_type_id"] for r in queried
+        ], f"pages diverge at limit={limit}"
+
+
+@pytest.mark.integration
+def test_query_and_list_findings_agree_when_merged(temp_db):
+    """Two routes to the same merged answer must agree.
+
+    This is the class an external MCP client audit found, and that no
+    single-call test can see: ``list_findings`` requires a scope while
+    ``query_findings`` defaults to every dataset, so only a caller comparing
+    both answers notices that one deduplicated and the other did not.
+    """
+    s1 = Dataset(dataset_name="s1", export_root="/tmp").save(temp_db)
+    s2 = Dataset(dataset_name="s2", export_root="/tmp").save(temp_db)
+    _seed_finding(temp_db, s1, "nessus:500", ["10.0.0.1"], [445], severity=4)
+    _seed_finding(temp_db, s2, "nessus:500", ["10.0.0.2"], [445], severity=4)
+    _seed_finding(temp_db, s2, "nuclei:tech-detect", ["10.0.0.2"], [443], severity=1)
+    listed = mcp.tool_list_findings([s1, s2], merged=True, conn=temp_db)
+    queried = mcp.tool_query_findings(merged=True, conn=temp_db)
+    assert sorted(r["finding_type_id"] for r in listed) == sorted(
+        r["finding_type_id"] for r in queried
+    )
 
 
 @pytest.mark.integration
@@ -991,11 +1129,13 @@ def test_get_finding_detail_truncates(seeded):
 
 
 @pytest.mark.integration
-def test_search_findings_cross_scan(seeded):
+def test_search_findings_cross_dataset(seeded):
     hits = mcp.tool_search_findings(severity_int=4, conn=seeded["conn"])
-    assert [h["plugin_id"] for h in hits] == ["nessus:100"]
-    assert hits[0]["scan_name"] == "engagement"
-    none = mcp.tool_search_findings(plugin_name="no-such-plugin", conn=seeded["conn"])
+    assert [h["finding_type_id"] for h in hits] == ["nessus:100"]
+    assert hits[0]["dataset_name"] == "engagement"
+    none = mcp.tool_search_findings(
+        finding_type_name="no-such-finding_type", conn=seeded["conn"]
+    )
     assert none == []
 
 
@@ -1248,10 +1388,46 @@ def test_get_capabilities_reports_batch_state():
     assert caps["batch_concurrency"] == 3
 
 
+@pytest.mark.unit
+def test_get_capabilities_identifies_the_build():
+    """A client must be able to say which build it observed.
+
+    Nothing in the MCP surface identified the server until 4.0.0 -- not
+    get_capabilities, get_config, the instructions string or any resource. A
+    re-audit consequently reported six freshly corrected tool descriptions as
+    stale, having read a cached ``tools/list``, and no field existed with which
+    to catch it. Compared against the live values, never literals, so a version
+    bump cannot break this test.
+    """
+    from cerno_pkg._version import get_version
+    from cerno_pkg.database import SCHEMA_VERSION
+
+    caps = mcp.tool_get_capabilities(CernoConfig())
+    assert caps["cerno_version"] == get_version()
+    assert caps["schema_version"] == SCHEMA_VERSION
+
+
+@pytest.mark.unit
+def test_instructions_identify_the_build_and_both_exec_tools():
+    """The handshake names the build, and tells the two runners apart.
+
+    With execution gated off, neither ``execute_command`` nor
+    ``start_execution`` is registered, so the instructions string is the *only*
+    place either is described -- and it used to pair them with a bare slash,
+    which an auditing client read as two names for one tool.
+    """
+    from cerno_pkg._version import get_version
+
+    text = mcp.build_server_instructions(CernoConfig())
+    assert get_version() in text
+    assert "execute_command" in text and "start_execution" in text
+    assert "synchronous" in text and "asynchronous" in text
+
+
 @pytest.mark.integration
-def test_triage_scope_multi_scan(temp_db):
-    s1 = Scan(scan_name="alpha", export_root="/tmp").save(temp_db)
-    s2 = Scan(scan_name="beta", export_root="/tmp").save(temp_db)
+def test_triage_scope_multi_dataset(temp_db):
+    s1 = Dataset(dataset_name="alpha", export_root="/tmp").save(temp_db)
+    s2 = Dataset(dataset_name="beta", export_root="/tmp").save(temp_db)
     _seed_finding(temp_db, s1, "nessus:700", ["10.0.0.1"], [445], severity=4)
     _seed_finding(temp_db, s2, "nessus:800", ["10.0.0.2"], [22], severity=3)
     text = mcp.prompt_triage_scope([s1, s2], conn=temp_db)
@@ -1274,7 +1450,7 @@ def _attributed_run(conn, fid, command, exit_code=0):
 
 @pytest.fixture
 def contrib(seeded, tmp_path):
-    """Seeded finding f1 (plugin 100, unmapped) with one attributed nmap run."""
+    """Seeded finding f1 (finding_type 100, unmapped) with one attributed nmap run."""
     _attributed_run(
         seeded["conn"],
         seeded["f1"],
@@ -1335,7 +1511,7 @@ class TestWorkflowContribution:
         cand = mcp.tool_get_workflow_candidate(
             fid, also_covers=["nuclei:tls-version"], config=cfg, conn=c
         )
-        assert cand["workflow"]["finding_id"] == "nessus:100,nuclei:tls-version"
+        assert cand["workflow"]["finding_type_id"] == "nessus:100,nuclei:tls-version"
         assert any("same issue" in h for h in cand["review_hints"])
 
     def test_also_covers_rejects_an_unprefixed_id(self, contrib):
@@ -1422,7 +1598,7 @@ class TestWorkflowContribution:
                     "version": "1.0",
                     "workflows": [
                         {
-                            "finding_id": "nessus:100",
+                            "finding_type_id": "nessus:100",
                             "workflow_name": "local",
                             "description": "d",
                             "steps": [
@@ -1457,7 +1633,7 @@ class TestWorkflowContribution:
 
     def test_anonymous_username_does_not_block_export(self, contrib, monkeypatch):
         """Regression: a nxc cred username 'anonymous' (anon-FTP) must not block a
-        workflow whose plugin-derived name/description say 'Anonymous'."""
+        workflow whose finding_type-derived name/description say 'Anonymous'."""
         monkeypatch.setattr(
             mcp, "_nxc_leak_material", lambda cfg: (["anonymous"], [], ["anonymous"])
         )
@@ -1483,7 +1659,7 @@ class TestWorkflowContribution:
         monkeypatch.setattr(
             mcp,
             "_nxc_leak_material",
-            lambda cfg: (["svc_scan"], ["ACME"], ["Winter2026!"]),
+            lambda cfg: (["svc_dataset"], ["ACME"], ["Winter2026!"]),
         )
         c, fid, cfg = contrib["conn"], contrib["f1"], contrib["cfg"]
         mcp.tool_set_finding_verdict(fid, "confirmed", conn=c, config=cfg)
@@ -1550,7 +1726,7 @@ class TestNxcLeakMaterial:
 
 @pytest.mark.integration
 def test_scope_allows_in_scope_ip(seeded):
-    """An IP belonging to the seeded scan hosts runs without error."""
+    """An IP belonging to the seeded dataset hosts runs without error."""
     out = mcp.tool_execute_command(
         ["python3", "-c", "print(1)", "10.0.0.1"],
         config=CernoConfig(mcp_exec_allowlist=["python3"]),
@@ -1804,36 +1980,36 @@ class TestToolImportNuclei:
         monkeypatch.setattr(database, "DATABASE_PATH", dbfile)
         database.initialize_database(dbfile)
         monkeypatch.setattr(
-            "cerno_pkg.constants.SCANS_ROOT", tmp_path / "scans", raising=False
+            "cerno_pkg.constants.DATASETS_ROOT", tmp_path / "datasets", raising=False
         )
         return dbfile
 
     def test_imports_the_json_array_shape(self):
         out = mcp.tool_import_nuclei(
-            str(NUCLEI_FIXTURES / "web_scan.json"), scan_name="web"
+            str(NUCLEI_FIXTURES / "web_scan.json"), dataset_name="web"
         )
-        assert out["scan_name"] == "web"
-        assert out["plugins_exported"] == 20
+        assert out["dataset_name"] == "web"
+        assert out["finding_types_exported"] == 20
         assert out["total_hosts"] == 20
         assert out["severities"] == {0: 20}
 
     def test_imports_the_jsonl_shape(self):
         out = mcp.tool_import_nuclei(
-            str(NUCLEI_FIXTURES / "web_scan.jsonl"), scan_name="web-jsonl"
+            str(NUCLEI_FIXTURES / "web_scan.jsonl"), dataset_name="web-jsonl"
         )
-        assert out["plugins_exported"] == 20
+        assert out["finding_types_exported"] == 20
 
-    def test_scan_name_defaults_to_the_file_stem(self):
+    def test_dataset_name_defaults_to_the_file_stem(self):
         out = mcp.tool_import_nuclei(str(NUCLEI_FIXTURES / "web_scan.json"))
-        assert out["scan_name"] == "web_scan"
+        assert out["dataset_name"] == "web_scan"
 
     def test_min_severity_is_honored(self):
         out = mcp.tool_import_nuclei(
             str(NUCLEI_FIXTURES / "web_scan.json"),
-            scan_name="filtered",
+            dataset_name="filtered",
             min_severity=3,
         )
-        assert out["plugins_exported"] == 0
+        assert out["finding_types_exported"] == 0
 
     def test_missing_file_raises_a_readable_error(self):
         with pytest.raises(ValueError, match="No such file"):
@@ -1847,6 +2023,6 @@ class TestToolImportNuclei:
 
     def test_malformed_file_imports_nothing_without_raising(self):
         out = mcp.tool_import_nuclei(
-            str(NUCLEI_FIXTURES / "malformed.json"), scan_name="bad"
+            str(NUCLEI_FIXTURES / "malformed.json"), dataset_name="bad"
         )
-        assert out["plugins_exported"] == 0
+        assert out["finding_types_exported"] == 0

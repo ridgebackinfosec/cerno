@@ -1,7 +1,7 @@
-# Cerno Demo Scans
+# Cerno Demo Datasets
 
 This directory contains synthetic scanner exports for demos, screenshots, and
-first-time exploration — two Nessus scans and two matching nuclei scans, so
+first-time exploration — two Nessus scans and two matching nuclei datasets, so
 `cerno demo` exercises both import paths:
 
 - `cerno-demo-initial.nessus` - smaller baseline scan for first import and
@@ -39,11 +39,11 @@ cerno demo
 cerno review
 ```
 
-To demonstrate cross-scan comparison, within each source:
+To demonstrate cross-dataset comparison, within each source:
 
 ```bash
-cerno scan compare Cerno_Demo_Initial_Scan Cerno_Demo_Expanded_Scan
-cerno scan compare Cerno_Demo_Nuclei_Initial_Scan Cerno_Demo_Nuclei_Expanded_Scan
+cerno dataset compare Cerno_Demo_Initial Cerno_Demo_Expanded
+cerno dataset compare Cerno_Demo_Nuclei_Initial Cerno_Demo_Nuclei_Expanded
 ```
 
 Comparing *across* sources is refused by design: finding IDs are namespaced per
@@ -55,36 +55,36 @@ where the source changes, because a 5-finding Nessus scan followed by a
 1-finding nuclei scan is not four findings remediated.
 
 ```bash
-cerno scan history 198.51.100.10
+cerno dataset history 198.51.100.10
 ```
 
-<!-- BEGIN GENERATED: scan-history -->
+<!-- BEGIN GENERATED: dataset-history -->
 ```text
 ╭──────────────────────────────────────── Host Vulnerability History ────────────────────────────────────────╮
 │  IP Address: 198.51.100.10                                                                                 │
 │  Scan Target: 198.51.100.10                                                                                │
 │  First Seen: 2026-01-01                                                                                    │
 │  Last Seen: 2026-01-01                                                                                     │
-│  Total Scans: 5                                                                                            │
+│  Total Datasets: 5                                                                                         │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 
-                                                Scan Timeline                                                 
-╭──────────────────────────────┬────────┬────────────┬───────┬──────────┬──────┬────────┬─────┬──────┬───────╮
-│ Scan Name                    │ Source │ Date       │ Total │ Critical │ High │ Medium │ Low │ Info │ Trend │
-├──────────────────────────────┼────────┼────────────┼───────┼──────────┼──────┼────────┼─────┼──────┼───────┤
-│ Cerno_Demo_Initial_Scan      │ nessus │ 2026-01-01 │     5 │        - │    - │      3 │   1 │    1 │       │
-│ Cerno_Demo_Expanded_Scan     │ nessus │ 2026-01-01 │     5 │        - │    - │      3 │   1 │    1 │   =   │
-│ Cerno_Demo_Nuclei_Initial_S… │ nuclei │ 2026-01-01 │     7 │        - │    - │      - │   1 │    6 │  n/a  │
-│ Cerno_Demo_Nuclei_Expanded_… │ nuclei │ 2026-01-01 │     7 │        - │    - │      - │   1 │    6 │   =   │
-│ Cerno_Demo_Burp_Scan         │ burp   │ 2026-01-01 │     3 │        - │    1 │      - │   - │    2 │  n/a  │
-╰──────────────────────────────┴────────┴────────────┴───────┴──────────┴──────┴────────┴─────┴──────┴───────╯
+                                              Dataset Timeline                                              
+╭────────────────────────────┬────────┬────────────┬───────┬──────────┬──────┬────────┬─────┬──────┬───────╮
+│ Dataset Name               │ Source │ Date       │ Total │ Critical │ High │ Medium │ Low │ Info │ Trend │
+├────────────────────────────┼────────┼────────────┼───────┼──────────┼──────┼────────┼─────┼──────┼───────┤
+│ Cerno_Demo_Initial         │ nessus │ 2026-01-01 │     5 │        - │    - │      3 │   1 │    1 │       │
+│ Cerno_Demo_Expanded        │ nessus │ 2026-01-01 │     5 │        - │    - │      3 │   1 │    1 │   =   │
+│ Cerno_Demo_Nuclei_Initial  │ nuclei │ 2026-01-01 │     7 │        - │    - │      - │   1 │    6 │  n/a  │
+│ Cerno_Demo_Nuclei_Expanded │ nuclei │ 2026-01-01 │     7 │        - │    - │      - │   1 │    6 │   =   │
+│ Cerno_Demo_Burp            │ burp   │ 2026-01-01 │     3 │        - │    1 │      - │   - │    2 │  n/a  │
+╰────────────────────────────┴────────┴────────────┴───────┴──────────┴──────┴────────┴─────┴──────┴───────╯
 
-Overall trend: not shown - this host's scans come from different sources (burp, nessus, nuclei), which count different things. Compare scans from one source.
+Overall trend: not shown - this host's datasets come from different sources (burp, nessus, nuclei), which count different things. Compare datasets from one source.
 ```
-<!-- END GENERATED: scan-history -->
+<!-- END GENERATED: dataset-history -->
 
 To review both scanners together, run `cerno review` and select a Nessus and a
-nuclei scan at the prompt (e.g. `2,4`).
+nuclei dataset at the prompt (e.g. `2,4`).
 
 To demonstrate NetExec enrichment with the expanded scan:
 
@@ -97,10 +97,10 @@ cerno review
 Open an SMB, SSH, FTP, VNC, LDAP, or RDP finding and press `[N]` for the per-host NetExec
 breakdown.
 
-`cerno demo` imports all four demo scans (two Nessus, two nuclei) and sets
+`cerno demo` imports all four demo datasets (two Nessus, two nuclei) and sets
 `nxc_workspace_path` to the bundled synthetic NetExec workspace. Use `cerno demo --no-nxc` to skip NetExec
 configuration or `cerno demo --overwrite` to replace previously imported demo
-scans if the fixture content changed.
+datasets if the fixture content changed.
 
 `cerno demo` reads these files from `docs/demo/` in a source checkout and falls
 back to the identical packaged copy in `cerno_pkg/demo/` (used by pipx/pip
@@ -136,10 +136,10 @@ Two deliberate differences from a raw `nuclei -je` file:
 ## Demo Coverage
 
 The initial Nessus scan imports as 5 synthetic hosts and 11 Cerno findings; the
-expanded one as 42 hosts and 45 findings. The nuclei scans add 9 and 17 findings
+expanded one as 42 hosts and 45 findings. The nuclei datasets add 9 and 17 findings
 respectively, **without adding a single host row** — they target the same
 host:port pairs, so both scanners' findings hang off the same hosts. Together
-they make `cerno scan compare` useful while keeping the first review
+they make `cerno dataset compare` useful while keeping the first review
 approachable.
 
 ### What The Two Scanners Show Together
@@ -161,10 +161,10 @@ running at all:
 | `nessus:40984` Web Server Directory Enumeration | `robots-txt` |
 
 **The same evidence, two scanner models.** On each of the six `203.0.113.8x`
-shop hosts, Nessus reports three separate plugins — `nessus:84502` HSTS Not Enforced,
+shop hosts, Nessus reports three separate finding_types — `nessus:84502` HSTS Not Enforced,
 `nessus:85601` X-Frame-Options Not Set, `nessus:98033` CSP Not Set. nuclei reports all three as
 *matcher names on one* `http-missing-security-headers` finding, which Cerno
-merges into a single host:port row's plugin output. Open that finding on
+merges into a single host:port row's evidence. Open that finding on
 `203.0.113.80` to see both shapes side by side.
 
 **What only nuclei found** — the reason to run both:
@@ -187,7 +187,7 @@ merges into a single host:port row's plugin output. Open that finding on
   signing covering SMB share and MS17-010 findings, and web-header findings
   covering cookie flag findings.
 - CVE tags for bulk CVE extraction.
-- Plugin output on affected hosts for finding detail views.
+- FindingType output on affected hosts for finding detail views.
 - Synthetic Metasploit module mappings for Telnet, VNC, MS17-010, Shellshock,
   and Tomcat search demos.
 - Synthetic NetExec data for SMB signing, share access, domain credentials,

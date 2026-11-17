@@ -12,7 +12,10 @@ If you intentionally change the MCP surface, update ``EXPECTED_TOOLS`` /
 ``EXPECTED_*`` below in the same PR — that failure is the tripwire working.
 """
 
+from cerno_pkg.constants import SOURCE_OPERATOR
+
 import asyncio
+import json
 import sqlite3
 
 import pytest
@@ -22,7 +25,7 @@ import cerno_pkg.database as database
 from cerno_pkg.config import CernoConfig
 from cerno_pkg.constants import reset_results_root_cache
 from cerno_pkg.mcp_server import build_server, server as mcp
-from cerno_pkg.models import Finding, Host, Plugin, Port, Scan
+from cerno_pkg.models import Finding, Host, FindingType, Port, Dataset
 
 # ---------------------------------------------------------------------------
 # Frozen MCP surface (tripwire). Update deliberately when changing the server.
@@ -30,7 +33,7 @@ from cerno_pkg.models import Finding, Host, Plugin, Port, Scan
 
 EXPECTED_TOOLS = {
     # read (always on)
-    "list_scans",
+    "list_datasets",
     "list_findings",
     "get_finding_detail",
     "get_finding_hosts",
@@ -40,7 +43,7 @@ EXPECTED_TOOLS = {
     "list_cves",
     "find_affected_by_cve",
     "host_history",
-    "compare_scans",
+    "compare_datasets",
     "get_workflow",
     "check_tools",
     "list_executions",
@@ -84,10 +87,10 @@ EXPECTED_TOOLS = {
     "set_finding_verdict",  # mcp_allow_mutations
     "reveal_credential",  # mcp_allow_cred_reveal
 }
-EXPECTED_STATIC_RESOURCES = {"cerno://scans", "cerno://config"}
+EXPECTED_STATIC_RESOURCES = {"cerno://datasets", "cerno://config"}
 EXPECTED_RESOURCE_TEMPLATES = {
-    "cerno://scan/{scan_id}/hosts",
-    "cerno://scan/{scan_id}/cves",
+    "cerno://dataset/{dataset_id}/hosts",
+    "cerno://dataset/{dataset_id}/cves",
     "cerno://finding/{finding_id}/output",
     "cerno://finding/{finding_id}/workflow",
     "cerno://finding/{finding_id}/verdict",
@@ -101,14 +104,14 @@ EXPECTED_PROMPTS = {"triage_finding", "exploit_plan", "triage_scope", "verify_fi
 # add_note, import_nessus, import_nuclei, import_burp, create_finding,
 # reveal_credential).
 EXPECTED_READONLY_TOOLS = {
-    "list_scans",
+    "list_datasets",
     "list_findings",
     "search_findings",
     "query_findings",
     "get_finding_hosts",
     "get_web_targets",
     "host_history",
-    "compare_scans",
+    "compare_datasets",
     "get_workflow",
     "list_workflow_gaps",
     "get_notes",
@@ -178,28 +181,30 @@ def contract(tmp_path, monkeypatch):
     conn = sqlite3.connect(str(dbfile))
     _init_schema(conn)
 
-    scan_id = Scan(scan_name="engagement", export_root=str(tmp_path)).save(conn)
-    Scan(scan_name="baseline", export_root=str(tmp_path)).save(conn)
-    Plugin(
-        plugin_id="nessus:100",
-        plugin_name="SMB Signing",
+    dataset_id = Dataset(dataset_name="engagement", export_root=str(tmp_path)).save(
+        conn
+    )
+    Dataset(dataset_name="baseline", export_root=str(tmp_path)).save(conn)
+    FindingType(
+        finding_type_id="nessus:100",
+        finding_type_name="SMB Signing",
         severity_int=4,
         has_metasploit=True,
         cves=["CVE-2021-1"],
         metasploit_names=["ms17_010"],
     ).save(conn)
-    finding_id = Finding(scan_id=scan_id, plugin_id="nessus:100").save(conn)
+    finding_id = Finding(dataset_id=dataset_id, finding_type_id="nessus:100").save(conn)
     host_id = Host.get_or_create("10.0.0.1", "10.0.0.1", "ipv4", conn=conn)
     Port.get_or_create(445, conn=conn)
     conn.execute(
-        "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, plugin_output) "
+        "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, evidence) "
         "VALUES (?, ?, 445, 'Signing: disabled')",
         (finding_id, host_id),
     )
     conn.execute(
-        "INSERT INTO host_services (scan_id, host_id, port_number, protocol, svc_name) "
+        "INSERT INTO host_services (dataset_id, host_id, port_number, protocol, svc_name) "
         "VALUES (?, ?, 445, 'tcp', 'cifs')",
-        (scan_id, host_id),
+        (dataset_id, host_id),
     )
     cur = conn.execute(
         "INSERT INTO tool_executions (tool_name, command_text, executed_at, exit_code) "
@@ -239,11 +244,11 @@ def contract(tmp_path, monkeypatch):
     srv = build_server(cfg)
     return {
         "server": srv,
-        "scan_id": scan_id,
+        "dataset_id": dataset_id,
         "finding_id": finding_id,
-        # plugins.plugin_id is TEXT and namespaced per source from schema v5 on,
+        # finding_types.finding_type_id is TEXT and namespaced per source from schema v5 on,
         # so the MCP surface takes it as a string.
-        "plugin_id": "100",
+        "finding_type_id": "100",
         "artifact_id": artifact_id,
         "execution_id": exec_id,
         "host_ip": "10.0.0.1",
@@ -330,29 +335,32 @@ def test_tools_callable_through_server(contract):
     s = contract["server"]
     fid, sid, aid, ip = (
         contract["finding_id"],
-        contract["scan_id"],
+        contract["dataset_id"],
         contract["artifact_id"],
         contract["host_ip"],
     )
     args = {
-        "list_scans": {},
-        "list_findings": {"scan_ids": [sid]},
+        "list_datasets": {},
+        "list_findings": {"dataset_ids": [sid]},
         "query_findings": {
-            "scan_ids": [sid],
+            "dataset_ids": [sid],
             "severity_int": 4,
             "has_metasploit": True,
         },
-        "plan_batch": {"strategy": "nmap", "scan_ids": [sid], "skip_done": False},
+        "plan_batch": {"strategy": "nmap", "dataset_ids": [sid], "skip_done": False},
         "get_finding_detail": {"finding_id": fid},
         "get_finding_hosts": {"finding_id": fid},
         "list_hosts": {},
-        "list_services": {"scan_id": sid},
-        "get_web_targets": {"scan_id": sid},
-        "list_cves": {"scan_ids": [sid]},
+        "list_services": {"dataset_id": sid},
+        "get_web_targets": {"dataset_id": sid},
+        "list_cves": {"dataset_ids": [sid]},
         "find_affected_by_cve": {"cve": "CVE-2021-1"},
         "host_history": {"host_ip": ip},
-        "compare_scans": {"scan1_name": "baseline", "scan2_name": "engagement"},
-        "get_workflow": {"plugin_id": contract["plugin_id"]},
+        "compare_datasets": {
+            "dataset1_name": "baseline",
+            "dataset2_name": "engagement",
+        },
+        "get_workflow": {"finding_type_id": contract["finding_type_id"]},
         "check_tools": {},
         "list_executions": {},
         "list_artifacts": {},
@@ -365,7 +373,7 @@ def test_tools_callable_through_server(contract):
         "generate_msf_search": {"finding_id": fid},
         "prepare_workflow": {"finding_id": fid},
         "get_finding_verdict": {"finding_id": fid},
-        "list_workflow_gaps": {"scan_ids": [sid]},
+        "list_workflow_gaps": {"dataset_ids": [sid]},
         "get_notes": {"finding_id": fid},
         # mutations (safe against the seeded temp DB)
         "set_review_state": {"finding_id": fid, "new_state": "in_progress"},
@@ -458,7 +466,12 @@ def test_workflow_contribution_structured_output(contract):
     ]
 
     export = results["export_workflow_contribution"].structured_content
-    assert set(export) == {"path", "reason", "plugin_id", "submission_instructions"}
+    assert set(export) == {
+        "path",
+        "reason",
+        "finding_type_id",
+        "submission_instructions",
+    }
     text = open(export["path"], encoding="utf-8").read()
     assert "10.0.0.1" not in text and "develop" in export["submission_instructions"]
 
@@ -499,12 +512,12 @@ def test_not_found_message_reaches_client(contract, tool_name, kwargs, expected)
 @pytest.mark.integration
 def test_resources_readable_through_server(contract):
     s = contract["server"]
-    sid, fid, ip = contract["scan_id"], contract["finding_id"], contract["host_ip"]
+    sid, fid, ip = contract["dataset_id"], contract["finding_id"], contract["host_ip"]
     uris = [
-        "cerno://scans",
+        "cerno://datasets",
         "cerno://config",
-        f"cerno://scan/{sid}/hosts",
-        f"cerno://scan/{sid}/cves",
+        f"cerno://dataset/{sid}/hosts",
+        f"cerno://dataset/{sid}/cves",
         f"cerno://finding/{fid}/output",
         f"cerno://finding/{fid}/workflow",
         f"cerno://host/{ip}/nxc",
@@ -517,10 +530,10 @@ def test_resources_readable_through_server(contract):
 @pytest.mark.integration
 def test_prompts_renderable_through_server(contract):
     s = contract["server"]
-    fid, sid = contract["finding_id"], contract["scan_id"]
+    fid, sid = contract["finding_id"], contract["dataset_id"]
     assert _run(s.get_prompt("triage_finding", {"finding_id": str(fid)}))
     assert _run(s.get_prompt("exploit_plan", {"finding_id": str(fid)}))
-    assert _run(s.get_prompt("triage_scope", {"scan_ids": str(sid)}))
+    assert _run(s.get_prompt("triage_scope", {"dataset_ids": str(sid)}))
 
 
 # ---------------------------------------------------------------------------
@@ -537,13 +550,15 @@ def test_prompts_do_not_touch_default_db(tmp_path, monkeypatch, temp_db):
     sqlite3.connect(str(empty)).close()  # exists but has no schema
     monkeypatch.setattr(database, "DATABASE_PATH", empty)
 
-    scan_id = Scan(scan_name="s", export_root="/tmp").save(temp_db)
-    Plugin(plugin_id="nessus:1", plugin_name="P", severity_int=4).save(temp_db)
-    fid = Finding(scan_id=scan_id, plugin_id="nessus:1").save(temp_db)
+    dataset_id = Dataset(dataset_name="s", export_root="/tmp").save(temp_db)
+    FindingType(finding_type_id="nessus:1", finding_type_name="P", severity_int=4).save(
+        temp_db
+    )
+    fid = Finding(dataset_id=dataset_id, finding_type_id="nessus:1").save(temp_db)
     host_id = Host.get_or_create("10.0.0.1", "10.0.0.1", "ipv4", conn=temp_db)
     Port.get_or_create(445, conn=temp_db)
     temp_db.execute(
-        "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, plugin_output) "
+        "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, evidence) "
         "VALUES (?, ?, 445, 'x')",
         (fid, host_id),
     )
@@ -552,7 +567,7 @@ def test_prompts_do_not_touch_default_db(tmp_path, monkeypatch, temp_db):
     # Would raise "no such table" if it fell back to the schema-less default DB.
     assert "P" in mcp.prompt_triage_finding(fid, conn=temp_db)
     assert "P" in mcp.prompt_exploit_plan(fid, conn=temp_db)
-    assert "s" in mcp.prompt_triage_scope(scan_id, conn=temp_db)
+    assert "s" in mcp.prompt_triage_scope(dataset_id, conn=temp_db)
 
 
 # ---------------------------------------------------------------------------
@@ -760,19 +775,21 @@ def test_agent_finding_round_trips_through_the_mcp(contract):
         reference_url="https://example.com/jwt",
     )
     # The MCP is the agent's channel: never operator:, which is the TUI's.
-    assert created["plugin_id"].startswith("agent:")
-    assert created["scan_name"] == "Agent"
+    assert created["finding_type_id"].startswith("agent:")
+    assert created["dataset_name"] == "Agent"
     assert created["targets_written"] == 2
 
     matched = mcp.tool_query_findings(source="agent")
-    assert [f["plugin_id"] for f in matched] == [created["plugin_id"]]
+    assert [f["finding_type_id"] for f in matched] == [created["finding_type_id"]]
     assert matched[0]["severity_int"] == 3
 
     # ...and it is not filed under the operator's own findings.
     assert mcp.tool_query_findings(source="operator") == []
 
     updated = mcp.tool_update_finding(created["finding_id"], severity_int=1)
-    assert updated["plugin_id"] == created["plugin_id"]  # identity never moves
+    assert (
+        updated["finding_type_id"] == created["finding_type_id"]
+    )  # identity never moves
     assert updated["severity_int"] == 1
     assert updated["title"] == "Weak JWT validation"  # untouched field survives
 
@@ -789,14 +806,16 @@ def test_mcp_can_edit_an_operator_finding(contract):
     )
     from cerno_pkg.constants import SOURCE_OPERATOR
 
-    plugin_id, finding_id = create_authored_finding(
+    finding_type_id, finding_id = create_authored_finding(
         AuthoredFindingInput(title="Typed by hand", severity_int=2),
         SOURCE_OPERATOR,
     )
-    assert plugin_id.startswith("operator:")
+    assert finding_type_id.startswith("operator:")
 
     updated = mcp.tool_update_finding(finding_id, severity_int=4)
-    assert updated["plugin_id"] == plugin_id  # still operator:, not reattributed
+    assert (
+        updated["finding_type_id"] == finding_type_id
+    )  # still operator:, not reattributed
     assert updated["severity_int"] == 4
     assert updated["title"] == "Typed by hand"
 
@@ -814,3 +833,284 @@ def test_mcp_reports_every_validation_problem_at_once(contract):
         mcp.tool_create_finding(title="", severity_int=9)
     message = str(excinfo.value)
     assert "Title" in message and "Severity" in message
+
+
+# ---------------------------------------------------------------------------
+# The surface a client sees, not just the names it is called by
+# ---------------------------------------------------------------------------
+#
+# EXPECTED_TOOLS above freezes tool/resource/prompt *names*. It does not cover
+# the two other things a client consumes as contract: the **keys** a tool
+# returns, and the **prose** an agent reads to decide what to call.
+#
+# An external MCP client audit of 4.0.0 found what the file-reading doc guards
+# structurally could not: ``compare_datasets`` still returned ``scan1_id`` /
+# ``scan1_date`` / ``scan2_id`` / ``scan2_date``, because its payload is
+# ``dataclasses.asdict(DatasetComparisonResult)`` and four of that dataclass's
+# six leading fields were missed by the rename -- while the two ``*_name``
+# fields beside them were renamed. Nothing failed: the adapter name was
+# unchanged, and no test asserted a payload key.
+#
+# The same audit misread the ``source`` filter as accepting only nessus and
+# nuclei, because ``query_findings``' description said so while all five
+# sources worked -- prose is the API here, so it is tested like the API.
+
+# A scan *target* is one of the deliberately kept meanings of "scan" (see
+# CLAUDE.md on the three homonyms); these are correct field names, not rot.
+_KEPT_FIELD_NAMES = {"scan_target", "scan_target_type"}
+
+# Phrases where "scan"/"scanner" is still the right word: the act of scanning,
+# a scan target, the tool doing it.
+_KEPT_DESCRIPTION_PHRASES = (
+    "scan target",
+    "scanner",
+    "remote scan",
+    "leak scan",
+    "port scan",
+    "long scans",
+    ".nessus",
+)
+
+_RETIRED_IDENTIFIER = __import__("re").compile(
+    r"(^|_)(scan\d*|plugin)(_|\d|$)", __import__("re").I
+)
+
+
+def _all_gates_on() -> CernoConfig:
+    return CernoConfig(
+        mcp_allow_execution=True,
+        mcp_allow_mutations=True,
+        mcp_allow_batch=True,
+        mcp_allow_cred_reveal=True,
+    )
+
+
+def _published_descriptions() -> list[tuple[str, str]]:
+    """``(label, text)`` for every description a client can read."""
+    server = build_server(_all_gates_on())
+    loop = asyncio.new_event_loop()
+    try:
+        tools = loop.run_until_complete(server.list_tools())
+        prompts = loop.run_until_complete(server.list_prompts())
+    finally:
+        loop.close()
+    out = [(f"tool {t.name}", t.description or "") for t in tools]
+    out += [(f"prompt {p.name}", p.description or "") for p in prompts]
+    return out
+
+
+@pytest.mark.unit
+def test_no_dataclass_field_uses_retired_vocabulary():
+    """Payload keys finish the rename too.
+
+    ``compare_datasets`` returns ``dataclasses.asdict()``, so a dataclass field
+    name *is* a client-visible key. This walks the package rather than listing
+    classes, so a new dataclass is covered the day it is written.
+    """
+    import dataclasses
+    import importlib
+    import pkgutil
+
+    import cerno_pkg
+
+    offenders = []
+    for info in pkgutil.walk_packages(cerno_pkg.__path__, "cerno_pkg."):
+        try:
+            module = importlib.import_module(info.name)
+        except Exception:  # pragma: no cover - an unimportable module
+            continue
+        for name, obj in vars(module).items():
+            if not (isinstance(obj, type) and dataclasses.is_dataclass(obj)):
+                continue
+            if obj.__module__ != info.name:  # re-export, counted at its origin
+                continue
+            for field in dataclasses.fields(obj):
+                if field.name in _KEPT_FIELD_NAMES:
+                    continue
+                if _RETIRED_IDENTIFIER.search(field.name):
+                    offenders.append(f"{info.name}.{name}.{field.name}")
+
+    assert not offenders, (
+        "dataclass field uses retired vocabulary (these become MCP payload "
+        "keys):\n" + "\n".join(sorted(set(offenders)))
+    )
+
+
+@pytest.mark.integration
+def test_published_descriptions_use_current_vocabulary():
+    """Every description a client reads must use the current words.
+
+    ``list_hosts`` advertised "all datasets, or one scan" and
+    ``create_finding`` the shared "Agent" scan, long after ``cerno scan`` was
+    removed. An agent reads these as instructions, so they are contract.
+    """
+    import re
+
+    retired = re.compile(r"\b(scans?|plugins?)\b", re.I)
+    offenders = []
+    for label, text in _published_descriptions():
+        for match in retired.finditer(text):
+            window = text[max(0, match.start() - 50) : match.end() + 50]
+            flat = " ".join(window.split())
+            if any(k in flat.lower() for k in _KEPT_DESCRIPTION_PHRASES):
+                continue
+            offenders.append(f"{label}: ...{flat}...")
+
+    assert (
+        not offenders
+    ), "published MCP description uses retired vocabulary:\n" + "\n".join(
+        sorted(set(offenders))
+    )
+
+
+@pytest.mark.integration
+def test_published_source_filter_names_every_source():
+    """The ``source`` filter's documentation must list all five sources.
+
+    It documented ``("nessus" or "nuclei")`` while burp, operator and agent all
+    filtered correctly -- so an auditing client concluded three real sources
+    were invalid, which an empty result set appeared to confirm. Keyed to
+    ``SOURCE_IDS``, so a sixth source fails this until it is documented.
+    """
+    from cerno_pkg.constants import SOURCE_IDS
+
+    described = dict(_published_descriptions())
+    text = described.get("tool query_findings")
+    assert text, "query_findings is no longer published"
+
+    missing = sorted(name for name in SOURCE_IDS if name not in text)
+    assert not missing, (
+        f"query_findings' description does not name {missing}; "
+        f"every source in SOURCE_IDS must be listed"
+    )
+
+
+# ---------------------------------------------------------------------------
+# The output schema is a filter, not a hint
+# ---------------------------------------------------------------------------
+#
+# A registered tool's return annotation becomes its MCP output schema, and the
+# SDK filters ``structured_content`` down to the keys that TypedDict declares.
+# The text block is not filtered. So a key an adapter returns but its TypedDict
+# omits is silently dropped from the channel clients read -- and the tool still
+# "works", still type-checks (the registrations use ``cast``, a no-op), and
+# still passes any test that calls the adapter directly.
+#
+# That is how 4.0.0 shipped a cerno_version field no client could see, and a
+# list_datasets row missing the ``source`` its adapter returns. An external
+# audit found both; three in-repo verification passes could not, because they
+# all called the adapters.
+#
+# This compares the two channels for every tool that HAS an output schema. The
+# gate on ``output_schema`` matters: check_tools, get_config, get_host_nxc,
+# list_nxc_credentials and plan_batch publish none, so their
+# ``structured_content`` is None and the client correctly reads the whole text
+# block. Without that gate they read as five false offenders.
+
+#: Arguments sufficient to get a non-error, JSON response out of each tool
+#: against the ``contract`` fixture's seeded database.
+_SCHEMA_PROBE_ARGS: dict[str, dict] = {
+    "get_capabilities": {},
+    "get_config": {},
+    "check_tools": {},
+    "list_datasets": {},
+    "list_hosts": {},
+    "top_hosts": {"limit": 3},
+    "list_findings": {"dataset_ids": [1]},
+    "search_findings": {"limit": 3},
+    "query_findings": {"limit": 3},
+    "list_workflow_gaps": {},
+    "list_cves": {"dataset_ids": [1]},
+    "list_services": {"dataset_id": 1},
+    "get_finding_detail": {"finding_id": 1},
+    "get_finding_hosts": {"finding_id": 1},
+    "get_finding_verdict": {"finding_id": 1},
+    "get_notes": {"finding_id": 1},
+    "get_workflow": {"finding_type_id": "nessus:100"},
+    "prepare_workflow": {"finding_id": 1},
+    "generate_nmap_cmd": {"finding_id": 1},
+    "generate_netexec_cmd": {"finding_id": 1},
+    "generate_msf_search": {"finding_id": 1},
+    "get_workflow_candidate": {"finding_id": 1},
+    "plan_batch": {"strategy": "nmap"},
+    "host_history": {"host_ip": "10.0.0.1"},
+    "compare_datasets": {
+        "dataset1_name": "engagement",
+        "dataset2_name": "baseline",
+    },
+    "find_affected_by_cve": {"cve": "CVE-2021-1"},
+    "list_executions": {},
+    "list_artifacts": {},
+    "get_finding_artifacts": {"finding_id": 1},
+    "list_nxc_credentials": {},
+    "get_host_nxc": {"host_ip": "10.0.0.1"},
+    "get_web_targets": {"dataset_ids": [1]},
+}
+
+
+def _top_keys(payload) -> set:
+    """Keys of a dict payload, or of the first row of a list payload."""
+    if isinstance(payload, dict):
+        return set(payload)
+    if isinstance(payload, list) and payload and isinstance(payload[0], dict):
+        return set(payload[0])
+    return set()
+
+
+def _unwrap(structured):
+    """The SDK wraps a non-object result as ``{"result": ...}``."""
+    if isinstance(structured, dict) and set(structured) == {"result"}:
+        return structured["result"]
+    return structured
+
+
+@pytest.mark.integration
+def test_output_schema_does_not_drop_keys(contract):
+    """No tool may return a key its output schema silently filters out."""
+    server = contract["server"]
+    tools = _run(server.list_tools())
+
+    offenders: list[str] = []
+    skipped: list[str] = []
+    checked = 0
+
+    for tool in tools:
+        schema = getattr(tool, "output_schema", None) or getattr(
+            tool, "outputSchema", None
+        )
+        if not schema:
+            # No output schema -> structured_content is None -> the client reads
+            # the unfiltered text block. Nothing can be dropped.
+            continue
+        args = _SCHEMA_PROBE_ARGS.get(tool.name)
+        if args is None:
+            skipped.append(f"{tool.name} (no probe args)")
+            continue
+        try:
+            result = _run(server.call_tool(tool.name, args))
+        except Exception as exc:  # pragma: no cover - probe could not run
+            skipped.append(f"{tool.name} ({type(exc).__name__})")
+            continue
+        if getattr(result, "is_error", False):
+            skipped.append(f"{tool.name} (tool error)")
+            continue
+        try:
+            text_payload = json.loads(result.content[0].text)
+        except Exception:
+            skipped.append(f"{tool.name} (non-JSON text block)")
+            continue
+
+        checked += 1
+        dropped = _top_keys(text_payload) - _top_keys(
+            _unwrap(result.structured_content)
+        )
+        if dropped:
+            offenders.append(f"{tool.name}: output schema drops {sorted(dropped)}")
+
+    assert checked, f"no schema-bearing tool could be probed; skipped: {skipped}"
+    assert not offenders, (
+        "a tool returns keys its output schema filters out of structured_content "
+        "(clients read structured_content, so this data is invisible):\n"
+        + "\n".join(sorted(offenders))
+        + f"\n\nnot probed: {sorted(skipped)}"
+    )

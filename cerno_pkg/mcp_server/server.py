@@ -13,7 +13,7 @@ This module is intentionally structured in two layers:
 IMPORTANT: stdio transport uses stdout as the JSON-RPC channel. Nothing in the
 adapter path may write to stdout. That is why execution goes through
 ``ops.run_command_captured`` (no Rich spinner, no interactive sudo) and scan
-comparison/history use the pure-data ``cross_scan`` functions rather than the
+comparison/history use the pure-data ``cross_dataset`` functions rather than the
 console-printing helpers in ``analysis``.
 """
 
@@ -45,6 +45,7 @@ from ..config import CernoConfig, load_config
 from ..constants import REVIEW_STATES
 from ..exec_chain import EXEC_WRAPPERS, command_chain, matches_any
 from ..logging_setup import log_debug, log_error, log_info
+from ..parsing import finding_type_ref, finding_type_source
 
 # Valid review states (mirrors the findings.review_state CHECK constraint).
 _VALID_REVIEW_STATES = set(REVIEW_STATES)
@@ -55,9 +56,12 @@ _VALID_REVIEW_STATES = set(REVIEW_STATES)
 # validates against the generated schema. So any key an adapter may omit, or a
 # DB column may leave NULL, must be typed Optional[...] -- and a TypedDict must
 # not be shared between tools that return different key sets.
-class ScanInfo(TypedDict, total=False):
-    scan_id: int
-    scan_name: str
+class DatasetInfo(TypedDict, total=False):
+    dataset_id: int
+    dataset_name: str
+    # NULL for a dataset with no findings yet: there is nothing to derive a
+    # source from, and the output schema is validated, so lying here fails.
+    source: Optional[str]
     created_at: str
     last_reviewed_at: Optional[str]
     unique_hosts: int
@@ -72,17 +76,18 @@ class ScanInfo(TypedDict, total=False):
 
 class FindingSummary(TypedDict, total=False):
     finding_id: int
-    scan_id: int
-    plugin_id: str
+    dataset_id: int
+    finding_type_id: str
+    source: str
     review_state: str
-    plugin_name: str
+    finding_type_name: str
     severity_int: int
     severity_label: str
     has_metasploit: bool
     cvss3_score: Optional[float]
     cvss2_score: Optional[float]
     cves: list[str]
-    plugin_url: Optional[str]
+    details_url: Optional[str]
 
 
 class FindingDetail(FindingSummary, total=False):
@@ -99,18 +104,18 @@ class FindingDetail(FindingSummary, total=False):
 
 
 class FindingSearchResult(FindingSummary, total=False):
-    scan_name: str
+    dataset_name: str
 
 
 class QueryFindingResult(FindingSummary, total=False):
-    scan_name: str
+    dataset_name: str
     has_workflow: bool
 
 
 class WorkflowGapResult(FindingSummary, total=False):
     # Findings with NO mapped verification workflow; distinct TypedDict (not
     # QueryFindingResult) so the contract-test schema guard stays happy.
-    scan_name: str
+    dataset_name: str
 
 
 class NotesResult(TypedDict):
@@ -152,9 +157,9 @@ class ArtifactInfo(TypedDict, total=False):
 
 class CveAffected(TypedDict, total=False):
     finding_id: int
-    scan_id: int
-    plugin_id: str
-    plugin_name: str
+    dataset_id: int
+    finding_type_id: str
+    finding_type_name: str
     severity_int: int
     hosts: list[str]
 
@@ -191,6 +196,8 @@ class Capabilities(TypedDict, total=False):
     scope_enforced: bool
     scope_extra: list[str]
     nxc_available: bool
+    cerno_version: str
+    schema_version: int
 
 
 class HostInfo(TypedDict, total=False):
@@ -203,7 +210,7 @@ class HostInfo(TypedDict, total=False):
     first_seen: str
     last_seen: str
     finding_count: int
-    scan_count: int
+    dataset_count: int
     max_severity: Optional[int]
 
 
@@ -216,7 +223,7 @@ class ServiceInfo(TypedDict, total=False):
 
 class CveEntry(TypedDict, total=False):
     cve: str
-    plugins: list[dict]
+    finding_types: list[dict]
 
 
 class IngestResult(TypedDict, total=False):
@@ -241,7 +248,10 @@ class VerdictInfo(TypedDict, total=False):
     verdict: str
     note: Optional[str]
     created_at: Optional[str]
-    created_by: Optional[str]
+    #: finding_sources.source_id of the channel that recorded the verdict
+    #: (4 = operator/TUI, 5 = agent/MCP), with its resolved name alongside.
+    created_by: Optional[int]
+    created_by_name: Optional[str]
 
 
 class WorkflowCandidateHint(TypedDict):
@@ -263,7 +273,7 @@ class VerdictResult(TypedDict, total=False):
 
 class WorkflowCandidateResult(TypedDict):
     finding_id: int
-    plugin_id: str
+    finding_type_id: str
     available: bool
     reason: Optional[str]
     verdict: Optional[str]
@@ -279,7 +289,7 @@ class WorkflowCandidateResult(TypedDict):
 class WorkflowExportResult(TypedDict):
     path: str
     reason: str
-    plugin_id: str
+    finding_type_id: str
     submission_instructions: str
 
 
@@ -308,33 +318,58 @@ def _db(
 # ========== Serialization helpers ==========
 
 
-def _finding_plugin_to_dict(finding: Any, plugin: Any) -> dict:
-    """Flatten a (Finding, Plugin) tuple into a JSON-serializable dict."""
+def _finding_finding_type_to_dict(finding: Any, finding_type: Any) -> dict:
+    """Flatten a (Finding, FindingType) tuple into a JSON-serializable dict."""
     return {
         "finding_id": finding.finding_id,
-        "scan_id": finding.scan_id,
-        "plugin_id": finding.plugin_id,
+        "dataset_id": finding.dataset_id,
+        "finding_type_id": finding.finding_type_id,
+        # Derived from the id prefix rather than guessed: finding_type_source()
+        # reports "unknown" for an unprefixed id instead of assuming Nessus.
+        "source": finding_type_source(finding.finding_type_id),
         "review_state": finding.review_state,
-        "plugin_name": plugin.plugin_name,
-        "severity_int": plugin.severity_int,
-        "severity_label": plugin.severity_label,
-        "has_metasploit": plugin.has_metasploit,
-        "cvss3_score": plugin.cvss3_score,
-        "cvss2_score": plugin.cvss2_score,
-        "cves": plugin.cves or [],
-        "plugin_url": plugin.plugin_url,
+        "finding_type_name": finding_type.finding_type_name,
+        "severity_int": finding_type.severity_int,
+        "severity_label": finding_type.severity_label,
+        "has_metasploit": finding_type.has_metasploit,
+        "cvss3_score": finding_type.cvss3_score,
+        "cvss2_score": finding_type.cvss2_score,
+        "cves": finding_type.cves or [],
+        "details_url": finding_type.details_url,
     }
+
+
+def _finding_row_sort_key(row: dict) -> tuple:
+    """Worst first, then the source and numeric order the SQL layer uses.
+
+    Mirrors ``database.finding_type_id_order_sql`` -- prefix, then the
+    reference cast to an integer -- so a page from a tool that sorts in Python
+    matches the same page from ``query_findings``, which sorts in SQL. ``source``
+    is on every row and sorts identically to the SQL prefix term.
+
+    Without this, a capped list was ordered by finding type id alone, and
+    prefixes sort alphabetically: ``burp:`` outranked ``nessus:`` and
+    ``nuclei:`` whatever the severity, so a first page could hold no Critical
+    at all while the same query through ``query_findings`` returned every one.
+    """
+    ref = finding_type_ref(str(row["finding_type_id"]))
+    return (
+        -(row["severity_int"] or 0),
+        row["source"],
+        int(ref) if ref.isdigit() else 0,
+        str(row["finding_type_id"]),
+    )
 
 
 # ========== Read tools ==========
 
 
-def tool_list_scans(conn: Optional[sqlite3.Connection] = None) -> list[dict]:
-    """List all imported scans with per-severity finding counts and progress."""
-    from ..models import Scan
+def tool_list_datasets(conn: Optional[sqlite3.Connection] = None) -> list[dict]:
+    """List all imported datasets with per-severity finding counts and progress."""
+    from ..models import Dataset
 
     with _db(conn) as c:
-        return Scan.get_all_with_stats(c)
+        return Dataset.get_all_with_stats(c)
 
 
 #: Row cap for list/query/search when neither the caller nor config sets one.
@@ -356,29 +391,29 @@ def _resolve_limit(limit: Optional[int], config: Optional[CernoConfig]) -> int:
 
 
 def tool_list_findings(
-    scan_ids: list[int],
+    dataset_ids: list[int],
     *,
     severity_int: Optional[int] = None,
     review_state: Optional[str] = None,
     has_metasploit: Optional[bool] = None,
-    plugin_name: Optional[str] = None,
+    finding_type_name: Optional[str] = None,
     merged: bool = False,
     limit: Optional[int] = None,
     offset: int = 0,
     config: Optional[CernoConfig] = None,
     conn: Optional[sqlite3.Connection] = None,
 ) -> list[dict]:
-    """List findings across one or more scans, optionally filtered and paged.
+    """List findings across one or more datasets, optionally filtered and paged.
 
     Args:
-        scan_ids: Scan IDs to include.
+        dataset_ids: Dataset IDs to include.
         severity_int: Optional severity filter (0=Info .. 4=Critical).
         review_state: Optional review-state filter.
-        has_metasploit: If set, keep only findings whose plugin has a MSF module.
-        plugin_name: Optional case-insensitive substring match on plugin name.
-        merged: When True and more than one scan is given, deduplicate by
-            ``plugin_id`` (one representative finding per plugin, siblings tracked
-            in ``extra_finding_ids``) — matching the TUI's multi-scan review.
+        has_metasploit: If set, keep only findings whose finding_type has a MSF module.
+        finding_type_name: Optional case-insensitive substring match on finding_type name.
+        merged: When True and more than one dataset is given, deduplicate by
+            ``finding_type_id`` (one representative finding per finding_type, siblings tracked
+            in ``extra_finding_ids``) — matching the TUI's multi-dataset review.
             When False (default), findings are concatenated and deduplicated by
             ``finding_id``.
         limit: Maximum number of findings to return (applied after filtering/dedup).
@@ -392,40 +427,44 @@ def tool_list_findings(
     severity_dir = None if severity_int is None else f"{severity_int}_"
     results: list[dict] = []
     with _db(conn) as c:
-        if merged and len(scan_ids) > 1:
-            display_list, _ = Finding.get_by_scan_ids_merged(
-                scan_ids,
+        if merged and len(dataset_ids) > 1:
+            display_list, _ = Finding.get_by_dataset_ids_merged(
+                dataset_ids,
                 severity_dir=severity_dir,
                 has_metasploit=has_metasploit,
                 conn=c,
             )
-            needle = plugin_name.lower() if plugin_name else None
-            for finding, plugin in display_list:
+            needle = finding_type_name.lower() if finding_type_name else None
+            for finding, finding_type in display_list:
                 if review_state is not None and finding.review_state != review_state:
                     continue
                 if (
                     needle is not None
-                    and needle not in (plugin.plugin_name or "").lower()
+                    and needle not in (finding_type.finding_type_name or "").lower()
                 ):
                     continue
-                results.append(_finding_plugin_to_dict(finding, plugin))
+                results.append(_finding_finding_type_to_dict(finding, finding_type))
         else:
             seen: set[int] = set()
-            for scan_id in scan_ids:
-                pairs = Finding.get_by_scan_with_plugin(
-                    scan_id,
+            for dataset_id in dataset_ids:
+                pairs = Finding.get_by_dataset_with_finding_type(
+                    dataset_id,
                     severity_dir=severity_dir,
                     review_state=review_state,
-                    plugin_name_filter=plugin_name,
+                    finding_type_name_filter=finding_type_name,
                     has_metasploit=has_metasploit,
                     conn=c,
                 )
-                for finding, plugin in pairs:
+                for finding, finding_type in pairs:
                     fid = finding.finding_id
                     if fid is None or fid in seen:
                         continue
                     seen.add(fid)
-                    results.append(_finding_plugin_to_dict(finding, plugin))
+                    results.append(_finding_finding_type_to_dict(finding, finding_type))
+    # Sort before paging: both branches above come back ordered by finding type
+    # id, so a page cut short by ``limit`` kept the alphabetically-earliest
+    # source rather than the worst findings.
+    results.sort(key=_finding_row_sort_key)
     if offset:
         results = results[offset:]
     if limit >= 0:
@@ -435,46 +474,52 @@ def tool_list_findings(
 
 def tool_search_findings(
     *,
-    plugin_name: Optional[str] = None,
+    finding_type_name: Optional[str] = None,
     severity_int: Optional[int] = None,
     has_metasploit: Optional[bool] = None,
     limit: Optional[int] = None,
     config: Optional[CernoConfig] = None,
     conn: Optional[sqlite3.Connection] = None,
 ) -> list[dict]:
-    """Search findings across ALL scans (no scan_ids required).
+    """Search findings across ALL datasets (no dataset_ids required).
 
     Answers questions like "every host with a critical SMB finding anywhere".
-    Each result carries its ``scan_name`` for cross-scan context. Results are
+    Each result carries its ``dataset_name`` for cross-dataset context. Results are
     capped at ``limit`` (None: config ``default_page_size``, min 8, else 500).
     """
-    from ..models import Finding, Scan
+    from ..models import Finding, Dataset
 
     limit = _resolve_limit(limit, config)
     severity_dir = None if severity_int is None else f"{severity_int}_"
     results: list[dict] = []
     with _db(conn) as c:
-        for scan in Scan.get_all_with_stats(c):
-            scan_id = scan["scan_id"]
-            pairs = Finding.get_by_scan_with_plugin(
-                scan_id,
+        for dataset in Dataset.get_all_with_stats(c):
+            dataset_id = dataset["dataset_id"]
+            pairs = Finding.get_by_dataset_with_finding_type(
+                dataset_id,
                 severity_dir=severity_dir,
-                plugin_name_filter=plugin_name,
+                finding_type_name_filter=finding_type_name,
                 has_metasploit=has_metasploit,
                 conn=c,
             )
-            for finding, plugin in pairs:
-                row = _finding_plugin_to_dict(finding, plugin)
-                row["scan_name"] = scan["scan_name"]
+            for finding, finding_type in pairs:
+                row = _finding_finding_type_to_dict(finding, finding_type)
+                row["dataset_name"] = dataset["dataset_name"]
                 results.append(row)
-                if len(results) >= limit >= 0:
-                    return results
+    # Every match is collected before the cap is applied. Returning from inside
+    # the loop the moment ``limit`` rows existed made the page depend on
+    # dataset iteration order (dataset_id DESC), so a search across every
+    # dataset could answer with its lowest severities and never reach the
+    # Critical this tool's own description promises to find.
+    results.sort(key=_finding_row_sort_key)
+    if limit >= 0:
+        results = results[:limit]
     return results
 
 
 def tool_query_findings(
     *,
-    scan_ids: Optional[list[int]] = None,
+    dataset_ids: Optional[list[int]] = None,
     severity_int: Optional[int] = None,
     severity_min: Optional[int] = None,
     review_state: Optional[str] = None,
@@ -483,7 +528,7 @@ def tool_query_findings(
     port: Optional[int] = None,
     service: Optional[str] = None,
     host: Optional[str] = None,
-    plugin_name: Optional[str] = None,
+    finding_type_name: Optional[str] = None,
     source: Optional[str] = None,
     has_metasploit: Optional[bool] = None,
     has_workflow: Optional[bool] = None,
@@ -495,20 +540,20 @@ def tool_query_findings(
 ) -> list[dict]:
     """Query findings with AND-combined predicates (the composite superset tool).
 
-    Every predicate is optional and parameterized (no free-form SQL). ``scan_ids``
-    None spans all scans; ``verdict`` accepts confirmed/false_positive/unable or
+    Every predicate is optional and parameterized (no free-form SQL). ``dataset_ids``
+    None spans all datasets; ``verdict`` accepts confirmed/false_positive/unable or
     "none" (no verdict yet); ``cve`` is an exact, case-insensitive CVE id;
     ``has_workflow`` consults the workflow mapper (bundled + ``custom_workflows_path``),
     not the DB. ``limit`` None uses config ``default_page_size`` (min 8), else 500.
-    Each row carries its ``scan_name`` and ``has_workflow`` flag.
+    Each row carries its ``dataset_name`` and ``has_workflow`` flag.
     """
-    from ..models import Scan
+    from ..models import Dataset
     from ..query import FindingQuery, run_finding_query
     from ..workflow_mapper import build_workflow_mapper
 
     cfg = config or load_config()
     q = FindingQuery(
-        scan_ids=scan_ids,
+        dataset_ids=dataset_ids,
         severity_int=severity_int,
         severity_min=severity_min,
         review_state=review_state,
@@ -517,7 +562,7 @@ def tool_query_findings(
         port=port,
         service=service,
         host=host,
-        plugin_name=plugin_name,
+        finding_type_name=finding_type_name,
         source=source,
         has_metasploit=has_metasploit,
         has_workflow=has_workflow,
@@ -528,19 +573,21 @@ def tool_query_findings(
     mapper = build_workflow_mapper(cfg)
     with _db(conn) as c:
         rows = run_finding_query(q, c, workflow_mapper=mapper)
-        scan_names = {s["scan_id"]: s["scan_name"] for s in Scan.get_all_with_stats(c)}
+        dataset_names = {
+            s["dataset_id"]: s["dataset_name"] for s in Dataset.get_all_with_stats(c)
+        }
         results: list[dict] = []
-        for finding, plugin in rows:
-            row = _finding_plugin_to_dict(finding, plugin)
-            row["scan_name"] = scan_names.get(finding.scan_id)
-            row["has_workflow"] = mapper.has_workflow(str(plugin.plugin_id))
+        for finding, finding_type in rows:
+            row = _finding_finding_type_to_dict(finding, finding_type)
+            row["dataset_name"] = dataset_names.get(finding.dataset_id)
+            row["has_workflow"] = mapper.has_workflow(str(finding_type.finding_type_id))
             results.append(row)
     return results
 
 
 def tool_list_workflow_gaps(
     *,
-    scan_ids: Optional[list[int]] = None,
+    dataset_ids: Optional[list[int]] = None,
     severity_min: Optional[int] = None,
     config: Optional[CernoConfig] = None,
     conn: Optional[sqlite3.Connection] = None,
@@ -549,26 +596,28 @@ def tool_list_workflow_gaps(
 
     Reuses the composite query layer (``has_workflow=False``) and the workflow
     mapper (bundled + ``custom_workflows_path``); adds no new query logic. Returns one representative row per unmapped
-    plugin (merged), worst-first (severity desc, then Metasploit-backed first).
+    finding_type (merged), worst-first (severity desc, then Metasploit-backed first).
     """
-    from ..models import Scan
+    from ..models import Dataset
     from ..query import FindingQuery, run_finding_query
     from ..workflow_mapper import build_workflow_mapper
 
     q = FindingQuery(
-        scan_ids=scan_ids,
+        dataset_ids=dataset_ids,
         severity_min=severity_min,
         has_workflow=False,  # the gap predicate
-        merged=True,  # one representative per unmapped plugin
+        merged=True,  # one representative per unmapped finding_type
     )
     mapper = build_workflow_mapper(config)
     with _db(conn) as c:
         rows = run_finding_query(q, c, workflow_mapper=mapper)
-        scan_names = {s["scan_id"]: s["scan_name"] for s in Scan.get_all_with_stats(c)}
+        dataset_names = {
+            s["dataset_id"]: s["dataset_name"] for s in Dataset.get_all_with_stats(c)
+        }
         results: list[dict] = []
-        for finding, plugin in rows:
-            row = _finding_plugin_to_dict(finding, plugin)
-            row["scan_name"] = scan_names.get(finding.scan_id)
+        for finding, finding_type in rows:
+            row = _finding_finding_type_to_dict(finding, finding_type)
+            row["dataset_name"] = dataset_names.get(finding.dataset_id)
             results.append(row)
     # MSF-backed criticals first: severity desc, then has_metasploit desc.
     results.sort(
@@ -583,7 +632,7 @@ def tool_top_hosts(
     """Return hosts ordered worst-severity-first for prioritization.
 
     Sorted by max severity (descending), then finding count (descending),
-    sliced to ``limit``. Reuses the cross-scan host inventory.
+    sliced to ``limit``. Reuses the cross-dataset host inventory.
     """
     from ..models import Host
 
@@ -601,11 +650,22 @@ def tool_get_capabilities(config: Optional[CernoConfig] = None) -> dict:
 
     TUI-only config keys (``config.MCP_NOT_APPLICABLE_KEYS``) are intentionally
     not applied by the MCP server and are not reported here.
+
+    ``cerno_version`` and ``schema_version`` exist so a client can state which
+    build it observed. Without them, nothing in this surface identified the
+    server: a re-audit of 4.0.0 reported six freshly corrected tool
+    descriptions as stale, having read a cached ``tools/list``, and there was
+    no field with which to notice. Both are derived at call time, so neither
+    can drift from the package.
     """
+    from ..database import SCHEMA_VERSION
+    from .._version import get_version
     from ..nxc_db import get_nxc_manager
 
     cfg = config or load_config()
     return {
+        "cerno_version": get_version(),
+        "schema_version": SCHEMA_VERSION,
         "execution_enabled": cfg.mcp_allow_execution,
         "mutations_enabled": cfg.mcp_allow_mutations,
         "cred_injection_enabled": cfg.mcp_allow_cred_injection,
@@ -668,51 +728,51 @@ def tool_get_finding_hosts(
 
 
 def tool_get_web_targets(
-    scan_id: int, conn: Optional[sqlite3.Connection] = None
+    dataset_id: int, conn: Optional[sqlite3.Connection] = None
 ) -> list[str]:
-    """Return HTTP/HTTPS URLs discovered in a scan (ready for web testing)."""
-    from ..models import get_http_urls_for_scan
+    """Return HTTP/HTTPS URLs discovered in a dataset (ready for web testing)."""
+    from ..models import get_http_urls_for_dataset
 
     with _db(conn) as c:
-        return get_http_urls_for_scan(scan_id, c)
+        return get_http_urls_for_dataset(dataset_id, c)
 
 
 def tool_host_history(
     host_ip: str, conn: Optional[sqlite3.Connection] = None
 ) -> Optional[dict]:
-    """Return a host's vulnerability timeline across all scans, or None if unknown."""
-    from ..cross_scan import get_host_vulnerability_history
+    """Return a host's vulnerability timeline across all datasets, or None if unknown."""
+    from ..cross_dataset import get_host_vulnerability_history
 
     with _db(conn) as c:
         history = get_host_vulnerability_history(host_ip, conn=c)
     return dataclasses.asdict(history) if history is not None else None
 
 
-def tool_compare_scans(
-    scan1_name: str,
-    scan2_name: str,
+def tool_compare_datasets(
+    dataset1_name: str,
+    dataset2_name: str,
     *,
     min_severity: int = 0,
     conn: Optional[sqlite3.Connection] = None,
 ) -> Optional[dict]:
-    """Compare two scans by name; returns new/resolved/persistent findings and hosts.
+    """Compare two datasets by name; returns new/resolved/persistent findings and hosts.
 
     Raises ``MixedSourceComparisonError`` (a ``ValueError``, so it reaches the
-    client as a tool error) when the two scans come from different sources --
-    their plugin ids share no namespace, so the comparison would be meaningless.
+    client as a tool error) when the two datasets come from different sources --
+    their finding_type ids share no namespace, so the comparison would be meaningless.
     """
-    from ..cross_scan import compare_scans, get_scan_by_name
+    from ..cross_dataset import compare_datasets, get_dataset_by_name
 
     with _db(conn) as c:
-        s1 = get_scan_by_name(scan1_name, conn=c)
-        s2 = get_scan_by_name(scan2_name, conn=c)
+        s1 = get_dataset_by_name(dataset1_name, conn=c)
+        s2 = get_dataset_by_name(dataset2_name, conn=c)
         if s1 is None:
-            raise ValueError(f"Scan not found: {scan1_name}")
+            raise ValueError(f"Dataset not found: {dataset1_name}")
         if s2 is None:
-            raise ValueError(f"Scan not found: {scan2_name}")
-        result = compare_scans(
-            scan_id_1=s1["scan_id"],
-            scan_id_2=s2["scan_id"],
+            raise ValueError(f"Dataset not found: {dataset2_name}")
+        result = compare_datasets(
+            dataset_id_1=s1["dataset_id"],
+            dataset_id_2=s2["dataset_id"],
             min_severity=min_severity,
             conn=c,
         )
@@ -721,7 +781,7 @@ def tool_compare_scans(
 
 def tool_import_nuclei(
     nuclei_path: str,
-    scan_name: Optional[str] = None,
+    dataset_name: Optional[str] = None,
     min_severity: Optional[int] = None,
 ) -> dict:
     """Import a nuclei JSON/JSONL results file. Returns import statistics.
@@ -735,7 +795,7 @@ def tool_import_nuclei(
     arg > config > hardcoded default.
     """
     from ..config import load_config
-    from ..constants import SCANS_ROOT
+    from ..constants import DATASETS_ROOT
     from ..nuclei_import import import_nuclei_file
 
     if min_severity is None:
@@ -748,11 +808,11 @@ def tool_import_nuclei(
         raise ValueError("min_severity must be between 0 and 4")
 
     result = import_nuclei_file(
-        path, SCANS_ROOT, scan_name=scan_name, min_severity=min_severity
+        path, DATASETS_ROOT, dataset_name=dataset_name, min_severity=min_severity
     )
     return {
-        "scan_name": result.scan_name,
-        "plugins_exported": result.plugins_exported,
+        "dataset_name": result.dataset_name,
+        "finding_types_exported": result.finding_types_exported,
         "total_hosts": result.total_hosts,
         "severities": result.severities,
     }
@@ -776,14 +836,14 @@ def tool_create_finding(
     scanner reported.
 
     The findings live in one shared ``Agent`` scan, created on first use, which
-    keeps every scanner scan single-source so ``compare_scans`` goes on working
-    on the scans around it.
+    keeps every scanner scan single-source so ``compare_datasets`` goes on working
+    on the datasets around it.
     """
     from ..authored_findings import (
         AuthoredFindingError,
         AuthoredFindingInput,
         create_authored_finding,
-        get_or_create_authored_scan,
+        get_or_create_authored_dataset,
         parse_target_tokens,
     )
     from ..constants import SOURCE_AGENT
@@ -800,15 +860,15 @@ def tool_create_finding(
         # SOURCE_AGENT, not operator: this adapter *is* the MCP channel, so
         # everything written through it is the agent's assertion. The TUI's [+]
         # passes SOURCE_OPERATOR for the same reason.
-        plugin_id, finding_id = create_authored_finding(data, SOURCE_AGENT)
+        finding_type_id, finding_id = create_authored_finding(data, SOURCE_AGENT)
     except AuthoredFindingError as exc:
         # Every problem at once, so the caller fixes them in one more call.
         raise ValueError("; ".join(exc.problems)) from None
 
     return {
-        "plugin_id": plugin_id,
+        "finding_type_id": finding_type_id,
         "finding_id": finding_id,
-        "scan_name": get_or_create_authored_scan(SOURCE_AGENT).scan_name,
+        "dataset_name": get_or_create_authored_dataset(SOURCE_AGENT).dataset_name,
         "targets_written": len(data.targets),
     }
 
@@ -828,7 +888,7 @@ def tool_update_finding(
     so a correction the operator asks for can be applied directly. Scanner
     findings are refused: they record what the scanner reported.
 
-    Only the arguments given are changed. The ``plugin_id`` never moves, even
+    Only the arguments given are changed. The ``finding_type_id`` never moves, even
     when the title does, so a workflow mapping or a note naming it stays valid
     -- which also means an edit does not reattribute a finding: an edited
     ``agent:`` finding stays ``agent:``.
@@ -851,7 +911,7 @@ def tool_update_finding(
     )
 
     try:
-        plugin_id = update_authored_finding(
+        finding_type_id = update_authored_finding(
             finding_id,
             title=title,
             severity_int=severity_int,
@@ -865,7 +925,7 @@ def tool_update_finding(
         raise ValueError("; ".join(exc.problems)) from None
 
     return {
-        "plugin_id": plugin_id,
+        "finding_type_id": finding_type_id,
         "finding_id": finding_id,
         "title": updated.title,
         "severity_int": updated.severity_int,
@@ -875,7 +935,7 @@ def tool_update_finding(
 
 def tool_import_burp(
     burp_path: str,
-    scan_name: Optional[str] = None,
+    dataset_name: Optional[str] = None,
     min_severity: Optional[int] = None,
 ) -> dict:
     """Import a Burp Suite XML report. Returns import statistics.
@@ -890,7 +950,7 @@ def tool_import_burp(
     """
     from ..burp_import import import_burp_file
     from ..config import load_config
-    from ..constants import SCANS_ROOT
+    from ..constants import DATASETS_ROOT
 
     if min_severity is None:
         min_severity = load_config().burp_min_severity
@@ -902,26 +962,26 @@ def tool_import_burp(
         raise ValueError("min_severity must be between 0 and 4")
 
     result = import_burp_file(
-        path, SCANS_ROOT, scan_name=scan_name, min_severity=min_severity
+        path, DATASETS_ROOT, dataset_name=dataset_name, min_severity=min_severity
     )
     return {
-        "scan_name": result.scan_name,
-        "plugins_exported": result.plugins_exported,
+        "dataset_name": result.dataset_name,
+        "finding_types_exported": result.finding_types_exported,
         "total_hosts": result.total_hosts,
         "severities": result.severities,
     }
 
 
 def tool_get_workflow(
-    plugin_id: str, config: Optional[CernoConfig] = None
+    finding_type_id: str, config: Optional[CernoConfig] = None
 ) -> Optional[dict]:
-    """Return the verification workflow mapped to a plugin, or None if none exists.
+    """Return the verification workflow mapped to a finding_type, or None if none exists.
 
     Looks up bundled workflows supplemented by config ``custom_workflows_path``.
     """
     from ..workflow_mapper import build_workflow_mapper
 
-    workflow = build_workflow_mapper(config).get_workflow(str(plugin_id))
+    workflow = build_workflow_mapper(config).get_workflow(str(finding_type_id))
     return dataclasses.asdict(workflow) if workflow is not None else None
 
 
@@ -930,27 +990,27 @@ def tool_get_finding_detail(
     max_hosts: int = 100,
     conn: Optional[sqlite3.Connection] = None,
 ) -> dict:
-    """Return full detail for one finding: plugin metadata + per-host plugin output.
+    """Return full detail for one finding: finding_type metadata + per-host evidence.
 
     Note: Cerno does not store Nessus description/solution/synopsis text. The
-    authoritative evidence is the per-host ``plugin_output`` plus the CVE list,
-    Metasploit module names, and the Tenable ``plugin_url`` for further reading.
+    authoritative evidence is the per-host ``evidence`` plus the CVE list,
+    Metasploit module names, and the Tenable ``details_url`` for further reading.
 
     The ``affected`` list is capped at ``max_hosts`` entries to protect the
-    caller's context on large scans; ``affected_total`` gives the true count and
+    caller's context on large datasets; ``affected_total`` gives the true count and
     ``affected_truncated`` flags when the list was cut.
     """
-    from ..models import Finding, FindingVerdict, Plugin, SeverityLevel
+    from ..models import Finding, FindingVerdict, FindingType, SeverityLevel
 
     with _db(conn) as c:
         finding = Finding.get_by_id(finding_id, c)
         if finding is None:
             raise ValueError(f"No finding with id {finding_id}")
-        plugin = Plugin.get_by_id(finding.plugin_id, c)
-        if plugin is None:
-            raise ValueError(f"No plugin with id {finding.plugin_id}")
-        sev = SeverityLevel.get_by_int(plugin.severity_int, c)
-        outputs = finding.get_plugin_outputs_by_host(c)
+        finding_type = FindingType.get_by_id(finding.finding_type_id, c)
+        if finding_type is None:
+            raise ValueError(f"No finding_type with id {finding.finding_type_id}")
+        sev = SeverityLevel.get_by_int(finding_type.severity_int, c)
+        outputs = finding.get_evidence_by_host(c)
         current = FindingVerdict.get_current(finding_id, c)
         stats = _finding_verified_stats(finding_id, c)
         suggested = _suggested_verdict(finding_id, c)
@@ -959,20 +1019,21 @@ def tool_get_finding_detail(
     capped = outputs[:max_hosts] if max_hosts >= 0 else outputs
     return {
         "finding_id": finding_id,
-        "scan_id": finding.scan_id,
-        "plugin_id": plugin.plugin_id,
-        "plugin_name": plugin.plugin_name,
-        "severity_int": plugin.severity_int,
+        "dataset_id": finding.dataset_id,
+        "finding_type_id": finding_type.finding_type_id,
+        "source": finding_type_source(finding_type.finding_type_id),
+        "finding_type_name": finding_type.finding_type_name,
+        "severity_int": finding_type.severity_int,
         "severity_label": sev.severity_label if sev is not None else None,
         "review_state": finding.review_state,
-        "has_metasploit": plugin.has_metasploit,
-        "metasploit_names": plugin.metasploit_names or [],
-        "cvss3_score": plugin.cvss3_score,
-        "cvss2_score": plugin.cvss2_score,
-        "cves": plugin.cves or [],
-        "plugin_url": plugin.plugin_url,
+        "has_metasploit": finding_type.has_metasploit,
+        "metasploit_names": finding_type.metasploit_names or [],
+        "cvss3_score": finding_type.cvss3_score,
+        "cvss2_score": finding_type.cvss2_score,
+        "cves": finding_type.cves or [],
+        "details_url": finding_type.details_url,
         "affected": [
-            {"host": host, "port": port, "plugin_output": output}
+            {"host": host, "port": port, "evidence": output}
             for host, port, output in capped
         ],
         "affected_total": total,
@@ -1051,6 +1112,7 @@ def _verdict_info(v: Any) -> dict:
         "note": v.note,
         "created_at": v.created_at,
         "created_by": v.created_by,
+        "created_by_name": v.created_by_name,
     }
 
 
@@ -1205,7 +1267,7 @@ def tool_get_workflow_candidate(
 ) -> dict:
     """Draft (regenerate) a workflow candidate from a finding's execution trail.
 
-    Read-only. ``reason`` is "new" (plugin unmapped) or "enhanced" (non-baseline
+    Read-only. ``reason`` is "new" (finding_type unmapped) or "enhanced" (non-baseline
     commands absent from the mapped workflow); ``available`` is False when there
     is nothing to contribute. ``workflow`` is the sanitized entry to review/edit;
     ``leak_warnings`` must be empty and the verdict confirmed/false_positive for
@@ -1221,7 +1283,7 @@ def tool_get_workflow_candidate(
     from ..workflow_contrib import (
         CONTRIBUTABLE_VERDICTS,
         merge_also_covers,
-        scan_candidate,
+        dataset_candidate,
     )
 
     cfg = config or load_config()
@@ -1236,10 +1298,10 @@ def tool_get_workflow_candidate(
     candidate = assessment.candidate
     if candidate is not None and also_covers:
         merge_also_covers(candidate, also_covers, mapper)
-    leaks = scan_candidate(candidate, ctx) if candidate is not None else []
+    leaks = dataset_candidate(candidate, ctx) if candidate is not None else []
     return {
         "finding_id": finding_id,
-        "plugin_id": finding.plugin_id,
+        "finding_type_id": finding.finding_type_id,
         "available": candidate is not None,
         "reason": candidate.reason if candidate is not None else None,
         "verdict": verdict,
@@ -1275,7 +1337,7 @@ def tool_export_workflow_contribution(
 
     Local file only: no DB mutation, nothing sent anywhere. Uses the regenerated
     draft, or ``workflow`` (an edited entry: workflow_name, description, steps
-    [{title, commands, notes}], references; plugin_id is always the finding's).
+    [{title, commands, notes}], references; finding_type_id is always the finding's).
     Refuses unless the current verdict is confirmed/false_positive, and refuses
     (writing nothing) when the fail-closed leak scan finds any engagement data.
 
@@ -1292,7 +1354,7 @@ def tool_export_workflow_contribution(
         SUBMISSION_INSTRUCTIONS,
         candidate_from_override,
         merge_also_covers,
-        scan_candidate,
+        dataset_candidate,
         to_yaml_fragment,
     )
     from ..workflow_mapper import WorkflowMapper
@@ -1326,7 +1388,7 @@ def tool_export_workflow_contribution(
         if also_covers:
             merge_also_covers(candidate, also_covers, mapper)
 
-    hits = scan_candidate(candidate, ctx)
+    hits = dataset_candidate(candidate, ctx)
     if hits:
         raise ValueError(
             "Refusing to export: leak scan found engagement data — "
@@ -1340,7 +1402,7 @@ def tool_export_workflow_contribution(
     # The namespace separator is a path/drive separator on Windows and awkward
     # everywhere else, so the id is flattened for the filename only; the
     # fragment itself still carries the real namespaced id.
-    safe_id = str(finding.plugin_id).replace(":", "-")
+    safe_id = str(finding.finding_type_id).replace(":", "-")
     stem = f"{safe_id}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
     path: Optional[Path] = None
     for n in range(100):
@@ -1355,9 +1417,11 @@ def tool_export_workflow_contribution(
     if path is None:
         raise ValueError(f"Could not allocate a unique export file in {out_dir}")
 
-    # Sanity check: the file must load as a workflow file mapping this plugin.
+    # Sanity check: the file must load as a workflow file mapping this finding_type.
     with contextlib.redirect_stdout(sys.stderr):
-        loaded = WorkflowMapper(yaml_path=path).get_workflow(str(finding.plugin_id))
+        loaded = WorkflowMapper(yaml_path=path).get_workflow(
+            str(finding.finding_type_id)
+        )
     if loaded is None:
         path.unlink(missing_ok=True)
         raise ValueError("Exported YAML failed to re-load as a workflow; nothing kept.")
@@ -1365,24 +1429,24 @@ def tool_export_workflow_contribution(
     return {
         "path": str(path),
         "reason": candidate.reason,
-        "plugin_id": finding.plugin_id,
+        "finding_type_id": finding.finding_type_id,
         "submission_instructions": SUBMISSION_INSTRUCTIONS,
     }
 
 
 def tool_list_hosts(
-    scan_id: Optional[int] = None, conn: Optional[sqlite3.Connection] = None
+    dataset_id: Optional[int] = None, conn: Optional[sqlite3.Connection] = None
 ) -> list[dict]:
     """List hosts with finding counts and worst severity.
 
-    With no ``scan_id``, returns the cross-scan host inventory. With a
-    ``scan_id``, returns only hosts affected by findings in that scan.
+    With no ``dataset_id``, returns the cross-dataset host inventory. With a
+    ``dataset_id``, returns only hosts affected by findings in that dataset.
     """
     from ..database import query_all
     from ..models import Host
 
     with _db(conn) as c:
-        if scan_id is None:
+        if dataset_id is None:
             return Host.get_all_with_stats(c)
         rows = query_all(
             c,
@@ -1395,12 +1459,12 @@ def tool_list_hosts(
             FROM hosts h
             JOIN finding_affected_hosts fah ON h.host_id = fah.host_id
             JOIN findings f ON fah.finding_id = f.finding_id
-            JOIN plugins p ON f.plugin_id = p.plugin_id
-            WHERE f.scan_id = ?
+            JOIN finding_types p ON f.finding_type_id = p.finding_type_id
+            WHERE f.dataset_id = ?
             GROUP BY h.host_id
             ORDER BY finding_count DESC
             """,
-            (scan_id,),
+            (dataset_id,),
         )
         return [dict(row) for row in rows]
 
@@ -1483,15 +1547,15 @@ def tool_list_artifacts(
 
 
 def tool_list_cves(
-    scan_ids: list[int],
+    dataset_ids: list[int],
     *,
     severity_int: Optional[int] = None,
     conn: Optional[sqlite3.Connection] = None,
 ) -> list[dict]:
-    """List unique CVEs across one or more scans, each mapped to its plugins.
+    """List unique CVEs across one or more datasets, each mapped to its finding_types.
 
-    Uses the CVEs already cached in ``plugins.cves`` (no network calls). Useful
-    for building an exploitation plan from a scan's findings.
+    Uses the CVEs already cached in ``finding_types.cves`` (no network calls). Useful
+    for building an exploitation plan from a dataset's findings.
     """
     import json as _json
 
@@ -1499,13 +1563,13 @@ def tool_list_cves(
 
     cve_map: dict[str, list[dict]] = {}
     with _db(conn) as c:
-        for scan_id in scan_ids:
-            params: list[Any] = [scan_id]
+        for dataset_id in dataset_ids:
+            params: list[Any] = [dataset_id]
             query = """
-                SELECT p.plugin_id, p.plugin_name, p.severity_int, p.cves
+                SELECT p.finding_type_id, p.finding_type_name, p.severity_int, p.cves
                 FROM findings f
-                JOIN plugins p ON f.plugin_id = p.plugin_id
-                WHERE f.scan_id = ? AND p.cves IS NOT NULL
+                JOIN finding_types p ON f.finding_type_id = p.finding_type_id
+                WHERE f.dataset_id = ? AND p.cves IS NOT NULL
             """
             if severity_int is not None:
                 query += " AND p.severity_int = ?"
@@ -1517,8 +1581,8 @@ def tool_list_cves(
                     continue
                 for cve in cves:
                     entry = {
-                        "plugin_id": row["plugin_id"],
-                        "plugin_name": row["plugin_name"],
+                        "finding_type_id": row["finding_type_id"],
+                        "finding_type_name": row["finding_type_name"],
                         "severity_int": row["severity_int"],
                     }
                     bucket = cve_map.setdefault(cve, [])
@@ -1526,14 +1590,15 @@ def tool_list_cves(
                         bucket.append(entry)
 
     return [
-        {"cve": cve, "plugins": plugins} for cve, plugins in sorted(cve_map.items())
+        {"cve": cve, "finding_types": finding_types}
+        for cve, finding_types in sorted(cve_map.items())
     ]
 
 
 def tool_list_services(
-    scan_id: int, conn: Optional[sqlite3.Connection] = None
+    dataset_id: int, conn: Optional[sqlite3.Connection] = None
 ) -> list[dict]:
-    """List discovered host/port/protocol/service-name tuples for a scan."""
+    """List discovered host/port/protocol/service-name tuples for a dataset."""
     from ..database import query_all
 
     with _db(conn) as c:
@@ -1544,24 +1609,24 @@ def tool_list_services(
                    hs.protocol, hs.svc_name
             FROM host_services hs
             JOIN hosts h ON hs.host_id = h.host_id
-            WHERE hs.scan_id = ?
+            WHERE hs.dataset_id = ?
             ORDER BY h.scan_target, hs.port_number
             """,
-            (scan_id,),
+            (dataset_id,),
         )
         return [dict(row) for row in rows]
 
 
 def tool_find_affected_by_cve(
     cve: str,
-    scan_ids: Optional[list[int]] = None,
+    dataset_ids: Optional[list[int]] = None,
     conn: Optional[sqlite3.Connection] = None,
 ) -> list[dict]:
-    """Find findings/hosts affected by a specific CVE, across scans.
+    """Find findings/hosts affected by a specific CVE, across datasets.
 
-    The reverse of ``list_cves``: given a CVE, return every plugin whose cached
+    The reverse of ``list_cves``: given a CVE, return every finding_type whose cached
     ``cves`` list contains it (exact element match, case-insensitive) plus the
-    scan and affected host:port lines. Optional ``scan_ids`` narrows the search.
+    scan and affected host:port lines. Optional ``dataset_ids`` narrows the search.
     """
     from ..database import query_all
     from ..models import Finding
@@ -1572,15 +1637,15 @@ def tool_find_affected_by_cve(
         rows = query_all(
             c,
             """
-            SELECT f.finding_id, f.scan_id, p.plugin_id, p.plugin_name,
+            SELECT f.finding_id, f.dataset_id, p.finding_type_id, p.finding_type_name,
                    p.severity_int, p.cves
             FROM findings f
-            JOIN plugins p ON f.plugin_id = p.plugin_id
+            JOIN finding_types p ON f.finding_type_id = p.finding_type_id
             WHERE p.cves IS NOT NULL
             """,
         )
         for row in rows:
-            if scan_ids is not None and row["scan_id"] not in scan_ids:
+            if dataset_ids is not None and row["dataset_id"] not in dataset_ids:
                 continue
             try:
                 cves = json.loads(row["cves"]) or []
@@ -1590,16 +1655,16 @@ def tool_find_affected_by_cve(
                 continue
             finding = Finding(
                 finding_id=row["finding_id"],
-                scan_id=row["scan_id"],
-                plugin_id=row["plugin_id"],
+                dataset_id=row["dataset_id"],
+                finding_type_id=row["finding_type_id"],
             )
             hosts = finding.get_all_host_port_lines(c)
             results.append(
                 {
                     "finding_id": row["finding_id"],
-                    "scan_id": row["scan_id"],
-                    "plugin_id": row["plugin_id"],
-                    "plugin_name": row["plugin_name"],
+                    "dataset_id": row["dataset_id"],
+                    "finding_type_id": row["finding_type_id"],
+                    "finding_type_name": row["finding_type_name"],
                     "severity_int": row["severity_int"],
                     "hosts": hosts,
                 }
@@ -1901,28 +1966,28 @@ def tool_generate_msf_search(
 ) -> dict:
     """Build an msfconsole search command for a finding's Metasploit modules.
 
-    Uses the plugin's cached Metasploit module names when available, otherwise
-    falls back to searching on the plugin name. Returns the command without
+    Uses the finding_type's cached Metasploit module names when available, otherwise
+    falls back to searching on the finding_type name. Returns the command without
     running it.
     """
-    from ..models import Finding, Plugin
+    from ..models import Finding, FindingType
     from ..tools import _build_msfconsole_commands
 
     with _db(conn) as c:
         finding = Finding.get_by_id(finding_id, c)
         if finding is None:
             raise ValueError(f"No finding with id {finding_id}")
-        plugin = Plugin.get_by_id(finding.plugin_id, c)
-        if plugin is None:
-            raise ValueError(f"No plugin with id {finding.plugin_id}")
+        finding_type = FindingType.get_by_id(finding.finding_type_id, c)
+        if finding_type is None:
+            raise ValueError(f"No finding_type with id {finding.finding_type_id}")
 
-    names = plugin.metasploit_names or []
-    term = names[0] if names else plugin.plugin_name
+    names = finding_type.metasploit_names or []
+    term = names[0] if names else finding_type.finding_type_name
     commands = _build_msfconsole_commands(term)
     return {
         "command": commands[0] if commands else None,
         "search_term": term,
-        "has_metasploit": plugin.has_metasploit,
+        "has_metasploit": finding_type.has_metasploit,
         "metasploit_names": names,
     }
 
@@ -1934,7 +1999,7 @@ def tool_prepare_workflow(
     config: Optional[CernoConfig] = None,
     conn: Optional[sqlite3.Connection] = None,
 ) -> Optional[dict]:
-    """Fill the verification workflow mapped to a finding's plugin, marking each
+    """Fill the verification workflow mapped to a finding's finding_type, marking each
     filled command executable-via-execute_command or manual-only.
 
     Placeholders (<TARGET>/<PORT>/<USERNAME>/<PASSWORD>/<INTERFACE>, plus
@@ -1944,7 +2009,7 @@ def tool_prepare_workflow(
     server-side only at run time, never a real secret here). Each command reports
     ``executable`` + ``manual_reason`` (allowlist/denylist + installed check), so
     non-cerno-runnable steps (responder, ssh-audit, uninstalled tools, prose) are
-    clearly flagged. Returns None if no workflow is mapped to the plugin.
+    clearly flagged. Returns None if no workflow is mapped to the finding_type.
     """
     from ..workflow_prep import prepare_workflow
 
@@ -1959,7 +2024,7 @@ def tool_prepare_workflow(
 
 def _batch_query(
     *,
-    scan_ids: Optional[list[int]],
+    dataset_ids: Optional[list[int]],
     severity_int: Optional[int],
     severity_min: Optional[int],
     review_state: Optional[str],
@@ -1968,7 +2033,7 @@ def _batch_query(
     port: Optional[int],
     service: Optional[str],
     host: Optional[str],
-    plugin_name: Optional[str],
+    finding_type_name: Optional[str],
     source: Optional[str],
     has_metasploit: Optional[bool],
     has_workflow: Optional[bool],
@@ -1978,7 +2043,7 @@ def _batch_query(
     from ..query import FindingQuery
 
     return FindingQuery(
-        scan_ids=scan_ids,
+        dataset_ids=dataset_ids,
         severity_int=severity_int,
         severity_min=severity_min,
         review_state=review_state,
@@ -1987,7 +2052,7 @@ def _batch_query(
         port=port,
         service=service,
         host=host,
-        plugin_name=plugin_name,
+        finding_type_name=finding_type_name,
         source=source,
         has_metasploit=has_metasploit,
         has_workflow=has_workflow,
@@ -1998,7 +2063,7 @@ def _batch_query(
 def tool_plan_batch(
     strategy: str,
     *,
-    scan_ids: Optional[list[int]] = None,
+    dataset_ids: Optional[list[int]] = None,
     severity_int: Optional[int] = None,
     severity_min: Optional[int] = None,
     review_state: Optional[str] = None,
@@ -2007,7 +2072,7 @@ def tool_plan_batch(
     port: Optional[int] = None,
     service: Optional[str] = None,
     host: Optional[str] = None,
-    plugin_name: Optional[str] = None,
+    finding_type_name: Optional[str] = None,
     source: Optional[str] = None,
     has_metasploit: Optional[bool] = None,
     has_workflow: Optional[bool] = None,
@@ -2028,7 +2093,7 @@ def tool_plan_batch(
     from ..batch import plan_batch
 
     q = _batch_query(
-        scan_ids=scan_ids,
+        dataset_ids=dataset_ids,
         severity_int=severity_int,
         severity_min=severity_min,
         review_state=review_state,
@@ -2037,7 +2102,7 @@ def tool_plan_batch(
         port=port,
         service=service,
         host=host,
-        plugin_name=plugin_name,
+        finding_type_name=finding_type_name,
         source=source,
         has_metasploit=has_metasploit,
         has_workflow=has_workflow,
@@ -2264,13 +2329,13 @@ def _check_scope(
     if out_of_scope:
         raise ValueError(
             "Target(s) outside the engagement scope: "
-            f"{', '.join(out_of_scope)}. In scope = hosts from imported scans plus "
+            f"{', '.join(out_of_scope)}. In scope = hosts from imported datasets plus "
             "mcp_scope_extra. Add a range with "
             "'cerno config set mcp_scope_extra \"10.0.0.0/24\"' (then reconnect), "
             "or disable the check with 'cerno config set mcp_enforce_scope false'."
         )
     return [
-        f"Target {name!r} is not a known scan host; allowed but unverified against scope."
+        f"Target {name!r} is not a known dataset host; allowed but unverified against scope."
         for name in warnings
     ]
 
@@ -2702,6 +2767,7 @@ def tool_set_review_state(
     Allowed: unreviewed -> in_progress -> done, and done -> unreviewed.
     Raises ValueError (InvalidReviewTransition) for any other change.
     """
+    from ..constants import SOURCE_AGENT
     from ..models import Finding
 
     if new_state not in _VALID_REVIEW_STATES:
@@ -2714,7 +2780,8 @@ def tool_set_review_state(
         finding = Finding.get_by_id(finding_id, c)
         if finding is None:
             raise ValueError(f"No finding with id {finding_id}")
-        finding.transition_review_state(new_state, notes=notes, conn=c)
+        # An MCP client is the agent channel, whatever it calls itself.
+        finding.transition_review_state(new_state, SOURCE_AGENT, notes=notes, conn=c)
         c.commit()
     cfg = load_config()
     return {
@@ -2771,7 +2838,6 @@ def tool_set_finding_verdict(
     execution_id: Optional[int] = None,
     artifact_id: Optional[int] = None,
     nse_result_id: Optional[int] = None,
-    created_by: Optional[str] = None,
     conn: Optional[sqlite3.Connection] = None,
     config: Optional[CernoConfig] = None,
 ) -> dict:
@@ -2781,7 +2847,13 @@ def tool_set_finding_verdict(
     evidence (execution_id / artifact_id / nse_result_id) links the proof. This
     appends to the finding's verdict history; the latest becomes current. The
     returned verdict carries the ``workflow_candidate`` contribution hint.
+
+    Attribution is **not** a parameter: the verdict is recorded as the ``agent``
+    channel because that is what an MCP client is. A caller-supplied author
+    would read as provenance while being self-reported, which is worse than
+    recording none.
     """
+    from ..constants import SOURCE_AGENT
     from ..models import Finding, FindingVerdict, VerdictEvidence
 
     with _db(conn) as c:
@@ -2805,8 +2877,8 @@ def tool_set_finding_verdict(
         FindingVerdict.set(
             finding_id,
             verdict,
+            SOURCE_AGENT,
             note=note,
-            created_by=created_by,
             evidence=evidence or None,
             conn=c,
         )
@@ -2826,17 +2898,17 @@ def tool_set_finding_verdict(
 
 def tool_import_nessus(nessus_path: str) -> dict:
     """Import a .nessus file into the database. Returns import statistics."""
-    from ..constants import SCANS_ROOT
+    from ..constants import DATASETS_ROOT
     from ..nessus_import import import_nessus_file
 
     path = Path(nessus_path).expanduser()
     if not path.exists():
         raise ValueError(f"No such file: {nessus_path}")
 
-    result = import_nessus_file(path, SCANS_ROOT)
+    result = import_nessus_file(path, DATASETS_ROOT)
     return {
-        "scan_name": result.scan_name,
-        "plugins_exported": result.plugins_exported,
+        "dataset_name": result.dataset_name,
+        "finding_types_exported": result.finding_types_exported,
         "total_hosts": result.total_hosts,
         "severities": result.severities,
     }
@@ -2870,9 +2942,9 @@ def tool_reveal_credential(ref: str, conn: Optional[sqlite3.Connection] = None) 
 # can attach it to context. They return text/JSON strings and never print.
 
 
-def resource_scans(conn: Optional[sqlite3.Connection] = None) -> str:
-    """`cerno://scans` — JSON index of all scans with stats."""
-    return json.dumps(tool_list_scans(conn=conn), indent=2)
+def resource_datasets(conn: Optional[sqlite3.Connection] = None) -> str:
+    """`cerno://datasets` — JSON index of all datasets with stats."""
+    return json.dumps(tool_list_datasets(conn=conn), indent=2)
 
 
 def resource_config() -> str:
@@ -2885,31 +2957,37 @@ def resource_host_nxc(host_ip: str) -> str:
     return json.dumps(tool_get_host_nxc(host_ip), indent=2)
 
 
-def resource_scan_hosts(scan_id: int, conn: Optional[sqlite3.Connection] = None) -> str:
-    """`cerno://scan/{scan_id}/hosts` — discovered host:port lines, one per line."""
-    services = tool_list_services(scan_id, conn=conn)
+def resource_dataset_hosts(
+    dataset_id: int, conn: Optional[sqlite3.Connection] = None
+) -> str:
+    """`cerno://dataset/{dataset_id}/hosts` — discovered host:port lines, one per line."""
+    services = tool_list_services(dataset_id, conn=conn)
     return "\n".join(f"{s['host']}:{s['port']}" for s in services)
 
 
-def resource_scan_cves(scan_id: int, conn: Optional[sqlite3.Connection] = None) -> str:
-    """`cerno://scan/{scan_id}/cves` — JSON of unique CVEs mapped to plugins."""
+def resource_dataset_cves(
+    dataset_id: int, conn: Optional[sqlite3.Connection] = None
+) -> str:
+    """`cerno://dataset/{dataset_id}/cves` — JSON of unique CVEs mapped to finding_types."""
     import json as _json
 
-    return _json.dumps(tool_list_cves([scan_id], conn=conn), indent=2)
+    return _json.dumps(tool_list_cves([dataset_id], conn=conn), indent=2)
 
 
 def resource_finding_output(
     finding_id: int, conn: Optional[sqlite3.Connection] = None
 ) -> str:
-    """`cerno://finding/{finding_id}/output` — raw per-host plugin output."""
+    """`cerno://finding/{finding_id}/output` — raw per-host evidence."""
     detail = tool_get_finding_detail(finding_id, conn=conn)
-    header = f"# {detail['plugin_name']} (plugin {detail['plugin_id']})"
+    header = (
+        f"# {detail['finding_type_name']} (finding_type {detail['finding_type_id']})"
+    )
     blocks = [header]
     for a in detail["affected"]:
         host = a["host"]
         port = a["port"]
         loc = f"{host}:{port}" if port is not None else str(host)
-        output = a["plugin_output"] or "(no plugin output)"
+        output = a["evidence"] or "(no evidence)"
         blocks.append(f"[{loc}]\n{output}")
     return "\n\n".join(blocks)
 
@@ -2926,10 +3004,10 @@ def resource_finding_workflow(
         finding = Finding.get_by_id(finding_id, c)
         if finding is None:
             raise ValueError(f"No finding with id {finding_id}")
-        plugin_id = finding.plugin_id
-    workflow = tool_get_workflow(plugin_id, config=config)
+        finding_type_id = finding.finding_type_id
+    workflow = tool_get_workflow(finding_type_id, config=config)
     if workflow is None:
-        return f"No verification workflow mapped for plugin {plugin_id}."
+        return f"No verification workflow mapped for finding_type {finding_type_id}."
 
     lines = [f"# {workflow['workflow_name']}", workflow["description"], ""]
     for i, step in enumerate(workflow["steps"], 1):
@@ -3030,22 +3108,22 @@ def _finding_context(
     conn: Optional[sqlite3.Connection],
     config: Optional[CernoConfig] = None,
 ) -> str:
-    """Assemble the shared finding context block (plugin + hosts + output + workflow)."""
+    """Assemble the shared finding context block (finding_type + hosts + output + workflow)."""
     from ..claude_assistant import build_finding_context
-    from ..models import Finding, Plugin
+    from ..models import Finding, FindingType
     from ..workflow_mapper import build_workflow_mapper
 
     with _db(conn) as c:
         finding = Finding.get_by_id(finding_id, c)
         if finding is None:
             raise ValueError(f"No finding with id {finding_id}")
-        plugin = Plugin.get_by_id(finding.plugin_id, c)
-        if plugin is None:
-            raise ValueError(f"No plugin with id {finding.plugin_id}")
+        finding_type = FindingType.get_by_id(finding.finding_type_id, c)
+        if finding_type is None:
+            raise ValueError(f"No finding_type with id {finding.finding_type_id}")
         hosts, _ = finding.get_hosts_and_ports(c)
-        outputs = finding.get_plugin_outputs_by_host(c)
-    workflow = build_workflow_mapper(config).get_workflow(str(finding.plugin_id))
-    return build_finding_context(plugin, finding, hosts, outputs, workflow)
+        outputs = finding.get_evidence_by_host(c)
+    workflow = build_workflow_mapper(config).get_workflow(str(finding.finding_type_id))
+    return build_finding_context(finding_type, finding, hosts, outputs, workflow)
 
 
 def _execution_attribution_note(finding_id: int) -> str:
@@ -3093,38 +3171,38 @@ def prompt_exploit_plan(
 
 
 def prompt_triage_scope(
-    scan_ids: list[int] | int,
+    dataset_ids: list[int] | int,
     severity_int: Optional[int] = None,
     conn: Optional[sqlite3.Connection] = None,
 ) -> str:
-    """Report-brief prompt for a scan scope spanning one or more scans.
+    """Report-brief prompt for a dataset scope spanning one or more datasets.
 
-    Accepts a single ``scan_id`` or a list. Multiple scans are merged and
-    deduplicated by plugin_id (``Finding.get_by_scan_ids_merged``), matching the
+    Accepts a single ``dataset_id`` or a list. Multiple datasets are merged and
+    deduplicated by finding_type_id (``Finding.get_by_dataset_ids_merged``), matching the
     TUI's scope-level aggregate assistant.
     """
     from ..claude_assistant import REPORT_BRIEF_QUERY, build_aggregate_context
-    from ..models import Finding, Scan
+    from ..models import Finding, Dataset
 
-    ids = [scan_ids] if isinstance(scan_ids, int) else list(scan_ids)
+    ids = [dataset_ids] if isinstance(dataset_ids, int) else list(dataset_ids)
     if not ids:
-        raise ValueError("scan_ids must contain at least one scan id")
+        raise ValueError("dataset_ids must contain at least one dataset id")
 
     severity_dir = None if severity_int is None else f"{severity_int}_"
     with _db(conn) as c:
         names: list[str] = []
         for sid in ids:
-            scan = Scan.get_by_id(sid, c)
-            if scan is None:
-                raise ValueError(f"No scan with id {sid}")
-            names.append(scan.scan_name)
+            dataset = Dataset.get_by_id(sid, c)
+            if dataset is None:
+                raise ValueError(f"No dataset with id {sid}")
+            names.append(dataset.dataset_name)
 
         if len(ids) > 1:
-            pairs, _ = Finding.get_by_scan_ids_merged(
+            pairs, _ = Finding.get_by_dataset_ids_merged(
                 ids, severity_dir=severity_dir, conn=c
             )
         else:
-            pairs = Finding.get_by_scan_with_plugin(
+            pairs = Finding.get_by_dataset_with_finding_type(
                 ids[0], severity_dir=severity_dir, conn=c
             )
         sev_note = "" if severity_int is None else f" (severity {severity_int})"
@@ -3154,7 +3232,7 @@ def prompt_verify_finding(
         "",
         f"1. Call prepare_workflow({finding_id}) to get the mapped verification "
         "workflow. If it returns null, state clearly that NO workflow is mapped for "
-        "this plugin, then build a command with generate_nmap_cmd / "
+        "this finding_type, then build a command with generate_nmap_cmd / "
         "generate_netexec_cmd.",
     ]
     if mutate:
@@ -3189,7 +3267,7 @@ def prompt_verify_finding(
             "4. Review the captured output and tell the user which verdict "
             "(confirmed / false_positive / unable) and review status to set in the "
             "TUI.",
-            "5. Note whether the plugin had a workflow, so a missing one can be "
+            "5. Note whether the finding_type had a workflow, so a missing one can be "
             "contributed later.",
         ]
     instruction = "\n".join(steps)
@@ -3291,16 +3369,20 @@ def build_server_instructions(cfg: CernoConfig) -> str:
     mutation gate: when mutations are off, the client is told to ask the operator
     to set status/verdict in the TUI rather than calling the (unregistered) tools.
     """
+    from .._version import get_version
+
     mutate = cfg.mcp_allow_mutations
     lines = [
-        "Cerno exposes a vulnerability review database (findings imported "
-        "from Nessus and nuclei) and verification tooling. Follow "
-        "this procedure when verifying findings:",
+        f"Cerno {get_version()} exposes a vulnerability review database "
+        "(findings imported from Nessus, nuclei and Burp Suite, plus findings "
+        "written by hand in the TUI as 'operator:' or by an MCP client as "
+        "'agent:') and verification tooling. Follow this procedure when "
+        "verifying findings:",
         "",
         "1. Call get_capabilities first to see which actions are enabled.",
         "2. Before verifying a finding, call prepare_workflow(finding_id) (or "
         "get_workflow). If it returns null, tell the user NO workflow is mapped "
-        "for that plugin before falling back to generate_nmap_cmd / "
+        "for that finding_type before falling back to generate_nmap_cmd / "
         "generate_netexec_cmd.",
     ]
     if mutate:
@@ -3313,7 +3395,12 @@ def build_server_instructions(cfg: CernoConfig) -> str:
             "3. When you start verifying, tell the user to move the finding to "
             "In Progress in the TUI (mutations are disabled)."
         )
-    lines.append("4. Pass finding_id on every execute_command / start_execution.")
+    lines.append(
+        "4. Pass finding_id on every run — execute_command (synchronous, "
+        "returns the output) or start_execution (asynchronous, returns a "
+        "job_id to poll with get_execution_status and stop with "
+        "cancel_execution)."
+    )
     if mutate:
         lines += [
             "5. Ingest the output (ingest_results, or it is auto-ingested), review "
@@ -3329,7 +3416,7 @@ def build_server_instructions(cfg: CernoConfig) -> str:
         lines += [
             "5. Review the captured output and tell the user which verdict and "
             "status to set in the TUI (mutations are disabled).",
-            "6. Note to the user when a plugin has no workflow, so a new one can be "
+            "6. Note to the user when a finding_type has no workflow, so a new one can be "
             "contributed after verification.",
         ]
     return "\n".join(lines)
@@ -3436,35 +3523,44 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
 
     # --- Read tools (always on) ---
     @mcp.tool(annotations=_READONLY_ANN)
-    def list_scans() -> list[ScanInfo]:
-        """List all imported scans with severity counts and review progress."""
-        return cast("list[ScanInfo]", tool_list_scans())
+    def list_datasets() -> list[DatasetInfo]:
+        """List all imported datasets with severity counts and review progress."""
+        return cast("list[DatasetInfo]", tool_list_datasets())
 
     @mcp.tool(annotations=_READONLY_ANN)
     def list_findings(
-        scan_ids: list[int],
+        dataset_ids: list[int],
         severity_int: Optional[int] = None,
         review_state: Optional[str] = None,
         has_metasploit: Optional[bool] = None,
-        plugin_name: Optional[str] = None,
+        finding_type_name: Optional[str] = None,
         merged: bool = False,
         limit: Optional[int] = None,
         offset: int = 0,
     ) -> list[FindingSummary]:
-        """List findings across scans, filtered and paged.
+        """List findings across datasets, filtered and paged.
 
-        merged=True dedups multi-scan results by plugin (TUI semantics); limit/
+        list_findings filters by dataset, severity, review state, Metasploit
+        availability and finding type name. query_findings adds host, port,
+        service, CVE, source, severity_min, verdict and workflow predicates --
+        use query_findings when you need any of those.
+
+        Rows come back worst-severity-first, so a page cut short by limit keeps
+        the highest severities. Rows carry neither dataset_name nor
+        has_workflow; query_findings adds both.
+
+        merged=True dedups multi-dataset results by finding_type (TUI semantics); limit/
         offset page the result. limit defaults to the configured default_page_size
         (min 8) when set, else 500; use offset to page past it.
         """
         return cast(
             "list[FindingSummary]",
             tool_list_findings(
-                scan_ids,
+                dataset_ids,
                 severity_int=severity_int,
                 review_state=review_state,
                 has_metasploit=has_metasploit,
-                plugin_name=plugin_name,
+                finding_type_name=finding_type_name,
                 merged=merged,
                 limit=limit,
                 offset=offset,
@@ -3474,19 +3570,25 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
 
     @mcp.tool(annotations=_READONLY_ANN)
     def search_findings(
-        plugin_name: Optional[str] = None,
+        finding_type_name: Optional[str] = None,
         severity_int: Optional[int] = None,
         has_metasploit: Optional[bool] = None,
         limit: Optional[int] = None,
     ) -> list[FindingSearchResult]:
-        """Search findings across ALL scans (no scan_ids needed); each carries scan_name.
+        """Search findings across ALL datasets (no dataset_ids needed); each carries dataset_name.
 
-        limit defaults to the configured default_page_size (min 8) when set, else 500.
+        A narrower form of query_findings (which spans all datasets when
+        dataset_ids is None); use search_findings for a plain name/severity
+        search.
+
+        Rows come back worst-severity-first, so a page cut short by limit keeps
+        the highest severities. limit defaults to the configured
+        default_page_size (min 8) when set, else 500.
         """
         return cast(
             "list[FindingSearchResult]",
             tool_search_findings(
-                plugin_name=plugin_name,
+                finding_type_name=finding_type_name,
                 severity_int=severity_int,
                 has_metasploit=has_metasploit,
                 limit=limit,
@@ -3496,7 +3598,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
 
     @mcp.tool(annotations=_READONLY_ANN)
     def query_findings(
-        scan_ids: Optional[list[int]] = None,
+        dataset_ids: Optional[list[int]] = None,
         severity_int: Optional[int] = None,
         severity_min: Optional[int] = None,
         review_state: Optional[str] = None,
@@ -3505,7 +3607,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         port: Optional[int] = None,
         service: Optional[str] = None,
         host: Optional[str] = None,
-        plugin_name: Optional[str] = None,
+        finding_type_name: Optional[str] = None,
         source: Optional[str] = None,
         has_metasploit: Optional[bool] = None,
         has_workflow: Optional[bool] = None,
@@ -3515,18 +3617,22 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
     ) -> list[QueryFindingResult]:
         """Query findings with AND-combined predicates (composite superset of list/search).
 
-        All predicates optional. scan_ids=None spans all scans. verdict is
+        All predicates optional. dataset_ids=None spans all datasets. verdict is
         confirmed/false_positive/unable or "none" (no verdict yet). cve is an exact
-        CVE id (case-insensitive). source is the scan source ("nessus" or
-        "nuclei"). has_workflow consults the workflow mapper. Each
-        row carries scan_name and has_workflow. merged dedups by plugin across scans.
-        limit defaults to the configured default_page_size (min 8) when set, else
-        500; use offset to page past it.
+        CVE id (case-insensitive). source is the finding source — one of
+        "nessus", "nuclei", "burp", "operator" or "agent" (the last two are
+        hand-authored); any other value is rejected rather than silently
+        matching nothing. has_workflow consults the workflow mapper. Each
+        row carries dataset_name and has_workflow. merged dedups by finding_type
+        across every dataset in scope, the all-datasets default included.
+        Rows come back worst-severity-first, so a page cut short by limit keeps
+        the highest severities. limit defaults to the configured
+        default_page_size (min 8) when set, else 500; use offset to page past it.
         """
         return cast(
             "list[QueryFindingResult]",
             tool_query_findings(
-                scan_ids=scan_ids,
+                dataset_ids=dataset_ids,
                 severity_int=severity_int,
                 severity_min=severity_min,
                 review_state=review_state,
@@ -3535,7 +3641,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
                 port=port,
                 service=service,
                 host=host,
-                plugin_name=plugin_name,
+                finding_type_name=finding_type_name,
                 source=source,
                 has_metasploit=has_metasploit,
                 has_workflow=has_workflow,
@@ -3552,44 +3658,51 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         return cast("FindingHosts", tool_get_finding_hosts(finding_id))
 
     @mcp.tool(annotations=_READONLY_ANN)
-    def get_web_targets(scan_id: int) -> list[str]:
-        """Get HTTP/HTTPS URLs discovered in a scan."""
-        return tool_get_web_targets(scan_id)
+    def get_web_targets(dataset_id: int) -> list[str]:
+        """Get HTTP/HTTPS URLs discovered in a dataset."""
+        return tool_get_web_targets(dataset_id)
 
     @mcp.tool(annotations=_READONLY_ANN)
     def host_history(host_ip: str) -> Optional[dict]:
-        """Get a host's vulnerability timeline across all scans."""
+        """Get a host's vulnerability timeline across all datasets."""
         return tool_host_history(host_ip)
 
     @mcp.tool(annotations=_READONLY_ANN)
-    def compare_scans(
-        scan1_name: str, scan2_name: str, min_severity: int = 0
+    def compare_datasets(
+        dataset1_name: str, dataset2_name: str, min_severity: int = 0
     ) -> Optional[dict]:
-        """Compare two scans by name (new/resolved/persistent findings and hosts)."""
-        return tool_compare_scans(scan1_name, scan2_name, min_severity=min_severity)
+        """Compare two datasets by name (new/resolved/persistent findings and hosts)."""
+        return tool_compare_datasets(
+            dataset1_name, dataset2_name, min_severity=min_severity
+        )
 
     @mcp.tool(annotations=_READONLY_ANN)
-    def get_workflow(plugin_id: str) -> Optional[dict]:
-        """Get the verification workflow mapped to a plugin, if any.
+    def get_workflow(finding_type_id: str) -> Optional[dict]:
+        """Get the verification workflow mapped to a finding_type, if any.
 
-        ``plugin_id`` is the namespaced id: a bare Nessus plugin id
-        ("57608") or a prefixed nuclei template id ("nuclei:apache-detect").
+        ``finding_type_id`` is the namespaced id, and **every** source is
+        prefixed -- Nessus included: "nessus:57608", "nuclei:apache-detect",
+        "burp:00200300", "operator:3", "agent:7". A bare id ("57608") matches
+        nothing, because no source is the default.
         """
-        return tool_get_workflow(plugin_id, config=cfg)
+        return tool_get_workflow(finding_type_id, config=cfg)
 
     @mcp.tool(annotations=_READONLY_ANN)
     def list_workflow_gaps(
-        scan_ids: list[int], severity_min: Optional[int] = None
+        dataset_ids: list[int], severity_min: Optional[int] = None
     ) -> list[WorkflowGapResult]:
         """List findings with no mapped verification workflow (triage gaps), worst first.
 
-        The complement of query_findings(has_workflow=True): MSF-backed criticals
-        appear first. Use it to see what still needs a manual verification path.
+        One row per unmapped finding type, deduplicated across the datasets
+        given, so this is the complement of
+        query_findings(has_workflow=True, merged=True) rather than of the
+        unmerged form. MSF-backed criticals appear first. Use it to see what
+        still needs a manual verification path.
         """
         return cast(
             "list[WorkflowGapResult]",
             tool_list_workflow_gaps(
-                scan_ids=scan_ids, severity_min=severity_min, config=cfg
+                dataset_ids=dataset_ids, severity_min=severity_min, config=cfg
             ),
         )
 
@@ -3597,13 +3710,15 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
     def get_notes(finding_id: int) -> NotesResult:
         """Read a finding's review notes (timestamped entries + raw text).
 
-        Notes are append-only; written via add_note or set_review_state(notes=...).
+        Notes are append-only; written via add_note or set_review_state(notes=...),
+        both of which are registered only when mcp_allow_mutations is enabled. If
+        they are absent, ask the operator to add the note in the TUI.
         """
         return cast("NotesResult", tool_get_notes(finding_id))
 
     @mcp.tool(annotations=_READONLY_ANN)
     def get_finding_detail(finding_id: int, max_hosts: int = 100) -> FindingDetail:
-        """Get full detail for a finding: plugin metadata + per-host plugin output (capped).
+        """Get full detail for a finding: finding_type metadata + per-host evidence (capped).
 
         Also carries the current verification verdict, a non-binding
         suggested_verdict from ingested NSE evidence, and live-verified fact counts.
@@ -3628,7 +3743,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
     ) -> WorkflowCandidateResult:
         """Draft a workflow contribution from the commands run against a finding.
 
-        reason "new" = plugin has no mapped workflow; "enhanced" = non-baseline
+        reason "new" = finding_type has no mapped workflow; "enhanced" = non-baseline
         commands absent from the mapped one; available=false = nothing new.
         Hosts/ports/creds are templated (<TARGET>/<PORT>/<USERNAME>/<PASSWORD>/
         <DOMAIN>). Review/edit per review_hints, then export_workflow_contribution.
@@ -3663,13 +3778,13 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         )
 
     @mcp.tool(annotations=_READONLY_ANN)
-    def list_hosts(scan_id: Optional[int] = None) -> list[HostInfo]:
-        """List hosts with finding counts and worst severity (all scans, or one scan)."""
-        return cast("list[HostInfo]", tool_list_hosts(scan_id))
+    def list_hosts(dataset_id: Optional[int] = None) -> list[HostInfo]:
+        """List hosts with finding counts and worst severity (all datasets, or one)."""
+        return cast("list[HostInfo]", tool_list_hosts(dataset_id))
 
     @mcp.tool(annotations=_READONLY_ANN)
     def top_hosts(limit: int = 20) -> list[HostInfo]:
-        """List hosts worst-severity-first for prioritization (cross-scan)."""
+        """List hosts worst-severity-first for prioritization (cross-dataset)."""
         return cast("list[HostInfo]", tool_top_hosts(limit))
 
     @mcp.tool(annotations=_READONLY_ANN)
@@ -3696,25 +3811,25 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
 
     @mcp.tool(annotations=_READONLY_ANN)
     def list_cves(
-        scan_ids: list[int], severity_int: Optional[int] = None
+        dataset_ids: list[int], severity_int: Optional[int] = None
     ) -> list[CveEntry]:
-        """List unique CVEs across scans, each mapped to its plugins."""
+        """List unique CVEs across datasets, each mapped to its finding_types."""
         return cast(
-            "list[CveEntry]", tool_list_cves(scan_ids, severity_int=severity_int)
+            "list[CveEntry]", tool_list_cves(dataset_ids, severity_int=severity_int)
         )
 
     @mcp.tool(annotations=_READONLY_ANN)
-    def list_services(scan_id: int) -> list[ServiceInfo]:
-        """List discovered host/port/protocol/service-name tuples for a scan."""
-        return cast("list[ServiceInfo]", tool_list_services(scan_id))
+    def list_services(dataset_id: int) -> list[ServiceInfo]:
+        """List discovered host/port/protocol/service-name tuples for a dataset."""
+        return cast("list[ServiceInfo]", tool_list_services(dataset_id))
 
     @mcp.tool(annotations=_READONLY_ANN)
     def find_affected_by_cve(
-        cve: str, scan_ids: Optional[list[int]] = None
+        cve: str, dataset_ids: Optional[list[int]] = None
     ) -> list[CveAffected]:
-        """Find findings/hosts affected by a CVE across scans (reverse of list_cves)."""
+        """Find findings/hosts affected by a CVE across datasets (reverse of list_cves)."""
         return cast(
-            "list[CveAffected]", tool_find_affected_by_cve(cve, scan_ids=scan_ids)
+            "list[CveAffected]", tool_find_affected_by_cve(cve, dataset_ids=dataset_ids)
         )
 
     @mcp.tool(annotations=_READONLY_ANN)
@@ -3820,7 +3935,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         list_nxc_credentials) fills <USERNAME> and turns <PASSWORD> into a
         @cred:<ref>@ placeholder (secret resolved only at run time). Each command
         reports executable + manual_reason so non-runnable steps are clear. Returns
-        None when no workflow is mapped to the plugin.
+        None when no workflow is mapped to the finding_type.
         """
         return tool_prepare_workflow(
             finding_id, use_credential=use_credential, config=cfg
@@ -3829,7 +3944,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
     @mcp.tool(annotations=_READONLY_ANN)
     def plan_batch(
         strategy: str,
-        scan_ids: Optional[list[int]] = None,
+        dataset_ids: Optional[list[int]] = None,
         severity_int: Optional[int] = None,
         severity_min: Optional[int] = None,
         review_state: Optional[str] = None,
@@ -3838,7 +3953,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         port: Optional[int] = None,
         service: Optional[str] = None,
         host: Optional[str] = None,
-        plugin_name: Optional[str] = None,
+        finding_type_name: Optional[str] = None,
         source: Optional[str] = None,
         has_metasploit: Optional[bool] = None,
         has_workflow: Optional[bool] = None,
@@ -3853,11 +3968,13 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         the same AND-combined set as query_findings (including source, to batch
         over one scanner's findings only). Each item reports the generated
         command and whether it is executable-via-execute_command or manual; already-
-        resolved findings are skipped when skip_done. Review this, then execute_batch.
+        resolved findings are skipped when skip_done. Review this, then run
+        execute_batch — which, like execute_command, is registered only when the
+        matching gate is enabled (see get_capabilities). This dry run always works.
         """
         return tool_plan_batch(
             strategy,
-            scan_ids=scan_ids,
+            dataset_ids=dataset_ids,
             severity_int=severity_int,
             severity_min=severity_min,
             review_state=review_state,
@@ -3866,7 +3983,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
             port=port,
             service=service,
             host=host,
-            plugin_name=plugin_name,
+            finding_type_name=finding_type_name,
             source=source,
             has_metasploit=has_metasploit,
             has_workflow=has_workflow,
@@ -3877,29 +3994,29 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         )
 
     # --- Resources (always on; operator-pinnable context) ---
-    @mcp.resource("cerno://scans", mime_type="application/json")
-    def scans_resource() -> str:
-        """Index of all imported scans with statistics."""
-        return resource_scans()
+    @mcp.resource("cerno://datasets", mime_type="application/json")
+    def datasets_resource() -> str:
+        """Index of all imported datasets with statistics."""
+        return resource_datasets()
 
-    @mcp.resource("cerno://scan/{scan_id}/hosts", mime_type="text/plain")
-    def scan_hosts_resource(scan_id: int) -> str:
-        """Discovered host:port lines for a scan."""
-        return resource_scan_hosts(scan_id)
+    @mcp.resource("cerno://dataset/{dataset_id}/hosts", mime_type="text/plain")
+    def dataset_hosts_resource(dataset_id: int) -> str:
+        """Discovered host:port lines for a dataset."""
+        return resource_dataset_hosts(dataset_id)
 
-    @mcp.resource("cerno://scan/{scan_id}/cves", mime_type="application/json")
-    def scan_cves_resource(scan_id: int) -> str:
-        """Unique CVEs across a scan, mapped to their plugins."""
-        return resource_scan_cves(scan_id)
+    @mcp.resource("cerno://dataset/{dataset_id}/cves", mime_type="application/json")
+    def dataset_cves_resource(dataset_id: int) -> str:
+        """Unique CVEs across a dataset, mapped to their finding_types."""
+        return resource_dataset_cves(dataset_id)
 
     @mcp.resource("cerno://finding/{finding_id}/output", mime_type="text/plain")
     def finding_output_resource(finding_id: int) -> str:
-        """Raw per-host plugin output for a finding."""
+        """Raw per-host evidence for a finding."""
         return resource_finding_output(finding_id)
 
     @mcp.resource("cerno://finding/{finding_id}/workflow", mime_type="text/plain")
     def finding_workflow_resource(finding_id: int) -> str:
-        """Verification workflow for a finding's plugin, if one is mapped."""
+        """Verification workflow for a finding's finding_type, if one is mapped."""
         return resource_finding_workflow(finding_id, config=cfg)
 
     @mcp.resource("cerno://config", mime_type="application/json")
@@ -3939,13 +4056,13 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         return prompt_verify_finding(finding_id, config=cfg)
 
     @mcp.prompt()
-    def triage_scope(scan_ids: str, severity_int: Optional[int] = None) -> str:
-        """Draft a report brief across one or more scans (optionally one severity).
+    def triage_scope(dataset_ids: str, severity_int: Optional[int] = None) -> str:
+        """Draft a report brief across one or more datasets (optionally one severity).
 
-        scan_ids is a comma-separated list of scan IDs (e.g. "1" or "1,3"); multiple
-        scans are merged and deduplicated by plugin, matching the TUI scope assistant.
+        dataset_ids is a comma-separated list of dataset IDs (e.g. "1" or "1,3"); multiple
+        datasets are merged and deduplicated by finding_type, matching the TUI scope assistant.
         """
-        ids = [int(s) for s in str(scan_ids).split(",") if s.strip()]
+        ids = [int(s) for s in str(dataset_ids).split(",") if s.strip()]
         return prompt_triage_scope(ids, severity_int)
 
     # --- Execution (gated) ---
@@ -3972,7 +4089,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
             verifies a finding: it attributes the run (get_finding_artifacts,
             verdict evidence, verified stats, workflow contributions).
 
-            Targets are checked against the engagement scope (scan hosts plus
+            Targets are checked against the engagement scope (dataset hosts plus
             mcp_scope_extra) unless mcp_enforce_scope is off; out-of-scope IPs are
             refused and unresolved hostnames come back in scope_warnings. The
             response's next_steps shows how to continue the verification loop.
@@ -3982,7 +4099,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
             scope_warnings and a next_steps hint) rather than raising.
 
             Runs the blocking command in a worker thread and emits periodic
-            progress heartbeats so long scans (e.g. nmap) show liveness in
+            progress heartbeats so long datasets (e.g. nmap) show liveness in
             progress-capable clients.
             """
             task = asyncio.create_task(
@@ -4074,7 +4191,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         @mcp.tool(annotations=_DESTRUCTIVE_ANN)
         async def execute_batch(
             strategy: str,
-            scan_ids: Optional[list[int]] = None,
+            dataset_ids: Optional[list[int]] = None,
             severity_int: Optional[int] = None,
             severity_min: Optional[int] = None,
             review_state: Optional[str] = None,
@@ -4083,7 +4200,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
             port: Optional[int] = None,
             service: Optional[str] = None,
             host: Optional[str] = None,
-            plugin_name: Optional[str] = None,
+            finding_type_name: Optional[str] = None,
             source: Optional[str] = None,
             has_metasploit: Optional[bool] = None,
             has_workflow: Optional[bool] = None,
@@ -4105,7 +4222,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
             from ..batch import execute_batch as _execute_batch
 
             q = _batch_query(
-                scan_ids=scan_ids,
+                dataset_ids=dataset_ids,
                 severity_int=severity_int,
                 severity_min=severity_min,
                 review_state=review_state,
@@ -4114,7 +4231,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
                 port=port,
                 service=service,
                 host=host,
-                plugin_name=plugin_name,
+                finding_type_name=finding_type_name,
                 source=source,
                 has_metasploit=has_metasploit,
                 has_workflow=has_workflow,
@@ -4159,37 +4276,37 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
         @mcp.tool()
         def import_nuclei(
             nuclei_path: str,
-            scan_name: Optional[str] = None,
+            dataset_name: Optional[str] = None,
             min_severity: Optional[int] = None,
         ) -> dict:
             """Import a nuclei JSON (-je) or JSONL (-jle/-jsonl) results file.
 
-            scan_name defaults to the file's stem, since nuclei output carries no
-            scan name of its own. min_severity (0-4) drops findings below that
+            dataset_name defaults to the file's stem, since nuclei output carries no
+            dataset name of its own. min_severity (0-4) drops findings below that
             severity, defaulting to the nuclei_min_severity config key; a typical
             nuclei run is dominated by Info results.
             """
             return tool_import_nuclei(
-                nuclei_path, scan_name=scan_name, min_severity=min_severity
+                nuclei_path, dataset_name=dataset_name, min_severity=min_severity
             )
 
         @mcp.tool()
         def import_burp(
             burp_path: str,
-            scan_name: Optional[str] = None,
+            dataset_name: Optional[str] = None,
             min_severity: Optional[int] = None,
         ) -> dict:
             """Import a Burp Suite XML report ("Report issues" export).
 
-            scan_name defaults to the file's stem, since a Burp report carries no
-            scan name of its own. One finding is created per issue type, with
+            dataset_name defaults to the file's stem, since a Burp report carries no
+            dataset name of its own. One finding is created per issue type, with
             every instance's evidence merged into the affected host's output.
             Issues dismissed as false positives in Burp are skipped. min_severity
             (0-4) defaults to the burp_min_severity config key; Burp's scale tops
             out at High (3).
             """
             return tool_import_burp(
-                burp_path, scan_name=scan_name, min_severity=min_severity
+                burp_path, dataset_name=dataset_name, min_severity=min_severity
             )
 
         @mcp.tool()
@@ -4209,7 +4326,7 @@ def build_server(config: Optional[CernoConfig] = None) -> Any:
             may be omitted for an engagement-level observation.
 
             The finding is attributed to you: it gets an "agent:" id in the
-            shared "Agent" scan, kept apart from the "operator:" findings the
+            shared "Agent" dataset, kept apart from the "operator:" findings the
             tester enters by hand so the two authorships stay distinguishable.
             It is reviewable, verdictable and workflow-matchable like any other.
             """

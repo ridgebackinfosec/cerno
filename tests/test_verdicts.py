@@ -1,5 +1,7 @@
 """Tests for finding verdicts + evidence (models + MCP adapters)."""
 
+from cerno_pkg.constants import SOURCE_OPERATOR
+
 import sqlite3
 
 import pytest
@@ -15,13 +17,16 @@ from cerno_pkg.mcp_server import server as mcp
 
 
 def _seed_finding(conn: sqlite3.Connection) -> int:
-    conn.execute("INSERT INTO scans (scan_name, export_root) VALUES ('s', '/tmp')")
-    sid = conn.execute("SELECT scan_id FROM scans").fetchone()["scan_id"]
     conn.execute(
-        "INSERT INTO plugins (plugin_id, plugin_name, severity_int) VALUES ('nessus:100','SMB',3)"
+        "INSERT INTO datasets (dataset_name, export_root) VALUES ('s', '/tmp')"
+    )
+    sid = conn.execute("SELECT dataset_id FROM datasets").fetchone()["dataset_id"]
+    conn.execute(
+        "INSERT INTO finding_types (finding_type_id, finding_type_name, severity_int) VALUES ('nessus:100','SMB',3)"
     )
     conn.execute(
-        "INSERT INTO findings (scan_id, plugin_id) VALUES (?,'nessus:100')", (sid,)
+        "INSERT INTO findings (dataset_id, finding_type_id) VALUES (?,'nessus:100')",
+        (sid,),
     )
     fid = conn.execute("SELECT finding_id FROM findings").fetchone()["finding_id"]
     conn.commit()
@@ -33,7 +38,7 @@ class TestFindingVerdictModel:
     def test_set_and_get_current(self, temp_db: sqlite3.Connection) -> None:
         fid = _seed_finding(temp_db)
         FindingVerdict.set(
-            fid, "confirmed", note="ms17 fired", created_by="agent", conn=temp_db
+            fid, "confirmed", SOURCE_OPERATOR, note="ms17 fired", conn=temp_db
         )
         current = FindingVerdict.get_current(fid, temp_db)
         assert current is not None
@@ -42,8 +47,8 @@ class TestFindingVerdictModel:
 
     def test_history_latest_is_current(self, temp_db: sqlite3.Connection) -> None:
         fid = _seed_finding(temp_db)
-        FindingVerdict.set(fid, "unable", conn=temp_db)
-        FindingVerdict.set(fid, "confirmed", conn=temp_db)
+        FindingVerdict.set(fid, "unable", SOURCE_OPERATOR, conn=temp_db)
+        FindingVerdict.set(fid, "confirmed", SOURCE_OPERATOR, conn=temp_db)
         history = FindingVerdict.get_history(fid, temp_db)
         assert len(history) == 2
         current = FindingVerdict.get_current(fid, temp_db)
@@ -52,7 +57,7 @@ class TestFindingVerdictModel:
     def test_invalid_verdict_raises(self, temp_db: sqlite3.Connection) -> None:
         fid = _seed_finding(temp_db)
         with pytest.raises(InvalidVerdict):
-            FindingVerdict.set(fid, "bogus", conn=temp_db)
+            FindingVerdict.set(fid, "bogus", SOURCE_OPERATOR, conn=temp_db)
 
     def test_evidence_linked(self, temp_db: sqlite3.Connection) -> None:
         fid = _seed_finding(temp_db)
@@ -64,7 +69,11 @@ class TestFindingVerdictModel:
             "execution_id"
         ]
         v = FindingVerdict.set(
-            fid, "confirmed", evidence=[VerdictEvidence(execution_id=eid)], conn=temp_db
+            fid,
+            "confirmed",
+            SOURCE_OPERATOR,
+            evidence=[VerdictEvidence(execution_id=eid)],
+            conn=temp_db,
         )
         assert v.verdict_id is not None
         ev = VerdictEvidence.get_by_verdict(v.verdict_id, temp_db)
@@ -118,3 +127,62 @@ class TestVerdictMcpAdapters:
         detail = mcp.tool_get_finding_detail(fid, conn=temp_db)
         assert detail["verdict"] == "false_positive"
         assert detail["verified_port_count"] == 0
+
+
+@pytest.mark.integration
+class TestVerdictAttribution:
+    """`finding_verdicts.created_by` records which channel recorded the verdict.
+
+    Before 4.0.0 this column existed but nothing populated it: the TUI omitted
+    it and the MCP adapter accepted it as caller-supplied free text that the
+    registered tool never passed. It is now derived from the channel.
+    """
+
+    def test_tui_verdict_is_attributed_to_the_operator(
+        self, temp_db: sqlite3.Connection
+    ) -> None:
+        from cerno_pkg.constants import SOURCE_IDS
+
+        fid = _seed_finding(temp_db)
+        FindingVerdict.set(fid, "confirmed", SOURCE_OPERATOR, conn=temp_db)
+        row = temp_db.execute(
+            "SELECT created_by FROM finding_verdicts WHERE finding_id = ?", (fid,)
+        ).fetchone()
+        assert row["created_by"] == SOURCE_IDS[SOURCE_OPERATOR]
+
+    def test_mcp_verdict_is_attributed_to_the_agent(
+        self, temp_db: sqlite3.Connection
+    ) -> None:
+        from cerno_pkg.constants import SOURCE_AGENT, SOURCE_IDS
+
+        fid = _seed_finding(temp_db)
+        mcp.tool_set_finding_verdict(fid, "confirmed", conn=temp_db)
+        row = temp_db.execute(
+            "SELECT created_by FROM finding_verdicts WHERE finding_id = ?", (fid,)
+        ).fetchone()
+        assert row["created_by"] == SOURCE_IDS[SOURCE_AGENT]
+
+    def test_the_mcp_tool_takes_no_author_argument(self) -> None:
+        """A self-reported author reads as provenance but guarantees nothing."""
+        import inspect
+
+        params = inspect.signature(mcp.tool_set_finding_verdict).parameters
+        assert "created_by" not in params
+
+    def test_the_current_verdict_view_resolves_the_channel_name(
+        self, temp_db: sqlite3.Connection
+    ) -> None:
+        fid = _seed_finding(temp_db)
+        FindingVerdict.set(fid, "confirmed", SOURCE_OPERATOR, conn=temp_db)
+        current = FindingVerdict.get_current(fid, temp_db)
+        assert current is not None
+        assert current.created_by_name == SOURCE_OPERATOR
+
+    def test_a_scanner_source_cannot_record_a_verdict(
+        self, temp_db: sqlite3.Connection
+    ) -> None:
+        from cerno_pkg.constants import SOURCE_NESSUS
+
+        fid = _seed_finding(temp_db)
+        with pytest.raises(ValueError, match="not an acting channel"):
+            FindingVerdict.set(fid, "confirmed", SOURCE_NESSUS, conn=temp_db)

@@ -604,7 +604,7 @@ def log_tool_execution(
     sampled: bool = False,
     ports: Optional[str] = None,
     file_path: Optional[Path] = None,
-    scan_dir: Optional[Path] = None,
+    dataset_dir: Optional[Path] = None,
     finding_id: Optional[int] = None,
     conn: Optional[sqlite3.Connection] = None,
 ) -> Optional[int]:
@@ -619,10 +619,10 @@ def log_tool_execution(
         sampled: Whether host list was sampled
         ports: Port specification string
         file_path: Unused (kept for call compatibility; findings are referenced by ID)
-        scan_dir: Scan directory for session linking
+        dataset_dir: Dataset directory for session linking
         finding_id: Explicit finding to attribute this execution to. Takes
-            precedence over session/scan_dir derivation (used by the MCP server,
-            which has no scan_dir but knows the finding).
+            precedence over session/dataset_dir derivation (used by the MCP server,
+            which has no dataset_dir but knows the finding).
         conn: Optional database connection. If None, creates new connection.
               Useful for testing or including in larger transactions.
 
@@ -641,7 +641,7 @@ def log_tool_execution(
             sampled,
             ports,
             file_path,
-            scan_dir,
+            dataset_dir,
             finding_id,
         )
 
@@ -660,7 +660,7 @@ def log_tool_execution(
                 sampled,
                 ports,
                 file_path,
-                scan_dir,
+                dataset_dir,
                 finding_id,
             )
     except Exception as e:
@@ -728,7 +728,7 @@ def _log_tool_execution_impl(
     sampled: bool,
     ports: Optional[str],
     file_path: Optional[Path],
-    scan_dir: Optional[Path],
+    dataset_dir: Optional[Path],
     finding_id: Optional[int] = None,
 ) -> Optional[int]:
     """Internal implementation of log_tool_execution - requires connection.
@@ -747,19 +747,19 @@ def _log_tool_execution_impl(
         # Determine session_id; finding_id may be supplied explicitly.
         session_id = None
 
-        if scan_dir and scan_dir.exists():
+        if dataset_dir and dataset_dir.exists():
             # Try to find active session
-            scan_name = scan_dir.name
+            dataset_name = dataset_dir.name
             row = query_one(
                 conn,
                 """
                 SELECT s.session_id
                 FROM sessions s
-                JOIN scans sc ON s.scan_id = sc.scan_id
-                WHERE sc.scan_name = ? AND s.session_end IS NULL
+                JOIN datasets sc ON s.dataset_id = sc.dataset_id
+                WHERE sc.dataset_name = ? AND s.session_end IS NULL
                 ORDER BY s.session_start DESC LIMIT 1
                 """,
-                (scan_name,),
+                (dataset_name,),
             )
             if row:
                 session_id = row["session_id"]
@@ -925,9 +925,9 @@ def log_artifacts_for_run(
         return log_artifacts_for_nmap(execution_id, oabase, metadata, conn=conn)
 
     if name == "nuclei":
-        from .tools import nuclei_scan_output
+        from .tools import nuclei_dataset_output
 
-        path = Path(nuclei_scan_output(oabase))
+        path = Path(nuclei_dataset_output(oabase))
         if not path.exists():
             # A run that matched nothing writes no file; that is not an error.
             log_debug(f"No nuclei output at {path}; nothing to register")
@@ -1161,8 +1161,8 @@ def build_nmap_remote_oneliner(
         Complete one-liner command string
     """
     output_path = f"/tmp/cerno_{timestamp}"
-    scan_flag = "-sU" if udp else "-sS"
-    nmap_parts = ["sudo", "nmap", scan_flag, "-A", "-iL", "-"]
+    dataset_flag = "-sU" if udp else "-sS"
+    nmap_parts = ["sudo", "nmap", dataset_flag, "-A", "-iL", "-"]
     if ports_str:
         nmap_parts += ["-p", ports_str]
     if nse_option:

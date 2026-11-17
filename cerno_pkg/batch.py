@@ -33,7 +33,7 @@ from typing import Any, Callable, Optional
 from .config import CernoConfig, load_config
 from .database import db_transaction, query_one
 from .exec_chain import is_runnable, resolve_target_binary
-from .models import Finding, Plugin
+from .models import Finding, FindingType
 from .query import FindingQuery, run_finding_query
 
 
@@ -42,8 +42,8 @@ class BatchItem:
     """One finding's generated command and its execution classification."""
 
     finding_id: int
-    plugin_id: str
-    plugin_name: str
+    finding_type_id: str
+    finding_type_name: str
     tool: str
     generated_command: Optional[list[str]] = None
     executable: bool = False
@@ -67,8 +67,8 @@ class BatchPlan:
             "items": [
                 {
                     "finding_id": i.finding_id,
-                    "plugin_id": i.plugin_id,
-                    "plugin_name": i.plugin_name,
+                    "finding_type_id": i.finding_type_id,
+                    "finding_type_name": i.finding_type_name,
                     "tool": i.tool,
                     "generated_command": i.generated_command,
                     "executable": i.executable,
@@ -88,7 +88,7 @@ def _default_is_installed(name: str) -> bool:
 def _generate_command(
     finding_id: int,
     strategy: str,
-    plugin: Plugin,
+    finding_type: FindingType,
     use_credential: Optional[str],
     config: Optional[CernoConfig],
     conn: Optional[sqlite3.Connection],
@@ -189,14 +189,14 @@ def plan_batch(
 
     plan = BatchPlan(strategy=strategy)
     with db_transaction(conn) as c:
-        for finding, plugin in run_finding_query(query, c, config=cfg):
+        for finding, finding_type in run_finding_query(query, c, config=cfg):
             fid = finding.finding_id
             if fid is None:
                 continue
             item = BatchItem(
                 finding_id=fid,
-                plugin_id=plugin.plugin_id,
-                plugin_name=plugin.plugin_name,
+                finding_type_id=finding_type.finding_type_id,
+                finding_type_name=finding_type.finding_type_name,
                 tool=strategy,
             )
             resolved = _resolved_skip_reason(finding, c) if skip_done else None
@@ -204,7 +204,7 @@ def plan_batch(
                 item.skip_reason = resolved
             else:
                 argv, tool_label = _generate_command(
-                    fid, strategy, plugin, use_credential, cfg, c
+                    fid, strategy, finding_type, use_credential, cfg, c
                 )
                 item.tool = tool_label
                 item.generated_command = argv

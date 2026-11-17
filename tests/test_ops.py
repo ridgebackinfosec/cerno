@@ -174,36 +174,36 @@ class TestLogToolExecution:
     @pytest.mark.integration
     def test_log_execution_with_session_link(self, temp_db):
         """Test logging execution linked to a session."""
-        from cerno_pkg.models import Scan
+        from cerno_pkg.models import Dataset
 
         # Create scan and session
-        scan = Scan(scan_name="test_scan", export_root="/tmp/test")
-        scan_id = scan.save(temp_db)
-        assert scan_id is not None
+        dataset = Dataset(dataset_name="test_dataset", export_root="/tmp/test")
+        dataset_id = dataset.save(temp_db)
+        assert dataset_id is not None
 
         # Create session for linking test
         temp_db.execute(
-            "INSERT INTO sessions (scan_id, session_start) VALUES (?, datetime('now'))",
-            (scan_id,),
+            "INSERT INTO sessions (dataset_id, session_start) VALUES (?, datetime('now'))",
+            (dataset_id,),
         )
         temp_db.commit()
 
         # Create scan directory for linking
         with tempfile.TemporaryDirectory() as tmpdir:
-            scan_dir = Path(tmpdir) / "test_scan"
-            scan_dir.mkdir()
+            dataset_dir = Path(tmpdir) / "test_dataset"
+            dataset_dir.mkdir()
 
             metadata = ExecutionMetadata(
                 exit_code=0, duration_seconds=5.0, used_sudo=False
             )
 
-            # Note: This won't actually link since scan_dir.name != scan_name in DB
+            # Note: This won't actually link since dataset_dir.name != dataset_name in DB
             # but tests the code path
             execution_id = log_tool_execution(
                 tool_name="nmap",
                 command_text="nmap 192.168.1.1",
                 execution_metadata=metadata,
-                scan_dir=scan_dir,
+                dataset_dir=dataset_dir,
                 conn=temp_db,
             )
 
@@ -214,21 +214,23 @@ class TestLogToolExecution:
         reason="file_path column not present, cannot link executions by path"
     )
     def test_log_execution_with_file_link(self, temp_db, temp_dir):
-        """Test logging execution linked to a plugin file."""
-        from cerno_pkg.models import Scan, Plugin, Finding
+        """Test logging execution linked to a finding_type file."""
+        from cerno_pkg.models import Dataset, FindingType, Finding
 
         # Create dependencies
-        scan = Scan(scan_name="test_scan", export_root="/tmp/test")
-        scan_id = scan.save(temp_db)
-        assert scan_id is not None
+        dataset = Dataset(dataset_name="test_dataset", export_root="/tmp/test")
+        dataset_id = dataset.save(temp_db)
+        assert dataset_id is not None
 
-        plugin = Plugin(plugin_id="nessus:12345", plugin_name="Test", severity_int=2)
-        plugin.save(temp_db)
+        finding_type = FindingType(
+            finding_type_id="nessus:12345", finding_type_name="Test", severity_int=2
+        )
+        finding_type.save(temp_db)
 
-        file_path = temp_dir / "test_plugin.txt"
+        file_path = temp_dir / "test_finding_type.txt"
         file_path.write_text("192.168.1.1:80\n")
 
-        pf = Finding(scan_id=scan_id, plugin_id="nessus:12345")
+        pf = Finding(dataset_id=dataset_id, finding_type_id="nessus:12345")
         pf.save(temp_db)
 
         # Log execution
@@ -316,7 +318,7 @@ class TestLogArtifact:
         artifact_file = temp_dir / "scan.xml"
         artifact_file.write_text("test")
 
-        metadata_dict = {"scan_type": "SYN", "hosts_up": 5}
+        metadata_dict = {"dataset_type": "SYN", "hosts_up": 5}
 
         artifact_id = log_artifact(
             execution_id=exec_id,
@@ -472,7 +474,7 @@ class TestLogArtifactsForNmap:
         oabase = temp_dir / "scan"
         (temp_dir / "scan.xml").write_text("<nmaprun/>")
 
-        metadata_dict = {"scan_type": "version_detection"}
+        metadata_dict = {"dataset_type": "version_detection"}
 
         artifact_ids = log_artifacts_for_nmap(
             exec_id, oabase, metadata=metadata_dict, conn=temp_db
