@@ -21,18 +21,18 @@ an ``agent:`` finding in the TUI leaves it ``agent:``.
 
 Three things are specific to a source with no scanner behind it:
 
-* **One shared scan per source.** ``findings`` needs a ``scan_id`` and a
+* **One shared scan per source.** ``findings`` needs a ``dataset_id`` and a
   hand-authored finding belongs to no scanner run, so each source's findings
-  live in one scan named by
-  :data:`~cerno_pkg.constants.AUTHORED_SCAN_NAMES`, created on first use.
-  Keeping them out of the scanner scans is what preserves the invariant
-  :mod:`cerno_pkg.cross_scan` depends on -- that one scan has one source -- so
-  ``cerno scan compare`` keeps working on the scans around them.
-* **A sequential identity, per source.** There is no plugin number or template
+  live in one dataset named by
+  :data:`~cerno_pkg.constants.AUTHORED_DATASET_NAMES`, created on first use.
+  Keeping them out of the scanner datasets is what preserves the invariant
+  :mod:`cerno_pkg.cross_dataset` depends on -- that one scan has one source -- so
+  ``cerno dataset compare`` keeps working on the datasets around them.
+* **A sequential identity, per source.** There is no finding_type number or template
   id to borrow, so the ref is ``MAX(ref) + 1`` over that source's ids alone,
   allocated inside the write transaction -- ``operator:1`` and ``agent:1``
   coexist. It is deliberately *not* derived from the title:
-  ``Plugin.save()`` is ``INSERT OR REPLACE`` against a table global to every
+  ``FindingType.save()`` is ``INSERT OR REPLACE`` against a table global to every
   scan, so a title-derived id would let a second finding silently overwrite an
   earlier one's name and severity, and renaming a finding would move its
   identity.
@@ -58,25 +58,25 @@ from typing import Optional, Sequence
 
 from .constants import (
     AUTHORED_DESCRIPTION_MAX_CHARS,
-    AUTHORED_SCAN_NAMES,
+    AUTHORED_DATASET_NAMES,
     AUTHORED_SOURCES,
     AUTHORED_TITLE_MAX_CHARS,
-    PLUGIN_ID_PREFIXES,
-    SCANS_ROOT,
+    FINDING_TYPE_ID_PREFIXES,
+    DATASETS_ROOT,
     SOURCE_IDS,
 )
 from .database import db_transaction
 from .logging_setup import log_info
-from .models import Finding, Host, Plugin, Port, Scan, now_iso
-from .parsing import plugin_source, scan_target_type, split_host_port, unbracket
+from .models import Finding, Host, FindingType, Port, Dataset, now_iso
+from .parsing import finding_type_source, scan_target_type, split_host_port, unbracket
 
 __all__ = [
     "AuthoredFindingError",
     "AuthoredFindingInput",
     "UNCHANGED",
-    "authored_scan_path",
+    "authored_dataset_path",
     "create_authored_finding",
-    "get_or_create_authored_scan",
+    "get_or_create_authored_dataset",
     "load_authored_finding",
     "next_authored_ref",
     "parse_target_tokens",
@@ -89,7 +89,7 @@ _CVE_RE = re.compile(r"^CVE-\d{4}-\d{4,}$")
 
 #: A reference URL we are willing to store.
 #:
-#: ``plugins.plugin_url`` is later interpolated into a Rich *style* string to
+#: ``finding_types.details_url`` is later interpolated into a Rich *style* string to
 #: build the OSC-8 hyperlink in the finding panel, where embedded whitespace is
 #: parsed as extra style tokens and can abort rendering -- the same hazard
 #: ``nuclei_parse._TEMPLATE_URL_RE`` guards against, for the same reason.
@@ -142,7 +142,7 @@ class AuthoredFindingInput:
     """
 
     title: str
-    """Becomes ``plugins.plugin_name``."""
+    """Becomes ``finding_types.finding_type_name``."""
 
     severity_int: int
     """0-4. Unlike Burp, an author may call something Critical."""
@@ -151,9 +151,9 @@ class AuthoredFindingInput:
     """``(host, port)`` pairs. May be empty, and a port may be None."""
 
     description: str = ""
-    """Stored as ``plugin_output`` on every affected-host row.
+    """Stored as ``evidence`` on every affected-host row.
 
-    ``plugins`` has no description column, and per-host evidence is where all
+    ``finding_types`` has no description column, and per-host evidence is where all
     three importers put theirs, so the finding's narrative goes there too --
     the same text against each host rather than one per host.
     """
@@ -269,32 +269,32 @@ def _require_authored_source(source: str) -> str:
     return source
 
 
-def get_or_create_authored_scan(
+def get_or_create_authored_dataset(
     source: str, conn: Optional[sqlite3.Connection] = None
-) -> Scan:
+) -> Dataset:
     """Return ``source``'s shared scan, creating it on first use.
 
     ``source_file_path`` and ``source_file_hash`` stay NULL: no file produced
-    this scan, and claiming one would make ``cerno demo``-style hash
+    this dataset, and claiming one would make ``cerno demo``-style hash
     idempotency checks compare against nothing. ``export_root`` is NOT NULL, so
     it points at the directory a tool run against these findings would write to.
     """
-    scan_name = AUTHORED_SCAN_NAMES[_require_authored_source(source)]
+    dataset_name = AUTHORED_DATASET_NAMES[_require_authored_source(source)]
     with db_transaction(conn) as c:
-        existing = Scan.get_by_name(scan_name, c)
+        existing = Dataset.get_by_name(dataset_name, c)
         if existing is not None:
             return existing
 
-        scan = Scan(
-            scan_name=scan_name,
+        dataset = Dataset(
+            dataset_name=dataset_name,
             source_file_path=None,
             source_file_hash=None,
-            export_root=str(SCANS_ROOT / scan_name),
+            export_root=str(DATASETS_ROOT / dataset_name),
             created_at=now_iso(),
         )
-        scan.scan_id = scan.save(c)
-        log_info(f"Created the {scan_name} scan for {source}-authored findings")
-        return scan
+        dataset.dataset_id = dataset.save(c)
+        log_info(f"Created the {dataset_name} dataset for {source}-authored findings")
+        return dataset
 
 
 def next_authored_ref(source: str, conn: Optional[sqlite3.Connection] = None) -> int:
@@ -310,10 +310,10 @@ def next_authored_ref(source: str, conn: Optional[sqlite3.Connection] = None) ->
     database must not be handed the same number.
     """
     _require_authored_source(source)
-    prefix_len = len(PLUGIN_ID_PREFIXES[source])
+    prefix_len = len(FINDING_TYPE_ID_PREFIXES[source])
     with db_transaction(conn) as c:
         row = c.execute(
-            "SELECT MAX(CAST(substr(plugin_id, ?) AS INTEGER)) FROM plugins "
+            "SELECT MAX(CAST(substr(finding_type_id, ?) AS INTEGER)) FROM finding_types "
             "WHERE source_id = ?",
             (prefix_len + 1, SOURCE_IDS[source]),
         ).fetchone()
@@ -359,7 +359,7 @@ def _write_targets(
         conn.execute(
             """
             INSERT OR REPLACE INTO finding_affected_hosts (
-                finding_id, host_id, port_number, plugin_output
+                finding_id, host_id, port_number, evidence
             ) VALUES (?, ?, ?, ?)
             """,
             (finding_id, host_id, port, description),
@@ -374,7 +374,7 @@ def create_authored_finding(
     source: str,
     conn: Optional[sqlite3.Connection] = None,
 ) -> tuple[str, int]:
-    """Write a new hand-authored finding. Returns ``(plugin_id, finding_id)``.
+    """Write a new hand-authored finding. Returns ``(finding_type_id, finding_id)``.
 
     Args:
         data: The collected fields, already validated here rather than by the
@@ -389,45 +389,53 @@ def create_authored_finding(
     Raises:
         AuthoredFindingError: If ``source`` is not a hand-authored source, or
             ``data`` fails validation. Nothing is written in that case -- not
-            even the scan, so a rejected first attempt leaves no trace in
-            ``cerno scan list``.
+            even the dataset, so a rejected first attempt leaves no trace in
+            ``cerno dataset list``.
     """
     _require_authored_source(source)
     problems = validate_authored_input(data)
     if problems:
         raise AuthoredFindingError(problems)
 
-    scan_name = AUTHORED_SCAN_NAMES[source]
+    dataset_name = AUTHORED_DATASET_NAMES[source]
     with db_transaction(conn) as c:
-        scan = get_or_create_authored_scan(source, c)
-        if scan.scan_id is None:
-            raise AuthoredFindingError([f"Could not create the {scan_name} scan."])
+        dataset = get_or_create_authored_dataset(source, c)
+        if dataset.dataset_id is None:
+            raise AuthoredFindingError(
+                [f"Could not create the {dataset_name} dataset."]
+            )
 
-        plugin_id = PLUGIN_ID_PREFIXES[source] + str(next_authored_ref(source, c))
+        finding_type_id = FINDING_TYPE_ID_PREFIXES[source] + str(
+            next_authored_ref(source, c)
+        )
 
-        Plugin(
-            plugin_id=plugin_id,
-            plugin_name=data.title.strip(),
+        FindingType(
+            finding_type_id=finding_type_id,
+            finding_type_name=data.title.strip(),
             severity_int=data.severity_int,
             has_metasploit=False,  # the author can note one in the description
             cvss3_score=None,
             cvss2_score=None,
             metasploit_names=None,
             cves=_normalized_cves(data.cves),
-            plugin_url=(data.reference_url or "").strip() or None,
+            stored_details_url=(data.reference_url or "").strip() or None,
         ).save(c)
 
-        finding_id = Finding(scan_id=scan.scan_id, plugin_id=plugin_id).save(c)
+        finding_id = Finding(
+            dataset_id=dataset.dataset_id, finding_type_id=finding_type_id
+        ).save(c)
         if finding_id is None:
-            raise AuthoredFindingError([f"Could not create a finding for {plugin_id}."])
+            raise AuthoredFindingError(
+                [f"Could not create a finding for {finding_type_id}."]
+            )
 
         written = _write_targets(finding_id, data.targets, data.description, c)
 
     log_info(
-        f"Created {source} finding {plugin_id} ({data.title.strip()!r}, "
+        f"Created {source} finding {finding_type_id} ({data.title.strip()!r}, "
         f"severity {data.severity_int}, {written} host entries)"
     )
-    return plugin_id, finding_id
+    return finding_type_id, finding_id
 
 
 def load_authored_finding(
@@ -446,28 +454,28 @@ def load_authored_finding(
     """
     with db_transaction(conn) as c:
         row = c.execute(
-            "SELECT plugin_id FROM findings WHERE finding_id = ?", (finding_id,)
+            "SELECT finding_type_id FROM findings WHERE finding_id = ?", (finding_id,)
         ).fetchone()
         if row is None:
             raise AuthoredFindingError([f"No finding with id {finding_id}."])
 
-        plugin_id = str(row["plugin_id"])
-        if plugin_source(plugin_id) not in AUTHORED_SOURCES:
-            raise AuthoredFindingError([f"{plugin_id} was not entered by hand."])
+        finding_type_id = str(row["finding_type_id"])
+        if finding_type_source(finding_type_id) not in AUTHORED_SOURCES:
+            raise AuthoredFindingError([f"{finding_type_id} was not entered by hand."])
 
-        plugin = Plugin.get_by_id(plugin_id, c)
-        if plugin is None:
-            raise AuthoredFindingError([f"No plugin row for {plugin_id}."])
+        finding_type = FindingType.get_by_id(finding_type_id, c)
+        if finding_type is None:
+            raise AuthoredFindingError([f"No finding_type row for {finding_type_id}."])
 
         targets, description = _load_targets(finding_id, c)
 
     return AuthoredFindingInput(
-        title=plugin.plugin_name,
-        severity_int=plugin.severity_int,
+        title=finding_type.finding_type_name,
+        severity_int=finding_type.severity_int,
         targets=targets,
         description=description,
-        cves=list(plugin.cves or []),
-        reference_url=plugin.plugin_url,
+        cves=list(finding_type.cves or []),
+        reference_url=finding_type.details_url,
     )
 
 
@@ -482,7 +490,7 @@ def update_authored_finding(
     reference_url: object = UNCHANGED,
     conn: Optional[sqlite3.Connection] = None,
 ) -> str:
-    """Edit a hand-authored finding in place. Returns its ``plugin_id``.
+    """Edit a hand-authored finding in place. Returns its ``finding_type_id``.
 
     Only the fields given are touched; omitted ones keep their stored values.
     Pass ``reference_url=None`` to clear a reference (omitting it leaves the
@@ -494,7 +502,7 @@ def update_authored_finding(
     consequence is that the namespace records the finding's *creator*, not its
     last editor -- an edited ``agent:`` finding stays ``agent:``.
 
-    The ``plugin_id`` never changes, including when the title does. That is the
+    The ``finding_type_id`` never changes, including when the title does. That is the
     point of a sequential ref: a workflow mapping or a note that names
     ``operator:3`` still names the same finding after it is reworded.
 
@@ -503,42 +511,42 @@ def update_authored_finding(
             hand-authored, or the resulting finding would fail validation.
             Scanner findings are refused deliberately -- they are a record of
             what the scanner reported, and editing one would make the database
-            disagree with the scan file it came from.
+            disagree with the scanner export it came from.
     """
     with db_transaction(conn) as c:
         row = c.execute(
-            "SELECT plugin_id FROM findings WHERE finding_id = ?", (finding_id,)
+            "SELECT finding_type_id FROM findings WHERE finding_id = ?", (finding_id,)
         ).fetchone()
         if row is None:
             raise AuthoredFindingError([f"No finding with id {finding_id}."])
 
-        plugin_id = str(row["plugin_id"])
-        if plugin_source(plugin_id) not in AUTHORED_SOURCES:
+        finding_type_id = str(row["finding_type_id"])
+        if finding_type_source(finding_type_id) not in AUTHORED_SOURCES:
             raise AuthoredFindingError(
                 [
-                    f"{plugin_id} was not entered by hand, so it cannot be "
+                    f"{finding_type_id} was not entered by hand, so it cannot be "
                     "edited. Record a verdict on it instead."
                 ]
             )
 
-        plugin = Plugin.get_by_id(plugin_id, c)
-        if plugin is None:
-            raise AuthoredFindingError([f"No plugin row for {plugin_id}."])
+        finding_type = FindingType.get_by_id(finding_type_id, c)
+        if finding_type is None:
+            raise AuthoredFindingError([f"No finding_type row for {finding_type_id}."])
 
         current_targets, current_description = _load_targets(finding_id, c)
 
         merged = AuthoredFindingInput(
-            title=plugin.plugin_name if title is None else title,
+            title=finding_type.finding_type_name if title is None else title,
             severity_int=(
-                plugin.severity_int if severity_int is None else severity_int
+                finding_type.severity_int if severity_int is None else severity_int
             ),
             targets=(
                 list(current_targets) if targets is None else [tuple(t) for t in targets]  # type: ignore[misc]
             ),
             description=(current_description if description is None else description),
-            cves=list(plugin.cves or []) if cves is None else list(cves),
+            cves=list(finding_type.cves or []) if cves is None else list(cves),
             reference_url=(
-                plugin.plugin_url
+                finding_type.details_url
                 if reference_url is UNCHANGED
                 else (reference_url if reference_url is None else str(reference_url))
             ),
@@ -548,24 +556,24 @@ def update_authored_finding(
         if problems:
             raise AuthoredFindingError(problems)
 
-        Plugin(
-            plugin_id=plugin_id,
-            plugin_name=merged.title.strip(),
+        FindingType(
+            finding_type_id=finding_type_id,
+            finding_type_name=merged.title.strip(),
             severity_int=merged.severity_int,
-            has_metasploit=plugin.has_metasploit,
-            cvss3_score=plugin.cvss3_score,
-            cvss2_score=plugin.cvss2_score,
-            metasploit_names=plugin.metasploit_names,
+            has_metasploit=finding_type.has_metasploit,
+            cvss3_score=finding_type.cvss3_score,
+            cvss2_score=finding_type.cvss2_score,
+            metasploit_names=finding_type.metasploit_names,
             cves=_normalized_cves(merged.cves),
-            plugin_url=(merged.reference_url or "").strip() or None,
+            stored_details_url=(merged.reference_url or "").strip() or None,
         ).save(c)
 
         # Rewritten even when only the description changed: it is stored once
         # per host, so every row has to be brought along.
         _write_targets(finding_id, merged.targets, merged.description, c)
 
-    log_info(f"Updated authored finding {plugin_id}")
-    return plugin_id
+    log_info(f"Updated authored finding {finding_type_id}")
+    return finding_type_id
 
 
 def _load_targets(
@@ -578,7 +586,7 @@ def _load_targets(
     """
     rows = conn.execute(
         """
-        SELECT h.scan_target, fah.port_number, fah.plugin_output
+        SELECT h.scan_target, fah.port_number, fah.evidence
         FROM finding_affected_hosts fah
         JOIN hosts h ON h.host_id = fah.host_id
         WHERE fah.finding_id = ?
@@ -588,12 +596,10 @@ def _load_targets(
     ).fetchall()
 
     targets = [(str(r["scan_target"]), r["port_number"]) for r in rows]
-    description = next(
-        (str(r["plugin_output"]) for r in rows if r["plugin_output"]), ""
-    )
+    description = next((str(r["evidence"]) for r in rows if r["evidence"]), "")
     return targets, description
 
 
-def authored_scan_path(source: str) -> Path:
+def authored_dataset_path(source: str) -> Path:
     """Directory a tool run against ``source``'s findings writes its output to."""
-    return SCANS_ROOT / AUTHORED_SCAN_NAMES[_require_authored_source(source)]
+    return DATASETS_ROOT / AUTHORED_DATASET_NAMES[_require_authored_source(source)]

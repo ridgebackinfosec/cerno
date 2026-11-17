@@ -13,11 +13,20 @@ import shutil
 import sqlite3
 from pathlib import Path
 
-
 SMB_HOSTS = [
     (1, "198.51.100.20", "FILE01", "DEMO", "Windows Server 2019", 0, 0, 0, 0),
     (2, "198.51.100.21", "FILE02", "DEMO", "Windows Server 2016", 1, 0, 0, 1),
-    (3, "198.51.100.30", "DC01", "DEMO", "Windows Server 2019 Domain Controller", 0, 0, 1, 1),
+    (
+        3,
+        "198.51.100.30",
+        "DC01",
+        "DEMO",
+        "Windows Server 2019 Domain Controller",
+        0,
+        0,
+        1,
+        1,
+    ),
     (4, "198.51.100.32", "DB01", "DEMO", "Windows Server 2012 R2", 1, 0, 0, 0),
     (5, "203.0.113.63", "BACKUP", "DEMO", "Windows Server 2019", 0, 0, 0, 0),
     (6, "198.51.100.60", "WIN01", "DEMO", "Windows 10 Enterprise", 0, 0, 0, 0),
@@ -29,7 +38,13 @@ SMB_HOSTS = [
 ]
 
 SMB_USERS = [
-    (1, "DEMO", "da.backup", "aad3b435b51404eeaad3b435b51404ee:8846f7eaee8fb117ad06bdd830b7586c", "hash"),
+    (
+        1,
+        "DEMO",
+        "da.backup",
+        "aad3b435b51404eeaad3b435b51404ee:8846f7eaee8fb117ad06bdd830b7586c",
+        "hash",
+    ),
     (2, "DEMO", "svc_deploy", "SyntheticPassword!23", "plaintext"),
     (3, "DEMO", "auditor", "SyntheticAudit!23", "plaintext"),
     (4, "DEMO", "helpdesk", "SyntheticHelpdesk!23", "plaintext"),
@@ -115,12 +130,28 @@ SSH_LOGGEDIN_RELATIONS = [
 
 LDAP_HOSTS = [
     # id, ip, hostname, domain, os, signing_required, channel_binding
-    (1, "198.51.100.30", "DC01", "DEMO", "Windows Server 2019 Domain Controller", 0, "Never"),
+    (
+        1,
+        "198.51.100.30",
+        "DC01",
+        "DEMO",
+        "Windows Server 2019 Domain Controller",
+        0,
+        "Never",
+    ),
 ]
 
 RDP_HOSTS = [
     # id, ip, port, hostname, domain, os, nla
-    (1, "198.51.100.30", 3389, "DC01", "DEMO", "Windows Server 2019 Domain Controller", 1),
+    (
+        1,
+        "198.51.100.30",
+        3389,
+        "DC01",
+        "DEMO",
+        "Windows Server 2019 Domain Controller",
+        1,
+    ),
     (2, "198.51.100.60", 3389, "WIN01", "DEMO", "Windows 10 Enterprise", 0),
     (3, "198.51.100.61", 3389, "WIN02", "DEMO", "Windows 10 Enterprise", 0),
     (4, "198.51.100.62", 3389, "WIN03", "DEMO", "Windows 10 Enterprise", 1),
@@ -145,7 +176,8 @@ def create_smb_db(conn: sqlite3.Connection) -> None:
         SMB_USERS,
     )
     conn.executemany(
-        "INSERT INTO admin_relations (id, userid, hostid) VALUES (?, ?, ?)", SMB_ADMIN_RELATIONS
+        "INSERT INTO admin_relations (id, userid, hostid) VALUES (?, ?, ?)",
+        SMB_ADMIN_RELATIONS,
     )
     conn.executemany(
         "INSERT INTO loggedin_relations (id, userid, hostid) VALUES (?, ?, ?)",
@@ -158,12 +190,17 @@ def create_smb_db(conn: sqlite3.Connection) -> None:
 
 
 def create_ssh_db(conn: sqlite3.Connection) -> None:
-    conn.executemany("INSERT INTO hosts (id, host, port, banner, os) VALUES (?, ?, ?, ?, ?)", SSH_HOSTS)
     conn.executemany(
-        "INSERT INTO credentials (id, username, password, credtype) VALUES (?, ?, ?, ?)", SSH_CREDS
+        "INSERT INTO hosts (id, host, port, banner, os) VALUES (?, ?, ?, ?, ?)",
+        SSH_HOSTS,
     )
     conn.executemany(
-        "INSERT INTO admin_relations (id, credid, hostid) VALUES (?, ?, ?)", SSH_ADMIN_RELATIONS
+        "INSERT INTO credentials (id, username, password, credtype) VALUES (?, ?, ?, ?)",
+        SSH_CREDS,
+    )
+    conn.executemany(
+        "INSERT INTO admin_relations (id, credid, hostid) VALUES (?, ?, ?)",
+        SSH_ADMIN_RELATIONS,
     )
     conn.executemany(
         "INSERT INTO loggedin_relations (id, credid, hostid, shell) VALUES (?, ?, ?, ?)",
@@ -175,7 +212,9 @@ def create_ftp_db(conn: sqlite3.Connection) -> None:
     conn.execute(
         "INSERT INTO hosts (id, host, port, banner) VALUES (1, '198.51.100.33', 21, 'vsFTPd 2.3.4')"
     )
-    conn.execute("INSERT INTO credentials (id, username, password) VALUES (1, 'anonymous', '')")
+    conn.execute(
+        "INSERT INTO credentials (id, username, password) VALUES (1, 'anonymous', '')"
+    )
     conn.execute("INSERT INTO loggedin_relations (id, credid, hostid) VALUES (1, 1, 1)")
 
 

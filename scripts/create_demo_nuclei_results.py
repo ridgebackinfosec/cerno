@@ -7,7 +7,7 @@ like a real ``nuclei -je`` run (a single JSON array of result objects).
 **Targets are derived, not hard-coded.** The script parses the two demo
 ``.nessus`` files and reproduces the ``v_http_services`` selection logic, so the
 generated findings can only ever land on host:port pairs that actually exist in
-the demo scans. A finding spec naming a target that is not in that set is a hard
+the demo datasets. A finding spec naming a target that is not in that set is a hard
 error rather than a silently wrong fixture -- that is the whole reason this is a
 generator instead of two hand-written JSON files.
 
@@ -380,20 +380,20 @@ TEMPLATES = {
 # Finding specs
 # ---------------------------------------------------------------------------
 # Each entry: (template_id, target, options)
-#   target  -- "host:port", which MUST exist in the scan's HTTP service set
+#   target  -- "host:port", which MUST exist in the dataset's HTTP service set
 #   options -- optional dict:
 #       matchers  : list of matcher-name values; one record per matcher, all of
-#                   which Cerno merges into a single plugin_output
+#                   which Cerno merges into a single evidence
 #       extracted : extracted-results for a single record
 #       per       : {matcher: extracted} for matcher-specific extractions
 #       path      : URL path the template matched at (http only)
 #
-# "corroborates" comments name the Nessus demo plugin on the same host:port.
+# "corroborates" comments name the Nessus demo finding_type on the same host:port.
 
 SHOP_HOSTS = [f"203.0.113.{n}:443" for n in range(80, 86)]
 EDGE_HOSTS = [f"203.0.113.{n}:443" for n in range(70, 76)]
 
-# Findings present in BOTH demo scans (the initial scan's four targets).
+# Findings present in BOTH demo datasets (the initial scan's four targets).
 BASELINE_FINDINGS: list[tuple[str, str, dict]] = [
     # --- 198.51.100.10:80 (web01) ---
     ("tech-detect", "198.51.100.10:80", {"matchers": ["apache", "ubuntu"]}),
@@ -502,9 +502,9 @@ EXPANDED_ONLY_FINDINGS: list[tuple[str, str, dict]] = [
 ]
 
 # The centrepiece: Nessus splits missing security headers into three separate
-# plugins (84502 HSTS, 85601 X-Frame-Options, 98033 CSP) on each shop host;
+# finding_types (84502 HSTS, 85601 X-Frame-Options, 98033 CSP) on each shop host;
 # nuclei reports all three as matchers on ONE finding, which Cerno merges into a
-# single plugin_output. Same evidence, two scanner models, side by side.
+# single evidence. Same evidence, two scanner models, side by side.
 for _host in SHOP_HOSTS:
     EXPANDED_ONLY_FINDINGS.append(
         (
@@ -662,7 +662,7 @@ def _record(
 def build_records(
     findings: Iterable[tuple[str, str, dict]],
     targets: dict[str, dict[str, Any]],
-    scan_label: str,
+    dataset_label: str,
 ) -> list[dict[str, Any]]:
     """Expand finding specs into nuclei result objects.
 
@@ -675,11 +675,11 @@ def build_records(
     index = 0
     for template_id, target_key, options in findings:
         if template_id not in TEMPLATES:
-            raise SystemExit(f"{scan_label}: unknown template id {template_id!r}")
+            raise SystemExit(f"{dataset_label}: unknown template id {template_id!r}")
         target = targets.get(target_key)
         if target is None:
             raise SystemExit(
-                f"{scan_label}: {template_id} targets {target_key!r}, which is not "
+                f"{dataset_label}: {template_id} targets {target_key!r}, which is not "
                 f"an HTTP service in that scan. Known targets: "
                 f"{', '.join(sorted(targets))}"
             )

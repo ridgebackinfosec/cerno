@@ -14,7 +14,7 @@ would let the other rot.
 import pytest
 
 from cerno_pkg.constants import (
-    AUTHORED_SCAN_NAMES,
+    AUTHORED_DATASET_NAMES,
     SOURCE_AGENT,
     SOURCE_IDS,
     SOURCE_OPERATOR,
@@ -23,7 +23,7 @@ from cerno_pkg.authored_findings import (
     AuthoredFindingInput,
     AuthoredFindingError,
     create_authored_finding,
-    get_or_create_authored_scan,
+    get_or_create_authored_dataset,
     next_authored_ref,
     parse_target_tokens,
     update_authored_finding,
@@ -139,7 +139,7 @@ class TestValidation:
         assert validate_authored_input(_input(cves=["CVE-2021-44228"])) == []
 
     def test_non_http_reference_url_is_refused(self) -> None:
-        # plugin_url is interpolated into a Rich style to build the OSC-8 link.
+        # details_url is interpolated into a Rich style to build the OSC-8 link.
         assert validate_authored_input(_input(reference_url="javascript:alert(1)"))
 
     def test_reference_url_with_whitespace_is_refused(self) -> None:
@@ -158,34 +158,34 @@ class TestValidation:
 @pytest.mark.integration
 @pytest.mark.parametrize("source", [SOURCE_OPERATOR, SOURCE_AGENT])
 class TestAuthoredScan:
-    def test_scan_is_created_on_first_use(self, temp_db, source) -> None:
-        scan = get_or_create_authored_scan(source, temp_db)
-        assert scan.scan_name == AUTHORED_SCAN_NAMES[source]
-        assert scan.scan_id is not None
+    def test_dataset_is_created_on_first_use(self, temp_db, source) -> None:
+        dataset = get_or_create_authored_dataset(source, temp_db)
+        assert dataset.dataset_name == AUTHORED_DATASET_NAMES[source]
+        assert dataset.dataset_id is not None
         # No scanner file produced it.
-        assert scan.source_file_path is None
-        assert scan.source_file_hash is None
+        assert dataset.source_file_path is None
+        assert dataset.source_file_hash is None
 
-    def test_scan_is_reused_not_duplicated(self, temp_db, source) -> None:
-        first = get_or_create_authored_scan(source, temp_db)
-        second = get_or_create_authored_scan(source, temp_db)
-        assert first.scan_id == second.scan_id
-        assert temp_db.execute("SELECT COUNT(*) FROM scans").fetchone()[0] == 1
+    def test_dataset_is_reused_not_duplicated(self, temp_db, source) -> None:
+        first = get_or_create_authored_dataset(source, temp_db)
+        second = get_or_create_authored_dataset(source, temp_db)
+        assert first.dataset_id == second.dataset_id
+        assert temp_db.execute("SELECT COUNT(*) FROM datasets").fetchone()[0] == 1
 
     def test_scanner_source_is_refused(self, temp_db, source) -> None:
         """A scanner source must not get an auto-created scan of its own."""
         with pytest.raises(AuthoredFindingError):
-            get_or_create_authored_scan("nessus", temp_db)
-        assert temp_db.execute("SELECT COUNT(*) FROM scans").fetchone()[0] == 0
+            get_or_create_authored_dataset("nessus", temp_db)
+        assert temp_db.execute("SELECT COUNT(*) FROM datasets").fetchone()[0] == 0
 
 
 @pytest.mark.integration
 class TestAuthoredScanSeparation:
-    def test_each_source_gets_its_own_scan(self, temp_db) -> None:
-        operator = get_or_create_authored_scan(SOURCE_OPERATOR, temp_db)
-        agent = get_or_create_authored_scan(SOURCE_AGENT, temp_db)
-        assert operator.scan_id != agent.scan_id
-        assert {operator.scan_name, agent.scan_name} == {"Operator", "Agent"}
+    def test_each_source_gets_its_own_dataset(self, temp_db) -> None:
+        operator = get_or_create_authored_dataset(SOURCE_OPERATOR, temp_db)
+        agent = get_or_create_authored_dataset(SOURCE_AGENT, temp_db)
+        assert operator.dataset_id != agent.dataset_id
+        assert {operator.dataset_name, agent.dataset_name} == {"Operator", "Agent"}
 
 
 @pytest.mark.integration
@@ -202,15 +202,19 @@ class TestRefAllocation:
         """operator:10 must follow operator:9, not sort between 1 and 2."""
         for i in range(9):
             _create(_input(title=f"Finding {i}"), source, conn=temp_db)
-        plugin_id, _ = _create(_input(title="Tenth"), source, conn=temp_db)
-        assert plugin_id == f"{source}:10"
+        finding_type_id, _ = _create(_input(title="Tenth"), source, conn=temp_db)
+        assert finding_type_id == f"{source}:10"
         assert next_authored_ref(source, temp_db) == 11
 
     def test_other_sources_do_not_shift_the_sequence(self, temp_db, source) -> None:
-        from cerno_pkg.models import Plugin
+        from cerno_pkg.models import FindingType
 
-        Plugin(plugin_id="nessus:99999", plugin_name="N", severity_int=1).save(temp_db)
-        Plugin(plugin_id="burp:00200300", plugin_name="B", severity_int=3).save(temp_db)
+        FindingType(
+            finding_type_id="nessus:99999", finding_type_name="N", severity_int=1
+        ).save(temp_db)
+        FindingType(
+            finding_type_id="burp:00200300", finding_type_name="B", severity_int=3
+        ).save(temp_db)
         assert next_authored_ref(source, temp_db) == 1
 
 
@@ -243,42 +247,42 @@ class TestRefCountersAreIndependent:
 @pytest.mark.integration
 class TestCreate:
     def test_returns_namespaced_id_and_finding_id(self, temp_db) -> None:
-        plugin_id, finding_id = _create(_input(), conn=temp_db)
-        assert plugin_id == "operator:1"
+        finding_type_id, finding_id = _create(_input(), conn=temp_db)
+        assert finding_type_id == "operator:1"
         assert isinstance(finding_id, int)
 
-    def test_plugin_row_records_the_source(self, temp_db) -> None:
+    def test_finding_type_row_records_the_source(self, temp_db) -> None:
         _create(_input(), conn=temp_db)
         row = temp_db.execute(
-            "SELECT source_id, plugin_name, severity_int, has_metasploit, plugin_url "
-            "FROM plugins WHERE plugin_id = 'operator:1'"
+            "SELECT source_id, finding_type_name, severity_int, has_metasploit, details_url "
+            "FROM finding_types WHERE finding_type_id = 'operator:1'"
         ).fetchone()
         assert row["source_id"] == SOURCE_IDS[SOURCE_OPERATOR]
-        assert row["plugin_name"] == "Weak JWT validation"
+        assert row["finding_type_name"] == "Weak JWT validation"
         assert row["severity_int"] == 3
         assert not row["has_metasploit"]
-        assert row["plugin_url"] is None
+        assert row["details_url"] is None
 
-    def test_finding_lands_in_the_operator_scan(self, temp_db) -> None:
-        _plugin_id, finding_id = _create(_input(), conn=temp_db)
+    def test_finding_lands_in_the_operator_dataset(self, temp_db) -> None:
+        _finding_type_id, finding_id = _create(_input(), conn=temp_db)
         row = temp_db.execute(
-            "SELECT s.scan_name, f.review_state FROM findings f "
-            "JOIN scans s ON s.scan_id = f.scan_id WHERE f.finding_id = ?",
+            "SELECT s.dataset_name, f.review_state FROM findings f "
+            "JOIN datasets s ON s.dataset_id = f.dataset_id WHERE f.finding_id = ?",
             (finding_id,),
         ).fetchone()
-        assert row["scan_name"] == AUTHORED_SCAN_NAMES[SOURCE_OPERATOR]
+        assert row["dataset_name"] == AUTHORED_DATASET_NAMES[SOURCE_OPERATOR]
         assert row["review_state"] == "unreviewed"
 
     def test_description_is_stored_as_the_host_evidence(self, temp_db) -> None:
-        _plugin_id, finding_id = _create(
+        _finding_type_id, finding_id = _create(
             _input(targets=[("10.0.0.21", 443), ("10.0.0.22", 80)]), conn=temp_db
         )
         rows = temp_db.execute(
-            "SELECT plugin_output FROM finding_affected_hosts WHERE finding_id = ?",
+            "SELECT evidence FROM finding_affected_hosts WHERE finding_id = ?",
             (finding_id,),
         ).fetchall()
         assert len(rows) == 2
-        assert all("alg=none" in r["plugin_output"] for r in rows)
+        assert all("alg=none" in r["evidence"] for r in rows)
 
     def test_hosts_and_ports_are_normalized(self, temp_db) -> None:
         _create(
@@ -295,7 +299,7 @@ class TestCreate:
         assert ports == {8443}
 
     def test_a_finding_with_no_targets_still_exists(self, temp_db) -> None:
-        _plugin_id, finding_id = _create(_input(targets=[]), conn=temp_db)
+        _finding_type_id, finding_id = _create(_input(targets=[]), conn=temp_db)
         assert (
             temp_db.execute(
                 "SELECT COUNT(*) FROM finding_affected_hosts WHERE finding_id = ?",
@@ -310,10 +314,10 @@ class TestCreate:
             conn=temp_db,
         )
         row = temp_db.execute(
-            "SELECT cves, plugin_url FROM plugins WHERE plugin_id = 'operator:1'"
+            "SELECT cves, details_url FROM finding_types WHERE finding_type_id = 'operator:1'"
         ).fetchone()
         assert "CVE-2021-44228" in row["cves"]
-        assert row["plugin_url"] == "https://example.com/x"
+        assert row["details_url"] == "https://example.com/x"
 
     def test_no_service_is_invented(self, temp_db) -> None:
         """The operator describes a finding, not a service discovery."""
@@ -323,18 +327,18 @@ class TestCreate:
     def test_invalid_input_is_refused_and_writes_nothing(self, temp_db) -> None:
         with pytest.raises(AuthoredFindingError):
             _create(_input(severity_int=9), conn=temp_db)
-        assert temp_db.execute("SELECT COUNT(*) FROM plugins").fetchone()[0] == 0
-        assert temp_db.execute("SELECT COUNT(*) FROM scans").fetchone()[0] == 0
+        assert temp_db.execute("SELECT COUNT(*) FROM finding_types").fetchone()[0] == 0
+        assert temp_db.execute("SELECT COUNT(*) FROM datasets").fetchone()[0] == 0
 
     def test_two_findings_with_the_same_title_do_not_collide(self, temp_db) -> None:
-        """Plugin.save() is INSERT OR REPLACE, so a shared id would overwrite."""
+        """FindingType.save() is INSERT OR REPLACE, so a shared id would overwrite."""
         first, _ = _create(_input(severity_int=3), conn=temp_db)
         second, _ = _create(_input(severity_int=1), conn=temp_db)
         assert first != second
         severities = {
             r[0]
             for r in temp_db.execute(
-                "SELECT severity_int FROM plugins WHERE plugin_id LIKE 'operator:%'"
+                "SELECT severity_int FROM finding_types WHERE finding_type_id LIKE 'operator:%'"
             )
         }
         assert severities == {1, 3}
@@ -342,14 +346,14 @@ class TestCreate:
     def test_findings_reach_the_normal_review_path(self, temp_db) -> None:
         from cerno_pkg.models import Finding
 
-        _plugin_id, finding_id = _create(_input(), conn=temp_db)
-        scan_id = temp_db.execute(
-            "SELECT scan_id FROM findings WHERE finding_id = ?", (finding_id,)
+        _finding_type_id, finding_id = _create(_input(), conn=temp_db)
+        dataset_id = temp_db.execute(
+            "SELECT dataset_id FROM findings WHERE finding_id = ?", (finding_id,)
         ).fetchone()[0]
-        pairs = Finding.get_by_scan_with_plugin(scan_id, conn=temp_db)
+        pairs = Finding.get_by_dataset_with_finding_type(dataset_id, conn=temp_db)
         assert len(pairs) == 1
-        _finding, plugin = pairs[0]
-        assert plugin.source == SOURCE_OPERATOR
+        _finding, finding_type = pairs[0]
+        assert finding_type.source == SOURCE_OPERATOR
 
     def test_query_findings_by_source(self, temp_db) -> None:
         from cerno_pkg.query import FindingQuery, run_finding_query
@@ -362,36 +366,38 @@ class TestCreate:
 class TestUpdate:
     def test_title_change_keeps_the_identity(self, temp_db) -> None:
         """The payoff of a sequential ref over a title slug."""
-        plugin_id, finding_id = _create(_input(), conn=temp_db)
+        finding_type_id, finding_id = _create(_input(), conn=temp_db)
         update_authored_finding(finding_id, title="Renamed entirely", conn=temp_db)
         row = temp_db.execute(
-            "SELECT plugin_id, plugin_name FROM plugins WHERE plugin_id = ?",
-            (plugin_id,),
+            "SELECT finding_type_id, finding_type_name FROM finding_types WHERE finding_type_id = ?",
+            (finding_type_id,),
         ).fetchone()
-        assert row["plugin_id"] == "operator:1"
-        assert row["plugin_name"] == "Renamed entirely"
+        assert row["finding_type_id"] == "operator:1"
+        assert row["finding_type_name"] == "Renamed entirely"
 
     def test_severity_change(self, temp_db) -> None:
-        _plugin_id, finding_id = _create(_input(), conn=temp_db)
+        _finding_type_id, finding_id = _create(_input(), conn=temp_db)
         update_authored_finding(finding_id, severity_int=1, conn=temp_db)
         assert (
             temp_db.execute(
-                "SELECT severity_int FROM plugins WHERE plugin_id = 'operator:1'"
+                "SELECT severity_int FROM finding_types WHERE finding_type_id = 'operator:1'"
             ).fetchone()[0]
             == 1
         )
 
     def test_omitted_fields_are_left_alone(self, temp_db) -> None:
-        _plugin_id, finding_id = _create(_input(cves=["CVE-2021-44228"]), conn=temp_db)
+        _finding_type_id, finding_id = _create(
+            _input(cves=["CVE-2021-44228"]), conn=temp_db
+        )
         update_authored_finding(finding_id, severity_int=0, conn=temp_db)
         row = temp_db.execute(
-            "SELECT plugin_name, cves FROM plugins WHERE plugin_id = 'operator:1'"
+            "SELECT finding_type_name, cves FROM finding_types WHERE finding_type_id = 'operator:1'"
         ).fetchone()
-        assert row["plugin_name"] == "Weak JWT validation"
+        assert row["finding_type_name"] == "Weak JWT validation"
         assert "CVE-2021-44228" in row["cves"]
 
     def test_targets_are_replaced_not_appended(self, temp_db) -> None:
-        _plugin_id, finding_id = _create(
+        _finding_type_id, finding_id = _create(
             _input(targets=[("10.0.0.21", 443), ("10.0.0.22", 80)]), conn=temp_db
         )
         update_authored_finding(finding_id, targets=[("10.0.0.99", 22)], conn=temp_db)
@@ -403,14 +409,14 @@ class TestUpdate:
         assert [(r[0], r[1]) for r in rows] == [("10.0.0.99", 22)]
 
     def test_description_change_rewrites_every_host_row(self, temp_db) -> None:
-        _plugin_id, finding_id = _create(
+        _finding_type_id, finding_id = _create(
             _input(targets=[("10.0.0.21", 443), ("10.0.0.22", 80)]), conn=temp_db
         )
         update_authored_finding(finding_id, description="Rewritten.", conn=temp_db)
         outputs = {
             r[0]
             for r in temp_db.execute(
-                "SELECT plugin_output FROM finding_affected_hosts WHERE finding_id = ?",
+                "SELECT evidence FROM finding_affected_hosts WHERE finding_id = ?",
                 (finding_id,),
             )
         }
@@ -419,10 +425,10 @@ class TestUpdate:
     def test_review_state_survives_an_edit(self, temp_db) -> None:
         from cerno_pkg.models import Finding
 
-        _plugin_id, finding_id = _create(_input(), conn=temp_db)
+        _finding_type_id, finding_id = _create(_input(), conn=temp_db)
         finding = Finding.get_by_id(finding_id, temp_db)
         assert finding is not None
-        finding.update_review_state("in_progress", conn=temp_db)
+        finding.update_review_state("in_progress", SOURCE_OPERATOR, conn=temp_db)
         update_authored_finding(finding_id, title="Edited", conn=temp_db)
         assert (
             temp_db.execute(
@@ -433,19 +439,21 @@ class TestUpdate:
 
     def test_a_scanner_finding_cannot_be_edited(self, temp_db) -> None:
         """Scanner findings are a record of what the scanner reported."""
-        from cerno_pkg.models import Finding, Plugin, Scan
+        from cerno_pkg.models import Finding, FindingType, Dataset
 
-        scan_id = Scan(scan_name="s", export_root="/tmp/s").save(temp_db)
-        Plugin(plugin_id="nessus:57608", plugin_name="SMB", severity_int=3).save(
-            temp_db
-        )
-        finding_id = Finding(scan_id=scan_id, plugin_id="nessus:57608").save(temp_db)
+        dataset_id = Dataset(dataset_name="s", export_root="/tmp/s").save(temp_db)
+        FindingType(
+            finding_type_id="nessus:57608", finding_type_name="SMB", severity_int=3
+        ).save(temp_db)
+        finding_id = Finding(
+            dataset_id=dataset_id, finding_type_id="nessus:57608"
+        ).save(temp_db)
 
         with pytest.raises(AuthoredFindingError):
             update_authored_finding(finding_id, title="Hijacked", conn=temp_db)
         assert (
             temp_db.execute(
-                "SELECT plugin_name FROM plugins WHERE plugin_id = 'nessus:57608'"
+                "SELECT finding_type_name FROM finding_types WHERE finding_type_id = 'nessus:57608'"
             ).fetchone()[0]
             == "SMB"
         )
@@ -455,22 +463,22 @@ class TestUpdate:
             update_authored_finding(9999, title="Nope", conn=temp_db)
 
     def test_invalid_edit_is_refused_and_changes_nothing(self, temp_db) -> None:
-        _plugin_id, finding_id = _create(_input(), conn=temp_db)
+        _finding_type_id, finding_id = _create(_input(), conn=temp_db)
         with pytest.raises(AuthoredFindingError):
             update_authored_finding(finding_id, severity_int=9, conn=temp_db)
         assert (
             temp_db.execute(
-                "SELECT severity_int FROM plugins WHERE plugin_id = 'operator:1'"
+                "SELECT severity_int FROM finding_types WHERE finding_type_id = 'operator:1'"
             ).fetchone()[0]
             == 3
         )
 
     def test_nothing_to_change_is_not_an_error(self, temp_db) -> None:
-        _plugin_id, finding_id = _create(_input(), conn=temp_db)
+        _finding_type_id, finding_id = _create(_input(), conn=temp_db)
         update_authored_finding(finding_id, conn=temp_db)
         assert (
             temp_db.execute(
-                "SELECT plugin_name FROM plugins WHERE plugin_id = 'operator:1'"
+                "SELECT finding_type_name FROM finding_types WHERE finding_type_id = 'operator:1'"
             ).fetchone()[0]
             == "Weak JWT validation"
         )
@@ -486,7 +494,7 @@ class TestLoad:
             cves=["CVE-2021-44228"],
             reference_url="https://example.com/x",
         )
-        _plugin_id, finding_id = _create(original, conn=temp_db)
+        _finding_type_id, finding_id = _create(original, conn=temp_db)
 
         loaded = load_authored_finding(finding_id, conn=temp_db)
         assert loaded.title == original.title
@@ -497,14 +505,16 @@ class TestLoad:
         assert loaded.reference_url == original.reference_url
 
     def test_a_scanner_finding_cannot_be_loaded(self, temp_db) -> None:
-        from cerno_pkg.models import Finding, Plugin, Scan
+        from cerno_pkg.models import Finding, FindingType, Dataset
         from cerno_pkg.authored_findings import load_authored_finding
 
-        scan_id = Scan(scan_name="s", export_root="/tmp/s").save(temp_db)
-        Plugin(plugin_id="nessus:57608", plugin_name="SMB", severity_int=3).save(
-            temp_db
-        )
-        finding_id = Finding(scan_id=scan_id, plugin_id="nessus:57608").save(temp_db)
+        dataset_id = Dataset(dataset_name="s", export_root="/tmp/s").save(temp_db)
+        FindingType(
+            finding_type_id="nessus:57608", finding_type_name="SMB", severity_int=3
+        ).save(temp_db)
+        finding_id = Finding(
+            dataset_id=dataset_id, finding_type_id="nessus:57608"
+        ).save(temp_db)
         with pytest.raises(AuthoredFindingError):
             load_authored_finding(finding_id, conn=temp_db)
 
@@ -529,25 +539,25 @@ class TestAttribution:
             create_authored_finding(_input())  # type: ignore[call-arg]
 
     @pytest.mark.parametrize("source", [SOURCE_OPERATOR, SOURCE_AGENT])
-    def test_namespace_and_scan_follow_the_source(self, temp_db, source) -> None:
-        plugin_id, finding_id = _create(_input(), source, conn=temp_db)
-        assert plugin_id.startswith(f"{source}:")
+    def test_namespace_and_dataset_follow_the_source(self, temp_db, source) -> None:
+        finding_type_id, finding_id = _create(_input(), source, conn=temp_db)
+        assert finding_type_id.startswith(f"{source}:")
 
         row = temp_db.execute(
-            "SELECT p.source_id, s.scan_name FROM findings f "
-            "JOIN plugins p ON p.plugin_id = f.plugin_id "
-            "JOIN scans s ON s.scan_id = f.scan_id WHERE f.finding_id = ?",
+            "SELECT p.source_id, s.dataset_name FROM findings f "
+            "JOIN finding_types p ON p.finding_type_id = f.finding_type_id "
+            "JOIN datasets s ON s.dataset_id = f.dataset_id WHERE f.finding_id = ?",
             (finding_id,),
         ).fetchone()
         assert row["source_id"] == SOURCE_IDS[source]
-        assert row["scan_name"] == AUTHORED_SCAN_NAMES[source]
+        assert row["dataset_name"] == AUTHORED_DATASET_NAMES[source]
 
     def test_a_scanner_source_cannot_be_written(self, temp_db) -> None:
         """No hand-authored finding may masquerade as scanner output."""
         for scanner in ("nessus", "nuclei", "burp"):
             with pytest.raises(AuthoredFindingError):
                 create_authored_finding(_input(), scanner, conn=temp_db)
-        assert temp_db.execute("SELECT COUNT(*) FROM plugins").fetchone()[0] == 0
+        assert temp_db.execute("SELECT COUNT(*) FROM finding_types").fetchone()[0] == 0
 
     def test_unknown_source_is_refused(self, temp_db) -> None:
         with pytest.raises(AuthoredFindingError):
@@ -561,9 +571,9 @@ class TestAttribution:
 
         operator_pairs = run_finding_query(FindingQuery(source="operator"), temp_db)
         agent_pairs = run_finding_query(FindingQuery(source="agent"), temp_db)
-        assert [p.plugin_name for _f, p in operator_pairs] == ["Mine"]
-        assert [p.plugin_name for _f, p in agent_pairs] == ["Yours"]
-        assert [p.plugin_id for _f, p in agent_pairs] == ["agent:1"]
+        assert [p.finding_type_name for _f, p in operator_pairs] == ["Mine"]
+        assert [p.finding_type_name for _f, p in agent_pairs] == ["Yours"]
+        assert [p.finding_type_id for _f, p in agent_pairs] == ["agent:1"]
 
 
 @pytest.mark.integration
@@ -578,17 +588,17 @@ class TestEditsAreSymmetric:
 
     @pytest.mark.parametrize("source", [SOURCE_OPERATOR, SOURCE_AGENT])
     def test_edit_keeps_the_creating_namespace(self, temp_db, source) -> None:
-        plugin_id, finding_id = _create(_input(), source, conn=temp_db)
+        finding_type_id, finding_id = _create(_input(), source, conn=temp_db)
         returned = update_authored_finding(
             finding_id, title="Reworded entirely", severity_int=4, conn=temp_db
         )
-        assert returned == plugin_id == f"{source}:1"
+        assert returned == finding_type_id == f"{source}:1"
 
         row = temp_db.execute(
-            "SELECT plugin_name, severity_int, source_id FROM plugins "
-            "WHERE plugin_id = ?",
-            (plugin_id,),
+            "SELECT finding_type_name, severity_int, source_id FROM finding_types "
+            "WHERE finding_type_id = ?",
+            (finding_type_id,),
         ).fetchone()
-        assert row["plugin_name"] == "Reworded entirely"
+        assert row["finding_type_name"] == "Reworded entirely"
         assert row["severity_int"] == 4
         assert row["source_id"] == SOURCE_IDS[source]

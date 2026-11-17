@@ -19,7 +19,7 @@ from cerno_pkg.burp_parse import (
     ParsedBurpInstance,
     extract_cwes,
     find_cves,
-    format_plugin_output,
+    format_evidence,
     html_to_text,
     kb_url,
     parse_burp_file,
@@ -51,7 +51,7 @@ class TestSeverityToInt:
         assert severity_to_int("Info") == 0
 
     def test_unrecognized_floors_to_info(self) -> None:
-        # severity_levels is an FK and v_plugins_with_severity an INNER JOIN,
+        # severity_levels is an FK and v_finding_types_with_severity an INNER JOIN,
         # so an unmapped value would make the finding vanish, not fail loudly.
         assert severity_to_int("Catastrophic") == 0
         assert severity_to_int(None) == 0
@@ -208,13 +208,13 @@ class TestFormatPluginOutput:
         return ParsedBurpInstance(**base)  # type: ignore[arg-type]
 
     def test_location_confidence_and_detail_are_rendered(self) -> None:
-        out = format_plugin_output([self._instance()])
+        out = format_evidence([self._instance()])
         assert "/search [q parameter]" in out
         assert "Certain" in out
         assert "A detail line." in out
 
     def test_request_and_response_come_last(self) -> None:
-        out = format_plugin_output(
+        out = format_evidence(
             [self._instance(request="GET / HTTP/1.1", response="HTTP/1.1 200 OK")]
         )
         assert out.index("A detail line.") < out.index("GET / HTTP/1.1")
@@ -225,7 +225,7 @@ class TestFormatPluginOutput:
             self._instance(location=f"/search [p{i} parameter]")
             for i in range(BURP_MAX_INSTANCES_RENDERED)
         ]
-        out = format_plugin_output(instances)
+        out = format_evidence(instances)
         for i in range(BURP_MAX_INSTANCES_RENDERED):
             assert f"/search [p{i} parameter]" in out
         assert "more instance" not in out
@@ -235,12 +235,12 @@ class TestFormatPluginOutput:
             self._instance(location=f"/search [p{i} parameter]")
             for i in range(BURP_MAX_INSTANCES_RENDERED + 3)
         ]
-        out = format_plugin_output(instances)
+        out = format_evidence(instances)
         assert f"/search [p{BURP_MAX_INSTANCES_RENDERED} parameter]" not in out
         assert "3 more instances" in out
 
     def test_empty_instance_list(self) -> None:
-        assert format_plugin_output([]) == ""
+        assert format_evidence([]) == ""
 
 
 @pytest.fixture(scope="module")

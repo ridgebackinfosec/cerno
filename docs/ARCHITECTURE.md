@@ -80,11 +80,11 @@ Everything both interfaces depend on:
 
 | Module | Owns |
 |---|---|
-| [models.py](../cerno_pkg/models.py) | `Scan`, `Plugin`, `Finding`, `FindingVerdict`, `Artifact`, lookup models |
+| [models.py](../cerno_pkg/models.py) | `Scan`, `FindingType`, `Finding`, `FindingVerdict`, `Artifact`, lookup models |
 | [database.py](../cerno_pkg/database.py) | Connection handling, `SCHEMA_SQL_TABLES` / `SCHEMA_SQL_VIEWS`, `SCHEMA_VERSION`, `db_transaction()` |
 | [tools.py](../cerno_pkg/tools.py) + [tool_registry.py](../cerno_pkg/tool_registry.py) · [tool_definitions.py](../cerno_pkg/tool_definitions.py) · [tool_context.py](../cerno_pkg/tool_context.py) | Command builders, workflow builders, the `Tool` registry |
 | [ops.py](../cerno_pkg/ops.py) | Command execution, sudo/proxychains4 handling, remote-scan HTTPS server |
-| [nessus_import.py](../cerno_pkg/nessus_import.py) · [nuclei_import.py](../cerno_pkg/nuclei_import.py) · [nuclei_parse.py](../cerno_pkg/nuclei_parse.py) · [burp_import.py](../cerno_pkg/burp_import.py) · [burp_parse.py](../cerno_pkg/burp_parse.py) · [authored_findings.py](../cerno_pkg/authored_findings.py) · [cross_scan.py](../cerno_pkg/cross_scan.py) · [parsing.py](../cerno_pkg/parsing.py) | `.nessus` XML, nuclei JSON/JSONL and Burp Suite XML import, hand-authored findings (`operator:` from the TUI, `agent:` from the MCP), compare/history queries, canonical host:port and plugin-identity parsing |
+| [nessus_import.py](../cerno_pkg/nessus_import.py) · [nuclei_import.py](../cerno_pkg/nuclei_import.py) · [nuclei_parse.py](../cerno_pkg/nuclei_parse.py) · [burp_import.py](../cerno_pkg/burp_import.py) · [burp_parse.py](../cerno_pkg/burp_parse.py) · [authored_findings.py](../cerno_pkg/authored_findings.py) · [cross_dataset.py](../cerno_pkg/cross_dataset.py) · [parsing.py](../cerno_pkg/parsing.py) | `.nessus` XML, nuclei JSON/JSONL and Burp Suite XML import, hand-authored findings (`operator:` from the TUI, `agent:` from the MCP), compare/history queries, canonical host:port and plugin-identity parsing |
 | [nxc_db.py](../cerno_pkg/nxc_db.py) · [creds.py](../cerno_pkg/creds.py) | Read-only NetExec workspace access, audited credential reveal |
 | [workflow_mapper.py](../cerno_pkg/workflow_mapper.py) · [claude_assistant.py](../cerno_pkg/claude_assistant.py) | Workflow YAML loading/merging, Claude Assistant context + consent |
 | [config.py](../cerno_pkg/config.py) · [constants.py](../cerno_pkg/constants.py) · [logging_setup.py](../cerno_pkg/logging_setup.py) · [enums.py](../cerno_pkg/enums.py) | Configuration, paths, review-state constants, logging |
@@ -104,13 +104,13 @@ Run the **full** suite before every PR, not just the tests near your change. See
 
 | Target | Role |
 |---|---|
-| `~/.cerno/cerno.db` | **Source of truth.** 27 tables, 12 views, schema v5. No migration system — an older DB raises `SchemaVersionError` |
+| `~/.cerno/cerno.db` | **Source of truth.** 25 tables, 12 views, schema v6. No migration system — an older DB raises `SchemaVersionError` |
 | `~/.cerno/artifacts` | Tool output and logs, registered in the `artifacts` table |
 | `~/.nxc/workspaces/default` | NetExec workspace, **read-only**. Credentials are surfaced as refs, never duplicated into Cerno's DB |
 | `nmap` · `nxc` · `nuclei` · `msfconsole` · `claude` | External binaries, all optional |
 
 Import writes **no** per-plugin files — only the database (plus
-`scans/<name>/http_urls.txt` when web services exist).
+`datasets/<name>/http_urls.txt` when web services exist).
 
 ---
 
@@ -166,7 +166,7 @@ data, so they track the code instead of rotting:
 
 ```bash
 python scripts/generate_doc_examples.py            # regenerate everything
-python scripts/generate_doc_examples.py --only scan-list
+python scripts/generate_doc_examples.py --only dataset-list
 python scripts/generate_doc_examples.py --check    # fail if any are stale
 ```
 
@@ -177,9 +177,9 @@ for `docs/`, where copy-paste and review diffs matter more than colour.
 Content is written between marker pairs:
 
 ```markdown
-<!-- BEGIN GENERATED: scan-list -->
+<!-- BEGIN GENERATED: dataset-list -->
 ...generated, do not edit...
-<!-- END GENERATED: scan-list -->
+<!-- END GENERATED: dataset-list -->
 ```
 
 Only the region between the markers is rewritten, so the prose and captions

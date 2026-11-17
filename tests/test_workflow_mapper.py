@@ -8,11 +8,11 @@ from cerno_pkg.workflow_mapper import WorkflowMapper
 
 @pytest.fixture
 def sample_workflow_yaml(tmp_path: Path) -> Path:
-    """Create a sample workflow YAML with comma-separated plugin IDs."""
+    """Create a sample workflow YAML with comma-separated finding_type IDs."""
     yaml_content = """version: "1.0"
 
 workflows:
-  - finding_id: "nessus:12345"
+  - finding_type_id: "nessus:12345"
     workflow_name: "Test Workflow 1"
     description: "First test workflow"
     steps:
@@ -23,7 +23,7 @@ workflows:
     references:
       - "https://example.com/1"
 
-  - finding_id: "nessus:67890,nessus:11111,nessus:22222"
+  - finding_type_id: "nessus:67890,nessus:11111,nessus:22222"
     workflow_name: "Test Workflow 2"
     description: "Second test workflow with comma-separated IDs"
     steps:
@@ -34,7 +34,7 @@ workflows:
     references:
       - "https://example.com/2"
 
-  - finding_id: "nessus:33333"
+  - finding_type_id: "nessus:33333"
     workflow_name: "Test Workflow 3"
     description: "Third test workflow"
     steps:
@@ -53,20 +53,24 @@ workflows:
 class TestWorkflowMapper:
     """Tests for WorkflowMapper class."""
 
-    def test_count_with_comma_separated_plugin_ids(self, sample_workflow_yaml: Path):
-        """Test that count() returns distinct workflows, not plugin ID entries."""
+    def test_count_with_comma_separated_finding_type_ids(
+        self, sample_workflow_yaml: Path
+    ):
+        """Test that count() returns distinct workflows, not finding_type ID entries."""
         mapper = WorkflowMapper(sample_workflow_yaml)
 
-        # Should count 3 distinct workflows, not 6 plugin ID entries
-        # Workflow 1: plugin_id "12345" (1 entry)
-        # Workflow 2: plugin_id "67890,11111,22222" (3 entries)
-        # Workflow 3: plugin_id "33333" (1 entry)
+        # Should count 3 distinct workflows, not 6 finding_type ID entries
+        # Workflow 1: finding_type_id "12345" (1 entry)
+        # Workflow 2: finding_type_id "67890,11111,22222" (3 entries)
+        # Workflow 3: finding_type_id "33333" (1 entry)
         # Total distinct workflows: 3
         # Total dictionary entries: 5
         assert mapper.count() == 3, "count() should return 3 distinct workflows"
 
-    def test_plugin_id_lookup_with_comma_separated(self, sample_workflow_yaml: Path):
-        """Test that each plugin ID in comma-separated list can be looked up."""
+    def test_finding_type_id_lookup_with_comma_separated(
+        self, sample_workflow_yaml: Path
+    ):
+        """Test that each finding_type ID in comma-separated list can be looked up."""
         mapper = WorkflowMapper(sample_workflow_yaml)
 
         # All three IDs from comma-separated list should map to same workflow
@@ -115,13 +119,13 @@ def _write_wf(tmp_path: Path, entry_yaml: str) -> Path:
 
 
 @pytest.mark.unit
-class TestFindingIdKeyIsStrict:
-    """The YAML key is `finding_id`, and every value must name its source."""
+class TestFindingTypeIdKeyIsStrict:
+    """The YAML key is `finding_type_id`, and every value must name its source."""
 
-    def test_finding_id_key_loads(self, tmp_path: Path):
+    def test_finding_type_id_key_loads(self, tmp_path: Path):
         path = _write_wf(
             tmp_path,
-            '  - finding_id: "nessus:57608"\n'
+            '  - finding_type_id: "nessus:57608"\n'
             "    workflow_name: W\n"
             "    description: d\n"
             "    steps: []\n"
@@ -130,7 +134,8 @@ class TestFindingIdKeyIsStrict:
         mapper = WorkflowMapper(yaml_path=path)
         assert mapper.get_workflow("nessus:57608") is not None
 
-    def test_legacy_plugin_id_key_does_not_load(self, tmp_path: Path, capsys):
+    @pytest.mark.parametrize("legacy", ["finding_id", "plugin_id"])
+    def test_legacy_keys_do_not_load(self, tmp_path: Path, capsys, legacy):
         """A renamed key is a hard break, but it must say so.
 
         Nothing raises when a workflow fails to load -- it simply never shows
@@ -139,7 +144,7 @@ class TestFindingIdKeyIsStrict:
         """
         path = _write_wf(
             tmp_path,
-            '  - plugin_id: "nessus:57608"\n'
+            f'  - {legacy}: "nessus:57608"\n'
             "    workflow_name: Legacy\n"
             "    description: d\n"
             "    steps: []\n"
@@ -149,13 +154,13 @@ class TestFindingIdKeyIsStrict:
         assert mapper.count() == 0
         assert mapper.get_workflow("nessus:57608") is None
         out = capsys.readouterr().out
-        assert "plugin_id" in out and "finding_id" in out and "Legacy" in out
+        assert legacy in out and "finding_type_id" in out and "Legacy" in out
 
     def test_unprefixed_value_does_not_load(self, tmp_path: Path, capsys):
         """A bare number can never match a finding, so it is rejected."""
         path = _write_wf(
             tmp_path,
-            '  - finding_id: "57608"\n'
+            '  - finding_type_id: "57608"\n'
             "    workflow_name: Bare\n"
             "    description: d\n"
             "    steps: []\n"
@@ -170,7 +175,7 @@ class TestFindingIdKeyIsStrict:
         """Fail closed: a partly-registered entry would be a silent half-match."""
         path = _write_wf(
             tmp_path,
-            '  - finding_id: "nessus:57608,90317"\n'
+            '  - finding_type_id: "nessus:57608,90317"\n'
             "    workflow_name: Mixed validity\n"
             "    description: d\n"
             "    steps: []\n"
@@ -189,7 +194,7 @@ class TestCrossSourceWorkflowEntry:
     def mapper(self, tmp_path: Path) -> WorkflowMapper:
         path = _write_wf(
             tmp_path,
-            '  - finding_id: "nessus:84502,nuclei:http-missing-security-headers"\n'
+            '  - finding_type_id: "nessus:84502,nuclei:http-missing-security-headers"\n'
             "    workflow_name: Missing Security Headers\n"
             "    description: d\n"
             "    steps:\n"
@@ -217,7 +222,7 @@ class TestCrossSourceWorkflowEntry:
         """The value round-trips, so `workflow list` shows every covered id."""
         wf = mapper.get_workflow("nessus:84502")
         assert wf is not None
-        assert wf.finding_id == "nessus:84502,nuclei:http-missing-security-headers"
+        assert wf.finding_type_id == "nessus:84502,nuclei:http-missing-security-headers"
 
 
 @pytest.mark.unit
@@ -230,14 +235,14 @@ def test_bundled_yaml_ships_a_cross_source_entry():
     the former earned its own workflow), so pinning a pair here fails on a
     legitimate YAML edit while still not noticing a broken loader.
     """
-    from cerno_pkg.parsing import plugin_source
+    from cerno_pkg.parsing import finding_type_source
 
     mapper = WorkflowMapper()
     for finding_id in mapper.get_all_finding_ids():
         workflow = mapper.get_workflow(finding_id)
         assert workflow is not None
-        covered = [fid.strip() for fid in workflow.finding_id.split(",")]
-        if len({plugin_source(fid) for fid in covered}) < 2:
+        covered = [fid.strip() for fid in workflow.finding_type_id.split(",")]
+        if len({finding_type_source(fid) for fid in covered}) < 2:
             continue
         # Every id on a cross-source entry must resolve to that same workflow.
         assert all(
@@ -251,7 +256,7 @@ def test_bundled_yaml_ships_a_cross_source_entry():
 def test_documented_yaml_examples_still_load(tmp_path: Path):
     """Every complete example in docs/CUSTOM_WORKFLOWS.md must load.
 
-    The loader is strict about the `finding_id` key and its source prefixes, so
+    The loader is strict about the `finding_type_id` key and its source prefixes, so
     a doc example written against the old format would teach a format that
     silently produces no workflows. Nothing else catches that drift.
     """
@@ -263,7 +268,7 @@ def test_documented_yaml_examples_still_load(tmp_path: Path):
     checked = 0
     for block in re.findall(r"```yaml\n(.*?)```", doc, re.S):
         # Skip fragments and the deliberate "don't do this" examples.
-        if "finding_id" not in block or "❌" in block:
+        if "finding_type_id" not in block or "❌" in block:
             continue
         data = yaml.safe_load(block)
         if not isinstance(data, dict) or "workflows" not in data:
@@ -273,7 +278,7 @@ def test_documented_yaml_examples_still_load(tmp_path: Path):
         mapper = WorkflowMapper(yaml_path=path)
         assert mapper.count() == len(data["workflows"]), (
             f"a documented example did not load: "
-            f"{[w.get('finding_id') for w in data['workflows']]}"
+            f"{[w.get('finding_type_id') for w in data['workflows']]}"
         )
         checked += 1
     assert checked >= 5, f"expected several complete examples, found {checked}"
@@ -323,7 +328,7 @@ def one_custom_workflow(tmp_path: Path) -> Path:
         """version: "1.0"
 
 workflows:
-  - finding_id: "nessus:999001"
+  - finding_type_id: "nessus:999001"
     workflow_name: "Only Custom Workflow"
     description: "Sole entry in the custom file"
     steps:

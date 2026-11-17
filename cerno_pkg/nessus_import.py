@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Dict, Optional, Set, Tuple
 
 from .ansi import err, info
-from .constants import PLUGIN_DETAILS_BASE, PLUGIN_ID_PREFIXES, SOURCE_NESSUS
+from .constants import NESSUS_DETAILS_BASE, FINDING_TYPE_ID_PREFIXES, SOURCE_NESSUS
 from .logging_setup import log_error, log_info, log_timing
 
 # Severity labels for integer severity levels (0-4)
@@ -34,19 +34,19 @@ SEV_LABELS: Tuple[str, ...] = ("Info", "Low", "Medium", "High", "Critical")
 
 @dataclass
 class ExportResult:
-    """Result of Nessus plugin export operation.
+    """Result of Nessus finding-type import operation.
 
     Attributes:
-        plugins_exported: Total number of plugins exported
-        total_hosts: Sum of host:port entries across plugins (a host affected by
-            several plugins is counted once per plugin)
-        scan_name: Name of the scan (from the report name, unless overridden)
-        severities: Mapping of severity level to plugin count
+        finding_types_exported: Total number of finding_types exported
+        total_hosts: Sum of host:port entries across finding_types (a host affected by
+            several finding_types is counted once per finding_type)
+        dataset_name: Name of the dataset (from the .nessus report name, unless overridden)
+        severities: Mapping of severity level to finding_type count
     """
 
-    plugins_exported: int
+    finding_types_exported: int
     total_hosts: int
-    scan_name: str
+    dataset_name: str
     severities: Dict[int, int]
 
 
@@ -54,8 +54,8 @@ class ExportResult:
 class HostMetadata:
     """Metadata about a host extracted from Nessus HostProperties.
 
-    Captures the full host context from Nessus scans, supporting both
-    IP-targeted (internal) and FQDN-targeted (external) scans.
+    Captures the full host context from Nessus datasets, supporting both
+    IP-targeted (internal) and FQDN-targeted (external) datasets.
 
     Attributes:
         host_ip: Resolved IP address (from host-ip tag, always present)
@@ -172,7 +172,7 @@ def sanitize_filename(name: str, max_len: int = 80) -> str:
     safe = "_".join(safe.split())  # Collapse multiple spaces
 
     if not safe:
-        safe = "plugin"
+        safe = "finding_type"
 
     if len(safe) > max_len:
         safe = safe[:max_len].rstrip("_")
@@ -180,8 +180,8 @@ def sanitize_filename(name: str, max_len: int = 80) -> str:
     return safe
 
 
-def extract_scan_name_from_nessus(nessus_file: Path) -> str:
-    """Extract scan name from .nessus XML file.
+def extract_dataset_name_from_nessus(nessus_file: Path) -> str:
+    """Extract dataset name from .nessus XML file.
 
     Tries to extract the Report[@name] attribute from the XML. If not found
     or if parsing fails, falls back to using the .nessus filename stem.
@@ -191,13 +191,13 @@ def extract_scan_name_from_nessus(nessus_file: Path) -> str:
         nessus_file: Path to .nessus XML file
 
     Returns:
-        Sanitized scan name suitable for use as a directory name
+        Sanitized dataset name suitable for use as a directory name
 
     Example:
-        >>> extract_scan_name_from_nessus(Path("GOAD.nessus"))
+        >>> extract_dataset_name_from_nessus(Path("GOAD.nessus"))
         'GOAD'
-        >>> # If Report name="Internal Scan 2024" in XML
-        >>> extract_scan_name_from_nessus(Path("scan.nessus"))
+        >>> # If Report name="Internal Dataset 2024" in XML
+        >>> extract_dataset_name_from_nessus(Path("scan.nessus"))
         'Internal_Scan_2024'
     """
     try:
@@ -208,17 +208,17 @@ def extract_scan_name_from_nessus(nessus_file: Path) -> str:
         # Find <Report name="..."> element
         report_elem = root.find("Report")
         if report_elem is not None:
-            scan_name = report_elem.get("name")
-            if scan_name:
-                log_info(f"Extracted scan name from Report element: {scan_name}")
-                return sanitize_filename(scan_name)
+            dataset_name = report_elem.get("name")
+            if dataset_name:
+                log_info(f"Extracted dataset name from Report element: {dataset_name}")
+                return sanitize_filename(dataset_name)
 
     except Exception as e:
-        log_error(f"Failed to parse .nessus file for scan name: {e}")
+        log_error(f"Failed to parse .nessus file for dataset name: {e}")
 
     # Fallback to filename stem
     fallback = nessus_file.stem
-    log_info(f"Using filename stem as scan name: {fallback}")
+    log_info(f"Using filename stem as dataset name: {fallback}")
     return sanitize_filename(fallback)
 
 
@@ -273,7 +273,7 @@ def _build_index_stream(filename: Path, include_ports: bool = True) -> Tuple[
     Dict[str, HostMetadata],
     Set[Tuple[str, str, str, str]],
 ]:
-    """Parse .nessus XML file and build plugin index with streaming.
+    """Parse .nessus XML file and build finding_type index with streaming.
 
     Memory-efficient single-pass parsing using iterparse with element clearing.
 
@@ -283,8 +283,8 @@ def _build_index_stream(filename: Path, include_ports: bool = True) -> Tuple[
 
     Returns:
         Tuple of:
-          - plugins dict: plugin_id -> {name, severity_int, msf, msf_names, cves}
-          - plugin_hosts dict: plugin_id -> set of (host_entry, plugin_output) tuples
+          - finding_types dict: finding_type_id -> {name, severity_int, msf, msf_names, cves}
+          - finding_type_hosts dict: finding_type_id -> set of (host_entry, evidence) tuples
           - host_metadata dict: scan_target -> HostMetadata
           - service_entries set: (scan_target, port, protocol, svc_name) tuples
 
@@ -292,8 +292,8 @@ def _build_index_stream(filename: Path, include_ports: bool = True) -> Tuple[
         ET.ParseError: If XML parsing fails
         FileNotFoundError: If .nessus file doesn't exist
     """
-    plugins: Dict[str, dict] = {}
-    plugin_hosts: Dict[str, Set[tuple[str, str]]] = defaultdict(set)
+    finding_types: Dict[str, dict] = {}
+    finding_type_hosts: Dict[str, Set[tuple[str, str]]] = defaultdict(set)
     host_metadata: Dict[str, HostMetadata] = {}
     service_entries: Set[Tuple[str, str, str, str]] = set()
     current_host = ""
@@ -323,7 +323,7 @@ def _build_index_stream(filename: Path, include_ports: bool = True) -> Tuple[
                 if tag_name and current_host:
                     current_host_properties[tag_name] = tag_value
 
-            # Process each plugin finding
+            # Process each finding_type finding
             elif event == "end" and tag == "ReportItem":
                 pid = elem.attrib.get("pluginID")
                 if not pid:
@@ -364,18 +364,19 @@ def _build_index_stream(filename: Path, include_ports: bool = True) -> Tuple[
                     sorted(set(msf_name_list)) if msf_name_list else None
                 )
 
-                # Extract plugin_output from XML
-                plugin_output_elem = elem.find("plugin_output")
-                plugin_output = None
-                if plugin_output_elem is not None and plugin_output_elem.text:
-                    plugin_output = plugin_output_elem.text.strip()
+                # Extract evidence from Nessus's <plugin_output> element (its tag
+                # name, not ours -- the column is `evidence`)
+                evidence_elem = elem.find("plugin_output")
+                evidence = None
+                if evidence_elem is not None and evidence_elem.text:
+                    evidence = evidence_elem.text.strip()
 
-                # Store or merge plugin metadata (keep highest severity)
+                # Store or merge finding_type metadata (keep highest severity)
                 pname = (elem.attrib.get("pluginName") or "").strip()
-                existing = plugins.get(pid)
+                existing = finding_types.get(pid)
 
                 if existing is None:
-                    plugins[pid] = {
+                    finding_types[pid] = {
                         "name": pname,
                         "severity_int": sev_int,
                         "msf": msf_flag,
@@ -405,10 +406,10 @@ def _build_index_stream(filename: Path, include_ports: bool = True) -> Tuple[
                         merged_cves = list(set(existing_cves + cves))
                         existing["cves"] = sorted(merged_cves) if merged_cves else None
 
-                # Record host:port combination with plugin_output
+                # Record host:port combination with evidence
                 port = elem.attrib.get("port", "0")
                 entry = _format_host_entry(current_host, port, include_ports)
-                plugin_hosts[pid].add((entry, plugin_output or ""))
+                finding_type_hosts[pid].add((entry, evidence or ""))
 
                 # Collect service mapping for host_services table
                 svc_name = elem.attrib.get("svc_name", "")
@@ -425,7 +426,7 @@ def _build_index_stream(filename: Path, include_ports: bool = True) -> Tuple[
                     # host-ip is the resolved IP; scan_target is ReportHost@name
                     host_ip = current_host_properties.get("host-ip")
 
-                    # If no host-ip tag, fall back to scan_target (IP-targeted scans)
+                    # If no host-ip tag, fall back to scan_target (IP-targeted datasets)
                     if not host_ip:
                         host_ip = current_host
 
@@ -441,7 +442,7 @@ def _build_index_stream(filename: Path, include_ports: bool = True) -> Tuple[
                 current_host = ""
                 current_host_properties = {}
 
-        return plugins, plugin_hosts, host_metadata, service_entries
+        return finding_types, finding_type_hosts, host_metadata, service_entries
 
     except ET.ParseError as e:
         log_error(f"Failed to parse {filename} as XML: {e}")
@@ -458,25 +459,25 @@ def import_nessus_file(
     nessus_file: Path,
     output_dir: Path,
     *,
-    scan_name: Optional[str] = None,
+    dataset_name: Optional[str] = None,
     include_ports: bool = True,
     use_database: bool = True,
 ) -> ExportResult:
     """Import Nessus scan from .nessus file into database.
 
     Parses the .nessus XML file and populates the database with:
-    - Scan metadata (scan name, file path, hash)
-    - Plugin information (ID, name, severity, CVEs, Metasploit modules)
-    - One finding row per plugin per scan (review state starts as unreviewed)
-    - Host:port combinations with plugin output
+    - Dataset metadata (dataset name, file path, hash)
+    - FindingType information (ID, name, severity, CVEs, Metasploit modules)
+    - One finding row per finding_type per dataset (review state starts as unreviewed)
+    - Host:port combinations with finding_type output
 
-    The output_dir parameter is used to set the scan's export_root in the database,
+    The output_dir parameter is used to set the dataset's export_root in the database,
     but no actual files are created (database-only mode).
 
     Args:
         nessus_file: Path to .nessus XML file to parse
         output_dir: Root directory path (stored in database but no files created)
-        scan_name: Optional scan name (defaults to nessus_file.stem if not provided)
+        dataset_name: Optional dataset name (defaults to nessus_file.stem if not provided)
         include_ports: Whether to include port numbers in host listings (default: True)
         use_database: Whether to write metadata to database (default: True)
 
@@ -490,78 +491,78 @@ def import_nessus_file(
     log_info(f"Importing Nessus scan from {nessus_file}")
 
     # Parse .nessus file
-    plugins, plugin_hosts, host_metadata, service_entries = _build_index_stream(
-        nessus_file, include_ports
+    finding_types, finding_type_hosts, host_metadata, service_entries = (
+        _build_index_stream(nessus_file, include_ports)
     )
 
-    if not plugins:
-        log_info("No plugins with findings found in .nessus file")
-        info("No plugins with findings found.")
+    if not finding_types:
+        log_info("No finding_types with findings found in .nessus file")
+        info("No finding_types with findings found.")
         return ExportResult(
-            plugins_exported=0,
+            finding_types_exported=0,
             total_hosts=0,
-            scan_name=scan_name or nessus_file.stem,
+            dataset_name=dataset_name or nessus_file.stem,
             severities={},
         )
 
     # Prepare export directory structure
-    # Use provided scan_name or fall back to sanitized file stem
-    if scan_name is None:
-        scan_name = sanitize_filename(nessus_file.stem)
-    base_scan_dir = output_dir / scan_name
+    # Use provided dataset_name or fall back to sanitized file stem
+    if dataset_name is None:
+        dataset_name = sanitize_filename(nessus_file.stem)
+    base_dataset_dir = output_dir / dataset_name
 
-    # Sort plugins: severity descending, then plugin ID ascending
+    # Sort finding_types: severity descending, then finding_type ID ascending
     def sort_key(item: Tuple[str, dict]) -> Tuple[int, int]:
         pid, meta = item
         try:
             pid_int = int(pid)
         except ValueError:
-            pid_int = 999999999  # Large value for non-numeric plugin IDs
+            pid_int = 999999999  # Large value for non-numeric finding_type IDs
         return (-meta["severity_int"], pid_int)
 
     # Track statistics
     total_hosts = 0
     severities: Dict[int, int] = {}
 
-    # Export each plugin (DATABASE-ONLY MODE - no file creation)
-    for pid, meta in sorted(plugins.items(), key=sort_key):
-        # Leftover from the old per-plugin file export: this expression has no
+    # Export each finding_type (DATABASE-ONLY MODE - no file creation)
+    for pid, meta in sorted(finding_types.items(), key=sort_key):
+        # Leftover from the old per-finding_type file export: this expression has no
         # effect and nothing is written.
         msf_suffix = "-MSF" if meta.get("msf") else ""
         f"{pid}_{sanitize_filename(meta['name'])}{msf_suffix}.txt"
 
         # Count hosts for statistics
-        hosts = plugin_hosts.get(pid, set())
+        hosts = finding_type_hosts.get(pid, set())
         total_hosts += len(hosts)
         severities[meta["severity_int"]] = severities.get(meta["severity_int"], 0) + 1
 
     log_info(
-        f"Database-only import complete: {len(plugins)} plugins, {total_hosts} host entries (no files created)"
+        f"Database-only import complete: {len(finding_types)} finding_types, {total_hosts} host entries (no files created)"
     )
 
     # Write to database if enabled
     if use_database:
         _write_to_database(
             nessus_file=nessus_file,
-            scan_name=scan_name,
-            base_scan_dir=base_scan_dir,
-            plugins=plugins,
-            plugin_hosts=plugin_hosts,
+            dataset_name=dataset_name,
+            base_dataset_dir=base_dataset_dir,
+            finding_types=finding_types,
+            finding_type_hosts=finding_type_hosts,
             host_metadata=host_metadata,
             service_entries=service_entries,
         )
         # The host inventory just changed; invalidate the cached NetExec manager so
         # the next get_nxc_manager() rebuilds against the new hosts (otherwise a
-        # scan imported into a running MCP server stays invisible to nxc enrichment
+        # dataset imported into a running MCP server stays invisible to nxc enrichment
         # until restart). Safe/idempotent when the manager was never built.
         from .nxc_db import reset_nxc_manager
 
         reset_nxc_manager()
 
     return ExportResult(
-        plugins_exported=len(plugins),
+        finding_types_exported=len(finding_types),
         total_hosts=total_hosts,
-        scan_name=scan_name,
+        dataset_name=dataset_name,
         severities=severities,
     )
 
@@ -571,27 +572,27 @@ def import_nessus_file(
 
 def _write_to_database(
     nessus_file: Path,
-    scan_name: str,
-    base_scan_dir: Path,
-    plugins: Dict[str, dict],
-    plugin_hosts: Dict[str, Set[Tuple[str, str]]],
+    dataset_name: str,
+    base_dataset_dir: Path,
+    finding_types: Dict[str, dict],
+    finding_type_hosts: Dict[str, Set[Tuple[str, str]]],
     host_metadata: Dict[str, HostMetadata],
     service_entries: Set[Tuple[str, str, str, str]] = frozenset(),  # type: ignore[assignment]
 ) -> None:
-    """Write scan, plugin, and host data to database.
+    """Write dataset, finding_type, and host data to database.
 
     Args:
         nessus_file: Path to original .nessus file
-        scan_name: Sanitized scan name
-        base_scan_dir: Base directory used to derive scans.export_root (no files are written)
-        plugins: Plugin metadata dictionary
-        plugin_hosts: Plugin hosts dictionary (plugin_id -> set of host:port entries)
+        dataset_name: Sanitized dataset name
+        base_dataset_dir: Base directory used to derive datasets.export_root (no files are written)
+        finding_types: FindingType metadata dictionary
+        finding_type_hosts: FindingType hosts dictionary (finding_type_id -> set of host:port entries)
         host_metadata: Host metadata dictionary (scan_target -> HostMetadata)
         service_entries: Set of (scan_target, port, protocol, svc_name) tuples
     """
     try:
         from .database import db_transaction, compute_file_hash
-        from .models import Scan, Plugin, Finding, now_iso
+        from .models import Dataset, FindingType, Finding, now_iso
         from .parsing import detect_host_type
         import time
 
@@ -599,54 +600,56 @@ def _write_to_database(
         log_info("Writing metadata to database...")
 
         with db_transaction() as conn:
-            # Create or update scan
+            # Create or update dataset
             nessus_hash = (
                 compute_file_hash(nessus_file) if nessus_file.exists() else None
             )
 
-            scan = Scan(
-                scan_name=scan_name,
+            dataset = Dataset(
+                dataset_name=dataset_name,
                 source_file_path=str(nessus_file.resolve()),
                 source_file_hash=nessus_hash,
-                export_root=str(base_scan_dir.parent),
+                export_root=str(base_dataset_dir.parent),
                 created_at=now_iso(),
             )
 
-            # Check if scan exists
-            existing_scan = Scan.get_by_name(scan_name, conn)
-            if existing_scan:
-                scan.scan_id = existing_scan.scan_id
+            # Check if dataset exists
+            existing_dataset = Dataset.get_by_name(dataset_name, conn)
+            if existing_dataset:
+                dataset.dataset_id = existing_dataset.dataset_id
                 # Preserve the original import timestamp while refreshing source metadata.
-                scan.created_at = existing_scan.created_at
-                log_info(f"Updating existing scan: {scan_name}")
+                dataset.created_at = existing_dataset.created_at
+                log_info(f"Updating existing dataset: {dataset_name}")
             else:
-                log_info(f"Creating new scan: {scan_name}")
+                log_info(f"Creating new dataset: {dataset_name}")
 
-            scan_id = scan.save(conn)
-            if scan_id is None:
-                log_error("Failed to save scan - scan_id is None")
+            dataset_id = dataset.save(conn)
+            if dataset_id is None:
+                log_error("Failed to save dataset - dataset_id is None")
                 return
 
-            if existing_scan:
-                # Replace scan-derived data before inserting the fresh import. Keeping
-                # the scan row preserves stable references while avoiding duplicate
-                # (scan_id, plugin_id) findings and stale host/service rows.
-                conn.execute("DELETE FROM findings WHERE scan_id = ?", (scan_id,))
-                conn.execute("DELETE FROM host_services WHERE scan_id = ?", (scan_id,))
+            if existing_dataset:
+                # Replace dataset-derived data before inserting the fresh import. Keeping
+                # the dataset row preserves stable references while avoiding duplicate
+                # (dataset_id, finding_type_id) findings and stale host/service rows.
+                conn.execute("DELETE FROM findings WHERE dataset_id = ?", (dataset_id,))
+                conn.execute(
+                    "DELETE FROM host_services WHERE dataset_id = ?", (dataset_id,)
+                )
 
-            # ========== Step 1: Collect unique hosts and ports from ALL plugins ==========
+            # ========== Step 1: Collect unique hosts and ports from ALL finding_types ==========
             # Use (ip_address, scan_target) as composite key for hosts
             unique_hosts: Dict[Tuple[str, str], HostMetadata] = (
                 {}
             )  # (ip, target) -> metadata
             unique_ports: Set[int] = set()
 
-            for plugin_id_str, meta in plugins.items():
-                hosts_data = plugin_hosts.get(plugin_id_str, set())
+            for finding_type_id_str, meta in finding_types.items():
+                hosts_data = finding_type_hosts.get(finding_type_id_str, set())
 
                 for host_entry_data in hosts_data:
                     # Parse host:port (existing logic)
-                    host_entry, plugin_output = host_entry_data
+                    host_entry, evidence = host_entry_data
 
                     # Parse host:port - host_entry contains scan_target (possibly with port)
                     scan_target, port = _parse_host_entry(host_entry)
@@ -677,9 +680,9 @@ def _write_to_database(
             if unique_hosts:
                 log_info(f"Inserting {len(unique_hosts)} unique hosts...")
                 host_records = []
-                for (ip_addr, scan_tgt), meta_entry in unique_hosts.items():
+                for (ip_addr, dataset_tgt), meta_entry in unique_hosts.items():
                     # Determine scan_target_type
-                    scan_target_type = detect_host_type(scan_tgt)
+                    scan_target_type = detect_host_type(dataset_tgt)
                     # Convert 'hostname' to 'fqdn' for the new schema
                     if scan_target_type == "hostname":
                         scan_target_type = "fqdn"
@@ -687,7 +690,7 @@ def _write_to_database(
                     host_records.append(
                         (
                             ip_addr,
-                            scan_tgt,
+                            dataset_tgt,
                             scan_target_type,
                             meta_entry.netbios_name,
                             meta_entry.fqdn,
@@ -747,71 +750,75 @@ def _write_to_database(
 
                     if host_id and port_int:
                         service_records.append(
-                            (scan_id, host_id, port_int, protocol_val, svc_name_val)
+                            (dataset_id, host_id, port_int, protocol_val, svc_name_val)
                         )
 
                 if service_records:
                     conn.executemany(
                         """INSERT OR IGNORE INTO host_services
-                           (scan_id, host_id, port_number, protocol, svc_name)
+                           (dataset_id, host_id, port_number, protocol, svc_name)
                            VALUES (?, ?, ?, ?, ?)""",
                         service_records,
                     )
 
-            # ========== Step 5: Insert plugins and finding rows ==========
-            total_plugins = len(plugins)
-            for idx, (plugin_id_str, meta) in enumerate(plugins.items(), 1):
-                # plugins.plugin_id is TEXT and namespaced for every source, so
+            # ========== Step 5: Insert finding_types and finding rows ==========
+            total_finding_types = len(finding_types)
+            for idx, (finding_type_id_str, meta) in enumerate(finding_types.items(), 1):
+                # finding_types.finding_type_id is TEXT and namespaced for every source, so
                 # the bare number from the .nessus file is prefixed here. The
                 # Tenable URL below keeps using the bare value: that is the
                 # source-native reference, which is what Tenable publishes.
-                plugin_id = f"{PLUGIN_ID_PREFIXES[SOURCE_NESSUS]}{plugin_id_str}"
+                finding_type_id = (
+                    f"{FINDING_TYPE_ID_PREFIXES[SOURCE_NESSUS]}{finding_type_id_str}"
+                )
 
-                # Show progress every 10 plugins or at milestones
-                if idx % 10 == 0 or idx == total_plugins:
-                    log_info(f"Processing plugin {idx}/{total_plugins}...")
+                # Show progress every 10 finding_types or at milestones
+                if idx % 10 == 0 or idx == total_finding_types:
+                    log_info(f"Processing finding_type {idx}/{total_finding_types}...")
 
-                # Create plugin metadata
-                plugin = Plugin(
-                    plugin_id=plugin_id,
-                    plugin_name=meta["name"],
+                # Create finding_type metadata
+                finding_type = FindingType(
+                    finding_type_id=finding_type_id,
+                    finding_type_name=meta["name"],
                     severity_int=meta["severity_int"],
                     has_metasploit=meta.get("msf", False),
                     cvss3_score=meta.get("cvss3"),
                     cvss2_score=meta.get("cvss2"),
                     metasploit_names=meta.get("msf_names"),
                     cves=meta.get("cves"),
-                    plugin_url=f"{PLUGIN_DETAILS_BASE}{plugin_id_str}",
+                    stored_details_url=f"{NESSUS_DETAILS_BASE}{finding_type_id_str}",
                 )
-                plugin.save(conn)
+                finding_type.save(conn)
 
-                # Create the finding row for this plugin
-                hosts_data = plugin_hosts.get(plugin_id_str, set())
+                # Create the finding row for this finding_type
+                hosts_data = finding_type_hosts.get(finding_type_id_str, set())
 
-                # Count unique hosts and ports for this plugin
-                unique_hosts_for_plugin = set()
-                ports_for_plugin = set()
+                # Count unique hosts and ports for this finding_type
+                unique_hosts_for_finding_type = set()
+                ports_for_finding_type = set()
                 for host_entry_data in hosts_data:
-                    # Unpack tuple to get host_entry string (ignore plugin_output for counting)
+                    # Unpack tuple to get host_entry string (ignore evidence for counting)
                     host_entry, _ = (
-                        host_entry_data  # Extract host:port, ignore plugin_output
+                        host_entry_data  # Extract host:port, ignore evidence
                     )
 
                     # Now parse host:port as before
                     host, port = _parse_host_entry(host_entry)
-                    unique_hosts_for_plugin.add(host)
+                    unique_hosts_for_finding_type.add(host)
                     if port is not None:
-                        ports_for_plugin.add(port)
+                        ports_for_finding_type.add(port)
 
-                plugin_file = Finding(scan_id=scan_id, plugin_id=plugin_id)
+                finding_type_file = Finding(
+                    dataset_id=dataset_id, finding_type_id=finding_type_id
+                )
 
-                finding_id = plugin_file.save(conn)
+                finding_id = finding_type_file.save(conn)
 
                 # ========== Step 6: Collect junction records for bulk insert ==========
                 junction_records = []
                 for host_entry_data in hosts_data:
                     # Parse (same as before)
-                    host_entry, plugin_output = host_entry_data
+                    host_entry, evidence = host_entry_data
 
                     # Parse host:port - host_entry contains scan_target (possibly with port)
                     scan_target, port = _parse_host_entry(host_entry)
@@ -827,16 +834,14 @@ def _write_to_database(
                     composite_key = (ip_address, scan_target)
                     host_id = host_id_map.get(composite_key)
                     if host_id:
-                        junction_records.append(
-                            (finding_id, host_id, port, plugin_output)
-                        )
+                        junction_records.append((finding_id, host_id, port, evidence))
 
                 # Bulk insert junction records
                 if junction_records:
                     conn.executemany(
                         """
                         INSERT OR REPLACE INTO finding_affected_hosts (
-                            finding_id, host_id, port_number, plugin_output
+                            finding_id, host_id, port_number, evidence
                         ) VALUES (?, ?, ?, ?)
                         """,
                         junction_records,
@@ -844,7 +849,7 @@ def _write_to_database(
 
         elapsed = time.time() - start_time
         log_info(
-            f"Database updated: {len(plugins)} plugins, {scan_id=} (took {elapsed:.1f}s)"
+            f"Database updated: {len(finding_types)} finding_types, {dataset_id=} (took {elapsed:.1f}s)"
         )
 
     except Exception as e:

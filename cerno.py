@@ -3,8 +3,8 @@
 Cerno - Modern CLI for vulnerability finding review and security tool orchestration.
 
 This tool provides an interactive TUI for reviewing findings imported from
-Nessus and nuclei, running security tools (nmap, netexec, metasploit), and
-tracking progress.
+Nessus, nuclei and Burp Suite -- or written by hand -- running security tools
+(nmap, netexec, metasploit), and tracking progress.
 """
 
 # --- import path shim (supports both `python cerno.py` and `python -m cerno`) ---
@@ -48,7 +48,7 @@ from cerno_pkg import (
     save_session,
     load_session,
     delete_session,
-    show_scan_summary,
+    show_dataset_summary,
     # workflow_mapper
     WorkflowMapper,
     # analysis
@@ -131,7 +131,7 @@ def get_current_config():
 
 def browse_claude_chat(
     finding: Any,
-    plugin: Any,
+    finding_type: Any,
     hosts: list[str],
     workflow: Optional["Workflow"] = None,
 ) -> None:
@@ -142,7 +142,7 @@ def browse_claude_chat(
 
     Args:
         finding: Finding database object
-        plugin: Plugin database object
+        finding_type: FindingType database object
         hosts: List of affected host strings for context
         workflow: Optional Workflow object containing verification steps and references
     """
@@ -212,7 +212,7 @@ def browse_claude_chat(
                 response = claude_assistant.run_exchange(
                     conn=conn,
                     finding_id=finding_id,
-                    plugin=plugin,
+                    finding_type=finding_type,
                     finding=finding,
                     hosts=hosts,
                     question=raw,
@@ -227,8 +227,8 @@ def browse_claude_chat(
 def browse_claude_chat_aggregate(
     context_key: str,
     scope_description: str,
-    scan_names: list[str],
-    findings_with_plugins: list[Any],
+    dataset_names: list[str],
+    findings_with_finding_types: list[Any],
 ) -> None:
     """Interactive Claude Assistant chat for an aggregate scope.
 
@@ -239,8 +239,8 @@ def browse_claude_chat_aggregate(
     Args:
         context_key: Deterministic string identifying the conversation scope
         scope_description: Human-readable scope label shown to the user
-        scan_names: Display names of the selected scan(s)
-        findings_with_plugins: List of (Finding, Plugin) tuples in scope
+        dataset_names: Display names of the selected dataset(s)
+        findings_with_finding_types: List of (Finding, FindingType) tuples in scope
     """
     from cerno_pkg.database import get_connection
     from cerno_pkg import claude_assistant
@@ -296,8 +296,8 @@ def browse_claude_chat_aggregate(
                     conn=conn,
                     context_key=context_key,
                     scope_description=scope_description,
-                    scan_names=scan_names,
-                    findings_with_plugins=findings_with_plugins,
+                    dataset_names=dataset_names,
+                    findings_with_finding_types=findings_with_finding_types,
                     question=raw,
                 )
 
@@ -306,7 +306,7 @@ def browse_claude_chat_aggregate(
 
 
 def browse_workflow_groups(
-    scan: Any,  # Scan object (primary scan)
+    dataset: Any,  # Dataset object (primary dataset)
     workflow_groups: Dict[str, List[Tuple[Any, Any]]],
     use_sudo: bool,
     in_progress_total: List[str],
@@ -314,8 +314,8 @@ def browse_workflow_groups(
     workflow_mapper,
     config: Optional["CernoConfig"] = None,
     session_start_time: Optional[Any] = None,
-    scan_label: Optional[str] = None,
-    scans: Optional[List[Any]] = None,
+    dataset_label: Optional[str] = None,
+    datasets: Optional[List[Any]] = None,
 ) -> None:
     """
     Browse workflow groups and findings within selected workflow.
@@ -324,16 +324,16 @@ def browse_workflow_groups(
     counts, allows selection, then shows findings for that workflow.
 
     Args:
-        scan: Primary Scan database object
-        workflow_groups: Dict mapping workflow_name -> list of (Finding, Plugin) tuples
+        dataset: Primary Dataset database object
+        workflow_groups: Dict mapping workflow_name -> list of (Finding, FindingType) tuples
         use_sudo: Whether sudo is available
         in_progress_total: List of findings viewed but not marked done
         done_total: List of findings marked done
         workflow_mapper: WorkflowMapper instance
         config: Optional config (loaded if omitted)
         session_start_time: Review session start, used for end-of-session statistics
-        scan_label: Optional display label override (used for multi-scan breadcrumbs)
-        scans: Optional full list of selected Scan objects for multi-scan support
+        dataset_label: Optional display label override (used for multi-dataset breadcrumbs)
+        datasets: Optional full list of selected Dataset objects for multi-dataset support
     """
     # Load config if not provided (defensive programming)
     if config is None:
@@ -341,8 +341,8 @@ def browse_workflow_groups(
 
         config = load_config()
 
-    scan_dir = Path(scan.export_root) / scan.scan_name
-    _wf_label = scan_label if scan_label else scan_dir.name
+    dataset_dir = Path(dataset.export_root) / dataset.dataset_name
+    _wf_label = dataset_label if dataset_label else dataset_dir.name
     if not workflow_groups:
         warn("No findings with mapped workflows found.")
         return
@@ -393,15 +393,15 @@ def browse_workflow_groups(
         workflow_idx = int(ans) - 1
         workflow_name, workflow_files = workflow_list[workflow_idx]
 
-        # Extract plugin IDs from database records instead of filenames
-        plugin_ids = []
-        for _finding, plugin in workflow_files:
-            plugin_ids.append(plugin.plugin_id)
+        # Extract finding_type IDs from database records instead of filenames
+        finding_type_ids = []
+        for _finding, finding_type in workflow_files:
+            finding_type_ids.append(finding_type.finding_type_id)
 
-        # Browse findings for this workflow using database query filtered by plugin IDs
-        all_scans = scans if scans else [scan]
+        # Browse findings for this workflow using database query filtered by finding_type IDs
+        all_datasets = datasets if datasets else [dataset]
         browse_file_list(
-            all_scans,
+            all_datasets,
             None,  # No specific severity dir (workflow may span multiple severities)
             None,  # No severity filter
             f"Workflow: {workflow_name}",
@@ -410,7 +410,7 @@ def browse_workflow_groups(
             done_total,
             is_msf_mode=True,  # Show severity labels
             workflow_mapper=workflow_mapper,
-            plugin_ids_filter=plugin_ids if plugin_ids else None,
+            finding_type_ids_filter=finding_type_ids if finding_type_ids else None,
             config=config,
             session_start_time=session_start_time,
         )
@@ -419,16 +419,18 @@ def browse_workflow_groups(
         # This ensures the statistics display shows current counts after moving findings between statuses
         from cerno_pkg.models import Finding
 
-        all_scan_ids = [s.scan_id for s in all_scans if s.scan_id is not None]
-        if len(all_scan_ids) > 1:
-            refreshed_files, _ = Finding.get_by_scan_ids_merged(
-                scan_ids=all_scan_ids,
-                plugin_ids=plugin_ids if plugin_ids else None,
+        all_dataset_ids = [
+            s.dataset_id for s in all_datasets if s.dataset_id is not None
+        ]
+        if len(all_dataset_ids) > 1:
+            refreshed_files, _ = Finding.get_by_dataset_ids_merged(
+                dataset_ids=all_dataset_ids,
+                finding_type_ids=finding_type_ids if finding_type_ids else None,
             )
         else:
-            refreshed_files = Finding.get_by_scan_with_plugin(
-                scan_id=scan.scan_id,
-                plugin_ids=plugin_ids if plugin_ids else None,
+            refreshed_files = Finding.get_by_dataset_with_finding_type(
+                dataset_id=dataset.dataset_id,
+                finding_type_ids=finding_type_ids if finding_type_ids else None,
             )
         workflow_groups[workflow_name] = refreshed_files
 
@@ -437,7 +439,7 @@ def browse_workflow_groups(
 
 
 def browse_file_list(
-    scans: list[Any],  # List of Scan objects (single-scan: [scan])
+    datasets: list[Any],  # List of Dataset objects (single-dataset: [dataset])
     sev_dir: Optional[Path],
     severity_dir_filter: Optional[str],
     severity_label: str,
@@ -447,7 +449,7 @@ def browse_file_list(
     is_msf_mode: bool = False,
     workflow_mapper: Optional[WorkflowMapper] = None,
     has_metasploit_filter: Optional[bool] = None,
-    plugin_ids_filter: Optional[list[str]] = None,
+    finding_type_ids_filter: Optional[list[str]] = None,
     severity_dirs_filter: Optional[list[str]] = None,
     config: Optional["CernoConfig"] = None,
     session_start_time: Optional[Any] = None,
@@ -456,18 +458,18 @@ def browse_file_list(
     Browse and interact with the findings list (unified for severity and MSF modes).
 
     Args:
-        scans: List of Scan database objects (single-scan: pass [scan])
+        datasets: List of Dataset database objects (single-dataset: pass [dataset])
         sev_dir: Severity display path, used for the preview and tool output paths
         severity_dir_filter: Severity directory filter for database query (e.g., "3_High")
         severity_label: Display label for the severity
-        workflow_mapper: Optional workflow mapper for plugin workflows
+        workflow_mapper: Optional workflow mapper for finding_type workflows
         use_sudo: Whether sudo is available
         in_progress_total: List to track findings viewed but not marked done
         done_total: List to track findings marked done
         is_msf_mode: If True, derive each finding's severity directory from
-            its plugin metadata rather than the single sev_dir
-        has_metasploit_filter: Optional filter for metasploit plugins
-        plugin_ids_filter: Optional list of specific plugin IDs to include
+            its finding_type metadata rather than the single sev_dir
+        has_metasploit_filter: Optional filter for metasploit finding_types
+        finding_type_ids_filter: Optional list of specific finding_type IDs to include
         severity_dirs_filter: Optional list of severity filters for a multi-severity view
         config: Optional config (loaded if omitted)
         session_start_time: Review session start, used for end-of-session statistics
@@ -488,8 +490,8 @@ def browse_file_list(
     group_filter: Optional[Tuple[int, set, str]] = None
     # [I] / [D] toggles: None = all open statuses (Done hidden)
     status_filter: Optional[str] = None
-    # Default sort: severity for mixed views (Critical at top), plugin_id for single severity
-    sort_mode = "plugin_id" if severity_dir_filter is not None else "severity"
+    # Default sort: severity for mixed views (Critical at top), finding_type_id for single severity
+    sort_mode = "finding_type_id" if severity_dir_filter is not None else "severity"
 
     # Use config value if set, otherwise calculate based on terminal
     page_size = (
@@ -506,13 +508,13 @@ def browse_file_list(
     page_idx = 0
     first_iteration = True  # Track first iteration for startup hint
 
-    # Derive scan variables from scans list
-    primary_scan = scans[0]
-    scan_id = primary_scan.scan_id
-    is_multi_scan = len(scans) > 1
-    scan_ids = [s.scan_id for s in scans]
-    scan_names = [s.scan_name for s in scans]
-    scan_dir = Path(primary_scan.export_root) / primary_scan.scan_name
+    # Derive dataset variables from datasets list
+    primary_dataset = datasets[0]
+    dataset_id = primary_dataset.dataset_id
+    is_multi_dataset = len(datasets) > 1
+    dataset_ids = [s.dataset_id for s in datasets]
+    dataset_names = [s.dataset_name for s in datasets]
+    dataset_dir = Path(primary_dataset.export_root) / primary_dataset.dataset_name
 
     # Claude availability check (once per browse session)
     from cerno_pkg.claude_assistant import check_claude_available, claude_enabled
@@ -523,7 +525,7 @@ def browse_file_list(
     def get_counts_for(finding: "Finding") -> Tuple[int, str]:
         """Get host/port counts from database.
 
-        In multi-scan mode, counts distinct hosts across all finding_ids for this plugin.
+        In multi-dataset mode, counts distinct hosts across all finding_ids for this finding_type.
 
         Args:
             finding: Finding database object
@@ -534,10 +536,10 @@ def browse_file_list(
         from cerno_pkg.database import get_connection
 
         with get_connection() as conn:
-            if is_multi_scan and all_instances:
+            if is_multi_dataset and all_instances:
                 all_fids = [
                     f.finding_id
-                    for f in all_instances.get(finding.plugin_id, [])
+                    for f in all_instances.get(finding.finding_type_id, [])
                     if f.finding_id is not None
                 ]
             else:
@@ -547,40 +549,40 @@ def browse_file_list(
 
             return (Finding.count_targets(all_fids, conn), "")
 
-    # Initialize multi-scan tracking variables (updated each loop iteration)
+    # Initialize multi-dataset tracking variables (updated each loop iteration)
     all_instances: dict[str, list["Finding"]] = {}
-    scan_labels: Optional[dict[str, str]] = None
+    dataset_labels: Optional[dict[str, str]] = None
 
     while True:
-        # Query database for findings with plugin info
-        if is_multi_scan:
-            all_records, all_instances = Finding.get_by_scan_ids_merged(
-                scan_ids=scan_ids,
+        # Query database for findings with finding_type info
+        if is_multi_dataset:
+            all_records, all_instances = Finding.get_by_dataset_ids_merged(
+                dataset_ids=dataset_ids,
                 severity_dir=severity_dir_filter,
                 severity_dirs=severity_dirs_filter,
                 has_metasploit=has_metasploit_filter,
-                plugin_ids=plugin_ids_filter,
+                finding_type_ids=finding_type_ids_filter,
             )
             # Build scan label strings: "All N" or "M of N"
-            total_scans = len(scans)
-            scan_labels = {
+            total_datasets = len(datasets)
+            dataset_labels = {
                 pid: (
-                    f"All {total_scans}"
-                    if len(findings) == total_scans
-                    else f"{len(findings)} of {total_scans}"
+                    f"All {total_datasets}"
+                    if len(findings) == total_datasets
+                    else f"{len(findings)} of {total_datasets}"
                 )
                 for pid, findings in all_instances.items()
             }
         else:
-            all_records = Finding.get_by_scan_with_plugin(
-                scan_id=scan_id,
+            all_records = Finding.get_by_dataset_with_finding_type(
+                dataset_id=dataset_id,
                 severity_dir=severity_dir_filter,
                 severity_dirs=severity_dirs_filter,
                 has_metasploit=has_metasploit_filter,
-                plugin_ids=plugin_ids_filter,
+                finding_type_ids=finding_type_ids_filter,
             )
             all_instances = {}
-            scan_labels = None
+            dataset_labels = None
 
         # Separate reviewed and unreviewed based on review_state from database
         reviewed = [
@@ -605,11 +607,11 @@ def browse_file_list(
         # Targets, not machines: this labels the [V] host list, so it must equal
         # the number of lines that list renders.
         if candidates:
-            if is_multi_scan and all_instances:
+            if is_multi_dataset and all_instances:
                 all_fids = [
                     f.finding_id
                     for pf, _ in candidates
-                    for f in all_instances.get(pf.plugin_id, [])
+                    for f in all_instances.get(pf.finding_type_id, [])
                     if f.finding_id is not None
                 ]
             else:
@@ -630,12 +632,12 @@ def browse_file_list(
 
         # Apply sorting
         if sort_mode == "severity":
-            # Sort by severity descending (Critical first), then by plugin name
+            # Sort by severity descending (Critical first), then by finding_type name
             display = sorted(
                 candidates,
                 key=lambda record: (
                     -record[1].severity_int,
-                    natural_key(record[1].plugin_name),
+                    natural_key(record[1].finding_type_name),
                 ),
             )
         elif sort_mode == "hosts":
@@ -643,15 +645,15 @@ def browse_file_list(
                 candidates,
                 key=lambda record: (
                     -get_counts_for(record[0])[0],
-                    natural_key(record[1].plugin_name),
+                    natural_key(record[1].finding_type_name),
                 ),
             )
-        elif sort_mode == "plugin_id":
-            # Sort by plugin ID (numeric ascending)
-            display = sorted(candidates, key=lambda record: record[1].plugin_id)
+        elif sort_mode == "finding_type_id":
+            # Sort by finding_type ID (numeric ascending)
+            display = sorted(candidates, key=lambda record: record[1].finding_type_id)
         else:  # name
             display = sorted(
-                candidates, key=lambda record: natural_key(record[1].plugin_name)
+                candidates, key=lambda record: natural_key(record[1].finding_type_name)
             )
 
         total_pages = (
@@ -667,19 +669,19 @@ def browse_file_list(
         try:
             from cerno_pkg import breadcrumb
 
-            if is_multi_scan:
-                _names = [s.scan_name for s in scans]
-                _scan_label = (
+            if is_multi_dataset:
+                _names = [s.dataset_name for s in datasets]
+                _dataset_label = (
                     f"{_names[0]} + {_names[1]}"
                     if len(_names) == 2
-                    else f"{len(_names)} scans"
+                    else f"{len(_names)} datasets"
                 )
             else:
-                _scan_label = scan_dir.name
+                _dataset_label = dataset_dir.name
             filter_info = f"filtered: '{file_filter}'" if file_filter else "Findings"
             if status_filter:
                 filter_info += f" ({REVIEW_STATE_LABELS[status_filter]} only)"
-            bc = breadcrumb(_scan_label, severity_label, filter_info)
+            bc = breadcrumb(_dataset_label, severity_label, filter_info)
             header(bc if bc else f"Severity: {severity_label}")
 
             # Show startup hint on first iteration
@@ -769,7 +771,7 @@ def browse_file_list(
 
             sort_label = {
                 "severity": "Severity ↓",
-                "plugin_id": "Finding ID ↑",
+                "finding_type_id": "Finding ID ↑",
                 "hosts": "Host count ↓",
                 "name": "Name A↑Z",
             }.get(sort_mode, "Severity ↓")
@@ -777,7 +779,7 @@ def browse_file_list(
             # Show next sort mode indicator
             next_sort_mode = {
                 "severity": "Finding ID ↑",
-                "plugin_id": "Name A↑Z",
+                "finding_type_id": "Name A↑Z",
                 "name": "Host count ↓",
                 "hosts": "Severity ↓",
             }.get(sort_mode, "Finding ID ↑")
@@ -899,7 +901,7 @@ def browse_file_list(
                     get_counts_for,
                     row_offset=start,
                     show_severity=is_msf_mode,
-                    scan_labels=scan_labels,
+                    dataset_labels=dataset_labels,
                     chat_history_finding_ids=chat_history_ids,
                 )
 
@@ -1051,13 +1053,13 @@ def browse_file_list(
             continue
 
         # Add a hand-authored finding ([+]). Intercepted before the generic
-        # action handler because a create can pull a second scan into the
-        # session, which changes the loop's own scan variables.
+        # action handler because a create can pull a second dataset into the
+        # session, which changes the loop's own dataset variables.
         if ans == "+":
             from cerno_pkg.authored_findings import (
                 AuthoredFindingError,
                 create_authored_finding,
-                get_or_create_authored_scan,
+                get_or_create_authored_dataset,
             )
             from cerno_pkg.constants import SOURCE_OPERATOR
             from cerno_pkg.tui import prompt_new_finding
@@ -1069,26 +1071,26 @@ def browse_file_list(
                 # SOURCE_OPERATOR, not agent: this keystroke is the operator
                 # typing. An MCP client's creates go in under `agent:`, which
                 # is what keeps the two authorships distinguishable later.
-                new_plugin_id, _new_finding_id = create_authored_finding(
+                new_finding_type_id, _new_finding_id = create_authored_finding(
                     drafted, SOURCE_OPERATOR
                 )
             except AuthoredFindingError as exc:
                 err(f"Could not save the finding: {exc}")
                 continue
 
-            ok(f"Saved as {new_plugin_id}.")
-            operator_scan = get_or_create_authored_scan(SOURCE_OPERATOR)
-            if operator_scan.scan_id not in scan_ids:
-                # Append in place: this list is the caller's `selected_scans`,
+            ok(f"Saved as {new_finding_type_id}.")
+            operator_dataset = get_or_create_authored_dataset(SOURCE_OPERATOR)
+            if operator_dataset.dataset_id not in dataset_ids:
+                # Append in place: this list is the caller's `selected_datasets`,
                 # reused across the whole severity menu and handed to
-                # save_session(), so the Operator scan reaches session_scans
+                # save_session(), so the Operator scan reaches session_datasets
                 # and every later view without a new session API.
-                scans.append(operator_scan)
-                scan_ids = [s.scan_id for s in scans]
-                scan_names = [s.scan_name for s in scans]
-                is_multi_scan = len(scans) > 1
+                datasets.append(operator_dataset)
+                dataset_ids = [s.dataset_id for s in datasets]
+                dataset_names = [s.dataset_name for s in datasets]
+                is_multi_dataset = len(datasets) > 1
                 info(
-                    f"Added the {operator_scan.scan_name} scan to this review "
+                    f"Added the {operator_dataset.dataset_name} scan to this review "
                     "session, so hand-authored findings show up in this list."
                 )
             page_idx = 0
@@ -1113,14 +1115,14 @@ def browse_file_list(
                     _, _, group_desc = group_filter
                     scope_parts.append(f"group: {group_desc}")
                 scope_desc = " | ".join(scope_parts)
-                scan_ids_str = ",".join(str(sid) for sid in sorted(scan_ids))
+                dataset_ids_str = ",".join(str(sid) for sid in sorted(dataset_ids))
                 scope_hash = hashlib.md5(scope_desc.encode()).hexdigest()[:8]
-                context_key = f"findings_list:{scan_ids_str}:{scope_hash}"
+                context_key = f"findings_list:{dataset_ids_str}:{scope_hash}"
                 browse_claude_chat_aggregate(
                     context_key=context_key,
                     scope_description=scope_desc,
-                    scan_names=scan_names,
-                    findings_with_plugins=candidates,
+                    dataset_names=dataset_names,
+                    findings_with_finding_types=candidates,
                 )
             elif not claude_installed:
                 warn(
@@ -1222,20 +1224,28 @@ def browse_file_list(
                     ),
                     total=len(candidates),
                 )
-                for finding, plugin in candidates:
-                    new_state = move_review_state(finding, plugin, quiet=True)
+                for finding, finding_type in candidates:
+                    new_state = move_review_state(finding, finding_type, quiet=True)
                     if new_state is not None:
-                        display_name = finding_label(finding, plugin)
+                        display_name = finding_label(finding, finding_type)
                         moved[new_state] = moved.get(new_state, 0) + 1
                         if new_state == REVIEW_STATE_DONE:
                             done_total.append(display_name)
                         elif new_state == REVIEW_STATE_IN_PROGRESS:
                             in_progress_total.append(display_name)
-                        # Sync other scan instances in multi-scan mode
-                        if is_multi_scan:
-                            for other_f in all_instances.get(plugin.plugin_id, []):
+                        # Sync other scan instances in multi-dataset mode
+                        if is_multi_dataset:
+                            for other_f in all_instances.get(
+                                finding_type.finding_type_id, []
+                            ):
                                 if other_f.finding_id != finding.finding_id:
-                                    other_f.update_review_state(new_state)
+                                    # Same actor as the move that triggered this
+                                    # sync -- siblings never re-derive one.
+                                    from cerno_pkg.constants import (
+                                        SOURCE_OPERATOR as _ACTOR,
+                                    )
+
+                                    other_f.update_review_state(new_state, _ACTOR)
                     progress.advance(task)
             if moved:
                 ok(
@@ -1255,28 +1265,33 @@ def browse_file_list(
                 global_idx = int(ans) - 1
                 chosen_record = display[global_idx]
 
-            # Extract plugin info from record
-            finding, plugin = chosen_record
+            # Extract finding_type info from record
+            finding, finding_type = chosen_record
 
             # Create synthetic path for legacy code that still uses chosen.name
-            # In database-only mode, construct a name from plugin ID
-            synthetic_name = f"{plugin.plugin_id}_{plugin.plugin_name.replace(' ', '_').replace('/', '_')}.txt"
+            # In database-only mode, construct a name from finding_type ID
+            synthetic_name = f"{finding_type.finding_type_id}_{finding_type.finding_type_name.replace(' ', '_').replace('/', '_')}.txt"
             chosen_path = Path(synthetic_name)
 
-            # Get severity directory from plugin metadata
+            # Get severity directory from finding_type metadata
             if is_msf_mode:
-                # Construct severity directory name from plugin severity
-                sev_label = plugin.severity_label or f"Severity_{plugin.severity_int}"
-                chosen_sev_dir = scan_dir / f"{plugin.severity_int}_{sev_label}"
+                # Construct severity directory name from finding_type severity
+                sev_label = (
+                    finding_type.severity_label
+                    or f"Severity_{finding_type.severity_int}"
+                )
+                chosen_sev_dir = (
+                    dataset_dir / f"{finding_type.severity_int}_{sev_label}"
+                )
             else:
                 chosen_sev_dir = sev_dir
 
             # Process the file
             process_single_finding(
                 chosen_path,
-                plugin,
+                finding_type,
                 finding,
-                scan_dir,
+                dataset_dir,
                 chosen_sev_dir,
                 use_sudo,
                 in_progress_total,
@@ -1286,8 +1301,8 @@ def browse_file_list(
                 use_proxy=_proxy_active,
             )
 
-            # In multi-scan mode, broadcast review state changes to all other instances
-            if is_multi_scan and all_instances:
+            # In multi-dataset mode, broadcast review state changes to all other instances
+            if is_multi_dataset and all_instances:
                 from cerno_pkg.database import query_one, get_connection
 
                 with get_connection() as conn:
@@ -1298,9 +1313,14 @@ def browse_file_list(
                     )
                 if state_row:
                     new_state = state_row["review_state"]
-                    for other_f in all_instances.get(finding.plugin_id, []):
+                    for other_f in all_instances.get(finding.finding_type_id, []):
                         if other_f.finding_id != finding.finding_id:
-                            other_f.update_review_state(new_state)
+                            # Same actor as the move that triggered this sync.
+                            from cerno_pkg.constants import (
+                                SOURCE_OPERATOR as _ACTOR,
+                            )
+
+                            other_f.update_review_state(new_state, _ACTOR)
 
         elif action_type is None:
             continue
@@ -1313,9 +1333,9 @@ def show_session_statistics(
     session_start_time,
     in_progress_total: list[str],
     done_total: list[str],
-    scan_dir: Path,
-    scan_id: Optional[int] = None,
-    scan_ids: Optional[list[int]] = None,
+    dataset_dir: Path,
+    dataset_id: Optional[int] = None,
+    dataset_ids: Optional[list[int]] = None,
 ) -> None:
     """
     Display rich session statistics at the end of a review session.
@@ -1324,9 +1344,9 @@ def show_session_statistics(
         session_start_time: Datetime when session started
         in_progress_total: List of findings viewed but not marked done
         done_total: List of findings marked done
-        scan_dir: Scan directory (only used by the legacy no-scan_id fallback)
-        scan_id: Optional scan ID for database queries
-        scan_ids: Optional list of scan IDs for multi-scan queries (overrides scan_id)
+        dataset_dir: Dataset directory (only used by the legacy no-dataset_id fallback)
+        dataset_id: Optional dataset ID for database queries
+        dataset_ids: Optional list of dataset IDs for multi-dataset queries (overrides dataset_id)
     """
     from datetime import datetime
     from rich.table import Table
@@ -1365,28 +1385,28 @@ def show_session_statistics(
     if done_total:
         severity_counts = {}
 
-        # Database query (multi-scan or single-scan). The filesystem branch below
-        # is a legacy fallback, only reached when no scan_id is passed.
-        if scan_ids and len(scan_ids) > 1:
+        # Database query (multi-dataset or single-dataset). The filesystem branch below
+        # is a legacy fallback, only reached when no dataset_id is passed.
+        if dataset_ids and len(dataset_ids) > 1:
             from cerno_pkg.database import db_transaction, query_all
 
             with db_transaction() as conn:
-                placeholders = ",".join("?" * len(scan_ids))
+                placeholders = ",".join("?" * len(dataset_ids))
                 rows = query_all(
                     conn,
                     f"""
-                    SELECT p.severity_label, COUNT(DISTINCT f.plugin_id) as count
+                    SELECT p.severity_label, COUNT(DISTINCT f.finding_type_id) as count
                     FROM findings f
-                    JOIN v_plugins_with_severity p ON f.plugin_id = p.plugin_id
-                    WHERE f.scan_id IN ({placeholders}) AND f.review_state = 'done'
+                    JOIN v_finding_types_with_severity p ON f.finding_type_id = p.finding_type_id
+                    WHERE f.dataset_id IN ({placeholders}) AND f.review_state = 'done'
                     GROUP BY p.severity_label
                     """,
-                    tuple(scan_ids),
+                    tuple(dataset_ids),
                 )
                 for row in rows:
                     sev_label = pretty_severity_label(row[0])
                     severity_counts[sev_label] = row[1]
-        elif scan_id is not None:
+        elif dataset_id is not None:
             from cerno_pkg.database import db_transaction, query_all
 
             # Query database for completed findings grouped by severity
@@ -1396,18 +1416,18 @@ def show_session_statistics(
                     """
                     SELECT p.severity_label, COUNT(*) as count
                     FROM findings f
-                    JOIN v_plugins_with_severity p ON f.plugin_id = p.plugin_id
-                    WHERE f.scan_id = ? AND f.review_state = 'done'
+                    JOIN v_finding_types_with_severity p ON f.finding_type_id = p.finding_type_id
+                    WHERE f.dataset_id = ? AND f.review_state = 'done'
                     GROUP BY p.severity_label
                     """,
-                    (scan_id,),
+                    (dataset_id,),
                 )
                 for row in rows:
                     sev_label = pretty_severity_label(row[0])
                     severity_counts[sev_label] = row[1]
         else:
             # Fallback to filesystem walk
-            for sev_dir in scan_dir.iterdir():
+            for sev_dir in dataset_dir.iterdir():
                 if not sev_dir.is_dir():
                     continue
                 sev_label = pretty_severity_label(sev_dir.name)
@@ -1441,7 +1461,7 @@ def show_session_statistics(
                 sev_col = severity_cell(sev_label)
                 sev_table.add_row(sev_col, str(severity_counts[sev_label]))
 
-            # Counts cover every Done finding in the scan(s), not just this session.
+            # Counts cover every Done finding in the dataset(s), not just this session.
             console.print("Done by severity (all sessions):")
             console.print(sev_table)
             _console_global.print()
@@ -1477,8 +1497,8 @@ def main() -> None:
     session_start_time = datetime.now()
 
     # Initialize variables for scan selection (used later for session tracking)
-    scan_id: int = 0  # Will be set when user selects a scan
-    scan_dir: Optional[Path] = None  # Will be set when user selects a scan
+    dataset_id: int = 0  # Will be set when user selects a dataset
+    dataset_dir: Optional[Path] = None  # Will be set when user selects a dataset
 
     # Initialize workflow mapper. build_workflow_mapper() reads
     # custom_workflows_path / custom_workflows_exclusive, so supplement and
@@ -1524,100 +1544,104 @@ def main() -> None:
     in_progress_total: List[str] = []
     done_total: List[str] = []
 
-    from cerno_pkg.models import Scan, Finding
+    from cerno_pkg.models import Dataset, Finding
     from datetime import datetime
 
-    def _additional_scan_ids(scans: list[Scan]) -> Optional[list[int]]:
-        """Return secondary scan IDs for a multi-scan selection (None for single scan)."""
-        ids = [s.scan_id for s in scans[1:] if s.scan_id is not None]
+    def _additional_dataset_ids(datasets: list[Dataset]) -> Optional[list[int]]:
+        """Return secondary dataset IDs for a multi-dataset selection (None for single dataset)."""
+        ids = [s.dataset_id for s in datasets[1:] if s.dataset_id is not None]
         return ids or None
 
-    selected_scans: list[Scan] = []
-    # Carried across iterations of the scan-selection loop below: the
+    selected_datasets: list[Dataset] = []
+    # Carried across iterations of the dataset-selection loop below: the
     # previous scan's session is saved at the top of the next pass, after
     # this has been populated from that selection.
-    all_scan_ids: list[int] = []
+    all_dataset_ids: list[int] = []
 
     # Outer loop for scan selection
     # Wrapped in try/finally to ensure session is saved on ALL exit paths
     try:
         while True:
             # Save previous scan's session before loading next scan menu
-            # This handles the case where user reviews multiple scans (presses 'b' to go back)
-            if scan_id != 0:
+            # This handles the case where user reviews multiple datasets (presses 'b' to go back)
+            if dataset_id != 0:
                 save_session(
-                    scan_id,
+                    dataset_id,
                     session_start_time,
                     in_progress_count=len(in_progress_total),
                     done_count=len(done_total),
-                    additional_scan_ids=_additional_scan_ids(selected_scans),
+                    additional_dataset_ids=_additional_dataset_ids(selected_datasets),
                 )
 
                 # Show statistics if work was done
                 if in_progress_total or done_total:
-                    if scan_dir is not None:
+                    if dataset_dir is not None:
                         show_session_statistics(
                             session_start_time,
                             in_progress_total,
                             done_total,
-                            scan_dir,
-                            scan_id=scan_id,
-                            scan_ids=(all_scan_ids if len(all_scan_ids) > 1 else None),
+                            dataset_dir,
+                            dataset_id=dataset_id,
+                            dataset_ids=(
+                                all_dataset_ids if len(all_dataset_ids) > 1 else None
+                            ),
                         )
 
-                delete_session(scan_id)
+                delete_session(dataset_id)
 
                 # Reset tracking for next scan
-                scan_id = 0
-                scan_dir = None
+                dataset_id = 0
+                dataset_dir = None
                 in_progress_total = []
                 done_total = []
 
-            # Get all scans from database
+            # Get all datasets from database
             try:
                 with _console_global.status(
-                    "[bold green]Loading scans from database..."
+                    "[bold green]Loading datasets from database..."
                 ):
-                    all_scans = Scan.get_all()
+                    all_datasets = Dataset.get_all()
             except Exception as e:
-                err(f"Failed to query scans from database: {e}")
+                err(f"Failed to query datasets from database: {e}")
                 info(
                     "If the database is corrupted, try: rm ~/.cerno/cerno.db, then "
-                    "re-import with cerno import nessus|nuclei <file>"
+                    "re-import with cerno import nessus|nuclei|burp <file>"
                 )
                 return
 
-            if not all_scans:
+            if not all_datasets:
                 # First-time user - show guided tour
                 from cerno_pkg.onboarding import show_guided_tour
 
                 show_guided_tour()
                 # After tour, show import instructions
-                info("\nTo get started, import a scan:")
+                info("\nTo get started, import findings:")
                 info("  cerno import nessus /path/to/scan.nessus")
                 info("  cerno import nuclei /path/to/nuclei.json\n")
                 return
 
             # Display scan selection menu
-            header("Available Scans")
+            header("Available Datasets")
             from rich.table import Table
             from rich import box
             from cerno_pkg.ansi import style_if_enabled
 
-            scan_table = Table(
+            dataset_table = Table(
                 show_header=True,
                 header_style=style_if_enabled("bold cyan"),
                 box=box.SIMPLE,
             )
-            scan_table.add_column("#", style=style_if_enabled("cyan"), justify="right")
-            scan_table.add_column("Scan Name", style=style_if_enabled("yellow"))
-            scan_table.add_column("Last Reviewed", style=style_if_enabled("magenta"))
+            dataset_table.add_column(
+                "#", style=style_if_enabled("cyan"), justify="right"
+            )
+            dataset_table.add_column("Dataset Name", style=style_if_enabled("yellow"))
+            dataset_table.add_column("Last Reviewed", style=style_if_enabled("magenta"))
 
-            for idx, scan in enumerate(all_scans, 1):
+            for idx, dataset in enumerate(all_datasets, 1):
                 last_reviewed = "never"
-                if scan.last_reviewed_at:
+                if dataset.last_reviewed_at:
                     try:
-                        dt = datetime.fromisoformat(scan.last_reviewed_at)
+                        dt = datetime.fromisoformat(dataset.last_reviewed_at)
                         now = datetime.now()
                         delta = now - dt
                         if delta.days == 0:
@@ -1638,11 +1662,11 @@ def main() -> None:
                         else:
                             last_reviewed = dt.strftime("%Y-%m-%d")
                     except Exception:
-                        last_reviewed = scan.last_reviewed_at[:10]  # Just date
+                        last_reviewed = dataset.last_reviewed_at[:10]  # Just date
 
-                scan_table.add_row(str(idx), scan.scan_name, last_reviewed)
+                dataset_table.add_row(str(idx), dataset.dataset_name, last_reviewed)
 
-            _console_global.print(scan_table)
+            _console_global.print(dataset_table)
             print_action_menu([("Q", "Quit")])
 
             try:
@@ -1654,38 +1678,40 @@ def main() -> None:
             if ans in ("x", "exit", "q", "quit"):
                 return
 
-            from cerno_pkg.tui import parse_scan_selection
+            from cerno_pkg.tui import parse_dataset_selection
 
-            indices = parse_scan_selection(ans, len(all_scans))
+            indices = parse_dataset_selection(ans, len(all_datasets))
             if indices is None:
                 warn(
-                    f"Invalid choice. Enter 1-{len(all_scans)}, a range like 1-3, or [Q]uit."
+                    f"Invalid choice. Enter 1-{len(all_datasets)}, a range like 1-3, or [Q]uit."
                 )
                 continue
 
-            selected_scans = [all_scans[i - 1] for i in indices]
-            selected_scan = selected_scans[0]  # Primary scan for backward compat
-            export_root = Path(selected_scan.export_root)
-            scan_dir = export_root / selected_scan.scan_name
+            selected_datasets = [all_datasets[i - 1] for i in indices]
+            selected_dataset = selected_datasets[0]  # Primary scan for backward compat
+            export_root = Path(selected_dataset.export_root)
+            dataset_dir = export_root / selected_dataset.dataset_name
 
-            # Note: scan_dir is a Path object used for display (scan_dir.name) only
+            # Note: dataset_dir is a Path object used for display (dataset_dir.name) only
             # In database-only mode, the directory doesn't need to exist
 
-            # Type narrowing: ensure scan_id is not None
-            if selected_scan.scan_id is None:
-                warn("Invalid scan - missing scan_id")
+            # Type narrowing: ensure dataset_id is not None
+            if selected_dataset.dataset_id is None:
+                warn("Invalid dataset - missing dataset_id")
                 continue
 
-            scan_id = selected_scan.scan_id
-            all_scan_ids = [s.scan_id for s in selected_scans if s.scan_id is not None]
-            if len(selected_scans) > 1:
-                names = ", ".join(s.scan_name for s in selected_scans)
+            dataset_id = selected_dataset.dataset_id
+            all_dataset_ids = [
+                s.dataset_id for s in selected_datasets if s.dataset_id is not None
+            ]
+            if len(selected_datasets) > 1:
+                names = ", ".join(s.dataset_name for s in selected_datasets)
                 ok(f"Selected: {names}")
             else:
-                ok(f"Selected: {selected_scan.scan_name}")
+                ok(f"Selected: {selected_dataset.dataset_name}")
 
             # Check for existing session
-            previous_session = load_session(scan_id)
+            previous_session = load_session(dataset_id)
             if previous_session:
                 from datetime import datetime
 
@@ -1706,7 +1732,7 @@ def main() -> None:
                     ok("Session resumed.")
                 else:
                     # Start fresh session - end the old one
-                    delete_session(scan_id)
+                    delete_session(dataset_id)
                     ok("Starting fresh session.")
             else:
                 # No previous session - start fresh
@@ -1730,14 +1756,14 @@ def main() -> None:
                 warn(f"top_ports_count {top_ports} is very large, capping at 100")
                 top_ports = 100
 
-            show_scan_summary(
-                scan_dir,
+            show_dataset_summary(
+                dataset_dir,
                 top_ports_n=top_ports,
-                scan_id=scan_id,
-                scan_ids=all_scan_ids if len(all_scan_ids) > 1 else None,
-                scan_names=(
-                    [s.scan_name for s in selected_scans]
-                    if len(selected_scans) > 1
+                dataset_id=dataset_id,
+                dataset_ids=all_dataset_ids if len(all_dataset_ids) > 1 else None,
+                dataset_names=(
+                    [s.dataset_name for s in selected_datasets]
+                    if len(selected_datasets) > 1
                     else None
                 ),
             )
@@ -1746,23 +1772,23 @@ def main() -> None:
             from cerno_pkg.onboarding import show_workflow_guidance
 
             show_workflow_guidance(
-                scan_name=selected_scan.scan_name,
-                scan_id=scan_id,
-                scan_ids=all_scan_ids if len(all_scan_ids) > 1 else None,
-                scan_names=(
-                    [s.scan_name for s in selected_scans]
-                    if len(selected_scans) > 1
+                dataset_name=selected_dataset.dataset_name,
+                dataset_id=dataset_id,
+                dataset_ids=all_dataset_ids if len(all_dataset_ids) > 1 else None,
+                dataset_names=(
+                    [s.dataset_name for s in selected_datasets]
+                    if len(selected_datasets) > 1
                     else None
                 ),
             )
 
             # Host filter state (persists across severity loop iterations)
             host_filter: Optional[str] = None  # Active host filter (IP/hostname)
-            host_filter_plugin_ids: Optional[list[str]] = (
-                None  # Cached plugin IDs for filter
+            host_filter_finding_type_ids: Optional[list[str]] = (
+                None  # Cached finding_type IDs for filter
             )
 
-            # Claude availability (computed once per scan selection)
+            # Claude availability (computed once per dataset selection)
             from cerno_pkg.claude_assistant import (
                 check_claude_available as _check_claude,
             )
@@ -1771,60 +1797,60 @@ def main() -> None:
             _claude_installed_sev = _check_claude()
             _has_claude_sev = _claude_enabled(config)
 
-            # Build multi-scan display label for breadcrumb/header
-            if len(selected_scans) > 1:
-                _label_names = [s.scan_name for s in selected_scans]
+            # Build multi-dataset display label for breadcrumb/header
+            if len(selected_datasets) > 1:
+                _label_names = [s.dataset_name for s in selected_datasets]
                 if len(_label_names) == 2:
-                    _scan_label = f"{_label_names[0]} + {_label_names[1]}"
+                    _dataset_label = f"{_label_names[0]} + {_label_names[1]}"
                 else:
-                    _scan_label = f"{len(_label_names)} scans"
+                    _dataset_label = f"{len(_label_names)} datasets"
             else:
-                _scan_label = scan_dir.name
+                _dataset_label = dataset_dir.name
 
             # Severity loop (inner loop)
             while True:
                 # Re-derived every pass, not once at selection: browse_file_list
-                # appends the Operator scan to selected_scans in place when the
+                # appends the Operator scan to selected_datasets in place when the
                 # operator writes a finding with [+], and the severity menu, the
                 # aggregate Claude context key and the statistics all have to
                 # see it.
-                all_scan_ids = [
-                    s.scan_id for s in selected_scans if s.scan_id is not None
+                all_dataset_ids = [
+                    s.dataset_id for s in selected_datasets if s.dataset_id is not None
                 ]
 
                 from cerno_pkg import breadcrumb
 
-                bc = breadcrumb(_scan_label, "Choose severity")
-                header(bc if bc else f"Scan: {_scan_label} — choose severity")
+                bc = breadcrumb(_dataset_label, "Choose severity")
+                header(bc if bc else f"Dataset: {_dataset_label} — choose severity")
 
                 # Get severity directories from database (database-only mode)
                 # Apply host filter if active
-                severity_dir_names = Finding.get_severity_dirs_for_scan(
-                    scan_id,
-                    plugin_ids=host_filter_plugin_ids,
-                    scan_ids=all_scan_ids if len(all_scan_ids) > 1 else None,
+                severity_dir_names = Finding.get_severity_names_for_dataset(
+                    dataset_id,
+                    finding_type_ids=host_filter_finding_type_ids,
+                    dataset_ids=all_dataset_ids if len(all_dataset_ids) > 1 else None,
                 )
                 if not severity_dir_names:
-                    warn("No severity directories in this scan.")
+                    warn("No severity directories in this dataset.")
                     break
 
                 # Create virtual Path objects for compatibility with existing render code
                 # Database returns pre-sorted (DESC), so no additional sorting needed
-                severities = [scan_dir / sev_name for sev_name in severity_dir_names]
+                severities = [dataset_dir / sev_name for sev_name in severity_dir_names]
 
                 # Metasploit Module virtual group (menu counts) - query from database
                 # Apply host filter if active
-                if len(all_scan_ids) > 1:
-                    msf_files, _ = Finding.get_by_scan_ids_merged(
-                        scan_ids=all_scan_ids,
+                if len(all_dataset_ids) > 1:
+                    msf_files, _ = Finding.get_by_dataset_ids_merged(
+                        dataset_ids=all_dataset_ids,
                         has_metasploit=True,
-                        plugin_ids=host_filter_plugin_ids,
+                        finding_type_ids=host_filter_finding_type_ids,
                     )
                 else:
-                    msf_files = Finding.get_by_scan_with_plugin(
-                        scan_id=scan_id,
+                    msf_files = Finding.get_by_dataset_with_finding_type(
+                        dataset_id=dataset_id,
                         has_metasploit=True,
-                        plugin_ids=host_filter_plugin_ids,
+                        finding_type_ids=host_filter_finding_type_ids,
                     )
 
                 has_msf = len(msf_files) > 0
@@ -1835,33 +1861,35 @@ def main() -> None:
                 )
 
                 # Workflow Mapped virtual group (menu counts) - query from database
-                # Apply host filter if active (intersect workflow plugins with host filter)
-                workflow_plugin_ids = workflow_mapper.get_all_finding_ids()
-                if workflow_plugin_ids:
-                    # plugin_id is TEXT and namespaced per source, so this
+                # Apply host filter if active (intersect workflow finding_types with host filter)
+                workflow_finding_type_ids = workflow_mapper.get_all_finding_ids()
+                if workflow_finding_type_ids:
+                    # finding_type_id is TEXT and namespaced per source, so this
                     # must stay string-keyed: an int()/isdigit() filter here
                     # would silently drop every non-Nessus workflow id.
-                    workflow_plugin_ids_filtered = [
-                        str(pid) for pid in workflow_plugin_ids
+                    workflow_finding_type_ids_filtered = [
+                        str(pid) for pid in workflow_finding_type_ids
                     ]
-                    # If host filter is active, intersect with host filter plugin IDs
-                    if host_filter_plugin_ids is not None:
-                        host_filter_set = {str(pid) for pid in host_filter_plugin_ids}
-                        workflow_plugin_ids_filtered = [
+                    # If host filter is active, intersect with host filter finding_type IDs
+                    if host_filter_finding_type_ids is not None:
+                        host_filter_set = {
+                            str(pid) for pid in host_filter_finding_type_ids
+                        }
+                        workflow_finding_type_ids_filtered = [
                             pid
-                            for pid in workflow_plugin_ids_filtered
+                            for pid in workflow_finding_type_ids_filtered
                             if pid in host_filter_set
                         ]
-                    if workflow_plugin_ids_filtered:
-                        if len(all_scan_ids) > 1:
-                            workflow_files, _ = Finding.get_by_scan_ids_merged(
-                                scan_ids=all_scan_ids,
-                                plugin_ids=workflow_plugin_ids_filtered,
+                    if workflow_finding_type_ids_filtered:
+                        if len(all_dataset_ids) > 1:
+                            workflow_files, _ = Finding.get_by_dataset_ids_merged(
+                                dataset_ids=all_dataset_ids,
+                                finding_type_ids=workflow_finding_type_ids_filtered,
                             )
                         else:
-                            workflow_files = Finding.get_by_scan_with_plugin(
-                                scan_id=scan_id,
-                                plugin_ids=workflow_plugin_ids_filtered,
+                            workflow_files = Finding.get_by_dataset_with_finding_type(
+                                dataset_id=dataset_id,
+                                finding_type_ids=workflow_finding_type_ids_filtered,
                             )
                     else:
                         workflow_files = []
@@ -1879,9 +1907,9 @@ def main() -> None:
                     severities,
                     msf_summary=msf_summary,
                     workflow_summary=workflow_summary,
-                    scan_id=scan_id,
-                    plugin_ids=host_filter_plugin_ids,
-                    scan_ids=all_scan_ids if len(all_scan_ids) > 1 else None,
+                    dataset_id=dataset_id,
+                    finding_type_ids=host_filter_finding_type_ids,
+                    dataset_ids=all_dataset_ids if len(all_dataset_ids) > 1 else None,
                 )
 
                 # Show host filter status if active
@@ -1912,7 +1940,7 @@ def main() -> None:
                 try:
                     ans = Prompt.ask("Choose").strip().lower()
                 except KeyboardInterrupt:
-                    warn("\nInterrupted — returning to scan menu.")
+                    warn("\nInterrupted — returning to dataset menu.")
                     break
 
                 if ans in ("b", "back"):
@@ -1932,28 +1960,32 @@ def main() -> None:
                     if host_input.startswith("[") and host_input.endswith("]"):
                         host_input = host_input[1:-1]
 
-                    # Query plugin IDs for this host across all selected scans
-                    plugin_ids = Host.get_plugin_ids_for_scan(
+                    # Query finding_type IDs for this host across all selected datasets
+                    finding_type_ids = Host.get_finding_type_ids_for_dataset(
                         ip_address=host_input,
-                        scan_id=scan_id,
+                        dataset_id=dataset_id,
                         partial_match=True,
-                        scan_ids=all_scan_ids if len(all_scan_ids) > 1 else None,
+                        dataset_ids=(
+                            all_dataset_ids if len(all_dataset_ids) > 1 else None
+                        ),
                     )
 
-                    if not plugin_ids:
+                    if not finding_type_ids:
                         warn(f"No findings found for host: {host_input}")
                         continue
 
                     # Set filter state
                     host_filter = host_input
-                    host_filter_plugin_ids = plugin_ids
-                    ok(f"Found {len(plugin_ids)} finding(s) for host '{host_input}'")
+                    host_filter_finding_type_ids = finding_type_ids
+                    ok(
+                        f"Found {len(finding_type_ids)} finding(s) for host '{host_input}'"
+                    )
                     continue
 
                 elif ans in ("c", "clear") and host_filter:
                     # Clear host filter
                     host_filter = None
-                    host_filter_plugin_ids = None
+                    host_filter_finding_type_ids = None
                     ok("Host filter cleared.")
                     continue
 
@@ -1965,31 +1997,33 @@ def main() -> None:
                             _has_claude_sev = True
                     if _has_claude_sev:
                         # Build aggregate context from all findings in the current scan scope
-                        _sev_scan_names = [s.scan_name for s in selected_scans]
-                        _sev_scope = "All findings — " + ", ".join(_sev_scan_names)
+                        _sev_dataset_names = [s.dataset_name for s in selected_datasets]
+                        _sev_scope = "All findings — " + ", ".join(_sev_dataset_names)
                         if host_filter:
                             _sev_scope += f" (host filter: {host_filter})"
-                        _sev_scan_ids_str = ",".join(
-                            str(sid) for sid in sorted(all_scan_ids)
+                        _sev_dataset_ids_str = ",".join(
+                            str(sid) for sid in sorted(all_dataset_ids)
                         )
                         _host_suffix = f":{host_filter}" if host_filter else ""
-                        _sev_context_key = f"sev_menu:{_sev_scan_ids_str}{_host_suffix}"
+                        _sev_context_key = (
+                            f"sev_menu:{_sev_dataset_ids_str}{_host_suffix}"
+                        )
                         # Fetch all findings for context (no severity filter)
-                        if len(all_scan_ids) > 1:
-                            _sev_findings, _ = Finding.get_by_scan_ids_merged(
-                                scan_ids=all_scan_ids,
-                                plugin_ids=host_filter_plugin_ids,
+                        if len(all_dataset_ids) > 1:
+                            _sev_findings, _ = Finding.get_by_dataset_ids_merged(
+                                dataset_ids=all_dataset_ids,
+                                finding_type_ids=host_filter_finding_type_ids,
                             )
                         else:
-                            _sev_findings = Finding.get_by_scan_with_plugin(
-                                scan_id=scan_id,
-                                plugin_ids=host_filter_plugin_ids,
+                            _sev_findings = Finding.get_by_dataset_with_finding_type(
+                                dataset_id=dataset_id,
+                                finding_type_ids=host_filter_finding_type_ids,
                             )
                         browse_claude_chat_aggregate(
                             context_key=_sev_context_key,
                             scope_description=_sev_scope,
-                            scan_names=_sev_scan_names,
-                            findings_with_plugins=_sev_findings,
+                            dataset_names=_sev_dataset_names,
+                            findings_with_finding_types=_sev_findings,
                         )
                     elif not _claude_installed_sev:
                         warn(
@@ -2008,10 +2042,10 @@ def main() -> None:
 
                 # Validate special filter selections against availability
                 if selection.msf_selected and not has_msf:
-                    warn("No Metasploit modules available for this scan.")
+                    warn("No Metasploit modules available for this dataset.")
                     continue
                 if selection.workflow_selected and not has_workflows:
-                    warn("No workflow-mapped findings available for this scan.")
+                    warn("No workflow-mapped findings available for this dataset.")
                     continue
 
                 # Map new selection fields to existing variable names for minimal downstream changes
@@ -2043,7 +2077,7 @@ def main() -> None:
                     if host_filter:
                         label = f"{combined_label} (Host: {host_filter})"
                     browse_file_list(
-                        selected_scans,
+                        selected_datasets,
                         selected_sev_dirs[0] if selected_sev_dirs else None,
                         None,  # Single severity filter not used for multi-severity
                         label,
@@ -2053,7 +2087,7 @@ def main() -> None:
                         is_msf_mode=True,  # Show severity labels for each file
                         workflow_mapper=workflow_mapper,
                         severity_dirs_filter=severity_dir_names,
-                        plugin_ids_filter=host_filter_plugin_ids,
+                        finding_type_ids_filter=host_filter_finding_type_ids,
                         config=config,
                         session_start_time=session_start_time,
                     )
@@ -2072,7 +2106,7 @@ def main() -> None:
                         label = f"{label} (Host: {host_filter})"
 
                     browse_file_list(
-                        selected_scans,
+                        selected_datasets,
                         sev_dir,
                         severity_dir_filter,
                         label,
@@ -2081,7 +2115,7 @@ def main() -> None:
                         done_total,
                         is_msf_mode=False,
                         workflow_mapper=workflow_mapper,
-                        plugin_ids_filter=host_filter_plugin_ids,
+                        finding_type_ids_filter=host_filter_finding_type_ids,
                         config=config,
                         session_start_time=session_start_time,
                     )
@@ -2093,9 +2127,9 @@ def main() -> None:
                     if host_filter:
                         label = f"{label} (Host: {host_filter})"
 
-                    # Query database for metasploit plugins across all severities
+                    # Query database for metasploit finding_types across all severities
                     browse_file_list(
-                        selected_scans,
+                        selected_datasets,
                         None,  # No single severity dir
                         None,  # No severity filter
                         label,
@@ -2105,7 +2139,7 @@ def main() -> None:
                         is_msf_mode=True,
                         workflow_mapper=workflow_mapper,
                         has_metasploit_filter=True,
-                        plugin_ids_filter=host_filter_plugin_ids,
+                        finding_type_ids_filter=host_filter_finding_type_ids,
                         config=config,
                         session_start_time=session_start_time,
                     )
@@ -2113,13 +2147,13 @@ def main() -> None:
                 # === Workflow Mapped only ===
                 elif workflow_in_selection:
                     # Group findings by workflow name using database records
-                    # Note: workflow_files is already filtered by host_filter_plugin_ids
+                    # Note: workflow_files is already filtered by host_filter_finding_type_ids
                     workflow_groups = group_findings_by_workflow(
                         workflow_files, workflow_mapper
                     )
 
                     browse_workflow_groups(
-                        selected_scan,
+                        selected_dataset,
                         workflow_groups,
                         use_sudo,
                         in_progress_total,
@@ -2127,8 +2161,8 @@ def main() -> None:
                         workflow_mapper,
                         config=config,
                         session_start_time=session_start_time,
-                        scan_label=_scan_label,
-                        scans=selected_scans,
+                        dataset_label=_dataset_label,
+                        datasets=selected_datasets,
                     )
 
             # End of severity loop - continue to scan selection loop
@@ -2136,38 +2170,40 @@ def main() -> None:
 
     finally:
         # Always save session on exit (handles early exits via q, Ctrl+C, or errors)
-        # Only save if scan was actually selected (scan_id != 0)
-        if scan_id != 0:
+        # Only save if scan was actually selected (dataset_id != 0)
+        if dataset_id != 0:
             save_session(
-                scan_id,
+                dataset_id,
                 session_start_time,
                 in_progress_count=len(in_progress_total),
                 done_count=len(done_total),
-                additional_scan_ids=_additional_scan_ids(selected_scans),
+                additional_dataset_ids=_additional_dataset_ids(selected_datasets),
             )
 
             # Session summary with rich statistics (only if work was done)
             if in_progress_total or done_total:
-                # Type guard: scan_dir must be defined if any work was done
-                if scan_dir is not None:
+                # Type guard: dataset_dir must be defined if any work was done
+                if dataset_dir is not None:
                     show_session_statistics(
                         session_start_time,
                         in_progress_total,
                         done_total,
-                        scan_dir,
-                        scan_id=scan_id,
-                        scan_ids=all_scan_ids if len(all_scan_ids) > 1 else None,
+                        dataset_dir,
+                        dataset_id=dataset_id,
+                        dataset_ids=(
+                            all_dataset_ids if len(all_dataset_ids) > 1 else None
+                        ),
                     )
 
             # Always end session (mark session_end timestamp in database)
-            delete_session(scan_id)
+            delete_session(dataset_id)
 
 
 # === Typer CLI ===
 # Main app + sub-apps (import, scan, config, workflow, creds)
 
 app = typer.Typer(
-    help="cerno — faster review & tooling runner for vulnerability scans",
+    help="cerno — faster review & tooling runner for vulnerability datasets",
     add_completion=True,
 )
 _console = _console_global
@@ -2175,8 +2211,8 @@ _console = _console_global
 # Sub-applications
 import_app = typer.Typer(help="Import data from various sources into cerno")
 
-scan_app = typer.Typer(
-    help="Scan management - list, delete and compare scans, and show host history"
+dataset_app = typer.Typer(
+    help="Dataset management - list, delete and compare datasets, and show host history"
 )
 
 config_app = typer.Typer(help="Configuration management - view and modify settings")
@@ -2189,7 +2225,7 @@ creds_app = typer.Typer(
 
 # Register sub-apps with main app
 app.add_typer(import_app, name="import")
-app.add_typer(scan_app, name="scan")
+app.add_typer(dataset_app, name="dataset")
 app.add_typer(config_app, name="config")
 app.add_typer(workflow_app, name="workflow")
 app.add_typer(creds_app, name="creds")
@@ -2228,145 +2264,145 @@ def _demo_assets_dir() -> Path:
     )
 
 
-DEMO_NUCLEI_INITIAL_SCAN = "Cerno_Demo_Nuclei_Initial_Scan"
-DEMO_NUCLEI_EXPANDED_SCAN = "Cerno_Demo_Nuclei_Expanded_Scan"
-DEMO_BURP_SCAN = "Cerno_Demo_Burp_Scan"
+DEMO_NUCLEI_INITIAL_DATASET = "Cerno_Demo_Nuclei_Initial"
+DEMO_NUCLEI_EXPANDED_DATASET = "Cerno_Demo_Nuclei_Expanded"
+DEMO_BURP_DATASET = "Cerno_Demo_Burp"
 
 
 def _import_demo_nuclei(
-    nuclei_file: Path, scan_name: str, overwrite: bool = False
+    nuclei_file: Path, dataset_name: str, overwrite: bool = False
 ) -> tuple[str, bool]:
     """Import a bundled demo nuclei results file.
 
     Mirrors :func:`_import_demo_nessus` -- same hash-based idempotency, same
     ``--overwrite`` semantics, and the same deliberate bypass of the interactive
-    duplicate prompt. The one difference is that the scan name must be supplied:
+    duplicate prompt. The one difference is that the dataset name must be supplied:
     nuclei output has no equivalent of a ``.nessus`` ``Report@name``.
 
     Args:
         nuclei_file: Bundled demo results file (a ``-je`` JSON array).
-        scan_name: Scan name to import under.
+        dataset_name: Dataset name to import under.
         overwrite: Replace an existing scan whose source file changed.
 
     Returns:
-        Tuple of (scan_name, did_import).
+        Tuple of (dataset_name, did_import).
     """
-    from cerno_pkg.constants import SCANS_ROOT
+    from cerno_pkg.constants import DATASETS_ROOT
     from cerno_pkg.database import compute_file_hash
-    from cerno_pkg.models import Scan
+    from cerno_pkg.models import Dataset
     from cerno_pkg.nuclei_import import import_nuclei_file
 
-    out_dir = SCANS_ROOT / scan_name
+    out_dir = DATASETS_ROOT / dataset_name
     new_file_hash = compute_file_hash(nuclei_file)
-    existing_scan = Scan.get_by_name(scan_name)
+    existing_dataset = Dataset.get_by_name(dataset_name)
 
-    if existing_scan:
-        if existing_scan.source_file_hash == new_file_hash:
-            info(f"Scan already imported: {scan_name}")
-            return scan_name, False
+    if existing_dataset:
+        if existing_dataset.source_file_hash == new_file_hash:
+            info(f"Dataset already imported: {dataset_name}")
+            return dataset_name, False
         if not overwrite:
-            warn(f"Scan exists with different content, skipping: {scan_name}")
-            warn("Use `cerno demo --overwrite` to replace demo scans.")
-            return scan_name, False
+            warn(f"Dataset exists with different content, skipping: {dataset_name}")
+            warn("Use `cerno demo --overwrite` to replace demo datasets.")
+            return dataset_name, False
 
-        if not Scan.delete_by_name(scan_name):
-            raise RuntimeError(f"Failed to replace existing scan: {scan_name}")
-        info(f"Replaced existing scan: {scan_name}")
+        if not Dataset.delete_by_name(dataset_name):
+            raise RuntimeError(f"Failed to replace existing dataset: {dataset_name}")
+        info(f"Replaced existing dataset: {dataset_name}")
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    result = import_nuclei_file(nuclei_file, out_dir, scan_name=scan_name)
-    ok(f"Imported {scan_name}: {result.plugins_exported} findings")
-    return scan_name, True
+    result = import_nuclei_file(nuclei_file, out_dir, dataset_name=dataset_name)
+    ok(f"Imported {dataset_name}: {result.finding_types_exported} findings")
+    return dataset_name, True
 
 
 def _import_demo_burp(
-    burp_file: Path, scan_name: str, overwrite: bool = False
+    burp_file: Path, dataset_name: str, overwrite: bool = False
 ) -> tuple[str, bool]:
     """Import the bundled demo Burp report.
 
     Mirrors :func:`_import_demo_nuclei` exactly -- same hash-based idempotency,
     same ``--overwrite`` semantics, same deliberate bypass of the interactive
-    duplicate prompt, and the same need for an explicit scan name, since a Burp
+    duplicate prompt, and the same need for an explicit dataset name, since a Burp
     report has no equivalent of a ``.nessus`` ``Report@name`` either.
 
     Args:
         burp_file: Bundled demo report (Burp's "Report issues" XML export).
-        scan_name: Scan name to import under.
+        dataset_name: Dataset name to import under.
         overwrite: Replace an existing scan whose source file changed.
 
     Returns:
-        Tuple of (scan_name, did_import).
+        Tuple of (dataset_name, did_import).
     """
     from cerno_pkg.burp_import import import_burp_file
-    from cerno_pkg.constants import SCANS_ROOT
+    from cerno_pkg.constants import DATASETS_ROOT
     from cerno_pkg.database import compute_file_hash
-    from cerno_pkg.models import Scan
+    from cerno_pkg.models import Dataset
 
-    out_dir = SCANS_ROOT / scan_name
+    out_dir = DATASETS_ROOT / dataset_name
     new_file_hash = compute_file_hash(burp_file)
-    existing_scan = Scan.get_by_name(scan_name)
+    existing_dataset = Dataset.get_by_name(dataset_name)
 
-    if existing_scan:
-        if existing_scan.source_file_hash == new_file_hash:
-            info(f"Scan already imported: {scan_name}")
-            return scan_name, False
+    if existing_dataset:
+        if existing_dataset.source_file_hash == new_file_hash:
+            info(f"Dataset already imported: {dataset_name}")
+            return dataset_name, False
         if not overwrite:
-            warn(f"Scan exists with different content, skipping: {scan_name}")
-            warn("Use `cerno demo --overwrite` to replace demo scans.")
-            return scan_name, False
+            warn(f"Dataset exists with different content, skipping: {dataset_name}")
+            warn("Use `cerno demo --overwrite` to replace demo datasets.")
+            return dataset_name, False
 
-        if not Scan.delete_by_name(scan_name):
-            raise RuntimeError(f"Failed to replace existing scan: {scan_name}")
-        info(f"Replaced existing scan: {scan_name}")
+        if not Dataset.delete_by_name(dataset_name):
+            raise RuntimeError(f"Failed to replace existing dataset: {dataset_name}")
+        info(f"Replaced existing dataset: {dataset_name}")
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    result = import_burp_file(burp_file, out_dir, scan_name=scan_name)
-    ok(f"Imported {scan_name}: {result.plugins_exported} findings")
-    return scan_name, True
+    result = import_burp_file(burp_file, out_dir, dataset_name=dataset_name)
+    ok(f"Imported {dataset_name}: {result.finding_types_exported} findings")
+    return dataset_name, True
 
 
 def _import_demo_nessus(nessus_file: Path, overwrite: bool = False) -> tuple[str, bool]:
     """Import a bundled demo Nessus file without post-import tool suggestions."""
-    from cerno_pkg.constants import SCANS_ROOT
+    from cerno_pkg.constants import DATASETS_ROOT
     from cerno_pkg.database import compute_file_hash
-    from cerno_pkg.models import Scan
+    from cerno_pkg.models import Dataset
     from cerno_pkg.nessus_import import (
-        extract_scan_name_from_nessus,
+        extract_dataset_name_from_nessus,
         import_nessus_file,
     )
 
-    scan_name = extract_scan_name_from_nessus(nessus_file)
-    out_dir = SCANS_ROOT / scan_name
+    dataset_name = extract_dataset_name_from_nessus(nessus_file)
+    out_dir = DATASETS_ROOT / dataset_name
     new_file_hash = compute_file_hash(nessus_file)
-    existing_scan = Scan.get_by_name(scan_name)
+    existing_dataset = Dataset.get_by_name(dataset_name)
 
-    if existing_scan:
-        if existing_scan.source_file_hash == new_file_hash:
-            info(f"Scan already imported: {scan_name}")
-            return scan_name, False
+    if existing_dataset:
+        if existing_dataset.source_file_hash == new_file_hash:
+            info(f"Dataset already imported: {dataset_name}")
+            return dataset_name, False
         if not overwrite:
-            warn(f"Scan exists with different content, skipping: {scan_name}")
-            warn("Use `cerno demo --overwrite` to replace demo scans.")
-            return scan_name, False
+            warn(f"Dataset exists with different content, skipping: {dataset_name}")
+            warn("Use `cerno demo --overwrite` to replace demo datasets.")
+            return dataset_name, False
 
-        if not Scan.delete_by_name(scan_name):
-            raise RuntimeError(f"Failed to replace existing scan: {scan_name}")
-        info(f"Replaced existing scan: {scan_name}")
+        if not Dataset.delete_by_name(dataset_name):
+            raise RuntimeError(f"Failed to replace existing dataset: {dataset_name}")
+        info(f"Replaced existing dataset: {dataset_name}")
 
     out_dir.mkdir(parents=True, exist_ok=True)
     result = import_nessus_file(
         nessus_file=nessus_file,
         output_dir=out_dir,
-        scan_name=scan_name,
+        dataset_name=dataset_name,
         include_ports=True,
     )
-    ok(f"Imported {scan_name}: {result.plugins_exported} findings")
-    return scan_name, True
+    ok(f"Imported {dataset_name}: {result.finding_types_exported} findings")
+    return dataset_name, True
 
 
 @app.command(name="mcp")
 def mcp_cmd() -> None:
-    """Serve Cerno's scan database and tooling over the Model Context Protocol.
+    """Serve Cerno's findings database and tooling over the Model Context Protocol.
 
     Communicates over stdio (stdin/stdout), so this command is meant to be
     launched by an MCP client rather than run directly in a terminal. Register
@@ -2420,22 +2456,22 @@ def check_cmd() -> None:
     render_tool_availability_table(include_unavailable=True)
 
 
-@app.command(name="demo", help="Prepare bundled demo scans and NetExec enrichment")
+@app.command(name="demo", help="Prepare bundled demo datasets and NetExec enrichment")
 def demo_cmd(
     overwrite: bool = typer.Option(
         False,
         "--overwrite",
-        help="Replace existing demo scans if their source files changed.",
+        help="Replace existing demo datasets if their source files changed.",
     ),
     no_nxc: bool = typer.Option(
         False,
         "--no-nxc",
-        help="Import demo scans without configuring the bundled NetExec workspace.",
+        help="Import demo datasets without configuring the bundled NetExec workspace.",
     ),
 ) -> None:
     """Prepare Cerno demo data.
 
-    Imports the bundled initial and expanded Nessus scans, and by default points
+    Imports the bundled initial and expanded Nessus datasets, and by default points
     `nxc_workspace_path` at the bundled synthetic NetExec workspace.
     """
     from cerno_pkg import load_config, save_config, get_config_path
@@ -2447,21 +2483,21 @@ def demo_cmd(
         err(str(exc))
         raise typer.Exit(1)
 
-    initial_scan = assets_dir / "cerno-demo-initial.nessus"
-    expanded_scan = assets_dir / "cerno-demo-expanded.nessus"
+    initial_dataset = assets_dir / "cerno-demo-initial.nessus"
+    expanded_dataset = assets_dir / "cerno-demo-expanded.nessus"
     initial_nuclei = assets_dir / "cerno-demo-nuclei-initial.json"
     expanded_nuclei = assets_dir / "cerno-demo-nuclei-expanded.json"
     burp_report = assets_dir / "cerno-demo-burp-scan.xml"
     nxc_workspace = assets_dir / "nxc-workspace"
 
-    demo_scans = (
-        initial_scan,
-        expanded_scan,
+    demo_datasets = (
+        initial_dataset,
+        expanded_dataset,
         initial_nuclei,
         expanded_nuclei,
         burp_report,
     )
-    missing = [path for path in demo_scans if not path.exists()]
+    missing = [path for path in demo_datasets if not path.exists()]
     if not no_nxc and not nxc_workspace.exists():
         missing.append(nxc_workspace)
 
@@ -2488,39 +2524,43 @@ def demo_cmd(
 
     _console_global.print()
     imported = 0
-    for nessus_file in (initial_scan, expanded_scan):
+    for nessus_file in (initial_dataset, expanded_dataset):
         _, did_import = _import_demo_nessus(nessus_file, overwrite=overwrite)
         if did_import:
             imported += 1
 
-    # The nuclei halves target exactly the web services the Nessus scans found,
+    # The nuclei halves target exactly the web services the Nessus datasets found,
     # so they land on the same host rows and can be reviewed side by side.
-    for nuclei_file, scan_name in (
-        (initial_nuclei, DEMO_NUCLEI_INITIAL_SCAN),
-        (expanded_nuclei, DEMO_NUCLEI_EXPANDED_SCAN),
+    for nuclei_file, dataset_name in (
+        (initial_nuclei, DEMO_NUCLEI_INITIAL_DATASET),
+        (expanded_nuclei, DEMO_NUCLEI_EXPANDED_DATASET),
     ):
-        _, did_import = _import_demo_nuclei(nuclei_file, scan_name, overwrite=overwrite)
+        _, did_import = _import_demo_nuclei(
+            nuclei_file, dataset_name, overwrite=overwrite
+        )
         if did_import:
             imported += 1
 
     # The Burp half targets the same web services again, from a third angle:
     # one finding per issue type, with several instances merged per host:port.
-    _, did_import = _import_demo_burp(burp_report, DEMO_BURP_SCAN, overwrite=overwrite)
+    _, did_import = _import_demo_burp(
+        burp_report, DEMO_BURP_DATASET, overwrite=overwrite
+    )
     if did_import:
         imported += 1
 
     _console_global.print()
-    ok(f"Demo setup complete: {imported} scan(s) imported or updated.")
+    ok(f"Demo setup complete: {imported} dataset(s) imported or updated.")
     info("Next commands:")
-    info("  cerno scan list")
-    info("  cerno scan compare Cerno_Demo_Initial_Scan Cerno_Demo_Expanded_Scan")
+    info("  cerno dataset list")
+    info("  cerno dataset compare Cerno_Demo_Initial Cerno_Demo_Expanded")
     info(
-        f"  cerno scan compare {DEMO_NUCLEI_INITIAL_SCAN} "
-        f"{DEMO_NUCLEI_EXPANDED_SCAN}"
+        f"  cerno dataset compare {DEMO_NUCLEI_INITIAL_DATASET} "
+        f"{DEMO_NUCLEI_EXPANDED_DATASET}"
     )
     info("  cerno review")
     info(
-        "At the scan prompt, select a Nessus, a nuclei and the Burp scan "
+        "At the dataset prompt, select a Nessus, a nuclei and the Burp dataset "
         "together (e.g. '2,4,5') to review all three sources side by side."
     )
     if not no_nxc:
@@ -2548,7 +2588,7 @@ def main_callback(
         help="Show version and exit",
     )
 ):
-    """cerno CLI - faster review & tooling runner for vulnerability scans."""
+    """cerno CLI - faster review & tooling runner for vulnerability datasets."""
     # Load configuration (auto-creates with defaults if missing)
     from cerno_pkg import load_config, initialize_colors
     from cerno_pkg.logging_setup import init_logger
@@ -2577,8 +2617,8 @@ def review() -> None:
     """
     Run interactive review mode with database-driven workflow.
 
-    This command requires scans to be imported into the database first.
-    Use 'cerno import' to import scans before reviewing.
+    This command requires datasets to be imported into the database first.
+    Use 'cerno import' to import findings before reviewing.
 
     Takes no options: everything it used to accept as a flag is a
     ``config.yaml`` key, so the preference persists instead of being retyped.
@@ -2593,8 +2633,8 @@ def review() -> None:
     ``cerno review --check`` is now the ``cerno check`` command.
 
     Usage:
-        cerno review                     # Select from imported scans
-        cerno import nessus scan.nessus  # Import a scan first if needed
+        cerno review                     # Select from imported datasets
+        cerno import nessus scan.nessus  # Import findings first if needed
     """
     config = get_current_config()
 
@@ -2608,30 +2648,30 @@ def review() -> None:
         warn("\nInterrupted — goodbye.")
 
 
-def _show_nuclei_suggestion(scan_name: str) -> None:
+def _show_nuclei_suggestion(dataset_name: str) -> None:
     """Generate nuclei command suggestion from discovered HTTP services.
 
     Queries host_services table for HTTP/HTTPS services, writes URLs to a file,
     and displays a nuclei command suggestion.
 
     Args:
-        scan_name: Name of the scan to query
+        dataset_name: Name of the dataset to query
     """
     try:
-        from cerno_pkg.models import Scan, get_http_urls_for_scan
-        from cerno_pkg.constants import SCANS_ROOT
+        from cerno_pkg.models import Dataset, get_http_urls_for_dataset
+        from cerno_pkg.constants import DATASETS_ROOT
 
-        scan = Scan.get_by_name(scan_name)
-        if not scan or scan.scan_id is None:
+        dataset = Dataset.get_by_name(dataset_name)
+        if not dataset or dataset.dataset_id is None:
             return
 
-        urls = get_http_urls_for_scan(scan.scan_id)
+        urls = get_http_urls_for_dataset(dataset.dataset_id)
 
         if not urls:
             return  # No HTTP services discovered — skip silently
 
         # Write URLs to file
-        urls_dir = SCANS_ROOT / scan_name
+        urls_dir = DATASETS_ROOT / dataset_name
         urls_dir.mkdir(parents=True, exist_ok=True)
         urls_file = urls_dir / "http_urls.txt"
         urls_file.write_text("\n".join(urls) + "\n")
@@ -2647,7 +2687,7 @@ def _show_nuclei_suggestion(scan_name: str) -> None:
             f"written to {urls_file}"
         )
         # Built from config (templates dir, profile, User-Agent, concurrency) with
-        # every output path inside the scan directory, so the operator can run it
+        # every output path inside the dataset directory, so the operator can run it
         # and hand the JSON straight back to `cerno import nuclei`.
         from cerno_pkg.tools import NUCLEI_OUTPUT_NAMES, build_nuclei_cmd
 
@@ -2660,13 +2700,13 @@ def _show_nuclei_suggestion(scan_name: str) -> None:
         pass  # Non-fatal — don't break import flow
 
 
-def show_nessus_tool_suggestions(nessus_file: Path, scan_name: str) -> None:
+def show_nessus_tool_suggestions(nessus_file: Path, dataset_name: str) -> None:
     """
     Display suggested tool commands after an import completes.
 
     Args:
         nessus_file: Path to the original .nessus file
-        scan_name: Name of the imported scan (for DB queries)
+        dataset_name: Name of the imported dataset (for DB queries)
     """
     header("Suggested Tool Commands")
     info("\nTry running these other tools too:\n")
@@ -2690,7 +2730,7 @@ def show_nessus_tool_suggestions(nessus_file: Path, scan_name: str) -> None:
     info(f"   {gowitness_cmd}\n")
 
     # nuclei command (from database service data)
-    _show_nuclei_suggestion(scan_name)
+    _show_nuclei_suggestion(dataset_name)
 
     info("Tip: Copy these commands to run them in your terminal.\n")
 
@@ -2703,7 +2743,7 @@ def show_nessus_tool_suggestions(nessus_file: Path, scan_name: str) -> None:
     name="nessus",
     help="Import .nessus file (or directory of .nessus files) and populate database with findings",
 )
-def import_scan(
+def import_dataset(
     nessus: Path = typer.Argument(
         ..., help="Path to a .nessus file or directory containing .nessus files"
     ),
@@ -2713,8 +2753,8 @@ def import_scan(
 
     Accepts a single .nessus file or a directory. When given a directory, recursively
     discovers all .nessus files, lists them for confirmation, then imports each in sequence.
-    The scan name is taken from the .nessus report name. No per-plugin files are
-    written; ~/.cerno/scans/<scan_name>/ only receives http_urls.txt when web
+    The dataset name is taken from the .nessus report name. No per-finding_type files are
+    written; ~/.cerno/datasets/<dataset_name>/ only receives http_urls.txt when web
     services are found.
     """
     if not nessus.exists():
@@ -2771,34 +2811,34 @@ def _show_severity_breakdown(severities: dict) -> None:
     _console_global.print(sev_table)
 
 
-def _resolve_duplicate_scan(scan_name: str, source_file: Path) -> Optional[str]:
-    """Settle a scan-name collision before importing, whatever the source.
+def _resolve_duplicate_dataset(dataset_name: str, source_file: Path) -> Optional[str]:
+    """Settle a dataset-name collision before importing, whatever the source.
 
     Shared by every ``cerno import`` subcommand so each source behaves the same
     on re-import.
 
     Args:
-        scan_name: Scan name the importer intends to use.
+        dataset_name: Dataset name the importer intends to use.
         source_file: File being imported (its hash decides "identical").
 
     Returns:
-        The scan name to import under -- the original, or a suffixed one if the
+        The dataset name to import under -- the original, or a suffixed one if the
         operator chose to rename -- or None to skip/cancel the import.
     """
     from cerno_pkg.database import compute_file_hash
-    from cerno_pkg.models import Scan
+    from cerno_pkg.models import Dataset
 
-    existing_scan = Scan.get_by_name(scan_name)
-    if not existing_scan:
-        return scan_name
+    existing_dataset = Dataset.get_by_name(dataset_name)
+    if not existing_dataset:
+        return dataset_name
 
-    if existing_scan.source_file_hash == compute_file_hash(source_file):
-        ok(f"Scan '{scan_name}' already imported (identical file). Skipping.")
+    if existing_dataset.source_file_hash == compute_file_hash(source_file):
+        ok(f"Dataset '{dataset_name}' already imported (identical file). Skipping.")
         return None
 
-    warn(f"A scan named '{scan_name}' already exists.")
-    if existing_scan.created_at:
-        warn(f"Existing: imported on {existing_scan.created_at}")
+    warn(f"A dataset named '{dataset_name}' already exists.")
+    if existing_dataset.created_at:
+        warn(f"Existing: imported on {existing_dataset.created_at}")
     warn(f"New file: {source_file.name}")
     _console_global.print()
 
@@ -2813,13 +2853,13 @@ def _resolve_duplicate_scan(scan_name: str, source_file: Path) -> Optional[str]:
 
     if ans == "1":
         info("Overwriting existing scan...")
-        return scan_name
+        return dataset_name
     if ans == "2":
         counter = 2
-        candidate = f"{scan_name}_{counter}"
-        while Scan.get_by_name(candidate):
+        candidate = f"{dataset_name}_{counter}"
+        while Dataset.get_by_name(candidate):
             counter += 1
-            candidate = f"{scan_name}_{counter}"
+            candidate = f"{dataset_name}_{counter}"
         info(f"Importing as: {candidate}")
         return candidate
 
@@ -2831,23 +2871,23 @@ def _import_single_nessus(nessus: Path) -> bool:
     """Import a single .nessus file. Returns True on success, False on skip/cancel."""
     from cerno_pkg.nessus_import import (
         import_nessus_file,
-        extract_scan_name_from_nessus,
+        extract_dataset_name_from_nessus,
     )
-    from cerno_pkg.constants import SCANS_ROOT
+    from cerno_pkg.constants import DATASETS_ROOT
 
-    # Always extract scan name from .nessus file for consistency with database
-    scan_name = extract_scan_name_from_nessus(nessus)
+    # Always extract dataset name from .nessus file for consistency with database
+    dataset_name = extract_dataset_name_from_nessus(nessus)
 
-    # Determine output directory (always use SCANS_ROOT/<scan_name>)
-    out_dir = SCANS_ROOT / scan_name
-    info(f"Using scan name: {scan_name}")
+    # Determine output directory (always use DATASETS_ROOT/<dataset_name>)
+    out_dir = DATASETS_ROOT / dataset_name
+    info(f"Using dataset name: {dataset_name}")
 
     # Check for duplicate imports
-    resolved = _resolve_duplicate_scan(scan_name, nessus)
+    resolved = _resolve_duplicate_dataset(dataset_name, nessus)
     if resolved is None:
         return False
-    scan_name = resolved
-    out_dir = SCANS_ROOT / scan_name
+    dataset_name = resolved
+    out_dir = DATASETS_ROOT / dataset_name
 
     # Run import
     header("Importing scan to database")
@@ -2866,11 +2906,11 @@ def _import_single_nessus(nessus: Path) -> bool:
             result = import_nessus_file(
                 nessus_file=nessus,
                 output_dir=out_dir,
-                scan_name=scan_name,
+                dataset_name=dataset_name,
                 include_ports=True,
             )
 
-        ok(f"Import complete: {result.plugins_exported} findings")
+        ok(f"Import complete: {result.finding_types_exported} findings")
 
         _show_severity_breakdown(result.severities)
 
@@ -2880,7 +2920,7 @@ def _import_single_nessus(nessus: Path) -> bool:
 
     # Show suggested tool commands
     _console_global.print()  # Blank line for spacing
-    show_nessus_tool_suggestions(nessus, scan_name)
+    show_nessus_tool_suggestions(nessus, dataset_name)
     return True
 
 
@@ -2907,7 +2947,7 @@ def import_nuclei(
     name: Optional[str] = typer.Option(
         None,
         "--name",
-        help="Scan name to import under (default: the file's stem)",
+        help="Dataset name to import under (default: the file's stem)",
     ),
 ) -> None:
     """
@@ -2917,18 +2957,18 @@ def import_nuclei(
     newline-delimited records (``-jle`` / ``-jsonl``). The shape is detected
     from the file contents, not the extension.
 
-    Unlike a ``.nessus`` export, nuclei output carries no scan name, so the
+    Unlike a ``.nessus`` export, nuclei output carries no dataset name, so the
     file's stem is used unless ``--name`` is given. One finding is created per
     template; a template that matched the same host:port several times (six
     missing security headers, say) keeps every match's evidence in that host's
-    plugin output.
+    finding_type output.
 
     Findings below ``nuclei_min_severity`` (config, default 0 = keep all) are
     dropped. This replaces the removed ``--min-severity`` flag.
     """
     min_severity = get_current_config().nuclei_min_severity
     # Validated here rather than at load: a hand-edited config.yaml can hold
-    # anything, and silently importing everything would misrepresent the scan.
+    # anything, and silently importing everything would misrepresent the dataset.
     if not 0 <= min_severity <= 4:
         err(
             f"Invalid nuclei_min_severity: {min_severity}. Must be 0-4 "
@@ -2966,7 +3006,7 @@ def import_burp(
     name: Optional[str] = typer.Option(
         None,
         "--name",
-        help="Scan name to import under (default: the file's stem)",
+        help="Dataset name to import under (default: the file's stem)",
     ),
 ) -> None:
     """
@@ -2976,10 +3016,10 @@ def import_burp(
     Issues -> Report issues, or Dashboard -> scan -> Export). Both
     request/response forms are read, base64-encoded or not.
 
-    A Burp report carries no scan name, so the file's stem is used unless
+    A Burp report carries no dataset name, so the file's stem is used unless
     ``--name`` is given. One finding is created per *issue type*; a type that
     fired several times on the same host:port (reflected XSS on three
-    parameters, say) keeps every instance's evidence in that host's plugin
+    parameters, say) keeps every instance's evidence in that host's finding_type
     output, truncated to keep the finding panel readable.
 
     Issues the tester marked as false positives in Burp are skipped, and
@@ -2988,7 +3028,7 @@ def import_burp(
     """
     min_severity = get_current_config().burp_min_severity
     # Validated here rather than at load: a hand-edited config.yaml can hold
-    # anything, and silently importing everything would misrepresent the scan.
+    # anything, and silently importing everything would misrepresent the dataset.
     if not 0 <= min_severity <= 4:
         err(
             f"Invalid burp_min_severity: {min_severity}. Must be 0-4 "
@@ -3014,13 +3054,13 @@ def import_burp(
         raise typer.Exit(1)
 
 
-def _derive_nuclei_scan_name(results: Path) -> str:
-    """Pick a scan name for a nuclei results file that has no embedded name.
+def _derive_nuclei_dataset_name(results: Path) -> str:
+    """Pick a dataset name for a nuclei results file that has no embedded name.
 
     The command Cerno suggests after an import writes
-    ``~/.cerno/scans/<scan>/nuclei.json``, so the file stem is *always*
+    ``~/.cerno/datasets/<scan>/nuclei.json``, so the file stem is *always*
     ``nuclei``. Naming every such import "nuclei" makes the second one collide
-    with the first, so a file sitting directly inside a scan directory is named
+    with the first, so a file sitting directly inside a dataset directory is named
     after that directory instead -- keeping it tied to the Nessus scan whose
     target list produced it.
 
@@ -3028,17 +3068,17 @@ def _derive_nuclei_scan_name(results: Path) -> str:
         results: Path to the nuclei results file.
 
     Returns:
-        A sanitized scan name.
+        A sanitized dataset name.
     """
-    from cerno_pkg.constants import SCANS_ROOT
+    from cerno_pkg.constants import DATASETS_ROOT
     from cerno_pkg.nessus_import import sanitize_filename
 
     try:
-        in_scan_dir = results.resolve().parent.parent == SCANS_ROOT.resolve()
+        in_dataset_dir = results.resolve().parent.parent == DATASETS_ROOT.resolve()
     except OSError:
-        in_scan_dir = False
+        in_dataset_dir = False
 
-    if in_scan_dir and results.parent.name:
+    if in_dataset_dir and results.parent.name:
         return sanitize_filename(f"{results.parent.name}-nuclei")
     return sanitize_filename(results.stem)
 
@@ -3047,7 +3087,7 @@ def _derive_nuclei_scan_name(results: Path) -> str:
 GENERIC_NUCLEI_STEMS = frozenset({"nuclei", "results", "output", "nuclei_results"})
 
 
-def show_web_tool_suggestions(scan_name: str, source_label: str = "nuclei") -> None:
+def show_web_tool_suggestions(dataset_name: str, source_label: str = "nuclei") -> None:
     """Display suggested next steps after a web-source import completes.
 
     A web-only scan is a first-class case -- a web-app engagement may import
@@ -3061,23 +3101,23 @@ def show_web_tool_suggestions(scan_name: str, source_label: str = "nuclei") -> N
     the scanner in the prose.
 
     Args:
-        scan_name: Name of the imported scan (for DB queries)
-        source_label: Scanner that produced the scan, for the wording.
+        dataset_name: Name of the imported dataset (for DB queries)
+        source_label: Scanner that produced the dataset, for the wording.
     """
     try:
-        from cerno_pkg.constants import SCANS_ROOT
-        from cerno_pkg.models import Scan, get_http_urls_for_scan
+        from cerno_pkg.constants import DATASETS_ROOT
+        from cerno_pkg.models import Dataset, get_http_urls_for_dataset
         from cerno_pkg.tools import NUCLEI_OUTPUT_NAMES, build_nuclei_cmd
 
-        scan = Scan.get_by_name(scan_name)
-        if not scan or scan.scan_id is None:
+        dataset = Dataset.get_by_name(dataset_name)
+        if not dataset or dataset.dataset_id is None:
             return
 
-        urls = get_http_urls_for_scan(scan.scan_id)
+        urls = get_http_urls_for_dataset(dataset.dataset_id)
         if not urls:
             return  # Nothing web-shaped to follow up on — skip silently
 
-        out_dir = SCANS_ROOT / scan_name
+        out_dir = DATASETS_ROOT / dataset_name
         out_dir.mkdir(parents=True, exist_ok=True)
         urls_file = out_dir / "http_urls.txt"
         urls_file.write_text("\n".join(urls) + "\n")
@@ -3109,7 +3149,7 @@ def _import_single_nuclei(
     results: Path, name: Optional[str], min_severity: int
 ) -> bool:
     """Import one nuclei results file. Returns True on success."""
-    from cerno_pkg.constants import SCANS_ROOT
+    from cerno_pkg.constants import DATASETS_ROOT
     from cerno_pkg.nessus_import import sanitize_filename
     from cerno_pkg.nuclei_import import import_nuclei_file
 
@@ -3123,21 +3163,21 @@ def _import_single_nuclei(
         return False
 
     if name:
-        scan_name = sanitize_filename(name)
+        dataset_name = sanitize_filename(name)
     else:
-        scan_name = _derive_nuclei_scan_name(results)
-        if scan_name.lower() in GENERIC_NUCLEI_STEMS:
+        dataset_name = _derive_nuclei_dataset_name(results)
+        if dataset_name.lower() in GENERIC_NUCLEI_STEMS:
             warn(
-                f"'{scan_name}' says nothing about this engagement — "
-                "pass --name to label the scan."
+                f"'{dataset_name}' says nothing about this engagement — "
+                "pass --name to label the dataset."
             )
-    info(f"Using scan name: {scan_name}")
+    info(f"Using dataset name: {dataset_name}")
 
-    resolved = _resolve_duplicate_scan(scan_name, results)
+    resolved = _resolve_duplicate_dataset(dataset_name, results)
     if resolved is None:
         return False
-    scan_name = resolved
-    out_dir = SCANS_ROOT / scan_name
+    dataset_name = resolved
+    out_dir = DATASETS_ROOT / dataset_name
 
     header("Importing nuclei results to database")
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -3154,14 +3194,14 @@ def _import_single_nuclei(
             result = import_nuclei_file(
                 results,
                 out_dir,
-                scan_name=scan_name,
+                dataset_name=dataset_name,
                 min_severity=min_severity,
             )
     except Exception as e:
         err(f"Import failed: {e}")
         return False
 
-    if result.plugins_exported == 0:
+    if result.finding_types_exported == 0:
         warn("No nuclei findings were imported.")
         if min_severity > 0:
             info(f"--min-severity {min_severity} may have filtered everything out.")
@@ -3169,10 +3209,10 @@ def _import_single_nuclei(
             info("The file parsed, but it contains no matched findings.")
         return False
 
-    ok(f"Import complete: {result.plugins_exported} findings")
+    ok(f"Import complete: {result.finding_types_exported} findings")
     _show_severity_breakdown(result.severities)
 
-    show_web_tool_suggestions(scan_name)
+    show_web_tool_suggestions(dataset_name)
 
     _console_global.print()
     info("Review them with: cerno review")
@@ -3243,7 +3283,7 @@ GENERIC_BURP_STEMS = frozenset({"burp", "issues", "report", "burp_report", "expo
 def _import_single_burp(report: Path, name: Optional[str], min_severity: int) -> bool:
     """Import one Burp XML report. Returns True on success."""
     from cerno_pkg.burp_import import import_burp_file
-    from cerno_pkg.constants import SCANS_ROOT
+    from cerno_pkg.constants import DATASETS_ROOT
     from cerno_pkg.nessus_import import sanitize_filename
 
     if report.stat().st_size == 0:
@@ -3252,21 +3292,21 @@ def _import_single_burp(report: Path, name: Optional[str], min_severity: int) ->
         return False
 
     if name:
-        scan_name = sanitize_filename(name)
+        dataset_name = sanitize_filename(name)
     else:
-        scan_name = sanitize_filename(report.stem)
-        if scan_name.lower() in GENERIC_BURP_STEMS:
+        dataset_name = sanitize_filename(report.stem)
+        if dataset_name.lower() in GENERIC_BURP_STEMS:
             warn(
-                f"'{scan_name}' says nothing about this engagement — "
-                "pass --name to label the scan."
+                f"'{dataset_name}' says nothing about this engagement — "
+                "pass --name to label the dataset."
             )
-    info(f"Using scan name: {scan_name}")
+    info(f"Using dataset name: {dataset_name}")
 
-    resolved = _resolve_duplicate_scan(scan_name, report)
+    resolved = _resolve_duplicate_dataset(dataset_name, report)
     if resolved is None:
         return False
-    scan_name = resolved
-    out_dir = SCANS_ROOT / scan_name
+    dataset_name = resolved
+    out_dir = DATASETS_ROOT / dataset_name
 
     header("Importing Burp report to database")
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -3283,14 +3323,14 @@ def _import_single_burp(report: Path, name: Optional[str], min_severity: int) ->
             result = import_burp_file(
                 report,
                 out_dir,
-                scan_name=scan_name,
+                dataset_name=dataset_name,
                 min_severity=min_severity,
             )
     except Exception as e:
         err(f"Import failed: {e}")
         return False
 
-    if result.plugins_exported == 0:
+    if result.finding_types_exported == 0:
         warn("No Burp findings were imported.")
         if min_severity > 0:
             info(
@@ -3304,12 +3344,12 @@ def _import_single_burp(report: Path, name: Optional[str], min_severity: int) ->
             )
         return False
 
-    ok(f"Import complete: {result.plugins_exported} findings")
+    ok(f"Import complete: {result.finding_types_exported} findings")
     _show_severity_breakdown(result.severities)
 
-    # Source-agnostic: it reads the scan's web services back out of the
+    # Source-agnostic: it reads the dataset's web services back out of the
     # database, so a Burp import flows into a nuclei sweep of the same targets.
-    show_web_tool_suggestions(scan_name, source_label="Burp")
+    show_web_tool_suggestions(dataset_name, source_label="Burp")
 
     _console_global.print()
     info("Review them with: cerno review")
@@ -3429,43 +3469,43 @@ def _import_nessus_directory(directory: Path) -> None:
     ok(f"Summary: {imported} imported, {skipped} skipped")
 
 
-# === Scan Sub-App Commands ===
-# Grouped under 'cerno scan'
+# === Dataset Sub-App Commands ===
+# Grouped under 'cerno dataset'
 
 
-@scan_app.command(
-    name="list", help="List all imported scans with statistics and review progress"
+@dataset_app.command(
+    name="list", help="List all imported datasets with statistics and review progress"
 )
-def list_scans(
+def list_datasets(
     json_output: bool = typer.Option(
         False, "--json", help="Output scan data as JSON (for scripting)"
     ),
 ) -> None:
-    """Display all scans in the database with finding counts and severity breakdown.
+    """Display all datasets in the database with finding counts and severity breakdown.
 
     The default view is compact (readable at 80 columns). Set
-    ``scan_list_wide`` to true for every severity column, or pass --json for
+    ``dataset_list_wide`` to true for every severity column, or pass --json for
     machine-readable output (which bypasses the table entirely).
     """
-    from cerno_pkg.models import Scan
+    from cerno_pkg.models import Dataset
     from rich.table import Table
 
-    wide = get_current_config().scan_list_wide
+    wide = get_current_config().dataset_list_wide
 
-    scans = Scan.get_all_with_stats()
+    datasets = Dataset.get_all_with_stats()
 
     # --json: emit the raw rows and stop (scriptable, no Rich formatting).
     if json_output:
         import json
 
-        print(json.dumps(scans, indent=2, default=str))
+        print(json.dumps(datasets, indent=2, default=str))
         return
 
-    if not scans:
-        info("No scans found in database.")
+    if not datasets:
+        info("No datasets found in database.")
         info(
             "Tip: Use 'cerno import nessus <scan.nessus>' or "
-            "'cerno import nuclei <nuclei.json>' to import a scan"
+            "'cerno import nuclei <nuclei.json>' to import findings"
         )
         return
 
@@ -3482,24 +3522,24 @@ def list_scans(
         except Exception:
             return str(value)
 
-    def _fmt_source(scan: dict) -> str:
-        """Scanner that produced the scan, or "-" for an empty scan."""
-        return str(scan.get("source") or "-")
+    def _fmt_source(dataset: dict) -> str:
+        """Scanner that produced the dataset, or "-" for an empty dataset."""
+        return str(dataset.get("source") or "-")
 
-    def _done_pct(scan: dict) -> str:
-        total = scan["total_findings"] or 0
+    def _done_pct(dataset: dict) -> str:
+        total = dataset["total_findings"] or 0
         if not total:
             return "0%"
-        return f"{round((scan['done_count'] or 0) / total * 100)}%"
+        return f"{round((dataset['done_count'] or 0) / total * 100)}%"
 
     table = Table(
-        title="Imported Scans",
+        title="Imported Datasets",
         show_header=True,
         header_style=style_if_enabled("bold cyan"),
     )
 
     if wide:
-        table.add_column("Scan Name", style=style_if_enabled("yellow"), no_wrap=True)
+        table.add_column("Dataset Name", style=style_if_enabled("yellow"), no_wrap=True)
         # min_width: "nessus"/"nuclei" are 6 chars and the column is useless
         # truncated to "ne…", so it keeps its width when the table is cramped.
         table.add_column(
@@ -3516,22 +3556,22 @@ def list_scans(
         table.add_column("Info", justify="right", style=style_if_enabled("dim"))
         table.add_column("Done", justify="right", style=style_if_enabled("green"))
         table.add_column("Last Reviewed", style=style_if_enabled("dim"))
-        for scan in scans:
+        for dataset in datasets:
             table.add_row(
-                Text(scan["scan_name"]),  # Text: scan-derived
-                Text(_fmt_source(scan)),
-                str(scan["unique_hosts"] or 0),
-                str(scan["total_findings"] or 0),
-                str(scan["critical_count"] or 0),
-                str(scan["high_count"] or 0),
-                str(scan["medium_count"] or 0),
-                str(scan["low_count"] or 0),
-                str(scan["info_count"] or 0),
-                str(scan["done_count"] or 0),
-                _fmt_last_reviewed(scan["last_reviewed_at"]),
+                Text(dataset["dataset_name"]),  # Text: scan-derived
+                Text(_fmt_source(dataset)),
+                str(dataset["unique_hosts"] or 0),
+                str(dataset["total_findings"] or 0),
+                str(dataset["critical_count"] or 0),
+                str(dataset["high_count"] or 0),
+                str(dataset["medium_count"] or 0),
+                str(dataset["low_count"] or 0),
+                str(dataset["info_count"] or 0),
+                str(dataset["done_count"] or 0),
+                _fmt_last_reviewed(dataset["last_reviewed_at"]),
             )
     else:
-        table.add_column("Scan Name", style=style_if_enabled("yellow"), no_wrap=True)
+        table.add_column("Dataset Name", style=style_if_enabled("yellow"), no_wrap=True)
         # min_width: "nessus"/"nuclei" are 6 chars and the column is useless
         # truncated to "ne…", so it keeps its width when the table is cramped.
         table.add_column(
@@ -3545,37 +3585,42 @@ def list_scans(
         table.add_column("High", justify="right", style=style_if_enabled("bright_red"))
         table.add_column("Done %", justify="right", style=style_if_enabled("green"))
         table.add_column("Last Reviewed", style=style_if_enabled("dim"))
-        for scan in scans:
+        for dataset in datasets:
             table.add_row(
-                Text(scan["scan_name"]),  # Text: scan-derived
-                Text(_fmt_source(scan)),
-                str(scan["unique_hosts"] or 0),
-                str(scan["total_findings"] or 0),
-                str(scan["critical_count"] or 0),
-                str(scan["high_count"] or 0),
-                _done_pct(scan),
-                _fmt_last_reviewed(scan["last_reviewed_at"]),
+                Text(dataset["dataset_name"]),  # Text: scan-derived
+                Text(_fmt_source(dataset)),
+                str(dataset["unique_hosts"] or 0),
+                str(dataset["total_findings"] or 0),
+                str(dataset["critical_count"] or 0),
+                str(dataset["high_count"] or 0),
+                _done_pct(dataset),
+                _fmt_last_reviewed(dataset["last_reviewed_at"]),
             )
 
     _console_global.print(table)
     _console_global.print()  # Blank line
-    info(f"Total scans: {len(scans)}")
+    info(f"Total datasets: {len(datasets)}")
     if not wide:
-        info("Tip: --wide shows all severities; --json outputs machine-readable data")
-    info("Use 'cerno review' to start reviewing a scan")
+        info(
+            "Tip: set dataset_list_wide for all severities; "
+            "--json outputs machine-readable data"
+        )
+    info("Use 'cerno review' to start reviewing a dataset")
 
 
-@scan_app.command(name="delete", help="Delete a scan and its review data from database")
-def delete_scan(
-    scan_name: str = typer.Argument(..., help="Name of scan to delete")
+@dataset_app.command(
+    name="delete", help="Delete a dataset and its review data from database"
+)
+def delete_dataset(
+    dataset_name: str = typer.Argument(..., help="Name of scan to delete")
 ) -> None:
-    """Delete a scan and its review data from the database.
+    """Delete a dataset and its review data from the database.
 
     This will permanently remove (via ON DELETE CASCADE):
-    - The scan entry
-    - All findings for this scan and their host:port data
-    - Discovered services for this scan
-    - Review sessions that include this scan
+    - The dataset entry
+    - All findings for this dataset and their host:port data
+    - Discovered services for this dataset
+    - Review sessions that include this dataset
     - Verification verdicts and their evidence
     - Per-finding Claude Assistant chat history
 
@@ -3585,18 +3630,18 @@ def delete_scan(
 
     This action cannot be undone!
     """
-    from cerno_pkg.models import Scan
+    from cerno_pkg.models import Dataset
 
     # Check if scan exists
-    scan = Scan.get_by_name(scan_name)
-    if not scan:
-        err(f"Scan not found: {scan_name}")
-        info("Use 'cerno scan list' to see available scans")
+    dataset = Dataset.get_by_name(dataset_name)
+    if not dataset:
+        err(f"Dataset not found: {dataset_name}")
+        info("Use 'cerno dataset list' to see available datasets")
         raise typer.Exit(1)
 
     # Confirm deletion
-    warn(f"You are about to delete scan: {scan_name}")
-    warn("This will permanently delete scan review data:")
+    warn(f"You are about to delete dataset: {dataset_name}")
+    warn("This will permanently delete dataset review data:")
     warn("  - Findings and their host:port combinations")
     warn("  - Discovered services")
     warn("  - Review sessions")
@@ -3604,36 +3649,36 @@ def delete_scan(
     warn("  - Per-finding Claude Assistant chat history")
     info(
         "Tool executions, artifacts and their ingested results are retained, "
-        "but links to this scan's findings/sessions are cleared."
+        "but links to this dataset's findings/sessions are cleared."
     )
     _console_global.print()  # Blank line
 
     try:
-        response = Prompt.ask("Type the scan name to confirm deletion").strip()
+        response = Prompt.ask("Type the dataset name to confirm deletion").strip()
     except KeyboardInterrupt:
         _console_global.print()  # Newline after ^C
         info("Deletion cancelled")
         raise typer.Exit(0)
 
-    if response != scan_name:
-        err("Scan name does not match. Deletion cancelled.")
+    if response != dataset_name:
+        err("Dataset name does not match. Deletion cancelled.")
         raise typer.Exit(1)
 
-    # Delete scan
-    if Scan.delete_by_name(scan_name):
-        ok(f"Scan deleted: {scan_name}")
+    # Delete dataset
+    if Dataset.delete_by_name(dataset_name):
+        ok(f"Dataset deleted: {dataset_name}")
     else:
-        err(f"Failed to delete scan: {scan_name}")
+        err(f"Failed to delete dataset: {dataset_name}")
         raise typer.Exit(1)
 
 
-@scan_app.command(
+@dataset_app.command(
     name="compare",
-    help="Compare findings between two scans to identify new, resolved, and persistent vulnerabilities",
+    help="Compare findings between two datasets to identify new, resolved, and persistent vulnerabilities",
 )
-def compare_scans_cmd(
-    scan1: str = typer.Argument(..., help="First scan name (baseline)"),
-    scan2: str = typer.Argument(..., help="Second scan name (comparison)"),
+def compare_datasets_cmd(
+    dataset1: str = typer.Argument(..., help="First dataset name (baseline)"),
+    dataset2: str = typer.Argument(..., help="Second dataset name (comparison)"),
     severity: int = typer.Option(
         0,
         "--severity",
@@ -3641,7 +3686,7 @@ def compare_scans_cmd(
         help="Minimum severity level (0=Info, 1=Low, 2=Medium, 3=High, 4=Critical)",
     ),
 ) -> None:
-    """Compare findings between two scans.
+    """Compare findings between two datasets.
 
     Shows which vulnerabilities are new, resolved, or persistent between
     the baseline scan (scan1) and the comparison scan (scan2).
@@ -3649,41 +3694,41 @@ def compare_scans_cmd(
     Also shows host changes: new hosts, removed hosts, and persistent hosts.
 
     Examples:
-        cerno scan compare "Q1-2024" "Q2-2024"
-        cerno scan compare "Baseline" "Current" --severity 3
+        cerno dataset compare "Q1-2024" "Q2-2024"
+        cerno dataset compare "Baseline" "Current" --severity 3
     """
-    from cerno_pkg.cross_scan import compare_scans, get_scan_by_name
-    from cerno_pkg.render import render_scan_comparison
+    from cerno_pkg.cross_dataset import compare_datasets, get_dataset_by_name
+    from cerno_pkg.render import render_dataset_comparison
 
     # Validate severity
     if severity < 0 or severity > 4:
         err(f"Invalid severity level: {severity}. Must be 0-4.")
         raise typer.Exit(1)
 
-    # Look up scans by name
-    scan1_data = get_scan_by_name(scan1)
+    # Look up datasets by name
+    scan1_data = get_dataset_by_name(dataset1)
     if not scan1_data:
-        err(f"Scan not found: {scan1}")
-        info("Use 'cerno scan list' to see available scans")
+        err(f"Dataset not found: {dataset1}")
+        info("Use 'cerno dataset list' to see available datasets")
         raise typer.Exit(1)
 
-    scan2_data = get_scan_by_name(scan2)
+    scan2_data = get_dataset_by_name(dataset2)
     if not scan2_data:
-        err(f"Scan not found: {scan2}")
-        info("Use 'cerno scan list' to see available scans")
+        err(f"Dataset not found: {dataset2}")
+        info("Use 'cerno dataset list' to see available datasets")
         raise typer.Exit(1)
 
     # Check if comparing same scan
-    if scan1_data["scan_id"] == scan2_data["scan_id"]:
-        warn("Comparing a scan with itself - all findings will be persistent")
+    if scan1_data["dataset_id"] == scan2_data["dataset_id"]:
+        warn("Comparing a dataset with itself - all findings will be persistent")
 
     # Perform comparison
-    from cerno_pkg.cross_scan import MixedSourceComparisonError
+    from cerno_pkg.cross_dataset import MixedSourceComparisonError
 
     try:
-        result = compare_scans(
-            scan_id_1=scan1_data["scan_id"],
-            scan_id_2=scan2_data["scan_id"],
+        result = compare_datasets(
+            dataset_id_1=scan1_data["dataset_id"],
+            dataset_id_2=scan2_data["dataset_id"],
             min_severity=severity,
         )
     except MixedSourceComparisonError as e:
@@ -3691,30 +3736,30 @@ def compare_scans_cmd(
         raise typer.Exit(1)
 
     if not result:
-        err("Failed to compare scans")
+        err("Failed to compare datasets")
         raise typer.Exit(1)
 
     # Render results
-    render_scan_comparison(result)
+    render_dataset_comparison(result)
 
 
-@scan_app.command(
+@dataset_app.command(
     name="history",
-    help="Show vulnerability history for a specific host across all scans",
+    help="Show vulnerability history for a specific host across all datasets",
 )
 def host_history_cmd(
     host_ip: str = typer.Argument(..., help="Host IP address to query"),
 ) -> None:
     """Show vulnerability history for a specific host.
 
-    Displays a timeline of all scans where this host appeared,
+    Displays a timeline of all datasets where this host appeared,
     showing how its vulnerability profile has changed over time.
 
     Examples:
-        cerno scan history 192.168.1.10
-        cerno scan history 10.0.0.5
+        cerno dataset history 192.168.1.10
+        cerno dataset history 10.0.0.5
     """
-    from cerno_pkg.cross_scan import get_host_vulnerability_history
+    from cerno_pkg.cross_dataset import get_host_vulnerability_history
     from cerno_pkg.render import render_host_history
 
     # Get host history
@@ -3722,7 +3767,7 @@ def host_history_cmd(
 
     if not history:
         err(f"No history found for host: {host_ip}")
-        info("This host may not exist in any imported scans")
+        info("This host may not exist in any imported datasets")
         raise typer.Exit(1)
 
     # Render history
@@ -4065,7 +4110,7 @@ def workflow_list() -> None:
     table.add_column("Description", style="dim")
 
     for workflow in all_workflows:
-        finding_ids = workflow.get("finding_id", "")
+        finding_ids = workflow.get("finding_type_id", "")
         workflow_name = workflow.get("workflow_name", "")
         description = workflow.get("description", "")
 
@@ -4088,12 +4133,12 @@ def reset_installation() -> None:
     """Purge all cerno data under ~/.cerno and return to a fresh installation state.
 
     This permanently deletes:
-    - cerno.db and its WAL/SHM sidecars (all scans, findings, sessions, tool executions)
+    - cerno.db and its WAL/SHM sidecars (all datasets, findings, sessions, tool executions)
     - config.yaml and config.yaml.backup (user configuration)
     - cerno.log and rotated log files
     - proxychains4.conf (generated proxy config)
     - artifacts/ directory (generated tool output)
-    - scans/ directory (per-scan working directories, e.g. http_urls.txt)
+    - datasets/ directory (per-dataset working directories, e.g. http_urls.txt)
 
     A custom results_root or log_path outside ~/.cerno is NOT touched, and
     neither are shell completions (e.g. ~/.bashrc entries).
@@ -4112,12 +4157,12 @@ def reset_installation() -> None:
     log_files = list(cerno_dir.glob("cerno.log*"))
     proxy_conf = cerno_dir / "proxychains4.conf"
     artifacts_dir = cerno_dir / "artifacts"
-    scans_dir = cerno_dir / "scans"
+    datasets_dir = cerno_dir / "datasets"
 
     warn("This will permanently delete the following from ~/.cerno/:")
     if db_files:
         warn(
-            "  cerno.db       — entire database (scans, findings, sessions, tool executions)"
+            "  cerno.db       — entire database (datasets, findings, sessions, tool executions)"
         )
     if config_files:
         warn("  config.yaml    — user configuration (and any backup)")
@@ -4127,8 +4172,8 @@ def reset_installation() -> None:
         warn("  proxychains4.conf — generated proxy config")
     if artifacts_dir.exists():
         warn("  artifacts/     — generated tool output files")
-    if scans_dir.exists():
-        warn("  scans/         — per-scan working directories")
+    if datasets_dir.exists():
+        warn("  datasets/         — per-dataset working directories")
     _console_global.print()
     info("Shell completions (e.g. ~/.bashrc entries) are NOT affected.")
     _console_global.print()
@@ -4155,7 +4200,7 @@ def reset_installation() -> None:
                 err(f"Failed to delete {target}: {e}")
                 had_error = True
 
-    for directory in [artifacts_dir, scans_dir]:
+    for directory in [artifacts_dir, datasets_dir]:
         if directory.exists():
             try:
                 shutil.rmtree(directory)

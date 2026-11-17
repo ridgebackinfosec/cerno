@@ -55,7 +55,7 @@ __all__ = [
     "ParsedNucleiTemplate",
     "classify_cvss",
     "extract_cves",
-    "format_plugin_output",
+    "format_evidence",
     "normalize_port",
     "parse_nuclei_file",
     "resolve_template_url",
@@ -68,8 +68,8 @@ __all__ = [
 #:
 #: nuclei also emits ``unknown`` and ``""`` (its ``Undefined`` constant, whose
 #: ``String()`` renders empty). Neither has a ``severity_levels`` row, and
-#: ``plugins.severity_int`` both CHECKs ``BETWEEN 0 AND 4`` and foreign-keys to
-#: that table -- while ``v_plugins_with_severity`` is an INNER JOIN, so an
+#: ``finding_types.severity_int`` both CHECKs ``BETWEEN 0 AND 4`` and foreign-keys to
+#: that table -- while ``v_finding_types_with_severity`` is an INNER JOIN, so an
 #: unmapped value would make the finding silently vanish from every query
 #: rather than fail loudly. Info is the conservative floor.
 SEVERITY_BY_LABEL: dict[str, int] = {
@@ -265,7 +265,7 @@ def normalize_port(raw: Any, scheme: Optional[str]) -> Optional[int]:
     return _SCHEME_PORTS.get((scheme or "").strip().lower())
 
 
-def format_plugin_output(matches: list[ParsedNucleiMatch]) -> str:
+def format_evidence(matches: list[ParsedNucleiMatch]) -> str:
     """Render a template's matches for one host:port into one evidence block.
 
     Every sub-match keeps both its ``matcher-name`` *and* its
