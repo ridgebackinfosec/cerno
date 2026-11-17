@@ -11,8 +11,8 @@ from cerno_pkg.tools import NUCLEI_OUTPUT_NAMES, build_nuclei_cmd
 
 @pytest.mark.unit
 class TestBuildNucleiCmd:
-    URLS = Path("/home/u/.cerno/scans/eng/http_urls.txt")
-    OUT = Path("/home/u/.cerno/scans/eng")
+    URLS = Path("/home/u/.cerno/datasets/eng/http_urls.txt")
+    OUT = Path("/home/u/.cerno/datasets/eng")
 
     def _cmd(self, **overrides) -> str:
         cfg = CernoConfig(**overrides)
@@ -21,7 +21,7 @@ class TestBuildNucleiCmd:
     def test_targets_the_url_list(self) -> None:
         assert f"-l {self.URLS}" in self._cmd()
 
-    def test_all_three_outputs_land_in_the_scan_directory(self) -> None:
+    def test_all_three_outputs_land_in_the_dataset_directory(self) -> None:
         """The importer reads -je from here, so the path must be predictable."""
         cmd = self._cmd()
         assert f"-je {self.OUT / NUCLEI_OUTPUT_NAMES['json']}" in cmd
@@ -75,55 +75,55 @@ class TestNucleiScanNameDerivation:
 
     Naming every such import after the file stem means naming them all
     "nuclei", so the second import collides with the first. A file sitting
-    directly inside a scan directory is named after that directory instead.
+    directly inside a dataset directory is named after that directory instead.
     """
 
     @staticmethod
-    def _derive(path: Path, scans_root: Path, monkeypatch) -> str:
+    def _derive(path: Path, datasets_root: Path, monkeypatch) -> str:
         import cerno
         import cerno_pkg.constants
 
-        monkeypatch.setattr(cerno_pkg.constants, "SCANS_ROOT", scans_root)
-        return cerno._derive_nuclei_scan_name(path)  # type: ignore[attr-defined]
+        monkeypatch.setattr(cerno_pkg.constants, "DATASETS_ROOT", datasets_root)
+        return cerno._derive_nuclei_dataset_name(path)  # type: ignore[attr-defined]
 
-    def test_file_in_a_scan_directory_is_named_after_it(self, tmp_path, monkeypatch):
-        scans_root = tmp_path / "scans"
-        results = scans_root / "GOAD" / "nuclei.json"
+    def test_file_in_a_dataset_directory_is_named_after_it(self, tmp_path, monkeypatch):
+        datasets_root = tmp_path / "datasets"
+        results = datasets_root / "GOAD" / "nuclei.json"
         results.parent.mkdir(parents=True)
         results.touch()
-        assert self._derive(results, scans_root, monkeypatch) == "GOAD-nuclei"
+        assert self._derive(results, datasets_root, monkeypatch) == "GOAD-nuclei"
 
-    def test_scan_directory_name_is_sanitized(self, tmp_path, monkeypatch):
-        scans_root = tmp_path / "scans"
-        results = scans_root / "Client A Q1" / "nuclei.json"
+    def test_dataset_directory_name_is_sanitized(self, tmp_path, monkeypatch):
+        datasets_root = tmp_path / "datasets"
+        results = datasets_root / "Client A Q1" / "nuclei.json"
         results.parent.mkdir(parents=True)
         results.touch()
-        derived = self._derive(results, scans_root, monkeypatch)
+        derived = self._derive(results, datasets_root, monkeypatch)
         assert " " not in derived
         assert derived.endswith("-nuclei")
 
-    def test_file_outside_the_scan_tree_keeps_its_stem(self, tmp_path, monkeypatch):
-        scans_root = tmp_path / "scans"
-        scans_root.mkdir()
+    def test_file_outside_the_dataset_tree_keeps_its_stem(self, tmp_path, monkeypatch):
+        datasets_root = tmp_path / "datasets"
+        datasets_root.mkdir()
         results = tmp_path / "engagement-web.json"
         results.touch()
-        assert self._derive(results, scans_root, monkeypatch) == "engagement-web"
+        assert self._derive(results, datasets_root, monkeypatch) == "engagement-web"
 
     def test_a_home_level_nuclei_json_does_not_borrow_the_home_dir_name(
         self, tmp_path, monkeypatch
     ):
         """Only a *scan* directory may lend its name, never any parent."""
-        scans_root = tmp_path / "scans"
-        scans_root.mkdir()
+        datasets_root = tmp_path / "datasets"
+        datasets_root.mkdir()
         results = tmp_path / "nuclei.json"
         results.touch()
-        assert self._derive(results, scans_root, monkeypatch) == "nuclei"
+        assert self._derive(results, datasets_root, monkeypatch) == "nuclei"
 
-    def test_nested_deeper_than_a_scan_directory_keeps_its_stem(
+    def test_nested_deeper_than_a_dataset_directory_keeps_its_stem(
         self, tmp_path, monkeypatch
     ):
-        scans_root = tmp_path / "scans"
-        results = scans_root / "GOAD" / "sub" / "nuclei.json"
+        datasets_root = tmp_path / "datasets"
+        results = datasets_root / "GOAD" / "sub" / "nuclei.json"
         results.parent.mkdir(parents=True)
         results.touch()
-        assert self._derive(results, scans_root, monkeypatch) == "nuclei"
+        assert self._derive(results, datasets_root, monkeypatch) == "nuclei"

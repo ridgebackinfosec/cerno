@@ -9,15 +9,15 @@ downstream.
 Two things differ from :mod:`cerno_pkg.nessus_import` and are the reason this
 module exists rather than a flag on that one:
 
-* **Plugin identity.** ``plugins`` is global across scans and keyed by
-  ``plugin_id``, so a nuclei template id is namespaced (``nuclei:apache-detect``)
+* **FindingType identity.** ``finding_types`` is global across datasets and keyed by
+  ``finding_type_id``, so a nuclei template id is namespaced (``nuclei:apache-detect``)
   to keep it from colliding with a Nessus plugin number. See
-  :data:`cerno_pkg.constants.PLUGIN_ID_PREFIXES`.
+  :data:`cerno_pkg.constants.FINDING_TYPE_ID_PREFIXES`.
 * **Evidence merging.** One template routinely matches the same host:port
   several times -- six missing security headers, three detected technologies,
   two TLS versions -- but ``finding_affected_hosts`` has a
   ``UNIQUE (finding_id, host_id, port_number)`` constraint. Those matches are
-  merged into a single row's ``plugin_output`` (keeping each sub-match's
+  merged into a single row's ``evidence`` (keeping each sub-match's
   ``matcher-name`` *and* ``extracted-results``), because inserting them
   separately would make ``INSERT OR REPLACE`` keep only the last and silently
   discard the operator's evidence.
@@ -36,10 +36,10 @@ from pathlib import Path
 from typing import Dict, Optional
 
 from .ansi import info
-from .constants import PLUGIN_ID_PREFIXES, SOURCE_NUCLEI
+from .constants import FINDING_TYPE_ID_PREFIXES, SOURCE_NUCLEI
 from .database import compute_file_hash, db_transaction
 from .logging_setup import log_error, log_info, log_timing
-from .models import Finding, Host, Plugin, Port, Scan, now_iso
+from .models import Finding, Host, FindingType, Port, Dataset, now_iso
 
 # ExportResult is reused verbatim rather than redefined: the CLI and the MCP
 # tool handle both importers' results identically, and a second near-identical
@@ -48,49 +48,15 @@ from .nessus_import import ExportResult, sanitize_filename
 from .nuclei_parse import (
     ParsedNucleiMatch,
     ParsedNucleiTemplate,
-    format_plugin_output,
+    format_evidence,
     parse_nuclei_file,
 )
-from .parsing import detect_host_type
-
-#: Services derived from a real URL scheme, which outrank a bare record type.
-_SCHEME_SERVICES = frozenset({"http", "https"})
+from .parsing import prefer_service, scan_target_type, unbracket
 
 
-def _prefer_service(current: Optional[str], candidate: str) -> str:
-    """Pick the more informative of two services seen on one host:port.
-
-    A host:port can be reported by several templates -- an http template gives
-    a URL scheme, an ssl template gives only its ``type``. ``host_services`` is
-    UNIQUE per host:port, so a winner must be chosen: an explicit
-    ``http``/``https`` scheme beats a bare record type, because it says what
-    the service actually is. Without this the winner would come down to the
-    order rows happen to be inserted in.
-    """
-    if current is None:
-        return candidate
-    if candidate in _SCHEME_SERVICES and current not in _SCHEME_SERVICES:
-        return candidate
-    return current
-
-
-def _namespaced_plugin_id(template_id: str) -> str:
-    """Return the global ``plugins.plugin_id`` for a nuclei template id."""
-    return PLUGIN_ID_PREFIXES[SOURCE_NUCLEI] + template_id
-
-
-def _unbracket(host: str) -> str:
-    """Strip the brackets nuclei puts around a literal IPv6 target."""
-    if host.startswith("[") and host.endswith("]"):
-        return host[1:-1]
-    return host
-
-
-def _scan_target_type(host: str) -> str:
-    """Map a host to the ``hosts.scan_target_type`` CHECK vocabulary."""
-    detected = detect_host_type(_unbracket(host))
-    # detect_host_type says 'hostname'; the column's CHECK says 'fqdn'.
-    return "fqdn" if detected == "hostname" else detected
+def _namespaced_finding_type_id(template_id: str) -> str:
+    """Return the global ``finding_types.finding_type_id`` for a nuclei template id."""
+    return FINDING_TYPE_ID_PREFIXES[SOURCE_NUCLEI] + template_id
 
 
 def _group_by_target(
@@ -98,7 +64,7 @@ def _group_by_target(
 ) -> "OrderedDict[tuple[str, str, Optional[int]], list[ParsedNucleiMatch]]":
     """Group a template's matches by the host:port they will be stored against.
 
-    Insertion-ordered so the merged ``plugin_output`` reads in scan order.
+    Insertion-ordered so the merged ``evidence`` reads in scan order.
     """
     grouped: "OrderedDict[tuple[str, str, Optional[int]], list[ParsedNucleiMatch]]" = (
         OrderedDict()
@@ -113,7 +79,7 @@ def import_nuclei_file(
     nuclei_file: Path,
     output_dir: Path,
     *,
-    scan_name: Optional[str] = None,
+    dataset_name: Optional[str] = None,
     min_severity: int = 0,
 ) -> ExportResult:
     """Import a nuclei JSON/JSONL export into the database.
@@ -121,22 +87,22 @@ def import_nuclei_file(
     Args:
         nuclei_file: Path to a nuclei ``-je`` (JSON array) or ``-jle``/``-jsonl``
             (newline-delimited) results file.
-        output_dir: Directory recorded as the scan's ``export_root``. No files
+        output_dir: Directory recorded as the dataset's ``export_root``. No files
             are written there by this importer.
-        scan_name: Scan name to use. Defaults to the file's stem, since nuclei
-            output carries no scan name of its own (unlike a ``.nessus``
+        dataset_name: Dataset name to use. Defaults to the file's stem, since nuclei
+            output carries no dataset name of its own (unlike a ``.nessus``
             ``Report@name``).
         min_severity: Drop templates below this ``severity_int`` (0-4). A real
             ``pentest.yml`` run is dominated by Info findings, so this keeps a
             large scan from flooding the review list.
 
     Returns:
-        An :class:`~cerno_pkg.nessus_import.ExportResult`. ``plugins_exported``
+        An :class:`~cerno_pkg.nessus_import.ExportResult`. ``finding_types_exported``
         counts templates (one finding each), ``total_hosts`` counts host:port
         rows written. A missing, empty or malformed file yields a zeroed result
-        and writes nothing at all -- not even a scan row.
+        and writes nothing at all -- not even a dataset row.
     """
-    resolved_name = scan_name or sanitize_filename(nuclei_file.stem)
+    resolved_name = dataset_name or sanitize_filename(nuclei_file.stem)
     log_info(f"Importing nuclei results from {nuclei_file}")
 
     parsed = parse_nuclei_file(nuclei_file)
@@ -174,24 +140,24 @@ def import_nuclei_file(
         f"{total_hosts} host entries"
     )
     return ExportResult(
-        plugins_exported=len(templates),
+        finding_types_exported=len(templates),
         total_hosts=total_hosts,
-        scan_name=resolved_name,
+        dataset_name=resolved_name,
         severities=severities,
     )
 
 
 def _write_to_database(
     nuclei_file: Path,
-    scan_name: str,
+    dataset_name: str,
     output_dir: Path,
     templates: list[ParsedNucleiTemplate],
 ) -> int:
     """Write parsed templates to the database. Returns host:port rows written."""
     try:
         with db_transaction() as conn:
-            scan = Scan(
-                scan_name=scan_name,
+            dataset = Dataset(
+                dataset_name=dataset_name,
                 source_file_path=str(nuclei_file.resolve()),
                 source_file_hash=(
                     compute_file_hash(nuclei_file) if nuclei_file.exists() else None
@@ -199,52 +165,56 @@ def _write_to_database(
                 export_root=str(output_dir),
                 created_at=now_iso(),
             )
-            existing = Scan.get_by_name(scan_name, conn)
+            existing = Dataset.get_by_name(dataset_name, conn)
             if existing:
-                scan.scan_id = existing.scan_id
-                scan.created_at = existing.created_at
-                log_info(f"Updating existing scan: {scan_name}")
+                dataset.dataset_id = existing.dataset_id
+                dataset.created_at = existing.created_at
+                log_info(f"Updating existing dataset: {dataset_name}")
             else:
-                log_info(f"Creating new scan: {scan_name}")
+                log_info(f"Creating new dataset: {dataset_name}")
 
-            scan_id = scan.save(conn)
-            if scan_id is None:
-                log_error("Failed to save scan - scan_id is None")
+            dataset_id = dataset.save(conn)
+            if dataset_id is None:
+                log_error("Failed to save scan - dataset_id is None")
                 return 0
 
             if existing:
-                # Re-import replaces this scan's findings (cascading to
-                # finding_affected_hosts); hosts/ports/plugins are global and
+                # Re-import replaces this dataset's findings (cascading to
+                # finding_affected_hosts); hosts/ports/finding_types are global and
                 # accretive, exactly as in the Nessus importer.
-                conn.execute("DELETE FROM findings WHERE scan_id = ?", (scan_id,))
+                conn.execute("DELETE FROM findings WHERE dataset_id = ?", (dataset_id,))
                 # host_services has no FK to findings, so it does not cascade;
                 # clear it explicitly or a re-import leaves stale services
                 # behind. Same reset the Nessus importer performs.
-                conn.execute("DELETE FROM host_services WHERE scan_id = ?", (scan_id,))
+                conn.execute(
+                    "DELETE FROM host_services WHERE dataset_id = ?", (dataset_id,)
+                )
 
-            # host_services is UNIQUE(scan_id, host_id, port_number, protocol),
+            # host_services is UNIQUE(dataset_id, host_id, port_number, protocol),
             # so one service wins per host:port. Keyed accordingly and resolved
-            # by _prefer_service rather than left to insertion order. Collected
+            # by prefer_service rather than left to insertion order. Collected
             # while walking the matches and inserted once at the end.
             service_records: Dict[tuple[int, int, str], str] = {}
             rows_written = 0
             for template in templates:
-                plugin_id = _namespaced_plugin_id(template.template_id)
-                Plugin(
-                    plugin_id=plugin_id,
-                    plugin_name=template.template_name,
+                finding_type_id = _namespaced_finding_type_id(template.template_id)
+                FindingType(
+                    finding_type_id=finding_type_id,
+                    finding_type_name=template.template_name,
                     severity_int=template.severity_int,
                     has_metasploit=False,  # nuclei carries no Metasploit data
                     cvss3_score=template.cvss3_score,
                     cvss2_score=template.cvss2_score,
                     metasploit_names=None,
                     cves=template.cves or None,
-                    plugin_url=template.template_url,
+                    stored_details_url=template.template_url,
                 ).save(conn)
 
-                finding_id = Finding(scan_id=scan_id, plugin_id=plugin_id).save(conn)
+                finding_id = Finding(
+                    dataset_id=dataset_id, finding_type_id=finding_type_id
+                ).save(conn)
                 if finding_id is None:
-                    log_error(f"Failed to save finding for {plugin_id}")
+                    log_error(f"Failed to save finding for {finding_type_id}")
                     continue
 
                 for (ip_address, host, port), matches in _group_by_target(
@@ -253,9 +223,9 @@ def _write_to_database(
                     if not host:
                         continue
                     host_id = Host.get_or_create(
-                        ip_address=_unbracket(ip_address),
-                        scan_target=_unbracket(host),
-                        scan_target_type=_scan_target_type(host),
+                        ip_address=unbracket(ip_address),
+                        scan_target=unbracket(host),
+                        scan_target_type=scan_target_type(host),
                         conn=conn,
                     )
                     if port is not None:
@@ -263,33 +233,33 @@ def _write_to_database(
                         # Record the service behind this host:port. Without
                         # this a nuclei-only scan reports no web services at
                         # all, so get_web_targets, list_services,
-                        # FindingQuery.service and the scan/{id}/hosts resource
+                        # FindingQuery.service and the dataset/{id}/hosts resource
                         # all come back empty -- and a web-app engagement may
                         # import nothing but nuclei.
                         for match in matches:
                             svc_name = match.service_name
                             if svc_name:
                                 key = (host_id, port, "tcp")
-                                service_records[key] = _prefer_service(
+                                service_records[key] = prefer_service(
                                     service_records.get(key), svc_name
                                 )
                     conn.execute(
                         """
                         INSERT OR REPLACE INTO finding_affected_hosts (
-                            finding_id, host_id, port_number, plugin_output
+                            finding_id, host_id, port_number, evidence
                         ) VALUES (?, ?, ?, ?)
                         """,
-                        (finding_id, host_id, port, format_plugin_output(matches)),
+                        (finding_id, host_id, port, format_evidence(matches)),
                     )
                     rows_written += 1
 
             if service_records:
                 conn.executemany(
                     """INSERT OR IGNORE INTO host_services
-                       (scan_id, host_id, port_number, protocol, svc_name)
+                       (dataset_id, host_id, port_number, protocol, svc_name)
                        VALUES (?, ?, ?, ?, ?)""",
                     [
-                        (scan_id, host_id, port, protocol, svc_name)
+                        (dataset_id, host_id, port, protocol, svc_name)
                         for (host_id, port, protocol), svc_name in sorted(
                             service_records.items()
                         )
@@ -299,7 +269,7 @@ def _write_to_database(
 
             log_info(
                 f"Database updated: {len(templates)} nuclei templates, "
-                f"scan_id={scan_id}"
+                f"dataset_id={dataset_id}"
             )
             return rows_written
     except Exception as exc:

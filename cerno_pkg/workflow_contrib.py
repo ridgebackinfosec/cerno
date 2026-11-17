@@ -5,8 +5,8 @@ commands actually run against it (``tool_executions`` rows attributed to the
 finding) are turned into a candidate verification workflow for the bundled
 ``workflow_mappings.yaml``:
 
-- **new** — the plugin has no mapped workflow; the trail becomes one.
-- **enhanced** — the plugin is mapped but at least one non-baseline command run
+- **new** — the finding_type has no mapped workflow; the trail becomes one.
+- **enhanced** — the finding_type is mapped but at least one non-baseline command run
   is absent from it; the existing steps are kept and the new commands appended.
 - **skip** (``None``) — the existing workflow was used unchanged (or only Cerno's
   own baseline commands were run).
@@ -15,7 +15,7 @@ Safety invariant: nothing is ever submitted. Commands are *genericized* (hosts �
 ``<TARGET>``, ports → ``<PORT>``, credentials → ``<USERNAME>``/``<PASSWORD>``/
 ``<DOMAIN>``, output/target-file paths dropped or templated) and every exported
 field must pass a fail-closed leak scan (residual IPs, the engagement's host
-names, scan names, NetExec usernames/domains, local paths). Free-form review and
+names, dataset names, NetExec usernames/domains, local paths). Free-form review and
 verdict notes are never read. Export is a local YAML file only.
 
 The functions here are pure apart from the DB readers (``build_leak_context``,
@@ -36,7 +36,7 @@ from typing import Iterable, Optional, Sequence
 import yaml
 
 from .exec_chain import split_wrappers
-from .models import Finding, Host, Plugin, Scan, ToolExecution
+from .models import Finding, Host, FindingType, Dataset, ToolExecution
 from .workflow_mapper import Workflow, WorkflowMapper
 from .workflow_prep import canonicalize_placeholders
 
@@ -116,9 +116,9 @@ _NUCLEI_TARGET_LIST_FLAGS = frozenset({"-l", "-list"})
 _NUCLEI_HEADER_FLAGS = frozenset({"-H", "-header"})
 
 #: Identifiers this short, or this generic, are never treated as engagement data
-#: (a scan called "smb" must not make every ``nxc smb`` command a "leak").
+#: (a dataset called "smb" must not make every ``nxc smb`` command a "leak").
 _MIN_IDENTIFIER_LEN = 3
-#: Dictionary usernames that collide with ordinary plugin/workflow wording
+#: Dictionary usernames that collide with ordinary finding_type/workflow wording
 #: ("FTP Anonymous Login"); never engagement data, so never a leak.
 _GENERIC_USERNAMES = frozenset(
     {
@@ -146,7 +146,7 @@ _HASH_RE = re.compile(
     r"(?<![0-9A-Fa-f])[0-9A-Fa-f]{32}(?::[0-9A-Fa-f]{32})?(?![0-9A-Fa-f])"
 )
 #: Path prefixes that identify the operator's own machine (checked even in
-#: plugin-derived fields, where generic ``/`` paths like ``/cgi-bin/`` are normal).
+#: finding_type-derived fields, where generic ``/`` paths like ``/cgi-bin/`` are normal).
 _LOCAL_PATH_PREFIXES = ("~", "/home/", "/root/", "/Users/", "/tmp/", "/mnt/", "/media/")
 _WORD_EDGE = "A-Za-z0-9_"
 
@@ -166,13 +166,13 @@ class LeakContext:
     """Engagement identifiers that must never appear in an exported workflow.
 
     ``extra`` holds other identifiers (e.g. NetExec domains); ``usernames`` are
-    kept separate because plugin-derived fields are never checked for them.
+    kept separate because finding_type-derived fields are never checked for them.
     ``secrets`` are credential values held in memory for comparison only — they
     are excluded from ``repr`` and never echoed in a hit.
     """
 
     host_identifiers: list[str] = field(default_factory=list)
-    scan_names: list[str] = field(default_factory=list)
+    dataset_names: list[str] = field(default_factory=list)
     extra: list[str] = field(default_factory=list)
     usernames: list[str] = field(default_factory=list)
     secrets: list[str] = field(default_factory=list, repr=False)
@@ -183,7 +183,7 @@ class LeakContext:
         Usernames are added only when ``include_usernames``."""
         out: list[str] = []
         seen: set[str] = set()
-        pool = [*self.host_identifiers, *self.scan_names, *self.extra]
+        pool = [*self.host_identifiers, *self.dataset_names, *self.extra]
         if include_usernames:
             pool.extend(self.usernames)
         for ident in pool:
@@ -222,12 +222,12 @@ class Candidate:
     """A drafted (or operator-edited) workflow entry ready for review/export."""
 
     finding_id: int
-    plugin_id: str
-    # The entry's YAML ``finding_id`` value, kept verbatim so a multi-id
+    finding_type_id: str
+    # The entry's YAML ``finding_type_id`` value, kept verbatim so a multi-id
     # entry stays intact. Named for the DB column it comes from, matching
-    # Finding's convention (finding_id = row id, plugin_id = namespaced id);
-    # the YAML key it is written under is "finding_id".
-    yaml_plugin_id: str
+    # Finding's convention (finding_id = row id, finding_type_id = namespaced id);
+    # the YAML key it is written under is "finding_type_id".
+    yaml_finding_type_id: str
     reason: str  # "new" | "enhanced"
     workflow_name: str
     description: str
@@ -242,7 +242,7 @@ class Candidate:
     def to_entry(self) -> dict:
         """The ``workflows[]`` entry, in workflow_mappings.yaml key order."""
         return {
-            "finding_id": self.yaml_plugin_id,
+            "finding_type_id": self.yaml_finding_type_id,
             "workflow_name": self.workflow_name,
             "description": self.description,
             "steps": [
@@ -495,7 +495,7 @@ def scan_for_leaks(
     """Return every engagement-data hit in ``text`` (empty list = clean).
 
     Always flags IPv4/IPv6 literals (except 0.0.0.0/127.0.0.1/::/::1), the
-    engagement's host names, scan names and NetExec domains (case-insensitive,
+    engagement's host names, dataset names and NetExec domains (case-insensitive,
     word-bounded), credential secret values (case-sensitive) and NT / LM:NT hash
     literals — secrets and hashes are never echoed in the hit. Non-generic
     NetExec usernames are flagged when ``check_usernames``; dictionary usernames
@@ -535,12 +535,12 @@ def scan_for_leaks(
     return list(dict.fromkeys(hits))
 
 
-def scan_candidate(candidate: Candidate, ctx: LeakContext) -> list[str]:
+def dataset_candidate(candidate: Candidate, ctx: LeakContext) -> list[str]:
     """Leak-scan every exportable field of a candidate, plus the serialized file.
 
     Every field is checked for IPs, host/scan/domain identifiers, secret values,
     hash literals and operator-machine paths (custom workflows may carry real
-    data). ``workflow_name``/``description`` come from plugin metadata, so they
+    data). ``workflow_name``/``description`` come from finding_type metadata, so they
     are never checked for usernames. Contributed commands additionally get the
     strict path check; commands copied verbatim from the existing workflow don't
     (bundled steps legitimately reference e.g. ``/usr/share/wordlists``).
@@ -565,7 +565,7 @@ def scan_candidate(candidate: Candidate, ctx: LeakContext) -> list[str]:
             )
         )
 
-    check("finding_id", candidate.yaml_plugin_id)
+    check("finding_type_id", candidate.yaml_finding_type_id)
     check("workflow_name", candidate.workflow_name, usernames=False)
     check("description", candidate.description, usernames=False)
     for i, step in enumerate(candidate.steps):
@@ -579,7 +579,7 @@ def scan_candidate(candidate: Candidate, ctx: LeakContext) -> list[str]:
         check(f"possibly_superseded[{k}]", cmd)
 
     # Whole-file re-scan (header included). Usernames were checked per field —
-    # re-checking here would re-flag the plugin-derived name/description.
+    # re-checking here would re-flag the finding_type-derived name/description.
     seen = {h.split(": ", 1)[1] for h in hits}
     for h in scan_for_leaks(
         to_yaml_fragment(candidate), ctx, check_paths=False, check_usernames=False
@@ -659,7 +659,9 @@ def _derive_step_title(binary: str, commands: Sequence[str]) -> str:
                     value = toks[idx + 1]
                 if value:
                     scripts += [s for s in value.split(",") if s and s not in scripts]
-        return f"Run NSE scripts: {', '.join(scripts)}" if scripts else "Scan with nmap"
+        return (
+            f"Run NSE scripts: {', '.join(scripts)}" if scripts else "Dataset with nmap"
+        )
     if binary == "nxc":
         protos: list[str] = []
         for cmd in commands:
@@ -674,12 +676,12 @@ def _derive_step_title(binary: str, commands: Sequence[str]) -> str:
     return f"Run {binary}" if binary else "Run command"
 
 
-def _references(plugin: Optional[Plugin]) -> list[str]:
+def _references(finding_type: Optional[FindingType]) -> list[str]:
     refs: list[str] = []
-    if plugin is not None:
-        if plugin.plugin_url:
-            refs.append(plugin.plugin_url)
-        for cve in plugin.cves or []:
+    if finding_type is not None:
+        if finding_type.details_url:
+            refs.append(finding_type.details_url)
+        for cve in finding_type.cves or []:
             refs.append(f"https://nvd.nist.gov/vuln/detail/{cve}")
     return refs
 
@@ -709,22 +711,22 @@ def build_leak_context(
     compared, never stored or echoed.
     """
     ids = [fid for fid in [finding.finding_id, *finding.extra_finding_ids] if fid]
-    scan_ids: list[int] = [finding.scan_id] if finding.scan_id else []
+    dataset_ids: list[int] = [finding.dataset_id] if finding.dataset_id else []
     if ids:
         placeholders = ",".join("?" * len(ids))
         rows = conn.execute(
-            f"SELECT DISTINCT scan_id FROM findings WHERE finding_id IN ({placeholders})",
+            f"SELECT DISTINCT dataset_id FROM findings WHERE finding_id IN ({placeholders})",
             tuple(ids),
         ).fetchall()
-        scan_ids = list(dict.fromkeys(scan_ids + [r[0] for r in rows]))
+        dataset_ids = list(dict.fromkeys(dataset_ids + [r[0] for r in rows]))
     names = []
-    for sid in scan_ids:
-        scan = Scan.get_by_id(sid, conn)
-        if scan is not None:
-            names.append(scan.scan_name)
+    for sid in dataset_ids:
+        dataset = Dataset.get_by_id(sid, conn)
+        if dataset is not None:
+            names.append(dataset.dataset_name)
     return LeakContext(
-        host_identifiers=Host.identifiers_for_scans(scan_ids, conn),
-        scan_names=names,
+        host_identifiers=Host.identifiers_for_datasets(dataset_ids, conn),
+        dataset_names=names,
         extra=[e for e in extra if e],
         usernames=[u for u in usernames if u],
         secrets=[s for s in secrets if s],
@@ -778,9 +780,13 @@ def assess_candidate(
         if execution.execution_id is not None:
             source_ids.append(execution.execution_id)
 
-    plugin = Plugin.get_by_id(finding.plugin_id, conn)
-    plugin_name = plugin.plugin_name if plugin else f"Finding {finding.plugin_id}"
-    existing = mapper.get_workflow(str(finding.plugin_id))
+    finding_type = FindingType.get_by_id(finding.finding_type_id, conn)
+    finding_type_name = (
+        finding_type.finding_type_name
+        if finding_type
+        else f"Finding {finding.finding_type_id}"
+    )
+    existing = mapper.get_workflow(str(finding.finding_type_id))
 
     if existing is None:
         if not commands:
@@ -811,13 +817,13 @@ def assess_candidate(
         return Assessment(
             Candidate(
                 finding_id=finding.finding_id,
-                plugin_id=finding.plugin_id,
-                yaml_plugin_id=str(finding.plugin_id),
+                finding_type_id=finding.finding_type_id,
+                yaml_finding_type_id=str(finding.finding_type_id),
                 reason="new",
-                workflow_name=plugin_name,
-                description=f"Verify: {plugin_name}",
+                workflow_name=finding_type_name,
+                description=f"Verify: {finding_type_name}",
                 steps=steps,
-                references=_references(plugin),
+                references=_references(finding_type),
                 new_commands=list(commands),
                 review_hints=hints,
                 source_execution_ids=source_ids,
@@ -867,8 +873,8 @@ def assess_candidate(
     return Assessment(
         Candidate(
             finding_id=finding.finding_id,
-            plugin_id=finding.plugin_id,
-            yaml_plugin_id=existing.finding_id,
+            finding_type_id=finding.finding_type_id,
+            yaml_finding_type_id=existing.finding_type_id,
             reason="enhanced",
             workflow_name=existing.workflow_name,
             description=existing.description,
@@ -911,7 +917,7 @@ def merge_also_covers(
     finding. Ids are de-duplicated with order preserved.
 
     Every id must carry its source prefix; a bare ``84502`` is rejected by
-    :func:`parsing.plugin_source_id`, the same write-side guard the importers
+    :func:`parsing.finding_type_source_id`, the same write-side guard the importers
     use. An id another entry already claims is accepted but flagged: the
     mapper resolves ids through a dict, so two entries claiming one id would
     silently shadow one of them, and which one wins is load order.
@@ -928,7 +934,7 @@ def merge_also_covers(
         ValueError: An id is unprefixed or names an unknown source. The
             candidate is left untouched -- validation happens before any edit.
     """
-    from .parsing import plugin_source_id
+    from .parsing import finding_type_source_id
 
     if not also_covers:
         return candidate
@@ -937,14 +943,14 @@ def merge_also_covers(
         if not isinstance(pid, str) or not pid.strip():
             raise ValueError("also_covers entries must be non-empty strings")
         try:
-            plugin_source_id(pid.strip())
+            finding_type_source_id(pid.strip())
         except ValueError as exc:
             raise ValueError(
                 f"also_covers id {pid!r} is not usable: {exc}. Every id needs its "
                 "source prefix, e.g. 'nessus:84502' or 'nuclei:tls-version'."
             ) from exc
 
-    existing = [p for p in candidate.yaml_plugin_id.split(",") if p]
+    existing = [p for p in candidate.yaml_finding_type_id.split(",") if p]
     added: list[str] = []
     for pid in (p.strip() for p in also_covers):
         if pid in existing or pid in added:
@@ -953,11 +959,14 @@ def merge_also_covers(
     if not added:
         return candidate
 
-    candidate.yaml_plugin_id = ",".join(existing + added)
+    candidate.yaml_finding_type_id = ",".join(existing + added)
 
     for pid in added:
         owner = mapper.get_workflow(pid)
-        if owner is not None and owner.finding_id != candidate.yaml_plugin_id:
+        if (
+            owner is not None
+            and owner.finding_type_id != candidate.yaml_finding_type_id
+        ):
             candidate.review_hints.append(
                 f"{pid} is already covered by the workflow "
                 f"{owner.workflow_name!r}; in the PR, either fold this "
@@ -967,7 +976,7 @@ def merge_also_covers(
     candidate.review_hints.append(
         "State in the PR why "
         + ", ".join(repr(p) for p in added)
-        + f" and {candidate.plugin_id!r} are the same issue. Co-mapping makes "
+        + f" and {candidate.finding_type_id!r} are the same issue. Co-mapping makes "
         "one workflow serve every listed finding, so the claim belongs in review."
     )
     return candidate
@@ -997,7 +1006,7 @@ def candidate_from_override(
     """Build a candidate from an operator/Claude-edited workflow dict.
 
     Validates the shape (``workflow_name``, ``description``, ``steps`` [{title,
-    commands, notes}], ``references``); the finding_id is never taken from the
+    commands, notes}], ``references``); the finding_type_id is never taken from the
     override. Commands not copied verbatim from the existing workflow are
     genericized again, so pasting a real command is sanitized. Free text (names,
     titles, notes) is NOT rewritten — it must pass the leak scan as written.
@@ -1006,7 +1015,7 @@ def candidate_from_override(
         raise ValueError("workflow must be an object")
     if finding.finding_id is None:
         raise ValueError("Cannot build a candidate for an unsaved finding")
-    existing = mapper.get_workflow(str(finding.plugin_id))
+    existing = mapper.get_workflow(str(finding.finding_type_id))
     existing_cmds = _workflow_commands(existing) if existing else []
     hosts, ports = _finding_hosts_ports(finding, conn)
 
@@ -1037,16 +1046,16 @@ def candidate_from_override(
         )
 
     if base is not None:
-        yaml_plugin_id, reason = base.yaml_plugin_id, base.reason
+        yaml_finding_type_id, reason = base.yaml_finding_type_id, base.reason
     elif existing is not None:
-        yaml_plugin_id, reason = existing.finding_id, "enhanced"
+        yaml_finding_type_id, reason = existing.finding_type_id, "enhanced"
     else:
-        yaml_plugin_id, reason = str(finding.plugin_id), "new"
+        yaml_finding_type_id, reason = str(finding.finding_type_id), "new"
 
     return Candidate(
         finding_id=finding.finding_id,
-        plugin_id=finding.plugin_id,
-        yaml_plugin_id=yaml_plugin_id,
+        finding_type_id=finding.finding_type_id,
+        yaml_finding_type_id=yaml_finding_type_id,
         reason=reason,
         workflow_name=_require_str(
             workflow.get("workflow_name"), "workflow_name", allow_empty=False
@@ -1073,7 +1082,7 @@ def to_yaml_fragment(candidate: Candidate) -> str:
     via ``WorkflowMapper.load_additional_workflows`` / ``--custom-workflows``.
     """
     header = [
-        f"# Cerno workflow contribution: finding {candidate.yaml_plugin_id} ({candidate.reason})",
+        f"# Cerno workflow contribution: finding {candidate.yaml_finding_type_id} ({candidate.reason})",
         "# Drafted by Cerno from a verified finding's execution trail. Hosts, ports and",
         "# credentials are replaced with <TARGET>/<PORT>/<USERNAME>/<PASSWORD>/<DOMAIN>.",
         "# REVIEW BEFORE SUBMITTING. To contribute:",

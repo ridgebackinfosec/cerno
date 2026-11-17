@@ -45,6 +45,7 @@ from typing import Any, Optional, Union
 from .config import coerce_str_list
 from .constants import NUCLEI_TEMPLATE_REPO_BASE, NUCLEI_TEMPLATE_URL_BASE
 from .logging_setup import log_debug, log_error
+from .parsing import SCHEME_PORTS
 
 __all__ = [
     "NUCLEI_TEMPLATE_REPO_BASE",
@@ -54,7 +55,7 @@ __all__ = [
     "ParsedNucleiTemplate",
     "classify_cvss",
     "extract_cves",
-    "format_plugin_output",
+    "format_evidence",
     "normalize_port",
     "parse_nuclei_file",
     "resolve_template_url",
@@ -67,8 +68,8 @@ __all__ = [
 #:
 #: nuclei also emits ``unknown`` and ``""`` (its ``Undefined`` constant, whose
 #: ``String()`` renders empty). Neither has a ``severity_levels`` row, and
-#: ``plugins.severity_int`` both CHECKs ``BETWEEN 0 AND 4`` and foreign-keys to
-#: that table -- while ``v_plugins_with_severity`` is an INNER JOIN, so an
+#: ``finding_types.severity_int`` both CHECKs ``BETWEEN 0 AND 4`` and foreign-keys to
+#: that table -- while ``v_finding_types_with_severity`` is an INNER JOIN, so an
 #: unmapped value would make the finding silently vanish from every query
 #: rather than fail loudly. Info is the conservative floor.
 SEVERITY_BY_LABEL: dict[str, int] = {
@@ -82,7 +83,10 @@ SEVERITY_BY_LABEL: dict[str, int] = {
 }
 
 #: Default port per URL scheme, for records that omit ``port``.
-_SCHEME_PORTS: dict[str, int] = {"http": 80, "https": 443}
+#:
+#: Shared with the Burp parser via :data:`cerno_pkg.parsing.SCHEME_PORTS`, so
+#: both scanners' scheme-derived ports and services stay in step.
+_SCHEME_PORTS = SCHEME_PORTS
 
 #: Same validation the Nessus importer applies to ``<cve>`` elements.
 _CVE_RE = re.compile(r"^CVE-\d{4}-\d{4,}$")
@@ -261,7 +265,7 @@ def normalize_port(raw: Any, scheme: Optional[str]) -> Optional[int]:
     return _SCHEME_PORTS.get((scheme or "").strip().lower())
 
 
-def format_plugin_output(matches: list[ParsedNucleiMatch]) -> str:
+def format_evidence(matches: list[ParsedNucleiMatch]) -> str:
     """Render a template's matches for one host:port into one evidence block.
 
     Every sub-match keeps both its ``matcher-name`` *and* its

@@ -73,7 +73,7 @@ except Exception as e:
 - Distinguish integrity errors from operational errors
 
 **Examples**:
-- Plugin/scan save operations
+- FindingType/scan save operations
 - Tool execution logging
 - Session management
 
@@ -109,7 +109,7 @@ except Exception as e:
 
 **Examples**:
 - Nessus XML parsing
-- Plugin file parsing (host:port extraction)
+- FindingType file parsing (host:port extraction)
 - Configuration file parsing
 
 ---
@@ -157,7 +157,7 @@ except Exception as e:
 - Exit on missing critical tools
 
 **Examples**:
-- nmap scans
+- nmap datasets
 - netexec execution
 - git operations
 
@@ -205,13 +205,13 @@ from .logging_setup import log_debug, log_error, log_info
 
 # ERROR: Technical details for debugging (also use for non-critical surprises;
 # there is no separate warning-level helper)
-log_error(f"Failed to fetch plugin {plugin_id}: {exception}")
+log_error(f"Failed to fetch plugin {finding_type_id}: {exception}")
 
 # INFO: Normal operations
 log_info(f"Successfully imported {finding_count} findings")
 
 # DEBUG: Verbose detail, written only when debug_logging is enabled
-log_debug(f"Plugin {plugin_id} missing metadata, using defaults")
+log_debug(f"FindingType {finding_type_id} missing metadata, using defaults")
 ```
 
 ### User-Facing Helpers
@@ -304,7 +304,7 @@ def test_network_error_handling(mock_fetch):
     """Test graceful handling of network errors."""
     mock_fetch.side_effect = requests.RequestException("Connection refused")
 
-    result = fetch_cves(plugin_id="nessus:12345")
+    result = fetch_cves(finding_type_id="nessus:12345")
 
     assert result is None  # Graceful fallback
     # Verify logging occurred

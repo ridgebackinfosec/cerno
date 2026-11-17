@@ -13,7 +13,7 @@ import yaml
 
 from cerno_pkg.config import MCP_NOT_APPLICABLE_KEYS, CernoConfig
 from cerno_pkg.mcp_server import server as mcp
-from cerno_pkg.models import Finding, Host, Plugin, Port, Scan
+from cerno_pkg.models import Finding, Host, FindingType, Port, Dataset
 
 pytestmark = pytest.mark.integration
 
@@ -23,11 +23,15 @@ pytestmark = pytest.mark.integration
 # ---------------------------------------------------------------------------
 
 
-def _seed_finding(conn, scan_id, plugin_id, hosts, ports, *, severity=2):
-    Plugin(
-        plugin_id=plugin_id, plugin_name=f"Plugin {plugin_id}", severity_int=severity
+def _seed_finding(conn, dataset_id, finding_type_id, hosts, ports, *, severity=2):
+    FindingType(
+        finding_type_id=finding_type_id,
+        finding_type_name=f"FindingType {finding_type_id}",
+        severity_int=severity,
     ).save(conn)
-    finding_id = Finding(scan_id=scan_id, plugin_id=plugin_id).save(conn)
+    finding_id = Finding(dataset_id=dataset_id, finding_type_id=finding_type_id).save(
+        conn
+    )
     for ip in hosts:
         host_id = Host.get_or_create(
             ip_address=ip, scan_target=ip, scan_target_type="ipv4", conn=conn
@@ -36,7 +40,7 @@ def _seed_finding(conn, scan_id, plugin_id, hosts, ports, *, severity=2):
             Port.get_or_create(port, conn=conn)
             conn.execute(
                 "INSERT OR IGNORE INTO finding_affected_hosts "
-                "(finding_id, host_id, port_number, plugin_output) VALUES (?, ?, ?, 'out')",
+                "(finding_id, host_id, port_number, evidence) VALUES (?, ?, ?, 'out')",
                 (finding_id, host_id, port),
             )
     conn.commit()
@@ -45,30 +49,34 @@ def _seed_finding(conn, scan_id, plugin_id, hosts, ports, *, severity=2):
 
 @pytest.fixture
 def seeded(temp_db):
-    """One scan with two synthetic (never bundled-mapped) plugins: 100 and 200."""
-    scan_id = Scan(scan_name="engagement", export_root="/tmp").save(temp_db)
-    f1 = _seed_finding(temp_db, scan_id, "nessus:100", ["10.0.0.1"], [445], severity=4)
-    f2 = _seed_finding(temp_db, scan_id, "nessus:200", ["10.0.0.2"], [22], severity=1)
-    return {"conn": temp_db, "scan_id": scan_id, "f1": f1, "f2": f2}
+    """One scan with two synthetic (never bundled-mapped) finding_types: 100 and 200."""
+    dataset_id = Dataset(dataset_name="engagement", export_root="/tmp").save(temp_db)
+    f1 = _seed_finding(
+        temp_db, dataset_id, "nessus:100", ["10.0.0.1"], [445], severity=4
+    )
+    f2 = _seed_finding(
+        temp_db, dataset_id, "nessus:200", ["10.0.0.2"], [22], severity=1
+    )
+    return {"conn": temp_db, "dataset_id": dataset_id, "f1": f1, "f2": f2}
 
 
 @pytest.fixture
 def many(temp_db):
     """One scan with 12 findings (for default-limit tests)."""
-    scan_id = Scan(scan_name="big", export_root="/tmp").save(temp_db)
+    dataset_id = Dataset(dataset_name="big", export_root="/tmp").save(temp_db)
     for pid in range(1000, 1012):
-        _seed_finding(temp_db, scan_id, f"nessus:{pid}", ["10.0.1.1"], [80])
-    return {"conn": temp_db, "scan_id": scan_id}
+        _seed_finding(temp_db, dataset_id, f"nessus:{pid}", ["10.0.1.1"], [80])
+    return {"conn": temp_db, "dataset_id": dataset_id}
 
 
 @pytest.fixture
 def custom_wf(tmp_path) -> Path:
-    """Custom workflow YAML mapping synthetic plugin 100."""
+    """Custom workflow YAML mapping synthetic finding_type 100."""
     data = {
         "version": "1.0",
         "workflows": [
             {
-                "finding_id": "nessus:100",
+                "finding_type_id": "nessus:100",
                 "workflow_name": "Custom 100",
                 "description": "custom",
                 "steps": [
@@ -92,27 +100,27 @@ def custom_wf(tmp_path) -> Path:
 # ---------------------------------------------------------------------------
 
 
-def test_workflow_gaps_drop_custom_mapped_plugin(seeded, custom_wf):
+def test_workflow_gaps_drop_custom_mapped_finding_type(seeded, custom_wf):
     cfg = CernoConfig(custom_workflows_path=str(custom_wf))
     rows = mcp.tool_list_workflow_gaps(
-        scan_ids=[seeded["scan_id"]], config=cfg, conn=seeded["conn"]
+        dataset_ids=[seeded["dataset_id"]], config=cfg, conn=seeded["conn"]
     )
-    assert [r["plugin_id"] for r in rows] == ["nessus:200"]
+    assert [r["finding_type_id"] for r in rows] == ["nessus:200"]
 
 
 def test_workflow_gaps_unset_uses_bundled_only(seeded):
     rows = mcp.tool_list_workflow_gaps(
-        scan_ids=[seeded["scan_id"]], config=CernoConfig(), conn=seeded["conn"]
+        dataset_ids=[seeded["dataset_id"]], config=CernoConfig(), conn=seeded["conn"]
     )
-    assert [r["plugin_id"] for r in rows] == ["nessus:100", "nessus:200"]
+    assert [r["finding_type_id"] for r in rows] == ["nessus:100", "nessus:200"]
 
 
 def test_workflow_missing_custom_path_falls_back_to_bundled(seeded, tmp_path):
     cfg = CernoConfig(custom_workflows_path=str(tmp_path / "nope.yaml"))
     rows = mcp.tool_list_workflow_gaps(
-        scan_ids=[seeded["scan_id"]], config=cfg, conn=seeded["conn"]
+        dataset_ids=[seeded["dataset_id"]], config=cfg, conn=seeded["conn"]
     )
-    assert [r["plugin_id"] for r in rows] == ["nessus:100", "nessus:200"]
+    assert [r["finding_type_id"] for r in rows] == ["nessus:100", "nessus:200"]
 
 
 def test_malformed_custom_workflows_never_write_stdout(tmp_path, capsys):
@@ -120,7 +128,7 @@ def test_malformed_custom_workflows_never_write_stdout(tmp_path, capsys):
     from cerno_pkg.workflow_mapper import WorkflowMapper, build_workflow_mapper
 
     bad = tmp_path / "bad.yaml"
-    bad.write_text("workflows:\n  - finding_id: [unclosed\n", encoding="utf-8")
+    bad.write_text("workflows:\n  - finding_type_id: [unclosed\n", encoding="utf-8")
     mapper = build_workflow_mapper(CernoConfig(custom_workflows_path=str(bad)))
     assert mapper.count() == WorkflowMapper().count()  # bundled set intact
     assert capsys.readouterr().out == ""
@@ -129,9 +137,12 @@ def test_malformed_custom_workflows_never_write_stdout(tmp_path, capsys):
 def test_query_findings_has_workflow_uses_custom(seeded, custom_wf):
     cfg = CernoConfig(custom_workflows_path=str(custom_wf))
     rows = mcp.tool_query_findings(
-        scan_ids=[seeded["scan_id"]], has_workflow=True, config=cfg, conn=seeded["conn"]
+        dataset_ids=[seeded["dataset_id"]],
+        has_workflow=True,
+        config=cfg,
+        conn=seeded["conn"],
     )
-    assert [r["plugin_id"] for r in rows] == ["nessus:100"]
+    assert [r["finding_type_id"] for r in rows] == ["nessus:100"]
     assert rows[0]["has_workflow"] is True
 
 
@@ -167,9 +178,9 @@ def test_workflow_gaps_respect_exclusive_mode(seeded, custom_wf):
         custom_workflows_path=str(custom_wf), custom_workflows_exclusive=True
     )
     rows = mcp.tool_list_workflow_gaps(
-        scan_ids=[seeded["scan_id"]], config=cfg, conn=seeded["conn"]
+        dataset_ids=[seeded["dataset_id"]], config=cfg, conn=seeded["conn"]
     )
-    assert [r["plugin_id"] for r in rows] == ["nessus:200"]
+    assert [r["finding_type_id"] for r in rows] == ["nessus:200"]
 
 
 def test_resource_and_prompt_use_custom_workflow(seeded, custom_wf):
@@ -197,13 +208,13 @@ def test_plan_batch_has_workflow_uses_custom(seeded, custom_wf):
     cfg = CernoConfig(custom_workflows_path=str(custom_wf))
     plan = mcp.tool_plan_batch(
         "msf",
-        scan_ids=[seeded["scan_id"]],
+        dataset_ids=[seeded["dataset_id"]],
         has_workflow=True,
         skip_done=False,
         config=cfg,
         conn=seeded["conn"],
     )
-    assert [i["plugin_id"] for i in plan["items"]] == ["nessus:100"]
+    assert [i["finding_type_id"] for i in plan["items"]] == ["nessus:100"]
 
 
 # ---------------------------------------------------------------------------
@@ -245,7 +256,7 @@ def test_batch_bare_netexec_strategy_uses_config_default(seeded, tmp_path):
     cfg = CernoConfig(results_root=str(tmp_path), default_netexec_protocol="ldap")
     plan = mcp.tool_plan_batch(
         "netexec",
-        scan_ids=[seeded["scan_id"]],
+        dataset_ids=[seeded["dataset_id"]],
         skip_done=False,
         config=cfg,
         conn=seeded["conn"],
@@ -319,13 +330,15 @@ def test_nmap_no_profile_no_scripts(seeded, tmp_path):
 
 @pytest.mark.parametrize("tool", ["list", "query", "search"])
 def test_default_limit_follows_page_size(many, tool):
-    conn, sid = many["conn"], many["scan_id"]
+    conn, sid = many["conn"], many["dataset_id"]
 
     def call(cfg, **kw):
         if tool == "list":
             return mcp.tool_list_findings([sid], config=cfg, conn=conn, **kw)
         if tool == "query":
-            return mcp.tool_query_findings(scan_ids=[sid], config=cfg, conn=conn, **kw)
+            return mcp.tool_query_findings(
+                dataset_ids=[sid], config=cfg, conn=conn, **kw
+            )
         return mcp.tool_search_findings(config=cfg, conn=conn, **kw)
 
     assert len(call(CernoConfig())) == 12  # no config -> 500 default
@@ -459,7 +472,7 @@ def test_contribution_export_dir_defaults_under_results_root(seeded, tmp_path):
 
 
 def test_contribution_hint_uses_custom_workflows(seeded, custom_wf, tmp_path):
-    # Unmapped plugin 100 -> "new"; once custom_workflows_path maps it -> "enhanced".
+    # Unmapped finding_type 100 -> "new"; once custom_workflows_path maps it -> "enhanced".
     plain = _verified_with_run(seeded, CernoConfig())
     assert plain["workflow_candidate"] == {"available": True, "reason": "new"}
     custom = mcp.tool_get_finding_verdict(
@@ -490,12 +503,12 @@ def captured_nuclei_import(tmp_path, monkeypatch):
     seen: dict = {}
 
     class _Result:
-        scan_name = "stub"
-        plugins_exported = 0
+        dataset_name = "stub"
+        finding_types_exported = 0
         total_hosts = 0
         severities: dict = {}
 
-    def fake_import(path, scans_root, *, scan_name=None, min_severity=0):
+    def fake_import(path, datasets_root, *, dataset_name=None, min_severity=0):
         seen["min_severity"] = min_severity
         return _Result()
 
@@ -515,7 +528,7 @@ def test_import_nuclei_defaults_min_severity_from_config(captured_nuclei_import)
     results, seen = captured_nuclei_import
     _set_config(nuclei_min_severity=3)
 
-    mcp.tool_import_nuclei(str(results), scan_name="cfg-gated")
+    mcp.tool_import_nuclei(str(results), dataset_name="cfg-gated")
 
     assert seen["min_severity"] == 3
 
@@ -525,7 +538,7 @@ def test_import_nuclei_explicit_arg_beats_config(captured_nuclei_import):
     results, seen = captured_nuclei_import
     _set_config(nuclei_min_severity=3)
 
-    mcp.tool_import_nuclei(str(results), scan_name="arg-wins", min_severity=0)
+    mcp.tool_import_nuclei(str(results), dataset_name="arg-wins", min_severity=0)
 
     assert seen["min_severity"] == 0
 
@@ -535,7 +548,65 @@ def test_import_nuclei_unset_config_keeps_everything(captured_nuclei_import):
     results, seen = captured_nuclei_import
     _set_config()
 
-    mcp.tool_import_nuclei(str(results), scan_name="default")
+    mcp.tool_import_nuclei(str(results), dataset_name="default")
+
+    assert seen["min_severity"] == 0
+
+
+# ---------------------------------------------------------------------------
+# burp_min_severity
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def captured_burp_import(tmp_path, monkeypatch):
+    """Capture the min_severity that reaches import_burp_file."""
+    import cerno_pkg.burp_import as burp_import
+
+    report = tmp_path / "report.xml"
+    report.write_text('<?xml version="1.0"?><issues></issues>', encoding="utf-8")
+    seen: dict = {}
+
+    class _Result:
+        dataset_name = "stub"
+        finding_types_exported = 0
+        total_hosts = 0
+        severities: dict = {}
+
+    def fake_import(path, datasets_root, *, dataset_name=None, min_severity=0):
+        seen["min_severity"] = min_severity
+        return _Result()
+
+    monkeypatch.setattr(burp_import, "import_burp_file", fake_import)
+    return report, seen
+
+
+def test_import_burp_defaults_min_severity_from_config(captured_burp_import):
+    """Omitted min_severity falls back to the config key, not to 0."""
+    report, seen = captured_burp_import
+    _set_config(burp_min_severity=3)
+
+    mcp.tool_import_burp(str(report), dataset_name="cfg-gated")
+
+    assert seen["min_severity"] == 3
+
+
+def test_import_burp_explicit_arg_beats_config(captured_burp_import):
+    """An explicit min_severity wins over the config key (MCP precedence)."""
+    report, seen = captured_burp_import
+    _set_config(burp_min_severity=3)
+
+    mcp.tool_import_burp(str(report), dataset_name="arg-wins", min_severity=0)
+
+    assert seen["min_severity"] == 0
+
+
+def test_import_burp_unset_config_keeps_everything(captured_burp_import):
+    """With no config key set the default is still keep-all."""
+    report, seen = captured_burp_import
+    _set_config()
+
+    mcp.tool_import_burp(str(report), dataset_name="default")
 
     assert seen["min_severity"] == 0
 
@@ -555,6 +626,7 @@ MCP_APPLIED = {
     "custom_workflows_path",
     "custom_workflows_exclusive",
     "nuclei_min_severity",
+    "burp_min_severity",
     "nxc_workspace_path",
     "nxc_enrichment_enabled",
     "mcp_allow_execution",

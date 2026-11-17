@@ -49,7 +49,7 @@ def reset_results_root_cache() -> None:
     _results_root_cache = None
 
 
-SCANS_ROOT: Path = Path.home() / ".cerno" / "scans"
+DATASETS_ROOT: Path = Path.home() / ".cerno" / "datasets"
 """Per-scan working directories (only http_urls.txt is written here, when web services exist)."""
 
 REVIEW_PREFIX: str = "REVIEW_COMPLETE-"
@@ -139,9 +139,9 @@ VERDICT_ICONS: dict[str, str] = {
 """Compact verdict indicators: ✓ Confirmed, ✗ False Positive, ? Unable."""
 
 
-# ========== Plugin details configuration ==========
-PLUGIN_DETAILS_BASE: str = "https://www.tenable.com/plugins/nessus/"
-"""Base URL for Tenable plugin detail pages."""
+# ========== FindingType details configuration ==========
+NESSUS_DETAILS_BASE: str = "https://www.tenable.com/plugins/nessus/"
+"""Base URL for Tenable finding_type detail pages."""
 
 NUCLEI_TEMPLATE_URL_BASE: str = "https://cloud.projectdiscovery.io/public/"
 """Base URL for the public nuclei template viewer.
@@ -172,58 +172,191 @@ Cerno's importer discards ``request``/``response`` entirely, so this only
 bounds the size of the ``-je``/``-me`` artifacts the operator keeps.
 """
 
+BURP_KB_BASE: str = "https://portswigger.net/kb/issues/"
+"""Base URL for PortSwigger's issue-definition knowledge base.
 
-# ========== Finding sources (multi-source plugin identity) ==========
+Keyed on the 8-digit hex type index, with no slug: PortSwigger publishes
+``.../kb/issues/00200300_cross-site-scripting-reflected`` but the bare
+``.../kb/issues/00200300`` resolves to the same page. That is why the hex type
+index -- not the decimal ``type`` the XML stores -- is Burp's ``finding_type_ref``:
+it makes the details URL derivable from the id alone, exactly like the other
+two sources.
+"""
+
+BURP_REQUEST_MAX_BYTES: int = 4096
+"""Max decoded request bytes kept per Burp issue instance."""
+
+BURP_RESPONSE_MAX_BYTES: int = 4096
+"""Max decoded response bytes kept per Burp issue instance.
+
+Burp stores full HTTP exchanges; a single response can be megabytes. The whole
+exchange lands in one ``finding_affected_hosts.evidence`` cell, which the
+finding panel and the Claude assistant context both render in full.
+"""
+
+BURP_MAX_INSTANCES_RENDERED: int = 10
+"""Max Burp issue instances rendered into one host:port's ``evidence``.
+
+One issue type routinely fires on dozens of parameters of the same host:port,
+and ``finding_affected_hosts`` is UNIQUE per ``(finding_id, host_id,
+port_number)`` -- so every one of those instances merges into a single cell.
+Without this cap the per-instance byte caps alone still leave the panel
+unreadable. Instances beyond the cap are summarised by a trailing count.
+"""
+
+
+# ========== Finding sources (multi-source finding_type identity) ==========
 SOURCE_NESSUS: str = "nessus"
 SOURCE_NUCLEI: str = "nuclei"
+SOURCE_BURP: str = "burp"
+SOURCE_OPERATOR: str = "operator"
+"""Findings the tester wrote by hand in the review TUI.
+
+One of two sources that are *created* rather than imported, which is why
+neither has a parser or importer module -- :mod:`cerno_pkg.authored_findings`
+writes both directly. Everything downstream treats them like any other source.
+"""
+
+SOURCE_AGENT: str = "agent"
+"""Findings an MCP client created, i.e. ones an agent asserted.
+
+Split from :data:`SOURCE_OPERATOR` so the channel that wrote a hand-authored
+finding stays visible after the fact: a finding the tester verified by hand is
+a different claim from one an agent produced, and on an engagement that
+difference carries evidentiary weight. The namespace records the *creator*
+only -- editing an ``agent:`` finding in the TUI leaves it ``agent:``.
+"""
+
+AUTHORED_SOURCES: frozenset[str] = frozenset({SOURCE_OPERATOR, SOURCE_AGENT})
+"""Sources whose findings are hand-authored rather than parsed from a scanner export.
+
+The single definition every "can this be edited?" test uses, so the two
+channels cannot drift apart: forgetting one value in a two-way ``or`` would
+leave a finding that no interface can correct. Contrast the scanner sources,
+whose rows are a record of what a tool reported and are deliberately immutable.
+"""
+
+AUTHORED_DATASET_NAMES: dict[str, str] = {
+    SOURCE_OPERATOR: "Operator",
+    SOURCE_AGENT: "Agent",
+}
+"""The dataset each authored source collects its findings into, per source.
+
+``findings`` needs a ``dataset_id`` and a hand-authored finding belongs to no
+scanner run, so one dataset per source holds them all. Keeping them out of the
+scanner datasets preserves the invariant ``cross_dataset`` relies on -- that a
+dataset has a single source -- so ``cerno dataset compare`` keeps working on the datasets
+around them. Comparing the two authored datasets *with each other* is refused for
+the same reason it refuses Nessus against nuclei: their finding_type ids are
+namespaced apart, so they share none and a diff would report every finding on
+both sides as unique to its scan.
+
+One scan per source per *database*, created on first use, which means each
+accumulates across engagements. The findings list's ``[F]`` name filter narrows
+it, and ``cerno dataset delete Operator`` / ``cerno dataset delete Agent`` clears it.
+"""
 
 SOURCE_UNKNOWN: str = "unknown"
 """Source of an id carrying no recognised namespace prefix.
 
 Deliberately *not* a valid source: it has no ``finding_sources`` row and no
-``SOURCE_IDS`` entry, so :func:`parsing.plugin_source_id` raises on it and
+``SOURCE_IDS`` entry, so :func:`parsing.finding_type_source_id` raises on it and
 nothing can be written to the database under it. Read paths treat it as "no
 known source" and render a finding without a details link rather than
 fabricating one.
 """
 
-SOURCE_IDS: dict[str, int] = {SOURCE_NESSUS: 1, SOURCE_NUCLEI: 2}
+SOURCE_IDS: dict[str, int] = {
+    SOURCE_NESSUS: 1,
+    SOURCE_NUCLEI: 2,
+    SOURCE_BURP: 3,
+    SOURCE_OPERATOR: 4,
+    SOURCE_AGENT: 5,
+}
 """``finding_sources.source_id`` per source name.
 
 Mirrors the ``finding_sources`` rows in ``database.LOOKUP_SEEDS``.
 """
 
-PLUGIN_ID_PREFIXES: dict[str, str] = {
+FINDING_TYPE_ID_PREFIXES: dict[str, str] = {
     SOURCE_NESSUS: "nessus:",
     SOURCE_NUCLEI: "nuclei:",
+    SOURCE_BURP: "burp:",
+    SOURCE_OPERATOR: "operator:",
+    SOURCE_AGENT: "agent:",
 }
-"""Namespace prefix applied to ``plugins.plugin_id`` per source.
+"""Namespace prefix applied to ``finding_types.finding_type_id`` per source.
 
 *Every* source is namespaced, Nessus included (``'nessus:57608'``). No source
-is the default, so a bare token is not a valid plugin id anywhere: it has no
-source, and :func:`parsing.plugin_source` reports :data:`SOURCE_UNKNOWN` for
+is the default, so a bare token is not a valid finding_type id anywhere: it has no
+source, and :func:`parsing.finding_type_source` reports :data:`SOURCE_UNKNOWN` for
 it rather than guessing.
 
 The uniformity is what makes a new source cheap — it needs a prefix here and a
 ``finding_sources`` row, and nothing else has to learn about it. It also keeps
-the global ``plugins`` table collision-free: a nuclei template literally named
+the global ``finding_types`` table collision-free: a nuclei template literally named
 ``57608`` cannot occupy the same key as Nessus plugin 57608.
 """
 
-PLUGIN_ID_LABELS: dict[str, str] = {
+FINDING_TYPE_ID_LABELS: dict[str, str] = {
     SOURCE_NESSUS: "Nessus Plugin ID",
     SOURCE_NUCLEI: "Nuclei Template ID",
+    SOURCE_BURP: "Burp Issue Type",
+    SOURCE_OPERATOR: "Operator Finding ID",
+    SOURCE_AGENT: "Agent Finding ID",
 }
 """Label for the identifier row in the finding panel, per source."""
 
-PLUGIN_URL_TEMPLATES: dict[str, str] = {
-    SOURCE_NESSUS: PLUGIN_DETAILS_BASE + "{ref}",
+DETAILS_URL_TEMPLATES: dict[str, str] = {
+    SOURCE_NESSUS: NESSUS_DETAILS_BASE + "{ref}",
     SOURCE_NUCLEI: NUCLEI_TEMPLATE_URL_BASE + "{ref}",
+    SOURCE_BURP: BURP_KB_BASE + "{ref}",
 }
 """Details-page template per source, keyed on the source-native ``{ref}``.
 
 A source absent from this map has no known details page, and callers must
-render no link rather than fabricate one.
+render no link rather than fabricate one. Every source in
+:data:`AUTHORED_SOURCES` is such a source by nature: a hand-written finding has
+nothing to link to unless its author supplied a reference URL, which is stored
+in ``finding_types.details_url`` and preferred by :func:`parsing.finding_type_details_url`
+over any template.
+
+Burp is a partial case: the template is right for a real issue type, but an
+extension-generated issue carries a :data:`BURP_GENERIC_TYPES` ref with a name
+slug appended and has no knowledge-base page at all. The importer stores
+``details_url=None`` for those, and that is not enough on its own --
+:func:`parsing.finding_type_details_url` falls back to this template when no URL was
+stored -- so :func:`parsing.finding_type_details_url` special-cases a slugged Burp
+ref. See :data:`BURP_GENERIC_TYPES`.
+"""
+
+BURP_GENERIC_TYPES: frozenset[str] = frozenset({"00000000", "08000000"})
+"""Burp type indexes that do not identify a specific issue type.
+
+``0x08000000`` is the type every Burp *extension*-generated issue reports, and
+``0x00000000`` is the unset value. Both are shared by unrelated issues, so using
+one as a ``finding_type_id`` would merge, say, two different extensions' findings onto
+a single ``finding_types`` row under whichever name was imported first. The importer
+appends a slug of the issue name for these (``burp:08000000-jwt-none-algorithm``)
+and records no details URL, since PortSwigger publishes no page for them.
+"""
+
+
+# ========== Hand-authored findings ==========
+AUTHORED_TITLE_MAX_CHARS: int = 200
+"""Cap on a hand-authored finding's title.
+
+``finding_types.finding_type_name`` has no length constraint, but the title is rendered
+into a table cell and a panel header; a runaway title from an MCP client
+pasting tool output would push every column off screen.
+"""
+
+AUTHORED_DESCRIPTION_MAX_CHARS: int = 20_000
+"""Cap on a hand-authored finding's description.
+
+Stored once per affected host, like every other source's evidence, so the cost
+is multiplied by the host count. Generous enough for a written-up finding and
+small enough that a pasted scan log is refused rather than silently stored.
 """
 
 
@@ -332,7 +465,7 @@ PROCESS_TERMINATE_TIMEOUT: int = 3
 
 # ========== Search and parsing configuration ==========
 SEARCH_WINDOW_SIZE: int = 800
-"""Character window size around CVE matches when searching plugin pages."""
+"""Character window size around CVE matches when searching finding_type pages."""
 
 MIN_TERM_LENGTH: int = 2
 """Minimum length for search terms when extracting CVEs."""

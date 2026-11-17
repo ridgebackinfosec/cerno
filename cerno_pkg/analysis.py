@@ -1,7 +1,7 @@
-"""Data analysis functions for comparing and grouping plugin findings.
+"""Data analysis functions for comparing and grouping finding_type findings.
 
 This module provides functions to compare host/port combinations across
-multiple plugin findings from the database, identify superset relationships,
+multiple finding_type findings from the database, identify superset relationships,
 and generate scan statistics.
 """
 
@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Optional, Union, TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
-    from .models import Plugin, Finding
+    from .models import FindingType, Finding
 
 from rich import box
 from rich.progress import (
@@ -41,11 +41,11 @@ def _fetch_host_rows_by_finding(
     findings: list["Finding"],
     conn: Optional[sqlite3.Connection] = None,
 ) -> dict[Optional[int], list[sqlite3.Row]]:
-    """Fetch affected host rows for findings, merging multi-scan siblings.
+    """Fetch affected host rows for findings, merging multi-dataset siblings.
 
     Each finding's own rows plus the rows of its ``extra_finding_ids`` (sibling
-    findings from other selected scans) are bucketed under the representative
-    finding's ID, so analyses see the cross-scan union of hosts.
+    findings from other selected datasets) are bucketed under the representative
+    finding's ID, so analyses see the cross-dataset union of hosts.
 
     Args:
         findings: Representative Finding objects
@@ -96,7 +96,7 @@ def _fetch_host_rows_by_finding(
 
 @log_timing
 def compare_filtered(
-    files: Union[list["Finding"], list[tuple["Finding", "Plugin"]]],
+    files: Union[list["Finding"], list[tuple["Finding", "FindingType"]]],
     conn: Optional[sqlite3.Connection] = None,
 ) -> list[list[str]]:
     """Compare host/port combinations across multiple findings (database-only).
@@ -106,11 +106,11 @@ def compare_filtered(
     comparison tables.
 
     Args:
-        files: List of Finding objects or (Finding, Plugin) tuples to compare
+        files: List of Finding objects or (Finding, FindingType) tuples to compare
         conn: Database connection (optional)
 
     Returns:
-        List of groups where each group is a list of plugin identifiers with
+        List of groups where each group is a list of finding_type identifiers with
         identical host:port combinations, sorted by group size descending
     """
     if not files:
@@ -121,22 +121,24 @@ def compare_filtered(
     info(f"Files compared: {len(files)}")
 
     # Detect what type of input we have (database-only)
-    from .models import Finding, Plugin
+    from .models import Finding, FindingType
 
     if files and isinstance(files[0], tuple) and len(files[0]) == 2:
-        # (Finding, Plugin) tuples - extract Findings with explicit cast for type
+        # (Finding, FindingType) tuples - extract Findings with explicit cast for type
         # narrowing. mypy >=2 narrows the union from the isinstance check above and
         # calls this redundant, but pyright does not, so the cast has to stay.
         tuple_files = cast(  # type: ignore[redundant-cast]
-            list[tuple[Finding, Plugin]], files
+            list[tuple[Finding, FindingType]], files
         )
         findings: list[Finding] = [pf for pf, _ in tuple_files]
-        plugins_map = {pf.plugin_id: plugin for pf, plugin in tuple_files}
+        finding_types_map = {
+            pf.finding_type_id: finding_type for pf, finding_type in tuple_files
+        }
     else:
-        # Just Finding objects (need to query plugins separately for display)
+        # Just Finding objects (need to query finding_types separately for display)
         finding_files = cast(list[Finding], files)
         findings = finding_files
-        plugins_map = {}  # Will be populated if needed
+        finding_types_map = {}  # Will be populated if needed
 
     parsed = []
     with Progress(
@@ -150,7 +152,7 @@ def compare_filtered(
             "Querying findings for comparison...", total=len(files)
         )
 
-        # Database query: fetch all hosts/ports (incl. multi-scan siblings) in one batch
+        # Database query: fetch all hosts/ports (incl. multi-dataset siblings) in one batch
         hosts_by_file = _fetch_host_rows_by_finding(findings, conn)
 
         # Process each Finding
@@ -174,11 +176,11 @@ def compare_filtered(
                     combos[host].add(port)
                     had_explicit = True
 
-            # Display identifier from plugin info (not filename). These
+            # Display identifier from finding_type info (not filename). These
             # strings ARE the group identity: they are returned as the groups
             # and matched back by tui.filter_finding_candidates, so the format
             # must come from the one shared helper.
-            display_name = finding_label(pf, plugins_map.get(pf.plugin_id))
+            display_name = finding_label(pf, finding_types_map.get(pf.finding_type_id))
 
             parsed.append((display_name, hosts, ports_set, combos, had_explicit))
             progress.advance(task)
@@ -255,7 +257,7 @@ def compare_filtered(
 
 @log_timing
 def analyze_inclusions(
-    files: Union[list["Finding"], list[tuple["Finding", "Plugin"]]],
+    files: Union[list["Finding"], list[tuple["Finding", "FindingType"]]],
     conn: Optional[sqlite3.Connection] = None,
 ) -> list[list[str]]:
     """Analyze superset relationships across findings (database-only).
@@ -264,12 +266,12 @@ def analyze_inclusions(
     host:port combinations) and groups them accordingly.
 
     Args:
-        files: List of Finding objects or (Finding, Plugin) tuples to analyze
+        files: List of Finding objects or (Finding, FindingType) tuples to analyze
         conn: Database connection (optional)
 
     Returns:
         List of groups where each group is [superset_name, *covered_names],
-        representing plugins that are fully covered by the superset
+        representing finding_types that are fully covered by the superset
     """
     if not files:
         warn("No files selected for superset analysis.")
@@ -279,22 +281,24 @@ def analyze_inclusions(
     info(f"Files analyzed: {len(files)}")
 
     # Detect what type of input we have (database-only)
-    from .models import Finding, Plugin
+    from .models import Finding, FindingType
 
     if files and isinstance(files[0], tuple) and len(files[0]) == 2:
-        # (Finding, Plugin) tuples - extract Findings with explicit cast for type
+        # (Finding, FindingType) tuples - extract Findings with explicit cast for type
         # narrowing. mypy >=2 narrows the union from the isinstance check above and
         # calls this redundant, but pyright does not, so the cast has to stay.
         tuple_files = cast(  # type: ignore[redundant-cast]
-            list[tuple[Finding, Plugin]], files
+            list[tuple[Finding, FindingType]], files
         )
         findings: list[Finding] = [pf for pf, _ in tuple_files]
-        plugins_map = {pf.plugin_id: plugin for pf, plugin in tuple_files}
+        finding_types_map = {
+            pf.finding_type_id: finding_type for pf, finding_type in tuple_files
+        }
     else:
         # Just Finding objects with explicit cast for type narrowing
         finding_files = cast(list[Finding], files)
         findings = finding_files
-        plugins_map = {}
+        finding_types_map = {}
 
     parsed = []
     item_sets = {}
@@ -307,7 +311,7 @@ def analyze_inclusions(
     ) as progress:
         task = progress.add_task("Querying findings...", total=len(files))
 
-        # Database query: fetch all hosts/ports (incl. multi-scan siblings) in one batch
+        # Database query: fetch all hosts/ports (incl. multi-dataset siblings) in one batch
         hosts_by_file = _fetch_host_rows_by_finding(findings, conn)
 
         # Process each Finding
@@ -331,11 +335,11 @@ def analyze_inclusions(
                     combos[host].add(port)
                     had_explicit = True
 
-            # Display identifier from plugin info (not filename). These
+            # Display identifier from finding_type info (not filename). These
             # strings ARE the group identity: they are returned as the groups
             # and matched back by tui.filter_finding_candidates, so the format
             # must come from the one shared helper.
-            display_name = finding_label(pf, plugins_map.get(pf.plugin_id))
+            display_name = finding_label(pf, finding_types_map.get(pf.finding_type_id))
 
             parsed.append((display_name, hosts, ports_set, combos, had_explicit))
             item_sets[display_name] = build_item_set(
@@ -346,7 +350,7 @@ def analyze_inclusions(
     # Extract display names from parsed results
     display_names = [display_name for display_name, _, _, _, _ in parsed]
 
-    # Build coverage map: for each plugin, which others does it fully include?
+    # Build coverage map: for each finding_type, which others does it fully include?
     cover_map: dict[str, set[str]] = {
         display_name: set() for display_name in display_names
     }
@@ -359,7 +363,7 @@ def analyze_inclusions(
             if items_b.issubset(items_a):
                 cover_map[name_a].add(name_b)
 
-    # Maximals = plugins not strictly contained by any other
+    # Maximals = finding_types not strictly contained by any other
     maximals = []
     for name_a in display_names:
         items_a = item_sets[name_a]
@@ -395,7 +399,7 @@ def analyze_inclusions(
             sample = "\n".join(sample_names) + (
                 f"\n... (+{len(covered_list)-8} more)" if len(covered_list) > 8 else ""
             )
-            # Text, not str: root/covered names are scan-derived plugin names
+            # Text, not str: root/covered names are scan-derived finding_type names
             # and Rich markup-parses any bare string handed to a cell.
             groups_table.add_row(
                 str(i), Text(root), str(len(covered_list)), Text(sample or "—")
@@ -433,21 +437,21 @@ def natural_key(s: str) -> list[int | str]:
     ]
 
 
-def count_reviewed_in_scan(
-    scan_dir: Path,
-    scan_id: int,
-    scan_ids: Optional[list[int]] = None,
+def count_reviewed_in_dataset(
+    dataset_dir: Path,
+    dataset_id: int,
+    dataset_ids: Optional[list[int]] = None,
 ) -> tuple[int, int]:
-    """Count total and Done findings in a scan (database-only).
+    """Count total and Done findings in a dataset (database-only).
 
     Args:
-        scan_dir: Path to the scan directory (unused, kept for API compatibility)
-        scan_id: Scan ID for database queries (required)
-        scan_ids: Optional list of scan IDs for multi-scan queries (overrides scan_id)
+        dataset_dir: Path to the dataset directory (unused, kept for API compatibility)
+        dataset_id: Dataset ID for database queries (required)
+        dataset_ids: Optional list of dataset IDs for multi-dataset queries (overrides dataset_id)
 
     Returns:
         Tuple of (total_findings, done_findings)
     """
     from .models import Finding
 
-    return Finding.count_by_scan(scan_id, scan_ids=scan_ids)
+    return Finding.count_by_dataset(dataset_id, dataset_ids=dataset_ids)

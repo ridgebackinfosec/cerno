@@ -187,12 +187,13 @@ class ToolContext:
     workdir: Path          # Working directory
     results_dir: Path      # Results directory
     oabase: Path           # Output base path
-    scan_dir: Path         # Scan directory
+    dataset_dir: Path      # Dataset directory
     sev_dir: Path          # Severity directory
 
     # Optional metadata
-    plugin_url: Optional[str] = None    # Details page captured at import
-                                       # (Tenable for Nessus, nuclei-templates for nuclei)
+    details_url: Optional[str] = None    # Details page captured at import
+                                       # (Tenable for Nessus, nuclei-templates for
+                                       #  nuclei, PortSwigger KB for Burp)
     chosen_file: Optional[Path] = None  # Selected finding's display path
     use_proxy: bool = False             # Route through proxychains4
 ```
@@ -248,9 +249,9 @@ ctx = ToolContext(
     workdir=workdir,
     results_dir=results_dir,
     oabase=oabase,
-    scan_dir=scan_dir,
+    dataset_dir=dataset_dir,
     sev_dir=sev_dir,
-    plugin_url=plugin_url,
+    details_url=details_url,
     chosen_file=chosen,
 )
 

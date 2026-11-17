@@ -31,7 +31,7 @@ from .ansi import (
 )
 from .config import load_config
 from .constants import (
-    PLUGIN_ID_LABELS,
+    FINDING_TYPE_ID_LABELS,
     REVIEW_MOVE_LABELS,
     REVIEW_STATE_DONE,
     REVIEW_STATE_ICONS,
@@ -50,8 +50,12 @@ from .fs import default_page_size, finding_label, pretty_severity_label
 from .logging_setup import log_timing, log_debug
 
 if TYPE_CHECKING:
-    from .models import Finding, Plugin
-    from .cross_scan import ScanComparisonResult, HostVulnerabilityHistory, ScanSnapshot
+    from .models import Finding, FindingType
+    from .cross_dataset import (
+        DatasetComparisonResult,
+        HostVulnerabilityHistory,
+        DatasetSnapshot,
+    )
 
 _console_global = get_console()
 
@@ -68,7 +72,7 @@ def show_progress(message: str, threshold_seconds: float = 0.5):
 
     Example:
         >>> with show_progress("Loading 755 findings..."):
-        ...     findings = Finding.get_by_scan_with_plugin(scan_id)
+        ...     findings = Finding.get_by_dataset_with_finding_type(dataset_id)
     """
     start_time = time.time()
 
@@ -335,7 +339,7 @@ def render_empty_state(context: str, filter_text: str = "") -> None:
         info("\nNo findings at this severity level.")
         info("")
         info("This may mean:")
-        info("  • The scan found no issues of this severity")
+        info("  • This dataset has no issues of this severity")
         info("  • All findings of this severity have been filtered out")
         info("")
         info("Press [B] to return to severity menu.")
@@ -366,7 +370,7 @@ def render_empty_state(context: str, filter_text: str = "") -> None:
         info("")
 
     elif context == "no_findings":
-        warn("\nNo findings in this scan.")
+        warn("\nNo findings in this dataset.")
         info("")
         info("This could mean:")
         info("  • The imported file contained no findings")
@@ -408,15 +412,15 @@ def render_pagination_indicator(
     return f"[{bar}] Page {page_display} ({total_items} total)"
 
 
-def render_scan_context_header(scan: Any, scan_id: int) -> None:
+def render_dataset_context_header(dataset: Any, dataset_id: int) -> None:
     """Render compact scan context header with metadata and progress.
 
     Args:
-        scan: Scan database object
-        scan_id: Scan ID for database queries
+        scan: Dataset database object
+        dataset_id: Dataset ID for database queries
 
-    Displays scan overview including:
-    - Scan name and file
+    Displays dataset overview including:
+    - Dataset name and file
     - Import timestamp
     - Total findings count
     - Review progress (unreviewed/in progress/done)
@@ -437,9 +441,9 @@ def render_scan_context_header(scan: Any, scan_id: int) -> None:
                 SUM(CASE WHEN review_state = 'done' THEN 1 ELSE 0 END) as done,
                 COUNT(*) as total
             FROM findings
-            WHERE scan_id = ?
+            WHERE dataset_id = ?
         """,
-            (scan_id,),
+            (dataset_id,),
         )
         row = cursor.fetchone()
         unreviewed_count = row[0] if row else 0
@@ -448,14 +452,14 @@ def render_scan_context_header(scan: Any, scan_id: int) -> None:
         total_count = row[3] if row else 0
 
     # Format timestamp as relative time if recent, otherwise date
-    if scan.imported_at:
+    if dataset.imported_at:
         try:
-            if isinstance(scan.imported_at, str):
+            if isinstance(dataset.imported_at, str):
                 imported_dt = datetime.fromisoformat(
-                    scan.imported_at.replace("Z", "+00:00")
+                    dataset.imported_at.replace("Z", "+00:00")
                 )
             else:
-                imported_dt = scan.imported_at
+                imported_dt = dataset.imported_at
 
             now = (
                 datetime.now(imported_dt.tzinfo)
@@ -485,21 +489,21 @@ def render_scan_context_header(scan: Any, scan_id: int) -> None:
     term_width = get_terminal_width()
 
     # Build header text
-    scan_name = scan.scan_name or "Unknown"
-    nessus_file = scan.source_file_path or "unknown"
+    dataset_name = dataset.dataset_name or "Unknown"
+    nessus_file = dataset.source_file_path or "unknown"
 
     if term_width >= 120:
         # Wide terminal: single line
         header_text = Text()
-        header_text.append("Scan: ", style=style_if_enabled("bold"))
-        header_text.append(f"{scan_name}", style=style_if_enabled("cyan"))
+        header_text.append("Dataset: ", style=style_if_enabled("bold"))
+        header_text.append(f"{dataset_name}", style=style_if_enabled("cyan"))
         header_text.append(" | ", style=style_if_enabled("dim"))
         header_text.append(f"File: {nessus_file}", style=None)
         header_text.append(" | ", style=style_if_enabled("dim"))
         header_text.append(f"Imported: {time_ago}", style=None)
         header_text.append(" | ", style=style_if_enabled("dim"))
         header_text.append(
-            f"Total: {total_count} plugins", style=style_if_enabled("bold")
+            f"Total: {total_count} finding_types", style=style_if_enabled("bold")
         )
         header_text.append(" | ", style=style_if_enabled("dim"))
         _append_status_counts(
@@ -510,13 +514,15 @@ def render_scan_context_header(scan: Any, scan_id: int) -> None:
     else:
         # Narrow/medium terminal: multi-line layout
         line1 = Text()
-        line1.append("Scan: ", style=style_if_enabled("bold"))
-        line1.append(f"{scan_name}", style=style_if_enabled("cyan"))
+        line1.append("Dataset: ", style=style_if_enabled("bold"))
+        line1.append(f"{dataset_name}", style=style_if_enabled("cyan"))
         line1.append(" | ", style=style_if_enabled("dim"))
         line1.append(f"Imported: {time_ago}", style=None)
 
         line2 = Text()
-        line2.append(f"Total: {total_count} plugins", style=style_if_enabled("bold"))
+        line2.append(
+            f"Total: {total_count} finding_types", style=style_if_enabled("bold")
+        )
         line2.append(" | ", style=style_if_enabled("dim"))
         _append_status_counts(line2, unreviewed_count, in_progress_count, done_count)
 
@@ -527,18 +533,18 @@ def render_scan_context_header(scan: Any, scan_id: int) -> None:
     _console_global.print("─" * min(term_width, 80))
 
 
-def render_scan_table(scans: list[Path]) -> None:
-    """Render a table of available scan directories.
+def render_dataset_table(datasets: list[Path]) -> None:
+    """Render a table of available dataset directories.
 
     Args:
-        scans: List of scan directory paths to display
+        datasets: List of dataset directory paths to display
     """
     table = Table(title=None, box=box.SIMPLE, show_lines=False, pad_edge=False)
     table.add_column("#", justify="right", no_wrap=True, max_width=5)
-    table.add_column("Scan", overflow="fold")
-    for i, scan_dir in enumerate(scans, 1):
-        # Text: the scan name comes from the .nessus file or filename.
-        table.add_row(str(i), Text(scan_dir.name))
+    table.add_column("Dataset", overflow="fold")
+    for i, dataset_dir in enumerate(datasets, 1):
+        # Text: the dataset name comes from the .nessus file or filename.
+        table.add_row(str(i), Text(dataset_dir.name))
     _console_global.print(table)
 
 
@@ -546,13 +552,13 @@ def render_severity_table(
     severities: list[Path],
     msf_summary: Optional[tuple[int, int, int, int]] = None,
     workflow_summary: Optional[tuple[int, int, int, int]] = None,
-    scan_id: Optional[int] = None,
-    plugin_ids: Optional[list[str]] = None,
-    scan_ids: Optional[list[int]] = None,
+    dataset_id: Optional[int] = None,
+    finding_type_ids: Optional[list[str]] = None,
+    dataset_ids: Optional[list[int]] = None,
 ) -> None:
     """Render a table of severity levels with review progress percentages.
 
-    Database-only mode: scan_id is required for database queries.
+    Database-only mode: dataset_id is required for database queries.
 
     Special filters (Metasploit, Workflow) are shown in a separate section
     below severity levels, with letter indices (M, W) instead of numbers.
@@ -563,9 +569,9 @@ def render_severity_table(
             for Metasploit modules row. Only shown if provided.
         workflow_summary: Optional tuple of (unreviewed, in_progress, done, total)
             for Workflow Mapped row. Only shown if provided.
-        scan_id: Scan ID for database queries (required)
-        plugin_ids: Optional list of plugin IDs to filter counts by (for host filtering)
-        scan_ids: Optional list of scan IDs for multi-scan queries (overrides scan_id)
+        dataset_id: Dataset ID for database queries (required)
+        finding_type_ids: Optional list of finding_type IDs to filter counts by (for host filtering)
+        dataset_ids: Optional list of dataset IDs for multi-dataset queries (overrides dataset_id)
     """
     table = Table(title=None, box=box.SIMPLE, show_lines=False, pad_edge=False)
     table.add_column("#", justify="right", no_wrap=True, max_width=5)
@@ -580,21 +586,21 @@ def render_severity_table(
         )
     table.add_column("Total", justify="right", no_wrap=True, max_width=8)
 
-    if scan_id is None and not scan_ids:
-        # scan_id should always be provided in DB-only mode, but handle gracefully
+    if dataset_id is None and not dataset_ids:
+        # dataset_id should always be provided in DB-only mode, but handle gracefully
         from .ansi import warn
 
-        warn("scan_id not provided - cannot render severity table")
+        warn("dataset_id not provided - cannot render severity table")
         return
 
-    effective_scan_id = scan_id or (scan_ids[0] if scan_ids else 0)
+    effective_dataset_id = dataset_id or (dataset_ids[0] if dataset_ids else 0)
 
     for i, severity_dir in enumerate(severities, 1):
         counts = count_severity_findings(
             severity_dir,
-            scan_id=effective_scan_id,
-            plugin_ids=plugin_ids,
-            scan_ids=scan_ids,
+            dataset_id=effective_dataset_id,
+            finding_type_ids=finding_type_ids,
+            dataset_ids=dataset_ids,
         )
         label = pretty_severity_label(severity_dir.name)
         table.add_row(str(i), severity_cell(label), *review_count_cells(counts))
@@ -674,19 +680,19 @@ def render_finding_list_table(
     get_counts_for: Any,
     row_offset: int = 0,
     show_severity: bool = False,
-    scan_labels: Optional[dict[str, str]] = None,
+    dataset_labels: Optional[dict[str, str]] = None,
     chat_history_finding_ids: frozenset[int] = frozenset(),
 ) -> None:
-    """Render a paginated file list table with plugin info from database.
+    """Render a paginated file list table with finding_type info from database.
 
     Args:
-        display: List of (Finding, Plugin) tuples to display on this page
-        sort_mode: Current sort mode ("severity", "plugin_id", "name" or "hosts")
+        display: List of (Finding, FindingType) tuples to display on this page
+        sort_mode: Current sort mode ("severity", "finding_type_id", "name" or "hosts")
         get_counts_for: Function to get (host_count, ports_str) for a Finding object
         row_offset: Starting row number for pagination
         show_severity: Deprecated - severity column is now always shown
-        scan_labels: Optional dict mapping plugin_id to scan label (e.g., "All 4" or "2 of 4").
-                     When provided, adds a "Scans" column. When None (default), single-scan mode.
+        dataset_labels: Optional dict mapping finding_type_id to dataset label (e.g., "All 4" or "2 of 4").
+                     When provided, adds a "Datasets" column. When None (default), single-dataset mode.
         chat_history_finding_ids: Set of finding_ids that have Claude conversation history.
                                    When non-empty, adds an "AI" column with a ✦ indicator.
     Always ends with a "Status" column (○ Unreviewed, ◐ In Progress)
@@ -697,11 +703,11 @@ def render_finding_list_table(
     # Size the id column to this page's widest id. A fixed cap truncated every
     # namespaced id ("nuclei:http-missing-security-headers" became
     # "nuclei:ht…"), while a permanently wide column would steal space from
-    # Name on Nessus-only scans, where ids are five or six digits.
-    page_ids = [str(plugin.plugin_id) for _finding, plugin in display]
+    # Name on Nessus-only datasets, where ids are five or six digits.
+    page_ids = [str(finding_type.finding_type_id) for _finding, finding_type in display]
     reserved = (
         _FIXED_COLUMNS_WIDTH
-        + (11 if scan_labels is not None else 0)
+        + (11 if dataset_labels is not None else 0)
         + (5 if show_ai_column else 0)
     )
     # Measure against the console this table is actually printed to, not the
@@ -729,25 +735,25 @@ def render_finding_list_table(
     table.add_column("Name", overflow="fold")
     # Always show host count column
     table.add_column("Hosts", justify="right", no_wrap=True, max_width=8)
-    if scan_labels is not None:
-        table.add_column("Scans", justify="right", no_wrap=True, max_width=10)
+    if dataset_labels is not None:
+        table.add_column("Datasets", justify="right", no_wrap=True, max_width=10)
     if show_ai_column:
         table.add_column("AI", justify="center", no_wrap=True, max_width=4)
     table.add_column("Status", justify="center", no_wrap=True, max_width=6)
     table.caption = _status_legend()
     table.caption_justify = "left"
 
-    for i, (plugin_file, plugin) in enumerate(display, 1):
+    for i, (finding_type_file, finding_type) in enumerate(display, 1):
         row_number = row_offset + i
 
-        # Use plugin data directly from database
-        plugin_id_str = str(plugin.plugin_id)
-        plugin_name = plugin.plugin_name or "Unknown"
+        # Use finding_type data directly from database
+        finding_type_id_str = str(finding_type.finding_type_id)
+        finding_type_name = finding_type.finding_type_name or "Unknown"
 
-        # Get severity from plugin metadata
+        # Get severity from finding_type metadata
         from .nessus_import import severity_label_from_int
 
-        label = severity_label_from_int(plugin.severity_int)
+        label = severity_label_from_int(finding_type.severity_int)
 
         # Adaptive severity labels based on terminal width. get_terminal_width
         # is imported at module scope; re-importing it here would make the name
@@ -779,33 +785,35 @@ def render_finding_list_table(
         # Color-code the severity label using severity_cell
         sev_colored = severity_cell(sev_display)
 
-        # Text, not str: plugin_name is scan-derived and Rich markup-parses any
+        # Text, not str: finding_type_name is scan-derived and Rich markup-parses any
         # bare string handed to a cell, so brackets in it must not be tags.
         # Both the id and the name are scan-derived: Rich markup-parses any
         # bare str it is handed, so neither may be passed as one.
         row_data = [
             str(row_number),
             sev_colored,
-            Text(plugin_id_str),
-            Text(plugin_name),
+            Text(finding_type_id_str),
+            Text(finding_type_name),
         ]
 
         # Always retrieve and show host count from database
-        host_count, _ports_str = get_counts_for(plugin_file)
+        host_count, _ports_str = get_counts_for(finding_type_file)
         row_data.append(str(host_count))
 
-        if scan_labels is not None:
-            row_data.append(scan_labels.get(plugin.plugin_id, ""))
+        if dataset_labels is not None:
+            row_data.append(dataset_labels.get(finding_type.finding_type_id, ""))
 
         if show_ai_column:
-            finding_id = getattr(plugin_file, "finding_id", None)
+            finding_id = getattr(finding_type_file, "finding_id", None)
             if finding_id is not None and finding_id in chat_history_finding_ids:
                 ai_cell = Text("✦", style="bold magenta")
             else:
                 ai_cell = Text("")
             row_data.append(ai_cell)
 
-        row_data.append(_review_state_cell(getattr(plugin_file, "review_state", None)))
+        row_data.append(
+            _review_state_cell(getattr(finding_type_file, "review_state", None))
+        )
 
         table.add_row(*row_data)
 
@@ -908,10 +916,10 @@ def render_compare_tables(
         info("\nAll filtered findings fall into a single identical group.")
 
 
-#: Display label per findings-list sort mode ([S] cycles severity → plugin_id → name → hosts).
+#: Display label per findings-list sort mode ([S] cycles severity → finding_type_id → name → hosts).
 _SORT_LABELS = {
     "severity": "Severity",
-    "plugin_id": FINDING_ID_HEADER,
+    "finding_type_id": FINDING_ID_HEADER,
     "hosts": "Hosts",
     "name": "Name",
 }
@@ -980,7 +988,7 @@ def render_actions_footer(
         candidates_count: Number of findings matching current filter
         unique_cve_count: Unique CVEs across the filtered findings
         unique_host_count: Unique hosts across the filtered findings
-        sort_mode: Current sort mode ("severity", "plugin_id", "name" or "hosts")
+        sort_mode: Current sort mode ("severity", "finding_type_id", "name" or "hosts")
         can_next: Whether next page is available
         can_prev: Whether previous page is available
         has_claude: Whether Claude Assistant is available and enabled
@@ -1033,6 +1041,7 @@ def render_actions_footer(
         [
             key_text("E", f"CVEs ({unique_cve_count})"),
             key_text("M", f"{move_label} ({candidates_count})"),
+            key_text("+", "Add finding"),
         ]
     )
     right_row3_items = []
@@ -1081,6 +1090,7 @@ def render_finding_actions_footer(
     claude_installed: bool = False,
     use_proxy: bool = False,
     no_tools: bool = False,
+    is_authored_finding: bool = False,
 ) -> None:
     """Render action footer for finding review with responsive layout.
 
@@ -1092,12 +1102,15 @@ def render_finding_actions_footer(
     Args:
         review_state: Current review state of the finding; sets the [M] label
             ("Move to In Progress" / "Move to Done" / "Move back to Unreviewed")
-        has_workflow: Whether workflow action is available for this plugin
+        has_workflow: Whether workflow action is available for this finding_type
         has_nxc_data: Whether NetExec data is available for these hosts
         has_claude: Whether Claude Assistant is enabled and available
         claude_installed: Whether claude CLI is on PATH (shows [A] for the opt-in prompt)
         use_proxy: Whether proxychains4 routing is active (shows the [PROXY] badge)
         no_tools: Review-only mode (``--no-tools``); hides the [T] Run tool action
+        is_authored_finding: Whether this finding was hand-authored (``operator:``
+            or ``agent:``); shows the [U] Update action, which no scanner
+            finding offers
     """
     from .ansi import get_terminal_width
 
@@ -1125,9 +1138,14 @@ def render_finding_actions_footer(
     right_row2 = Text() if no_tools else join_actions_texts([key_text("T", "Run tool")])
 
     # Row 3: Control actions (always present)
-    left_row3 = join_actions_texts(
-        [_move_action_text(review_state), key_text("R", "Record verdict")]
-    )
+    left_row3_items = [_move_action_text(review_state), key_text("R", "Record verdict")]
+    if is_authored_finding:
+        # Only a hand-authored finding is editable, whichever channel wrote it:
+        # a scanner finding is a record of what the scanner reported, so
+        # offering [U] on one would promise something handle_finding_view
+        # refuses.
+        left_row3_items.append(key_text("U", "Update finding"))
+    left_row3 = join_actions_texts(left_row3_items)
     right_row3 = join_actions_texts([key_text("B", "Back")])
 
     # Row 4: Claude Assistant (conditional)
@@ -1431,7 +1449,7 @@ def show_actions_help(
         candidates_count: Number of findings matching current filter
         unique_cve_count: Unique CVEs across the filtered findings
         unique_host_count: Unique hosts across the filtered findings
-        sort_mode: Current sort mode ("severity", "plugin_id", "name" or "hosts")
+        sort_mode: Current sort mode ("severity", "finding_type_id", "name" or "hosts")
         can_next: Whether next page is available
         can_prev: Whether previous page is available
         status_filter: Active review-state filter ("in_progress" / "done"), or
@@ -1495,6 +1513,14 @@ def show_actions_help(
         ),
         key_text(
             "E", f"CVEs ({unique_cve_count}) - Extract CVEs for all filtered findings"
+        ),
+    )
+    table.add_row(
+        Text("Authoring", style="bold"),
+        key_text(
+            "+",
+            "Add finding - Write up something you found by hand, into the "
+            "Operator scan",
         ),
     )
     if group_applied:
@@ -1592,9 +1618,9 @@ def render_responsive_action_menu(
 
 def count_severity_findings(
     directory: Path,
-    scan_id: int,
-    plugin_ids: Optional[list[str]] = None,
-    scan_ids: Optional[list[int]] = None,
+    dataset_id: int,
+    finding_type_ids: Optional[list[str]] = None,
+    dataset_ids: Optional[list[int]] = None,
 ) -> tuple[int, int, int, int]:
     """Count findings in a severity directory by review state.
 
@@ -1602,9 +1628,9 @@ def count_severity_findings(
 
     Args:
         directory: Severity directory path
-        scan_id: Scan ID for database queries (required)
-        plugin_ids: Optional list of plugin IDs to filter by (for host filtering)
-        scan_ids: Optional list of scan IDs for multi-scan queries (overrides scan_id)
+        dataset_id: Dataset ID for database queries (required)
+        finding_type_ids: Optional list of finding_type IDs to filter by (for host filtering)
+        dataset_ids: Optional list of dataset IDs for multi-dataset queries (overrides dataset_id)
 
     Returns:
         Tuple of (unreviewed, in_progress, done, total)
@@ -1612,8 +1638,11 @@ def count_severity_findings(
     from .models import Finding
 
     severity_dir_name = directory.name
-    return Finding.count_by_scan_severity(
-        scan_id, severity_dir_name, plugin_ids=plugin_ids, scan_ids=scan_ids
+    return Finding.count_by_dataset_severity(
+        dataset_id,
+        severity_dir_name,
+        finding_type_ids=finding_type_ids,
+        dataset_ids=dataset_ids,
     )
 
 
@@ -1752,18 +1781,18 @@ def file_raw_payload_text(finding: "Finding") -> str:
     return content
 
 
-def file_raw_paged_text(finding: "Finding", plugin: "Plugin") -> str:
+def file_raw_paged_text(finding: "Finding", finding_type: "FindingType") -> str:
     """
     Prepare raw file content for paged viewing with metadata from database.
 
     Args:
         finding: Finding database object
-        plugin: Plugin metadata object
+        finding_type: FindingType metadata object
 
     Returns:
         Formatted string with file info and content
     """
-    display_name = finding_label(None, plugin)
+    display_name = finding_label(None, finding_type)
 
     # Get content from database
     content = file_raw_payload_text(finding)
@@ -1833,19 +1862,19 @@ def grouped_payload_text(finding: "Finding") -> str:
     return "\n".join(out) + ("\n" if out else "")
 
 
-def grouped_paged_text(finding: "Finding", plugin: "Plugin") -> str:
+def grouped_paged_text(finding: "Finding", finding_type: "FindingType") -> str:
     """
     Prepare grouped host:port content for paged viewing from database.
 
     Args:
         finding: Finding database object
-        plugin: Plugin metadata object
+        finding_type: FindingType metadata object
 
     Returns:
         Formatted string with header and grouped content
     """
     body = grouped_payload_text(finding)
-    display_name = finding_label(None, plugin)
+    display_name = finding_label(None, finding_type)
     return f"Grouped view: {display_name}\n{body}"
 
 
@@ -1864,30 +1893,30 @@ def hosts_only_payload_text(finding: "Finding") -> str:
     return "\n".join(hosts) + ("\n" if hosts else "")
 
 
-def hosts_only_paged_text(finding: "Finding", plugin: "Plugin") -> str:
+def hosts_only_paged_text(finding: "Finding", finding_type: "FindingType") -> str:
     """
     Prepare hosts-only content for paged viewing from database.
 
     Args:
         finding: Finding database object
-        plugin: Plugin metadata object
+        finding_type: FindingType metadata object
 
     Returns:
         Formatted string with header and host list
     """
     body = hosts_only_payload_text(finding)
-    display_name = finding_label(None, plugin)
+    display_name = finding_label(None, finding_type)
     return f"Hosts-only view: {display_name}\n{body}"
 
 
 # ---------------------------------------------------------------------------
 # Aggregate host view helpers (used by [V] in the findings list)
-# These operate across multiple (Finding, Plugin) tuples rather than one finding.
+# These operate across multiple (Finding, FindingType) tuples rather than one finding.
 # ---------------------------------------------------------------------------
 
 
 def _collect_aggregate_host_ports(
-    findings_with_plugins: list,
+    findings_with_finding_types: list,
     conn: Any,
 ) -> tuple[dict, list]:
     """Collect deduplicated host→ports across all findings in scope.
@@ -1898,7 +1927,7 @@ def _collect_aggregate_host_ports(
     from collections import defaultdict
 
     host_ports: dict = defaultdict(set)
-    for finding, _plugin in findings_with_plugins:
+    for finding, _finding_type in findings_with_finding_types:
         for hp in finding.get_all_host_port_lines(conn):
             if hp.startswith("["):
                 host, port_str = hp.rsplit(":", 1)
@@ -1962,29 +1991,31 @@ def aggregate_raw_paged_text(
     return f"Raw view: {scope_label}\n{aggregate_raw_payload_text(host_ports, sorted_hosts)}"
 
 
-def build_plugin_output_details(finding: "Finding", plugin: "Plugin") -> Optional[str]:
-    """Build formatted text for plugin output details display.
+def build_evidence_details(
+    finding: "Finding", finding_type: "FindingType"
+) -> Optional[str]:
+    """Build formatted text for finding_type output details display.
 
-    Shows plugin_output data for each affected host:port combination.
+    Shows evidence data for each affected host:port combination.
     If multiple hosts have the same output, shows all separately (no deduplication).
 
     Args:
         finding: Finding database object
-        plugin: Plugin metadata object
+        finding_type: FindingType metadata object
 
     Returns:
         Formatted string for display via menu_pager(), or None if no outputs
     """
     from .database import get_connection
 
-    # Get all plugin outputs from database
+    # Get all finding_type outputs from database
     with get_connection() as conn:
-        outputs = finding.get_plugin_outputs_by_host(conn)
+        outputs = finding.get_evidence_by_host(conn)
 
     if not outputs:
         return None
 
-    # Filter out entries with no plugin_output (None or empty)
+    # Filter out entries with no evidence (None or empty)
     outputs_with_data = [
         (host, port, output)
         for (host, port, output) in outputs
@@ -1996,13 +2027,15 @@ def build_plugin_output_details(finding: "Finding", plugin: "Plugin") -> Optiona
 
     # Build formatted output
     lines = []
-    lines.append(f"Finding Details: {plugin.plugin_name} ({plugin.plugin_id})")
+    lines.append(
+        f"Finding Details: {finding_type.finding_type_name} ({finding_type.finding_type_id})"
+    )
     lines.append("=" * 80)
-    lines.append(f"Severity: {plugin.severity_label}")
+    lines.append(f"Severity: {finding_type.severity_label}")
     lines.append(f"Total hosts with output: {len(outputs_with_data)}")
     lines.append("")
 
-    # Display each host:port's plugin output
+    # Display each host:port's finding_type output
     for idx, (host, port, output) in enumerate(outputs_with_data, 1):
         # Format host:port
         if port is not None:
@@ -2019,7 +2052,7 @@ def build_plugin_output_details(finding: "Finding", plugin: "Plugin") -> Optiona
 
 
 def display_finding_preview(
-    plugin: "Plugin",
+    finding_type: "FindingType",
     finding: "Finding",
     sev_dir: Optional[Path],
     chosen: Path,
@@ -2028,7 +2061,7 @@ def display_finding_preview(
     """Display finding preview panel with metadata (database-only).
 
     Args:
-        plugin: Plugin metadata object
+        finding_type: FindingType metadata object
         finding: Finding database object (required)
         sev_dir: Severity directory path
         chosen: Synthetic finding path (unused; kept for caller compatibility)
@@ -2041,21 +2074,23 @@ def display_finding_preview(
     # Build Rich Panel preview
     content = Text()
 
-    # Check for Metasploit module from plugin metadata
-    is_msf = plugin.has_metasploit
+    # Check for Metasploit module from finding_type metadata
+    is_msf = finding_type.has_metasploit
 
     # Source-aware identifier row ("Nessus Plugin ID" / "Nuclei Template ID").
     # Text.append never parses markup, so the id needs no escaping here.
-    id_label = PLUGIN_ID_LABELS.get(plugin.source, FINDING_ID_HEADER)
+    id_label = FINDING_TYPE_ID_LABELS.get(finding_type.source, FINDING_ID_HEADER)
     content.append(f"{id_label}: ", style=style_if_enabled("cyan"))
-    content.append(f"{plugin.plugin_id}\n", style=style_if_enabled("yellow"))
+    content.append(
+        f"{finding_type.finding_type_id}\n", style=style_if_enabled("yellow")
+    )
 
     # Severity
     content.append("Severity: ", style=style_if_enabled("cyan"))
     sev_label = (
         pretty_severity_label(sev_dir.name)
         if sev_dir
-        else f"{plugin.severity_int}_{plugin.severity_label or 'Unknown'}"
+        else f"{finding_type.severity_int}_{finding_type.severity_label or 'Unknown'}"
     )
     content.append(f"{sev_label}\n", style=severity_style(sev_label))
 
@@ -2063,11 +2098,11 @@ def display_finding_preview(
     # target keeps the full URL. The link is applied even when colors are off.
     # The row is omitted entirely when the source has no known details page,
     # rather than fabricating a Tenable link for a non-Nessus finding.
-    plugin_url = plugin.details_url
-    if plugin_url:
-        display_url = plugin_url.replace("://www.", "://", 1)
+    details_url = finding_type.details_url
+    if details_url:
+        display_url = details_url.replace("://www.", "://", 1)
         content.append("Finding Details: ", style=style_if_enabled("cyan"))
-        link_style = f"{style_if_enabled('blue underline')} link {plugin_url}".strip()
+        link_style = f"{style_if_enabled('blue underline')} link {details_url}".strip()
         content.append(f"{display_url}\n", style=link_style)
 
     # Verification verdict (read-only; truth, distinct from review status).
@@ -2132,17 +2167,19 @@ def display_finding_preview(
         else:
             content.append(f"{hosts[0]}\n", style=style_if_enabled("yellow"))
 
-    # Create panel with plugin name as title and indicators in subtitle
+    # Create panel with finding_type name as title and indicators in subtitle
     subtitle_parts = []
 
     # Add Metasploit badge (if available)
     if is_msf:
-        if plugin.metasploit_names and len(plugin.metasploit_names) > 0:
+        if finding_type.metasploit_names and len(finding_type.metasploit_names) > 0:
             # Show count if multiple modules, otherwise show first module name
-            if len(plugin.metasploit_names) > 1:
-                msf_text = f"⚡ Metasploit ({len(plugin.metasploit_names)} modules)"
+            if len(finding_type.metasploit_names) > 1:
+                msf_text = (
+                    f"⚡ Metasploit ({len(finding_type.metasploit_names)} modules)"
+                )
             else:
-                msf_module = plugin.metasploit_names[0]
+                msf_module = finding_type.metasploit_names[0]
                 # Truncate long module names to 40 chars
                 if len(msf_module) > 40:
                     msf_module = msf_module[:37] + "..."
@@ -2152,8 +2189,8 @@ def display_finding_preview(
             subtitle_parts.append("⚡ Metasploit")
 
     # Add Workflow badge (if available)
-    if workflow_mapper and plugin:
-        workflow = workflow_mapper.get_workflow(str(plugin.plugin_id))
+    if workflow_mapper and finding_type:
+        workflow = workflow_mapper.get_workflow(str(finding_type.finding_type_id))
         if workflow:
             workflow_name = workflow.workflow_name
             # Truncate long workflow names to 40 chars
@@ -2165,9 +2202,11 @@ def display_finding_preview(
 
     panel = Panel(
         content,
-        # Text, not markup: plugin_name is scan-derived, so brackets in it must
+        # Text, not markup: finding_type_name is scan-derived, so brackets in it must
         # never be parsed as style tags.
-        title=Text(str(plugin.plugin_name), style=style_if_enabled("bold cyan")),
+        title=Text(
+            str(finding_type.finding_type_name), style=style_if_enabled("bold cyan")
+        ),
         subtitle=subtitle,
         subtitle_align="center",
         title_align="center",
@@ -2515,35 +2554,37 @@ def display_nxc_per_host_detail(hosts: List[str]) -> None:
 # ===================================================================
 
 
-def bulk_extract_cves_for_plugins(plugins: List[tuple[str, str]]) -> None:
+def bulk_extract_cves_for_finding_types(finding_types: List[tuple[str, str]]) -> None:
     """
-    Display CVEs for multiple plugins from database (read-only, no web scraping).
+    Display CVEs for multiple finding_types from database (read-only, no web scraping).
 
-    Queries the database for CVEs associated with each plugin and displays
-    a consolidated list organized by plugin.
+    Queries the database for CVEs associated with each finding_type and displays
+    a consolidated list organized by finding_type.
 
     Args:
-        plugins: List of (plugin_id, plugin_name) tuples
+        finding_types: List of (finding_type_id, finding_type_name) tuples
     """
-    from .models import Plugin
+    from .models import FindingType
     from .database import get_connection
 
     header("CVE Information for Filtered Findings")
-    info(f"Displaying CVEs from {len(plugins)} finding(s)...\n")
+    info(f"Displaying CVEs from {len(finding_types)} finding(s)...\n")
 
-    results = {}  # plugin_name -> list of CVEs
+    results = {}  # finding_type_name -> list of CVEs
     failed_count = 0
 
     # Query database (instant, no progress bar needed)
     with get_connection() as conn:
-        for plugin_id, plugin_name in plugins:
+        for finding_type_id, finding_type_name in finding_types:
             try:
-                plugin = Plugin.get_by_id(plugin_id, conn=conn)
-                if plugin and plugin.cves:
-                    results[plugin_name] = plugin.cves
+                finding_type = FindingType.get_by_id(finding_type_id, conn=conn)
+                if finding_type and finding_type.cves:
+                    results[finding_type_name] = finding_type.cves
             except Exception as e:
                 failed_count += 1
-                log_debug(f"CVE extraction failed for plugin {plugin_id}: {e}")
+                log_debug(
+                    f"CVE extraction failed for finding_type {finding_type_id}: {e}"
+                )
 
     # Report failures if any
     if failed_count > 0:
@@ -2557,35 +2598,35 @@ def bulk_extract_cves_for_plugins(plugins: List[tuple[str, str]]) -> None:
 
 def bulk_extract_cves_for_findings(files: List[Path]) -> None:
     """
-    Display CVEs for multiple plugin findings from database (read-only, no web scraping).
+    Display CVEs for multiple finding_type findings from database (read-only, no web scraping).
 
-    Queries the database for CVEs associated with each plugin file and displays
-    a consolidated list organized by plugin.
+    Queries the database for CVEs associated with each finding_type file and displays
+    a consolidated list organized by finding_type.
 
     Args:
-        files: List of plugin file paths to display CVEs for
+        files: List of finding_type file paths to display CVEs for
     """
-    from .models import Plugin
+    from .models import FindingType
     from .database import get_connection
-    from .parsing import extract_plugin_id_from_filename
+    from .parsing import extract_finding_type_id_from_filename
 
     header("CVE Information for Filtered Findings")
     info(f"Displaying CVEs from {len(files)} finding(s)...\n")
 
-    results = {}  # plugin_name -> list of CVEs
+    results = {}  # finding_type_name -> list of CVEs
     failed_count = 0
 
     # Query database (instant, no progress bar needed)
     with get_connection() as conn:
         for file_path in files:
-            plugin_id = extract_plugin_id_from_filename(file_path)
-            if not plugin_id:
+            finding_type_id = extract_finding_type_id_from_filename(file_path)
+            if not finding_type_id:
                 continue
 
             try:
-                plugin = Plugin.get_by_id(plugin_id, conn=conn)
-                if plugin and plugin.cves:
-                    results[file_path.name] = plugin.cves
+                finding_type = FindingType.get_by_id(finding_type_id, conn=conn)
+                if finding_type and finding_type.cves:
+                    results[file_path.name] = finding_type.cves
             except Exception as e:
                 failed_count += 1
                 log_debug(f"CVE extraction failed for file {file_path.name}: {e}")
@@ -2607,7 +2648,7 @@ def display_bulk_cve_results(results: dict[str, list[str]]) -> None:
     Auto-selects combined format for 1-2 findings, separated for 3+.
 
     Args:
-        results: Dictionary mapping plugin name/filename to list of CVEs
+        results: Dictionary mapping finding_type name/filename to list of CVEs
     """
     from rich.prompt import Prompt
 
@@ -2627,10 +2668,12 @@ def display_bulk_cve_results(results: dict[str, list[str]]) -> None:
 
         # Show CVE count per finding (limit to first 10 findings for readability)
         findings_to_show = list(results.items())[:10]
-        for plugin_name, cves in findings_to_show:
-            # Truncate long plugin names
+        for finding_type_name, cves in findings_to_show:
+            # Truncate long finding_type names
             display_name = (
-                plugin_name if len(plugin_name) <= 60 else plugin_name[:57] + "..."
+                finding_type_name
+                if len(finding_type_name) <= 60
+                else finding_type_name[:57] + "..."
             )
             info(f"  {display_name}: {len(cves)} CVE(s)")
 
@@ -2664,11 +2707,11 @@ def display_bulk_cve_results(results: dict[str, list[str]]) -> None:
         else:
             # Separated by file (default)
             info(f"\nCVEs by finding ({total_findings}):\n")
-            for plugin_name, cves in sorted(results.items()):
-                info(f"{plugin_name}:")
+            for finding_type_name, cves in sorted(results.items()):
+                info(f"{finding_type_name}:")
                 for cve in cves:
                     info(cve)
-                _console_global.print()  # Blank line between plugins
+                _console_global.print()  # Blank line between finding_types
     else:
         warn("No CVEs found for any of the filtered findings.")
 
@@ -2698,7 +2741,7 @@ def color_unreviewed(count: int) -> str:
 
 
 # ===================================================================
-# Cross-Scan Comparison Rendering
+# Cross-Dataset Comparison Rendering
 # ===================================================================
 
 
@@ -2733,11 +2776,11 @@ def _format_severity_breakdown(by_severity: dict[int, int]) -> str:
     return ", ".join(parts) if parts else "None"
 
 
-def render_scan_comparison(result: "ScanComparisonResult") -> None:
+def render_dataset_comparison(result: "DatasetComparisonResult") -> None:
     """Render scan comparison results with summary panel and detail tables.
 
     Args:
-        result: ScanComparisonResult from compare_scans()
+        result: DatasetComparisonResult from compare_datasets()
     """
 
     # Format dates for display
@@ -2750,8 +2793,8 @@ def render_scan_comparison(result: "ScanComparisonResult") -> None:
         except Exception:
             return dt_str[:10] if len(dt_str) >= 10 else dt_str
 
-    scan1_date = format_date(result.scan1_date)
-    scan2_date = format_date(result.scan2_date)
+    dataset1_date = format_date(result.dataset1_date)
+    dataset2_date = format_date(result.dataset2_date)
 
     # Build summary panel content
     summary_lines = []
@@ -2797,8 +2840,8 @@ def render_scan_comparison(result: "ScanComparisonResult") -> None:
     summary_panel = Panel(
         summary_text,
         title=(
-            f"[bold]Scan Comparison: {safe_text(result.scan1_name)} ({scan1_date})"
-            f" → {safe_text(result.scan2_name)} ({scan2_date})[/bold]"
+            f"[bold]Dataset Comparison: {safe_text(result.dataset1_name)} ({dataset1_date})"
+            f" → {safe_text(result.dataset2_name)} ({dataset2_date})[/bold]"
         ),
         border_style=style_if_enabled("cyan"),
         padding=(1, 2),
@@ -2833,7 +2876,7 @@ def _render_findings_change_table(
     """Render a table of changed findings.
 
     Args:
-        findings: List of finding dicts with plugin info
+        findings: List of finding dicts with finding_type info
         title: Table title
         title_color: Color for the title
     """
@@ -2855,11 +2898,15 @@ def _render_findings_change_table(
 
         # Use Text objects to prevent markup bleeding between columns
         severity_text = Text(sev_label, style=sev_color)
-        plugin_text = Text(finding.get("plugin_name", "Unknown"))
-        plugin_id_text = Text(str(finding.get("plugin_id", "")), style="dim")
+        finding_type_text = Text(finding.get("finding_type_name", "Unknown"))
+        finding_type_id_text = Text(
+            str(finding.get("finding_type_id", "")), style="dim"
+        )
         hosts_text = Text(str(finding.get("affected_hosts", 0)), style="cyan")
 
-        table.add_row(severity_text, plugin_text, plugin_id_text, hosts_text)
+        table.add_row(
+            severity_text, finding_type_text, finding_type_id_text, hosts_text
+        )
 
     _console_global.print(table)
 
@@ -2867,7 +2914,7 @@ def _render_findings_change_table(
 def render_host_history(history: "HostVulnerabilityHistory") -> None:
     """Render vulnerability history for a single host.
 
-    Shows a timeline of scans with severity breakdown and trend indicators.
+    Shows a timeline of datasets with severity breakdown and trend indicators.
 
     Args:
         history: HostVulnerabilityHistory from get_host_vulnerability_history()
@@ -2889,7 +2936,7 @@ def render_host_history(history: "HostVulnerabilityHistory") -> None:
         f"[bold]Scan Target:[/bold] {safe_text(history.scan_target)}",
         f"[bold]First Seen:[/bold] {format_date(history.first_seen)}",
         f"[bold]Last Seen:[/bold] {format_date(history.last_seen)}",
-        f"[bold]Total Scans:[/bold] {history.scan_count}",
+        f"[bold]Total Datasets:[/bold] {history.dataset_count}",
     ]
     header_panel = Panel(
         "\n".join(header_lines),
@@ -2900,18 +2947,18 @@ def render_host_history(history: "HostVulnerabilityHistory") -> None:
     _console_global.print(header_panel)
     _console_global.print()
 
-    if not history.scans:
-        warn("No scan history available for this host")
+    if not history.datasets:
+        warn("No dataset history available for this host")
         return
 
     # Timeline table
     table = Table(
-        title="Scan Timeline",
+        title="Dataset Timeline",
         show_header=True,
         header_style=style_if_enabled("bold"),
         box=box.ROUNDED,
     )
-    table.add_column("Scan Name", style=style_if_enabled("yellow"))
+    table.add_column("Dataset Name", style=style_if_enabled("yellow"))
     table.add_column("Source", style=style_if_enabled("magenta"))
     table.add_column("Date", style=style_if_enabled("dim"))
     table.add_column("Total", justify="right")
@@ -2924,38 +2971,38 @@ def render_host_history(history: "HostVulnerabilityHistory") -> None:
 
     # A trend across two different scanners is meaningless: a 30-finding Nessus
     # scan followed by a 3-finding nuclei scan is not 27 findings remediated.
-    # Only compare consecutive scans from the same source, and say so instead
+    # Only compare consecutive datasets from the same source, and say so instead
     # of printing a number the operator would read as progress.
-    sources = {scan.source for scan in history.scans}
+    sources = {dataset.source for dataset in history.datasets}
     single_source = len(sources) == 1
 
-    prev: Optional[ScanSnapshot] = None
-    for scan in history.scans:
+    prev: Optional[DatasetSnapshot] = None
+    for dataset in history.datasets:
         # Calculate trend indicator
         trend = ""
         if prev is not None:
-            if prev.source != scan.source:
+            if prev.source != dataset.source:
                 trend = "[dim]n/a[/dim]"
             else:
-                diff = scan.finding_count - prev.finding_count
+                diff = dataset.finding_count - prev.finding_count
                 if diff > 0:
                     trend = f"[red]+{diff}[/red]"
                 elif diff < 0:
                     trend = f"[green]{diff}[/green]"
                 else:
                     trend = "[dim]=[/dim]"
-        prev = scan
+        prev = dataset
 
         table.add_row(
-            Text(scan.scan_name),  # Text: scan-derived
-            Text(scan.source),
-            format_date(scan.scan_date),
-            str(scan.finding_count),
-            str(scan.critical_count) if scan.critical_count else "-",
-            str(scan.high_count) if scan.high_count else "-",
-            str(scan.medium_count) if scan.medium_count else "-",
-            str(scan.low_count) if scan.low_count else "-",
-            str(scan.info_count) if scan.info_count else "-",
+            Text(dataset.dataset_name),  # Text: scan-derived
+            Text(dataset.source),
+            format_date(dataset.dataset_date),
+            str(dataset.finding_count),
+            str(dataset.critical_count) if dataset.critical_count else "-",
+            str(dataset.high_count) if dataset.high_count else "-",
+            str(dataset.medium_count) if dataset.medium_count else "-",
+            str(dataset.low_count) if dataset.low_count else "-",
+            str(dataset.info_count) if dataset.info_count else "-",
             trend,
         )
 
@@ -2963,15 +3010,15 @@ def render_host_history(history: "HostVulnerabilityHistory") -> None:
 
     # Summary
     _console_global.print()
-    if history.scan_count >= 2 and not single_source:
+    if history.dataset_count >= 2 and not single_source:
         info(
-            "Overall trend: not shown - this host's scans come from different "
+            "Overall trend: not shown - this host's datasets come from different "
             f"sources ({', '.join(sorted(sources))}), which count different "
-            "things. Compare scans from one source."
+            "things. Compare datasets from one source."
         )
-    elif history.scan_count >= 2:
-        first = history.scans[0]
-        last = history.scans[-1]
+    elif history.dataset_count >= 2:
+        first = history.datasets[0]
+        last = history.datasets[-1]
         total_change = last.finding_count - first.finding_count
         # _console_global.print, not info(): info() does not parse Rich markup,
         # so these lines used to print their own "[red]...[/red]" tags verbatim.

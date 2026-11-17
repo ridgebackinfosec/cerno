@@ -16,7 +16,7 @@ from typing import Callable, Optional, Union, List, TYPE_CHECKING
 import types
 
 if TYPE_CHECKING:
-    from .models import Plugin, Finding
+    from .models import FindingType, Finding
     from .workflow_mapper import WorkflowMapper
 
 
@@ -38,9 +38,9 @@ class ToolContext:
         workdir: Working directory for temporary files
         results_dir: Directory for final results/output
         oabase: Output file base path (for -oA style outputs)
-        scan_dir: Scan-level directory
+        dataset_dir: Dataset-level directory
         sev_dir: Severity-level directory
-        plugin_url: URL to Nessus plugin details (optional; currently unused by builders)
+        details_url: URL to Nessus plugin details (optional; currently unused by builders)
         chosen_file: Synthetic display path of the selected finding
     """
 
@@ -57,11 +57,11 @@ class ToolContext:
     workdir: Path
     results_dir: Path
     oabase: Path
-    scan_dir: Path
+    dataset_dir: Path
     sev_dir: Path
 
     # Optional metadata
-    plugin_url: Optional[str] = None
+    details_url: Optional[str] = None
     chosen_file: Optional[Path] = None
     use_proxy: bool = False
 
@@ -108,35 +108,35 @@ class ReviewContext:
     still passes these values as individual parameters.
 
     Attributes:
-        scan_dir: Scan directory path
-        scan_id: Database scan ID
-        scan_ids: List of all selected scan IDs (includes scan_id for single-scan mode)
+        dataset_dir: Dataset directory path
+        dataset_id: Database dataset ID
+        dataset_ids: List of all selected dataset IDs (includes dataset_id for single-dataset mode)
         sev_dir: Severity directory (None for MSF/workflow modes)
         finding: Current Finding object (None until file selected)
-        plugin: Current Plugin metadata (None until file selected)
+        finding_type: Current FindingType metadata (None until file selected)
         chosen_file: Current file path (None until file selected)
         hosts: List of target hosts for current finding
         ports_str: Comma-separated ports string
         args: CLI arguments namespace
         use_sudo: Whether sudo is available
-        workflow_mapper: Workflow mapper for plugin workflows
+        workflow_mapper: Workflow mapper for finding_type workflows
         in_progress_total: Tracking list for findings viewed but not marked done
         done_total: Tracking list for findings marked done
     """
 
-    # Scan context (required)
-    scan_dir: Path
-    scan_id: int
+    # Dataset context (required)
+    dataset_dir: Path
+    dataset_id: int
 
-    # Scan context (optional - list of all selected scan IDs)
-    scan_ids: list[int] = field(default_factory=list)
+    # Dataset context (optional - list of all selected dataset IDs)
+    dataset_ids: list[int] = field(default_factory=list)
 
     # Severity context (optional - None for MSF/workflow modes)
     sev_dir: Optional[Path] = None
 
     # Current file/finding (set when file selected)
     finding: Optional["Finding"] = None
-    plugin: Optional["Plugin"] = None
+    finding_type: Optional["FindingType"] = None
     chosen_file: Optional[Path] = None
 
     # Hosts/ports for current finding

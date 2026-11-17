@@ -3,7 +3,7 @@
 
 The README used to carry hand-captured screenshots. They went stale within a
 release and could only be refreshed by hand, so by v3 they still showed
-pre-3.0 labels ("Plugin ID") and bare finding IDs. These examples are captured
+pre-3.0 labels ("FindingType ID") and bare finding IDs. These examples are captured
 from the real renderers against the bundled demo data instead, so they track
 the code.
 
@@ -52,7 +52,7 @@ from typing import Callable, Optional
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # ---------------------------------------------------------------------------
-# HOME must be redirected BEFORE cerno_pkg is imported: constants.SCANS_ROOT and
+# HOME must be redirected BEFORE cerno_pkg is imported: constants.DATASETS_ROOT and
 # database.DATABASE_PATH are computed at import time from Path.home(), so a late
 # override would leave them pointing at the developer's real ~/.cerno.
 # ---------------------------------------------------------------------------
@@ -102,13 +102,13 @@ class Example:
 
 
 def build_demo_context() -> dict:
-    """Import the bundled demo scans and return handles the captures need.
+    """Import the bundled demo datasets and return handles the captures need.
 
     Uses the same path `cerno demo` does, so the examples show exactly what an
     operator sees after running it.
     """
     from cerno_pkg.database import get_connection, initialize_database
-    from cerno_pkg.models import Finding, Scan
+    from cerno_pkg.models import Finding, Dataset
 
     initialize_database()
 
@@ -120,17 +120,23 @@ def build_demo_context() -> dict:
         cerno.demo_cmd(overwrite=True, no_nxc=False)
 
     conn = get_connection()
-    scans = {s["scan_name"]: s["scan_id"] for s in Scan.get_all_with_stats(conn)}
-    nessus_id = scans["Cerno_Demo_Expanded_Scan"]
-    nuclei_id = scans["Cerno_Demo_Nuclei_Expanded_Scan"]
+    datasets = {
+        s["dataset_name"]: s["dataset_id"] for s in Dataset.get_all_with_stats(conn)
+    }
+    nessus_id = datasets["Cerno_Demo_Expanded"]
+    nuclei_id = datasets["Cerno_Demo_Nuclei_Expanded"]
 
     return {
         "conn": conn,
-        "scans": scans,
-        "nessus_scan_id": nessus_id,
-        "nuclei_scan_id": nuclei_id,
-        "nessus_findings": Finding.get_by_scan_with_plugin(nessus_id, conn=conn),
-        "nuclei_findings": Finding.get_by_scan_with_plugin(nuclei_id, conn=conn),
+        "datasets": datasets,
+        "nessus_dataset_id": nessus_id,
+        "nuclei_dataset_id": nuclei_id,
+        "nessus_findings": Finding.get_by_dataset_with_finding_type(
+            nessus_id, conn=conn
+        ),
+        "nuclei_findings": Finding.get_by_dataset_with_finding_type(
+            nuclei_id, conn=conn
+        ),
     }
 
 
@@ -365,14 +371,14 @@ def _host_counter(ctx: dict):
 
 def _severity_menu(ctx: dict) -> None:
     """The review entry point: findings by severity, with review progress."""
-    from cerno_pkg.constants import SCANS_ROOT
+    from cerno_pkg.constants import DATASETS_ROOT
     from cerno_pkg.models import Finding
     from cerno_pkg.render import render_severity_table
 
-    scan_id = ctx["nessus_scan_id"]
-    names = Finding.get_severity_dirs_for_scan(scan_id, conn=ctx["conn"])
-    scan_dir = SCANS_ROOT / "Cerno_Demo_Expanded_Scan"
-    render_severity_table([scan_dir / n for n in names], scan_id=scan_id)
+    dataset_id = ctx["nessus_dataset_id"]
+    names = Finding.get_severity_names_for_dataset(dataset_id, conn=ctx["conn"])
+    dataset_dir = DATASETS_ROOT / "Cerno_Demo_Expanded"
+    render_severity_table([dataset_dir / n for n in names], dataset_id=dataset_id)
 
 
 def _finding_browser(ctx: dict) -> None:
@@ -399,24 +405,30 @@ def _finding_detail(ctx: dict) -> None:
     from cerno_pkg.render import display_finding_preview
     from cerno_pkg.workflow_mapper import WorkflowMapper
 
-    finding, plugin = next(
-        fp for fp in ctx["nuclei_findings"] if "CVE-2021-44228" in str(fp[1].plugin_id)
+    finding, finding_type = next(
+        fp
+        for fp in ctx["nuclei_findings"]
+        if "CVE-2021-44228" in str(fp[1].finding_type_id)
     )
     display_finding_preview(
-        plugin, finding, None, _Path(str(plugin.plugin_id)), WorkflowMapper()
+        finding_type,
+        finding,
+        None,
+        _Path(str(finding_type.finding_type_id)),
+        WorkflowMapper(),
     )
 
 
-def _scan_list(ctx: dict) -> None:
-    """`cerno scan list` -- the Source column at a glance.
+def _dataset_list(ctx: dict) -> None:
+    """`cerno dataset list` -- the Source column at a glance.
 
-    Renders the compact table. Width is the ``scan_list_wide`` config key now
+    Renders the compact table. Width is the ``dataset_list_wide`` config key now
     (the ``--wide`` flag was removed), and the default is compact, so the
     example matches what a reader sees with an untouched config.
     """
     import cerno
 
-    cerno.list_scans(json_output=False)
+    cerno.list_datasets(json_output=False)
 
 
 def _host_comparison(ctx: dict) -> None:
@@ -519,13 +531,13 @@ def _config_show(ctx: dict) -> None:
         cerno.config_show()
 
 
-def _scan_history(ctx: dict) -> None:
-    """`cerno scan history` across two scanners.
+def _dataset_history(ctx: dict) -> None:
+    """`cerno dataset history` across two scanners.
 
     Shows the Source column and the Trend reading `n/a` where the sources
     differ -- the guard against claiming remediation that never happened.
     """
-    from cerno_pkg.cross_scan import get_host_vulnerability_history
+    from cerno_pkg.cross_dataset import get_host_vulnerability_history
     from cerno_pkg.render import render_host_history
 
     history = get_host_vulnerability_history("198.51.100.10", ctx["conn"])
@@ -556,7 +568,11 @@ EXAMPLES: list[Example] = [
         title="cerno review - finding detail",
     ),
     Example(
-        "scan-list", 100, _scan_list, targets=["README.md"], title="cerno scan list"
+        "dataset-list",
+        100,
+        _dataset_list,
+        targets=["README.md"],
+        title="cerno dataset list",
     ),
     Example(
         "host-comparison",
@@ -605,7 +621,11 @@ EXAMPLES: list[Example] = [
         targets=["docs/CONFIGURATION.md"],
     ),
     Example(
-        "scan-history", 110, _scan_history, kind="text", targets=["docs/demo/README.md"]
+        "dataset-history",
+        110,
+        _dataset_history,
+        kind="text",
+        targets=["docs/demo/README.md"],
     ),
 ]
 

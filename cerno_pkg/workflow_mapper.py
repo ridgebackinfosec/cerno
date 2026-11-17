@@ -12,7 +12,7 @@ import yaml
 from .ansi import warn
 from .constants import SOURCE_UNKNOWN
 from .logging_setup import log_debug, log_error
-from .parsing import plugin_source
+from .parsing import finding_type_source
 
 if TYPE_CHECKING:
     from .config import CernoConfig
@@ -40,14 +40,15 @@ class Workflow:
     Represents a complete verification workflow for one or more findings.
 
     Attributes:
-        finding_id: Original finding_id string from YAML (may be comma-separated)
+        finding_type_id: Original finding_type_id string from YAML
+            (may be comma-separated)
         workflow_name: Human-readable workflow name
         description: Brief description
         steps: List of workflow steps
         references: List of reference URLs
     """
 
-    finding_id: str
+    finding_type_id: str
     workflow_name: str
     description: str
     steps: list[WorkflowStep]
@@ -57,34 +58,41 @@ class Workflow:
 def _parse_workflow_entry(entry: dict, origin: str) -> Optional[Workflow]:
     """Build a :class:`Workflow` from one YAML entry, or None if unusable.
 
-    Enforces both halves of the finding-id contract, warning and skipping
+    Enforces both halves of the finding-type-id contract, warning and skipping
     rather than raising, so one bad entry cannot stop a file from loading:
 
-    * the key must be ``finding_id``; a legacy ``plugin_id`` key is named in
-      the warning so the break is self-diagnosing, but it does **not** load;
+    * the key must be ``finding_type_id``. Both removed spellings --
+      ``finding_id`` (4.0.0) and ``plugin_id`` (3.0.0) -- are named explicitly
+      in the warning so the break is self-diagnosing, but neither loads. A
+      silently unmatched workflow is the failure mode worth shouting about:
+      nothing errors, the ``[W]`` key simply stops finding anything, and that
+      can go unnoticed for weeks;
     * every id in the (optionally comma-separated) value must carry a source
-      prefix, because that is what ``plugins.plugin_id`` holds. A bare number
-      like ``57608`` can never match a finding, so the entry is rejected whole
-      rather than registered under a key nothing will look up.
+      prefix, because that is what ``finding_types.finding_type_id`` holds. A
+      bare number like ``57608`` can never match a finding, so the entry is
+      rejected whole rather than registered under a key nothing will look up.
 
     Args:
         entry: One mapping from the YAML ``workflows`` list.
         origin: File name, for the warning text.
     """
-    finding_id = str(entry.get("finding_id", "") or "").strip()
+    finding_type_id = str(entry.get("finding_type_id", "") or "").strip()
     name = str(entry.get("workflow_name", "") or "") or "(unnamed)"
 
-    if not finding_id:
-        if entry.get("plugin_id"):
-            warn(
-                f"{origin}: workflow {name!r} uses the removed 'plugin_id' key. "
-                f"Rename it to 'finding_id' and prefix each id with its source "
-                f"(e.g. 'nessus:57608'). Skipping."
-            )
+    if not finding_type_id:
+        for legacy in ("finding_id", "plugin_id"):
+            if entry.get(legacy):
+                warn(
+                    f"{origin}: workflow {name!r} uses the removed "
+                    f"{legacy!r} key. Rename it to 'finding_type_id' and "
+                    f"prefix each id with its source (e.g. 'nessus:57608'). "
+                    f"Skipping."
+                )
+                break
         return None
 
-    refs = [ref.strip() for ref in finding_id.split(",") if ref.strip()]
-    unprefixed = [ref for ref in refs if plugin_source(ref) == SOURCE_UNKNOWN]
+    refs = [ref.strip() for ref in finding_type_id.split(",") if ref.strip()]
+    unprefixed = [ref for ref in refs if finding_type_source(ref) == SOURCE_UNKNOWN]
     if unprefixed:
         warn(
             f"{origin}: workflow {name!r} has finding id(s) with no source "
@@ -103,7 +111,7 @@ def _parse_workflow_entry(entry: dict, origin: str) -> Optional[Workflow]:
     ]
 
     return Workflow(
-        finding_id=finding_id,
+        finding_type_id=finding_type_id,
         workflow_name=entry.get("workflow_name", ""),
         description=entry.get("description", ""),
         steps=steps,
@@ -179,7 +187,7 @@ class WorkflowMapper:
 
                 # Register the workflow under each id it covers, so one entry
                 # can serve equivalent findings from different scanners.
-                for fid in workflow.finding_id.split(","):
+                for fid in workflow.finding_type_id.split(","):
                     fid = fid.strip()
                     if fid:
                         self.workflows[fid] = workflow
@@ -257,7 +265,7 @@ class WorkflowMapper:
 
     def count(self) -> int:
         """
-        Get count of distinct workflows (not individual plugin ID entries).
+        Get count of distinct workflows (not individual finding_type ID entries).
 
         Returns:
             Number of distinct workflows
@@ -294,7 +302,7 @@ class WorkflowMapper:
                     continue
 
                 # Register under each id it covers (overrides existing).
-                for fid in workflow.finding_id.split(","):
+                for fid in workflow.finding_type_id.split(","):
                     fid = fid.strip()
                     if fid:
                         self.workflows[fid] = workflow
@@ -326,7 +334,7 @@ class WorkflowMapper:
         Get all workflows as a list of dictionaries.
 
         Returns:
-            List of workflow dictionaries with keys: finding_id, workflow_name, description
+            List of workflow dictionaries with keys: finding_type_id, workflow_name, description
         """
         workflows_list = []
         seen_workflows = set()
@@ -339,7 +347,7 @@ class WorkflowMapper:
             if workflow_key not in seen_workflows:
                 workflows_list.append(
                     {
-                        "finding_id": workflow.finding_id,
+                        "finding_type_id": workflow.finding_type_id,
                         "workflow_name": workflow.workflow_name,
                         "description": workflow.description,
                     }
@@ -362,7 +370,7 @@ def build_workflow_mapper(config: Optional[CernoConfig] = None) -> WorkflowMappe
     Two modes, chosen by ``custom_workflows_exclusive``:
 
     * **supplement** (default) -- bundled ``workflow_mappings.yaml`` first, then
-      ``custom_workflows_path`` merged on top (custom overrides on finding_id
+      ``custom_workflows_path`` merged on top (custom overrides on finding_type_id
       conflict). A missing or empty custom file leaves the bundled set.
     * **exclusive** -- only ``custom_workflows_path`` is loaded, for testing a
       workflow in isolation. Set without a path it warns and falls back to

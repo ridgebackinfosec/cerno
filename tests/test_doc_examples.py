@@ -1,7 +1,7 @@
 """Guard: the TUI examples in the docs must match what the code renders.
 
 The README previously carried hand-captured screenshots. They went stale within
-a release -- by v3 they still showed pre-3.0 labels ("Plugin ID") and bare
+a release -- by v3 they still showed pre-3.0 labels ("FindingType ID") and bare
 finding IDs -- because nothing forced an update. The examples are now generated
 by ``scripts/generate_doc_examples.py`` from the bundled demo data, and this
 test is what keeps them honest: change a renderer without regenerating and the
@@ -9,7 +9,7 @@ suite goes red, naming the command to fix it.
 
 Deliberately a subprocess rather than an in-process import. The generator
 redirects ``HOME`` *before* importing ``cerno_pkg``, because
-``constants.SCANS_ROOT`` and ``database.DATABASE_PATH`` are resolved at import
+``constants.DATASETS_ROOT`` and ``database.DATABASE_PATH`` are resolved at import
 time -- in-process it would either pick up the developer's real ``~/.cerno`` or
 fight the autouse fixtures that isolate it.
 """

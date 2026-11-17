@@ -1,10 +1,14 @@
 """Terminal User Interface (TUI) components for cerno.
 
 This module handles interactive menus and findings-list action handling:
-- Generic menu selectors (choose_from_list, parse_severity_selection, parse_scan_selection)
+- Generic menu selectors (choose_from_list, parse_severity_selection, parse_dataset_selection)
 - Findings-list actions: filtering, sorting, pagination, grouping
   (the [I] / [D] status-filter toggles are handled by browse_file_list, not here)
-- Multi-line Claude Assistant input
+- Multi-line free-text input (Claude Assistant, authored finding descriptions)
+- Authored-finding prompts (create and edit), which validate through
+  ``authored_findings.validate_authored_input`` and re-prompt rather than
+  discard what was typed. These serve the TUI, so what they collect is written
+  under ``operator:``; an MCP client's findings go in under ``agent:``
 
 The findings-list and workflow-group browsers themselves (browse_file_list,
 browse_workflow_groups) live in cerno.py.
@@ -38,6 +42,7 @@ from .constants import VISIBLE_GROUPS
 
 if TYPE_CHECKING:
     from .models import Finding
+    from .authored_findings import AuthoredFindingInput
 
 _console_global = get_console()
 
@@ -45,7 +50,9 @@ _console_global = get_console()
 ActionResult = Tuple[
     Optional[str],  # action_type: None, "back", "file_selected", "help", "mark_all"
     str,  # file_filter
-    Optional[Tuple[int, set, str]],  # group_filter: (index, plugin_ids, description)
+    Optional[
+        Tuple[int, set, str]
+    ],  # group_filter: (index, finding_type_ids, description)
     str,  # sort_mode
     int,  # page_idx
 ]
@@ -136,7 +143,7 @@ def parse_severity_selection(
     )
 
 
-def parse_scan_selection(selection: str, max_index: int) -> Optional[list[int]]:
+def parse_dataset_selection(selection: str, max_index: int) -> Optional[list[int]]:
     """Parse user scan selection into a list of 1-based indices.
 
     Supports:
@@ -147,7 +154,7 @@ def parse_scan_selection(selection: str, max_index: int) -> Optional[list[int]]:
 
     Args:
         selection: User input string
-        max_index: Maximum valid scan index (number of available scans)
+        max_index: Maximum valid scan index (number of available datasets)
 
     Returns:
         Sorted list of 1-based indices, or None if input is invalid
@@ -261,7 +268,7 @@ def choose_from_list(
 
 
 def filter_finding_candidates(
-    records: List[Any],  # List of (Finding, Plugin) tuples
+    records: List[Any],  # List of (Finding, FindingType) tuples
     file_filter: str,
     group_filter: Optional[Tuple[int, set, str]],
     status_filter: Optional[str],
@@ -269,9 +276,9 @@ def filter_finding_candidates(
     """Apply the findings-list name, group, and status filters.
 
     Args:
-        records: (Finding, Plugin) tuples to filter (open findings)
-        file_filter: Case-insensitive plugin-name substring ("" = no filter)
-        group_filter: Optional group filter tuple (index, plugin labels, description)
+        records: (Finding, FindingType) tuples to filter (open findings)
+        file_filter: Case-insensitive finding_type-name substring ("" = no filter)
+        group_filter: Optional group filter tuple (index, finding_type labels, description)
         status_filter: Review state to keep (e.g. "in_progress"), or None for all
 
     Returns:
@@ -281,7 +288,7 @@ def filter_finding_candidates(
     return [
         (pf, p)
         for (pf, p) in records
-        if needle in p.plugin_name.lower()
+        if needle in p.finding_type_name.lower()
         and (group_filter is None or finding_label(pf, p) in group_filter[1])
         and (status_filter is None or pf.review_state == status_filter)
     ]
@@ -289,9 +296,9 @@ def filter_finding_candidates(
 
 def handle_finding_list_actions(
     ans: str,
-    candidates: List[Any],  # List of (Finding, Plugin) tuples
-    page_items: List[Any],  # List of (Finding, Plugin) tuples
-    display: List[Any],  # List of (Finding, Plugin) tuples
+    candidates: List[Any],  # List of (Finding, FindingType) tuples
+    page_items: List[Any],  # List of (Finding, FindingType) tuples
+    display: List[Any],  # List of (Finding, FindingType) tuples
     file_filter: str,
     group_filter: Optional[Tuple[int, set, str]],
     sort_mode: str,
@@ -311,13 +318,13 @@ def handle_finding_list_actions(
 
     Args:
         ans: User input command
-        candidates: Filtered candidate records (Finding, Plugin) tuples
+        candidates: Filtered candidate records (Finding, FindingType) tuples
         page_items: Records on current page
         display: All records to display (after sort)
         file_filter: Current name filter string
         group_filter: Optional group filter tuple (index, set of
-            "Plugin <id>: <name>" labels, description)
-        sort_mode: Current sort mode ("severity", "plugin_id", "name" or "hosts")
+            "FindingType <id>: <name>" labels, description)
+        sort_mode: Current sort mode ("severity", "finding_type_id", "name" or "hosts")
         page_idx: Current page index
         total_pages: Total number of pages
         get_counts_for: Function to get host counts for a Finding (database-driven)
@@ -378,10 +385,10 @@ def handle_finding_list_actions(
         return None, file_filter, group_filter, sort_mode, page_idx
 
     if ans == "s":
-        # Cycle through sort modes: severity -> plugin_id -> name -> hosts -> severity
+        # Cycle through sort modes: severity -> finding_type_id -> name -> hosts -> severity
         if sort_mode == "severity":
-            sort_mode = "plugin_id"
-        elif sort_mode == "plugin_id":
+            sort_mode = "finding_type_id"
+        elif sort_mode == "finding_type_id":
             sort_mode = "name"
         elif sort_mode == "name":
             sort_mode = "hosts"
@@ -390,7 +397,7 @@ def handle_finding_list_actions(
 
         sort_label = {
             "severity": "Severity ↓",
-            "plugin_id": "Finding ID ↑",
+            "finding_type_id": "Finding ID ↑",
             "hosts": "Host count ↓",
             "name": "Name A↑Z",
         }.get(sort_mode, "Severity ↓")
@@ -418,12 +425,14 @@ def handle_finding_list_actions(
                 page_idx,
             )
 
-        # Extract plugin info from (Finding, Plugin) tuples for CVE extraction
-        # Pass list of (plugin_id, plugin_name) tuples instead of file paths
-        from .render import bulk_extract_cves_for_plugins
+        # Extract finding_type info from (Finding, FindingType) tuples for CVE extraction
+        # Pass list of (finding_type_id, finding_type_name) tuples instead of file paths
+        from .render import bulk_extract_cves_for_finding_types
 
-        plugin_info_list = [(p.plugin_id, p.plugin_name) for _pf, p in candidates]
-        bulk_extract_cves_for_plugins(plugin_info_list)
+        finding_type_info_list = [
+            (p.finding_type_id, p.finding_type_name) for _pf, p in candidates
+        ]
+        bulk_extract_cves_for_finding_types(finding_type_info_list)
         return None, file_filter, group_filter, sort_mode, page_idx
 
     if ans == "m":
@@ -458,7 +467,7 @@ def handle_finding_list_actions(
                 page_idx,
             )
 
-        # Pass (Finding, Plugin) tuples for database queries with plugin info
+        # Pass (Finding, FindingType) tuples for database queries with finding_type info
         from .analysis import compare_filtered
 
         groups = compare_filtered(candidates)
@@ -497,7 +506,7 @@ def handle_finding_list_actions(
                 page_idx,
             )
 
-        # Pass full (Finding, Plugin) tuples to preserve display names
+        # Pass full (Finding, FindingType) tuples to preserve display names
         from .analysis import analyze_inclusions
 
         groups = analyze_inclusions(candidates)
@@ -574,12 +583,17 @@ def handle_finding_list_actions(
     )
 
 
-def ask_claude_multiline() -> str:
-    """Prompt for Claude assistant input with multi-line support.
+def prompt_multiline(label: str, default: str = "") -> str:
+    """Prompt for free text with multi-line support.
 
     Enter inserts a newline; Alt+Enter (prompt_toolkit default) or Ctrl+J
     (the custom c-j binding; many terminals send it for Ctrl+Enter) submits.
     Returns "" on Ctrl+D; Ctrl+C re-raises KeyboardInterrupt for the caller.
+
+    Args:
+        label: Prompt text shown to the left of the cursor.
+        default: Pre-filled, editable text -- what makes editing a stored
+            description a correction rather than a retype.
     """
     from prompt_toolkit import PromptSession
     from prompt_toolkit.key_binding import KeyBindings
@@ -592,11 +606,134 @@ def ask_claude_multiline() -> str:
 
     session: PromptSession[str] = PromptSession(key_bindings=kb, multiline=True)
     try:
-        return session.prompt("Ask Claude: ").strip()
+        return session.prompt(label, default=default).strip()
     except KeyboardInterrupt:
         raise
     except EOFError:
         return ""
+
+
+def ask_claude_multiline() -> str:
+    """Prompt for Claude assistant input with multi-line support."""
+    return prompt_multiline("Ask Claude: ")
+
+
+# ===================================================================
+# Operator-authored findings (the TUI's channel; see authored_findings)
+# ===================================================================
+
+#: Severity choices offered when writing a finding by hand.
+_SEVERITY_CHOICES = {
+    "0": "Info",
+    "1": "Low",
+    "2": "Medium",
+    "3": "High",
+    "4": "Critical",
+}
+
+
+def _prompt_authored_fields(
+    existing: Optional["AuthoredFindingInput"] = None,
+) -> Optional["AuthoredFindingInput"]:
+    """Prompt for every authored-finding field, pre-filled from ``existing``.
+
+    Shared by the create and edit flows so the two cannot ask different
+    questions. Re-prompts on validation failure with everything the operator
+    typed still in place -- discarding a written-up description because a port
+    was out of range would be unforgivable.
+
+    Collects fields only; the ``source`` the result is written under is the
+    caller's to supply, and for every path through this module that is
+    :data:`~cerno_pkg.constants.SOURCE_OPERATOR`.
+
+    Returns:
+        The collected input, or None if the operator cancelled (Ctrl+C).
+    """
+    from .authored_findings import AuthoredFindingInput, parse_target_tokens
+    from .authored_findings import validate_authored_input
+
+    draft = existing or AuthoredFindingInput(title="", severity_int=2)
+
+    while True:
+        try:
+            title = Prompt.ask("Title", default=draft.title or None) or ""
+
+            severity_label = ", ".join(f"{k}={v}" for k, v in _SEVERITY_CHOICES.items())
+            info(f"Severity: {severity_label}")
+            severity_raw = Prompt.ask(
+                "Severity",
+                choices=list(_SEVERITY_CHOICES),
+                default=str(draft.severity_int),
+                show_choices=False,
+            )
+
+            targets_default = ", ".join(
+                f"{host}:{port}" if port is not None else host
+                for host, port in draft.targets
+            )
+            info("Affected hosts: 'host' or 'host:port', comma-separated")
+            targets_raw = Prompt.ask(
+                "Affected hosts (blank for none)", default=targets_default
+            )
+
+            info("Description: Enter inserts a newline, Ctrl+J submits")
+            description = prompt_multiline("Description: ", default=draft.description)
+
+            cves_raw = Prompt.ask(
+                "CVEs, comma-separated (optional)", default=", ".join(draft.cves)
+            )
+            reference = Prompt.ask(
+                "Reference URL (optional)", default=draft.reference_url or ""
+            )
+        except KeyboardInterrupt:
+            warn("Cancelled.")
+            return None
+
+        draft = AuthoredFindingInput(
+            title=title.strip(),
+            severity_int=int(severity_raw),
+            targets=parse_target_tokens([targets_raw]),
+            description=description,
+            cves=[c.strip() for c in cves_raw.split(",") if c.strip()],
+            reference_url=reference.strip() or None,
+        )
+
+        problems = validate_authored_input(draft)
+        if not problems:
+            return draft
+
+        warn("That finding cannot be saved yet:")
+        for problem in problems:
+            warn(f"  - {problem}")
+        info("Your answers are kept below; correct the ones that are wrong.")
+
+
+def prompt_new_finding() -> Optional["AuthoredFindingInput"]:
+    """Collect a brand-new operator finding, or None if cancelled."""
+    header("Add a finding")
+    info("Press Ctrl+C at any prompt to cancel.")
+    return _prompt_authored_fields()
+
+
+def prompt_edit_finding(finding_id: int) -> Optional["AuthoredFindingInput"]:
+    """Collect edits to an existing authored finding, or None if cancelled.
+
+    Every prompt starts pre-filled with what is stored, so an unchanged answer
+    writes the same value back. Accepts an ``agent:`` finding as readily as an
+    ``operator:`` one -- the operator owns the engagement and must be able to
+    correct what an agent asserted.
+    """
+    from .authored_findings import AuthoredFindingError, load_authored_finding
+
+    try:
+        existing = load_authored_finding(finding_id)
+    except AuthoredFindingError as exc:
+        warn(str(exc))
+        return None
+
+    header("Update finding")
+    info("Press Ctrl+C at any prompt to cancel; Enter keeps the current value.")
+    return _prompt_authored_fields(existing)
 
 
 # Note: browse_file_list and browse_workflow_groups live in cerno.py.

@@ -86,7 +86,7 @@ class PreparedStep:
 @dataclass
 class PreparedWorkflow:
     finding_id: int
-    plugin_id: str
+    finding_type_id: str
     workflow_name: str
     description: str
     steps: list[PreparedStep]
@@ -210,7 +210,7 @@ def prepare_workflow(
     is_installed: Optional[Callable[[str], bool]] = None,
     conn: Optional[sqlite3.Connection] = None,
 ) -> Optional[PreparedWorkflow]:
-    """Fill the workflow mapped to a finding's plugin and classify each command.
+    """Fill the workflow mapped to a finding's finding_type and classify each command.
 
     Args:
         finding_id: Finding whose hosts/ports fill the placeholders.
@@ -220,14 +220,14 @@ def prepare_workflow(
         allowlist/denylist: Exec policy globs; default to the config's
             ``mcp_exec_allowlist``/``mcp_exec_denylist``.
         config: Config source for the default allow/deny lists.
-        workflow_mapper: Mapper to resolve the plugin's workflow (default: bundled
+        workflow_mapper: Mapper to resolve the finding_type's workflow (default: bundled
             + custom).
         is_installed: Predicate for "binary on PATH" (injectable for tests).
         conn: Database connection.
 
     Returns:
         A :class:`PreparedWorkflow`, or None if no workflow is mapped to the
-        finding's plugin.
+        finding's finding_type.
 
     Raises:
         ValueError: If ``finding_id`` does not exist.
@@ -239,8 +239,8 @@ def prepare_workflow(
         finding = Finding.get_by_id(finding_id, c)
         if finding is None:
             raise ValueError(f"No finding with id {finding_id}")
-        plugin_id = finding.plugin_id
-        workflow: Optional[Workflow] = mapper.get_workflow(str(plugin_id))
+        finding_type_id = finding.finding_type_id
+        workflow: Optional[Workflow] = mapper.get_workflow(str(finding_type_id))
         if workflow is None:
             return None
         hosts, ports_str = finding.get_hosts_and_ports(c)
@@ -293,7 +293,7 @@ def prepare_workflow(
 
     return PreparedWorkflow(
         finding_id=finding_id,
-        plugin_id=plugin_id,
+        finding_type_id=finding_type_id,
         workflow_name=workflow.workflow_name,
         description=workflow.description,
         steps=steps,

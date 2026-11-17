@@ -12,15 +12,15 @@ tests/
 │   ├── minimal.nessus          # Minimal scan (3 plugins, 3 hosts)
 │   ├── nmap/                   # nmap XML for ingest tests (MS17-010, no hosts up)
 │   └── nxc/                    # NetExec protocol databases (smb, ldap, winrm, …)
-└── test_*.py                   # 45 test modules, roughly one per cerno_pkg module
+└── test_*.py                   # 48 test modules, roughly one per cerno_pkg module
 ```
 
 The modules group roughly as:
 
 | Area | Test files |
 |---|---|
-| Core data | `test_database.py`, `test_models.py`, `test_parsing.py`, `test_nessus_import.py`, `test_cross_scan.py`, `test_analysis.py`, `test_scan_list.py` |
-| Review TUI | `test_render.py`, `test_fs.py`, `test_session.py`, `test_review_states.py`, `test_multi_scan_review.py`, `test_color_scheme.py`, `test_demo_command.py` |
+| Core data | `test_database.py`, `test_models.py`, `test_parsing.py`, `test_nessus_import.py`, `test_nuclei_parse.py`, `test_nuclei_import.py`, `test_burp_parse.py`, `test_burp_import.py`, `test_authored_findings.py`, `test_cross_dataset.py`, `test_analysis.py`, `test_dataset_list.py` |
+| Review TUI | `test_render.py`, `test_fs.py`, `test_session.py`, `test_review_states.py`, `test_multi_dataset_review.py`, `test_color_scheme.py`, `test_demo_command.py` |
 | Tools & execution | `test_ops.py`, `test_tool_registry.py`, `test_exec_chain.py`, `test_workflow_mapper.py`, `test_workflow_prep.py`, `test_nxc_db.py` |
 | Verification loop | `test_nmap_parse.py`, `test_ingest.py`, `test_verdicts.py`, `test_query.py`, `test_batch.py`, `test_jobs.py`, `test_workflow_contrib.py` |
 | Credentials | `test_creds.py`, `test_cred_injection.py` |
@@ -160,19 +160,19 @@ def test_ipv4_with_port():
 
 ```python
 import pytest
-from cerno_pkg.models import Scan
+from cerno_pkg.models import Dataset
 
 @pytest.mark.integration
-def test_scan_save_creates_record(temp_db):
-    """Test saving a new scan to database."""
-    scan = Scan(
-        scan_name="test_scan",
+def test_dataset_save_creates_record(temp_db):
+    """Test saving a new dataset to database."""
+    dataset = Dataset(
+        dataset_name="test_dataset",
         export_root="/tmp"
     )
-    scan_id = scan.save(temp_db)
+    dataset_id = dataset.save(temp_db)
 
-    assert scan_id is not None
-    assert scan_id > 0
+    assert dataset_id is not None
+    assert dataset_id > 0
 ```
 
 ### Example Parametrized Test

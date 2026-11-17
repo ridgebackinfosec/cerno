@@ -138,10 +138,21 @@ def test_documented_seeded_rows_in_diagram(seeded_counts):
 
 @pytest.mark.unit
 def test_documented_schema_version():
-    """Every doc that states a schema version must state the current one."""
+    """Every doc that states a schema version must state the current one.
+
+    CLAUDE.md is in here because it states the version **twice** -- in the
+    Schema Management bullet and in the ``PRAGMA user_version`` verification
+    block -- and the 4.0.0 rename updated only the first. Both said 5 while
+    ``SCHEMA_VERSION`` was 6, and nothing caught it: this test covered only
+    ``schema.sql`` and the architecture diagram.
+    """
     sources = {
         "schema.sql": r"schema version (\d+)",
         "docs/diagrams/02-architecture.mmd": r"schema v(\d+)",
+        "CLAUDE.md": (
+            r"(?:SCHEMA_VERSION` \(current: "
+            r"|PRAGMA user_version;\"\s*#\s*Expected: )(\d+)"
+        ),
     }
     for doc, pattern in sources.items():
         found = _documented(doc, pattern)
@@ -235,3 +246,365 @@ def test_configuration_reference_lists_every_setting():
     assert (
         not unknown
     ), f"docs/CONFIGURATION.md documents settings that do not exist: {sorted(unknown)}"
+
+
+# ---------------------------------------------------------------------------
+# Documented labels, not just documented numbers
+# ---------------------------------------------------------------------------
+#
+# Everything above checks a *figure*. The 4.0.0 rename made the gap obvious:
+# every number in ``02-architecture.mmd`` was correct (25 tables, 12 views,
+# schema v6, 50 tools) while two of its **labels** named things the release had
+# deleted -- a ``cross_scan.py`` module and a ``scan`` CLI command. Nothing read
+# the labels, and CLAUDE.md already notes the rendered PNGs are caught by no
+# test at all, so the error would have shipped in the README's front-page image
+# for the very release that did the renaming.
+#
+# Fixing the diagram was not enough, because the same two facts are written
+# elsewhere: ``CLAUDE.md``'s module-structure block listed the identical stale
+# ``scan`` command, and ``TESTING.md``'s table named three test modules this
+# branch renamed -- right beside a module *count* that this file already
+# guarded and that was correct. So all three rules below read every hand-owned
+# doc, not just the diagrams.
+#
+# The third rule covers a different shape of the same rot: ``TESTING.md``'s
+# example test did ``from cerno_pkg.models import Scan`` and built a
+# ``Scan(scan_name=...)``, so the snippet a contributor is told to copy raised
+# ImportError. A name in a doc is checkable whether it sits in a table or in a
+# code fence.
+#
+# They are existence checks against the code rather than word lists, so they
+# cannot go stale and they leave the docs free to say "remote scan" or
+# "untrusted scan text", which remain correct.
+#
+# ``CHANGELOG.md`` is excluded on purpose: its history correctly names
+# ``cross_scan.py`` and ``cerno scan history`` as they existed in past
+# releases, and rewriting history to satisfy a test would be the actual bug.
+
+# Impacket ships this; it is named in workflow commands, not owned by us.
+_EXTERNAL_TOOLS = {"ntlmrelayx.py"}
+
+# The "add a tool" tutorials import the tool the *reader* is about to write, so
+# these never resolve and must not.
+_TUTORIAL_PLACEHOLDERS = {"build_mytool_cmd"}
+
+
+def _doc_sources() -> list[Path]:
+    """Every hand-owned doc, Mermaid sources included."""
+    paths = [
+        REPO_ROOT / name
+        for name in ("CLAUDE.md", "CONTRIBUTING.md", "README.md", "TESTING.md")
+    ]
+    paths += sorted((REPO_ROOT / "docs").rglob("*.md"))
+    paths += sorted((REPO_ROOT / "docs" / "diagrams").glob("*.mmd"))
+    paths += sorted((REPO_ROOT / "cerno_pkg" / "skills").glob("*.md"))
+    return [p for p in paths if p.is_file()]
+
+
+@pytest.mark.unit
+def test_documented_module_names_exist():
+    """Every ``*.py`` named in a doc or diagram must be a real file.
+
+    ``02-architecture.mmd`` kept listing ``cross_scan.py`` after the module was
+    renamed to ``cross_dataset.py``, and ``TESTING.md`` kept listing
+    ``test_cross_scan.py``, ``test_scan_list.py`` and
+    ``test_multi_scan_review.py`` after all three were renamed.
+    """
+    search_dirs = [
+        REPO_ROOT,
+        REPO_ROOT / "cerno_pkg",
+        REPO_ROOT / "cerno_pkg" / "mcp_server",
+        REPO_ROOT / "tests",
+        REPO_ROOT / "scripts",
+    ]
+
+    docs = _doc_sources()
+    assert docs, "no docs found to check"
+
+    offenders = []
+    for path in docs:
+        # Markdown escapes dunders as ``\_\_init\_\_.py``; unescape so the name
+        # resolves instead of reading as a bogus "_.py".
+        text = path.read_text(encoding="utf-8").replace("\\_", "_")
+        for name in sorted(set(re.findall(r"\b[a-z_][a-z0-9_]*\.py\b", text))):
+            if name in _EXTERNAL_TOOLS:
+                continue
+            if not any((d / name).is_file() for d in search_dirs):
+                offenders.append(f"{path.relative_to(REPO_ROOT)}: {name}")
+
+    assert not offenders, "doc names a module that does not exist:\n" + "\n".join(
+        offenders
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "doc, pattern",
+    [
+        # "<b>cerno.py</b> — Typer CLI<br/>review · import · dataset · check..."
+        (
+            "docs/diagrams/02-architecture.mmd",
+            r'<b>cerno\.py</b>[^<]*<br/>([^"]*)',
+        ),
+        # "cerno.py  # Typer CLI entry point: review/import/dataset/check/..."
+        ("CLAUDE.md", r"# Typer CLI entry point:([^\n]*)"),
+    ],
+)
+def test_documented_cli_commands_exist(doc, pattern):
+    """Every command in a doc's enumerated command list must be registered.
+
+    The diagram node read ``review · import · scan · config`` long after
+    ``cerno scan`` was replaced by ``cerno dataset``, so the picture advertised
+    a command that exits with "No such command 'scan'" -- and CLAUDE.md's
+    entry-point line carried the identical stale list.
+    """
+    import typer.main
+
+    from cerno import app
+
+    # get_command() is typed as Command but returns a Group for a multi-command
+    # app; getattr keeps the type checkers quiet without a cast.
+    live = set(getattr(typer.main.get_command(app), "commands", {}))
+    assert live, "no commands registered on the Typer app"
+
+    match = re.search(pattern, _read(doc))
+    assert match, f"{doc} no longer has a command list matching {pattern!r}"
+
+    # Split on every separator the two formats use. Tokens are *validated*
+    # rather than filtered: a filter silently dropped the final ``reset"`` of
+    # the Mermaid node, so the last command in the list was never checked.
+    listed = [token for token in re.split(r"<br/>|·|/|\s+", match.group(1)) if token]
+    assert listed, f"{doc}: no commands parsed out of {match.group(1)!r}"
+
+    unknown = sorted(set(listed) - live)
+    assert not unknown, (
+        f"{doc} lists commands that do not exist: {unknown}; "
+        f"registered commands are {sorted(live)}"
+    )
+
+
+@pytest.mark.unit
+def test_documented_imports_resolve():
+    """Every ``from cerno_pkg... import X`` in a doc must actually import.
+
+    ``TESTING.md``'s example test imported ``Scan`` from ``cerno_pkg.models``
+    and passed ``scan_name=`` to it, so the snippet contributors are told to
+    copy raised ImportError once the class became ``Dataset``. The example was
+    never executed by anything, and the module-name and command guards cannot
+    see inside a code fence.
+    """
+    import importlib
+
+    pattern = re.compile(r"^\s*from\s+(cerno_pkg[\w.]*)\s+import\s+([^\n#]+)", re.M)
+
+    offenders = []
+    checked = 0
+    for path in _doc_sources():
+        for module_name, names in pattern.findall(path.read_text(encoding="utf-8")):
+            try:
+                module = importlib.import_module(module_name)
+            except Exception as exc:  # pragma: no cover - a real failure
+                offenders.append(
+                    f"{path.relative_to(REPO_ROOT)}: {module_name} ({exc})"
+                )
+                continue
+            for raw in names.split(","):
+                symbol = raw.strip().split(" as ")[0].strip()
+                if not symbol or symbol in _TUTORIAL_PLACEHOLDERS:
+                    continue
+                checked += 1
+                if not hasattr(module, symbol):
+                    offenders.append(
+                        f"{path.relative_to(REPO_ROOT)}: "
+                        f"{module_name} has no {symbol!r}"
+                    )
+
+    assert checked, "no documented cerno_pkg imports found to check"
+    assert not offenders, "doc imports a name that does not exist:\n" + "\n".join(
+        offenders
+    )
+
+
+def _dataclass_fields_by_name() -> dict[str, set[str]]:
+    """``{class name: field names}`` for every dataclass in ``cerno_pkg``.
+
+    Keyed by bare class name so a doc snippet is checkable without importing
+    anything -- which matters, because the snippets that construct these
+    objects are fragments with no import line.
+    """
+    import dataclasses
+    import importlib
+    import pkgutil
+
+    import cerno_pkg
+
+    found: dict[str, set[str]] = {}
+    for info in pkgutil.walk_packages(cerno_pkg.__path__, "cerno_pkg."):
+        try:
+            module = importlib.import_module(info.name)
+        except Exception:  # pragma: no cover - an unimportable module
+            continue
+        for name, obj in vars(module).items():
+            if isinstance(obj, type) and dataclasses.is_dataclass(obj):
+                found.setdefault(name, set()).update(
+                    f.name for f in dataclasses.fields(obj)
+                )
+    return found
+
+
+@pytest.mark.unit
+def test_documented_constructor_kwargs_exist():
+    """Every keyword a doc passes to a cerno_pkg dataclass must be a real field.
+
+    ``docs/TOOL_SYSTEM_GUIDE.md`` built a ``ToolContext(scan_dir=...)`` after
+    the field became ``dataset_dir``, so a contributor following the
+    add-a-tool guide writes code that raises ``TypeError``. The snippet has no
+    import line, so :func:`test_documented_imports_resolve` cannot see it --
+    this matches on the class *name* instead, which needs no word list because
+    the names come from walking the package.
+    """
+    import ast
+    import textwrap
+
+    known = _dataclass_fields_by_name()
+    assert known, "no dataclasses discovered in cerno_pkg"
+
+    fence = re.compile(r"```python\n(.*?)```", re.S)
+    offenders = []
+    checked = 0
+    for path in _doc_sources():
+        for block in fence.findall(path.read_text(encoding="utf-8")):
+            tree = None
+            # A fragment may be a bare ``return ...``, illegal at module level;
+            # retry wrapped in a function before giving up on it.
+            for source in (block, "def _f():\n" + textwrap.indent(block, "    ")):
+                try:
+                    tree = ast.parse(source)
+                    break
+                except SyntaxError:
+                    continue
+            if tree is None:
+                continue
+            for node in ast.walk(tree):
+                if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)):
+                    continue
+                fields = known.get(node.func.id)
+                if fields is None:
+                    continue
+                for keyword in node.keywords:
+                    if keyword.arg is None:
+                        continue
+                    checked += 1
+                    if keyword.arg not in fields:
+                        offenders.append(
+                            f"{path.relative_to(REPO_ROOT)}: "
+                            f"{node.func.id} has no field {keyword.arg!r}"
+                        )
+
+    assert checked, "no documented dataclass constructions found to check"
+    assert not offenders, "doc passes a field that does not exist:\n" + "\n".join(
+        sorted(set(offenders))
+    )
+
+
+# ---------------------------------------------------------------------------
+# Documented SQL has to run
+# ---------------------------------------------------------------------------
+#
+# The guards above check that a documented *name* exists. This one checks that
+# a documented *query* works, by handing every SQL block in the docs to SQLite
+# against a freshly initialised schema. ``docs/DATABASE.md`` had three
+# statements selecting ``affected_hosts`` and ``host_count`` -- columns the
+# views call ``affected_targets`` and ``target_count``, a distinction CLAUDE.md
+# spells out at length. The file teaches the schema, so a query in it that
+# cannot run teaches the wrong schema.
+
+
+@pytest.mark.integration
+def test_documented_sql_executes():
+    """Every documented SQL statement must parse and resolve against the schema.
+
+    ``EXPLAIN`` compiles the statement -- resolving every table, view and
+    column -- without running it, so this costs nothing and needs no data.
+    """
+    import sqlite3 as _sqlite3
+    import tempfile as _tempfile
+
+    placeholder = re.compile(r"<[a-z_]+>|\.\.\.|\$\{")
+    blocks: list[tuple[Path, str]] = []
+    for path in _doc_sources():
+        for block in re.findall(
+            r"```sql\n(.*?)```", path.read_text(encoding="utf-8"), re.S
+        ):
+            blocks.append((path, block))
+    assert blocks, "no documented SQL blocks found to check"
+
+    with _tempfile.TemporaryDirectory() as tmp:
+        db_path = Path(tmp) / "docs.db"
+        db.initialize_database(db_path)
+        conn = _sqlite3.connect(db_path)
+        try:
+            offenders = []
+            checked = 0
+            for path, block in blocks:
+                for statement in block.split(";"):
+                    body = "\n".join(
+                        line
+                        for line in statement.splitlines()
+                        if line.strip() and not line.strip().startswith("--")
+                    ).strip()
+                    if not body or placeholder.search(body):
+                        continue
+                    checked += 1
+                    try:
+                        conn.execute("EXPLAIN " + body)
+                    except _sqlite3.Error as exc:
+                        offenders.append(
+                            f"{path.relative_to(REPO_ROOT)}: {exc} "
+                            f"-- in {body.splitlines()[0][:70]!r}"
+                        )
+        finally:
+            conn.close()
+
+    assert checked, "no runnable SQL statements found"
+    assert not offenders, "documented SQL does not run:\n" + "\n".join(
+        sorted(set(offenders))
+    )
+
+
+# ---------------------------------------------------------------------------
+# Retired phrasing: "plugin output"
+# ---------------------------------------------------------------------------
+#
+# Evidence captured at import lives in ``finding_affected_hosts.evidence`` and
+# comes from four sources, three of which have no plugins. The rename moved
+# "plugin output" to "finding_type output", which is wrong a second way -- the
+# text is not the finding *type's* output -- and the fix reached the MCP server
+# and nowhere else, leaving the phrase in four docs describing nuclei and Burp.
+#
+# Tenable's own term is the one legitimate use, and in this repo it is always
+# written "Nessus plugin output", so requiring that single preceding word needs
+# no exception list. ``CHANGELOG.md`` is outside ``_doc_sources()`` and so is
+# not checked: it quotes the retired phrasing as history.
+
+
+@pytest.mark.unit
+def test_docs_do_not_call_evidence_plugin_output():
+    """ "plugin output" in a doc must be Tenable's own term, i.e. Nessus's."""
+    docs = _doc_sources()
+    assert docs, "no docs found to check"
+
+    offenders = []
+    for path in docs:
+        text = path.read_text(encoding="utf-8")
+        for match in re.finditer(r"plugin output", text, re.IGNORECASE):
+            if re.search(r"nessus\s+$", text[: match.start()], re.IGNORECASE):
+                continue
+            line = text.count("\n", 0, match.start()) + 1
+            offenders.append(f"{path.relative_to(REPO_ROOT)}:{line}")
+
+    assert not offenders, (
+        "doc calls per-host evidence 'plugin output' (say 'evidence', or name "
+        "Nessus if it really is a Tenable plugin's output):\n"
+        + "\n".join(sorted(set(offenders)))
+    )

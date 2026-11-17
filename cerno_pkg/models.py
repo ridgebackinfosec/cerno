@@ -18,11 +18,12 @@ from .constants import (
     REVIEW_STATE_UNREVIEWED,
     REVIEW_TRANSITIONS,
 )
-from .database import db_transaction, plugin_id_order_sql, query_all, query_one
+from .database import db_transaction, finding_type_id_order_sql, query_all, query_one
 from .parsing import (
-    plugin_details_url,
-    plugin_source,
-    plugin_source_id,
+    channel_source_id,
+    finding_type_details_url,
+    finding_type_source,
+    finding_type_source_id,
 )
 from .logging_setup import log_error, log_info
 
@@ -38,15 +39,15 @@ def now_iso() -> str:
     return datetime.now().isoformat()
 
 
-# ========== Model: Scan ==========
+# ========== Model: Dataset ==========
 
 
 @dataclass
-class Scan:
+class Dataset:
     """Represents a Nessus scan and its exported findings."""
 
-    scan_id: Optional[int] = None
-    scan_name: str = ""
+    dataset_id: Optional[int] = None
+    dataset_name: str = ""
     source_file_path: Optional[str] = None
     source_file_hash: Optional[str] = None
     export_root: str = ""
@@ -54,18 +55,18 @@ class Scan:
     last_reviewed_at: Optional[str] = None
 
     @classmethod
-    def from_row(cls, row: sqlite3.Row) -> Scan:
-        """Create Scan from database row.
+    def from_row(cls, row: sqlite3.Row) -> Dataset:
+        """Create Dataset from database row.
 
         Args:
             row: SQLite row
 
         Returns:
-            Scan instance
+            Dataset instance
         """
         return cls(
-            scan_id=row["scan_id"],
-            scan_name=row["scan_name"],
+            dataset_id=row["dataset_id"],
+            dataset_name=row["dataset_name"],
             source_file_path=row["source_file_path"],
             source_file_hash=row["source_file_hash"],
             export_root=row["export_root"],
@@ -80,103 +81,109 @@ class Scan:
             conn: Database connection (creates new if None)
 
         Returns:
-            scan_id of saved record (or None if not set)
+            dataset_id of saved record (or None if not set)
         """
         with db_transaction(conn) as c:
-            if self.scan_id is None:
+            if self.dataset_id is None:
                 # Insert new scan
                 cursor = c.execute(
                     """
-                    INSERT INTO scans (scan_name, source_file_path, source_file_hash, export_root)
+                    INSERT INTO datasets (dataset_name, source_file_path, source_file_hash, export_root)
                     VALUES (?, ?, ?, ?)
                     """,
                     (
-                        self.scan_name,
+                        self.dataset_name,
                         self.source_file_path,
                         self.source_file_hash,
                         self.export_root,
                     ),
                 )
-                self.scan_id = cursor.lastrowid
-                log_info(f"Created scan: {self.scan_name} (ID: {self.scan_id})")
+                self.dataset_id = cursor.lastrowid
+                log_info(
+                    f"Created dataset: {self.dataset_name} (ID: {self.dataset_id})"
+                )
             else:
                 # Update existing scan
                 c.execute(
                     """
-                    UPDATE scans
-                    SET scan_name=?, source_file_path=?, source_file_hash=?,
+                    UPDATE datasets
+                    SET dataset_name=?, source_file_path=?, source_file_hash=?,
                         export_root=?, last_reviewed_at=?
-                    WHERE scan_id=?
+                    WHERE dataset_id=?
                     """,
                     (
-                        self.scan_name,
+                        self.dataset_name,
                         self.source_file_path,
                         self.source_file_hash,
                         self.export_root,
                         self.last_reviewed_at,
-                        self.scan_id,
+                        self.dataset_id,
                     ),
                 )
 
-        return self.scan_id
+        return self.dataset_id
 
     @classmethod
     def get_by_name(
-        cls, scan_name: str, conn: Optional[sqlite3.Connection] = None
-    ) -> Optional[Scan]:
-        """Retrieve scan by name.
+        cls, dataset_name: str, conn: Optional[sqlite3.Connection] = None
+    ) -> Optional[Dataset]:
+        """Retrieve a dataset by name.
 
         Args:
-            scan_name: Name of scan
+            dataset_name: Name of the dataset
             conn: Database connection
 
         Returns:
-            Scan instance or None if not found
+            Dataset instance or None if not found
         """
         with db_transaction(conn) as c:
-            row = query_one(c, "SELECT * FROM scans WHERE scan_name = ?", (scan_name,))
+            row = query_one(
+                c, "SELECT * FROM datasets WHERE dataset_name = ?", (dataset_name,)
+            )
             return cls.from_row(row) if row else None
 
     @classmethod
     def get_by_id(
-        cls, scan_id: int, conn: Optional[sqlite3.Connection] = None
-    ) -> Optional[Scan]:
+        cls, dataset_id: int, conn: Optional[sqlite3.Connection] = None
+    ) -> Optional[Dataset]:
         """Retrieve scan by ID.
 
         Args:
-            scan_id: Scan ID
+            dataset_id: Dataset ID
             conn: Database connection
 
         Returns:
-            Scan instance or None if not found
+            Dataset instance or None if not found
         """
         with db_transaction(conn) as c:
-            row = query_one(c, "SELECT * FROM scans WHERE scan_id = ?", (scan_id,))
+            row = query_one(
+                c, "SELECT * FROM datasets WHERE dataset_id = ?", (dataset_id,)
+            )
             return cls.from_row(row) if row else None
 
     @classmethod
-    def get_all(cls, conn: Optional[sqlite3.Connection] = None) -> list[Scan]:
-        """Retrieve all scans ordered by last reviewed (most recent first).
+    def get_all(cls, conn: Optional[sqlite3.Connection] = None) -> list[Dataset]:
+        """Retrieve all datasets ordered by last reviewed (most recent first).
 
-        Scans with NULL last_reviewed_at appear last, ordered by created_at DESC.
+        Datasets with NULL last_reviewed_at appear last, ordered by created_at DESC.
 
         Args:
             conn: Database connection
 
         Returns:
-            List of Scan instances (may be empty)
+            List of Dataset instances (may be empty)
         """
         with db_transaction(conn) as c:
             rows = query_all(
                 c,
                 """
-                SELECT * FROM scans
-                -- scan_id breaks the tie: created_at is CURRENT_TIMESTAMP at
-                -- second resolution, so scans imported in the same second (a
+                SELECT * FROM datasets
+                -- dataset_id breaks the tie: created_at is CURRENT_TIMESTAMP at
+                -- second resolution, so datasets imported in the same second (a
                 -- scripted import, or `cerno demo`'s four) tie on BOTH keys and
                 -- SQLite's row order for a full tie is unspecified.
                 ORDER BY last_reviewed_at DESC NULLS LAST, created_at DESC,
-                         scan_id DESC
+                         dataset_id DESC
                 """,
             )
             return [cls.from_row(row) for row in rows]
@@ -185,7 +192,7 @@ class Scan:
     def get_all_with_stats(
         cls, conn: Optional[sqlite3.Connection] = None
     ) -> list[dict]:
-        """Retrieve all scans with statistics (finding counts, severity breakdown).
+        """Retrieve all datasets with statistics (finding counts, severity breakdown).
 
         Args:
             conn: Database connection
@@ -198,8 +205,8 @@ class Scan:
                 c,
                 """
                 SELECT
-                    s.scan_id,
-                    s.scan_name,
+                    s.dataset_id,
+                    s.dataset_name,
                     s.created_at,
                     s.last_reviewed_at,
                     -- Machines, not scan targets: count distinct resolved IPs
@@ -211,7 +218,7 @@ class Scan:
                      FROM finding_affected_hosts fah
                      JOIN findings f2 ON fah.finding_id = f2.finding_id
                      JOIN hosts h ON fah.host_id = h.host_id
-                     WHERE f2.scan_id = s.scan_id) as unique_hosts,
+                     WHERE f2.dataset_id = s.dataset_id) as unique_hosts,
                     COUNT(DISTINCT f.finding_id) as total_findings,
                     SUM(CASE WHEN p.severity_int = 4 THEN 1 ELSE 0 END) as critical_count,
                     SUM(CASE WHEN p.severity_int = 3 THEN 1 ELSE 0 END) as high_count,
@@ -226,98 +233,101 @@ class Scan:
                     (SELECT GROUP_CONCAT(src) FROM (
                         SELECT DISTINCT fs.source_name AS src
                         FROM findings f3
-                        JOIN plugins p3 ON f3.plugin_id = p3.plugin_id
+                        JOIN finding_types p3 ON f3.finding_type_id = p3.finding_type_id
                         JOIN finding_sources fs ON p3.source_id = fs.source_id
-                        WHERE f3.scan_id = s.scan_id
+                        WHERE f3.dataset_id = s.dataset_id
                         ORDER BY fs.source_name
                      )) as source
-                FROM scans s
-                LEFT JOIN findings f ON s.scan_id = f.scan_id
-                LEFT JOIN plugins p ON f.plugin_id = p.plugin_id
-                GROUP BY s.scan_id, s.scan_name, s.created_at, s.last_reviewed_at
-                -- scan_id breaks the tie: see Scan.get_all(). Without it the
-                -- row order of `cerno scan list` (and MCP list_scans, which
+                FROM datasets s
+                LEFT JOIN findings f ON s.dataset_id = f.dataset_id
+                LEFT JOIN finding_types p ON f.finding_type_id = p.finding_type_id
+                GROUP BY s.dataset_id, s.dataset_name, s.created_at, s.last_reviewed_at
+                -- dataset_id breaks the tie: see Dataset.get_all(). Without it the
+                -- row order of `cerno dataset list` (and MCP list_datasets, which
                 -- shares this query) varies between invocations whenever two
-                -- scans were imported in the same second.
+                -- datasets were imported in the same second.
                 ORDER BY s.last_reviewed_at DESC NULLS LAST, s.created_at DESC,
-                         s.scan_id DESC
+                         s.dataset_id DESC
                 """,
             )
             return [dict(row) for row in rows]
 
     @classmethod
     def delete_by_name(
-        cls, scan_name: str, conn: Optional[sqlite3.Connection] = None
+        cls, dataset_name: str, conn: Optional[sqlite3.Connection] = None
     ) -> bool:
-        """Delete a scan and all associated data by name.
+        """Delete a dataset and all associated data by name.
 
         Due to CASCADE DELETE constraints, this will automatically delete:
-        - findings, and per finding: finding_affected_hosts, workflow_executions,
+        - findings, and per finding: finding_affected_hosts,
           claude_conversations, finding_verdicts (-> verdict_evidence)
         - host_services
-        - sessions and session_scans
+        - sessions and session_datasets
 
         Tool executions and artifacts are retained for audit/history, but their
         finding_id/session_id links are set to NULL by foreign key constraints
         when referenced rows are deleted.
 
         Args:
-            scan_name: Name of scan to delete
+            dataset_name: Name of the dataset to delete
             conn: Database connection
 
         Returns:
-            True if scan was deleted, False if scan not found
+            True if the dataset was deleted, False if it was not found
         """
         with db_transaction(conn) as c:
-            # Check if scan exists
-            scan = cls.get_by_name(scan_name, c)
-            if not scan:
+            # Check if the dataset exists
+            dataset = cls.get_by_name(dataset_name, c)
+            if not dataset:
                 return False
 
             # Delete scan (CASCADE will handle related tables)
-            c.execute("DELETE FROM scans WHERE scan_name = ?", (scan_name,))
+            c.execute("DELETE FROM datasets WHERE dataset_name = ?", (dataset_name,))
             return True
 
 
-# ========== Model: Plugin ==========
+# ========== Model: FindingType ==========
 
 
 @dataclass
-class Plugin:
-    """Represents one finding type from a scan source (a "plugin").
+class FindingType:
+    """Represents one finding type from a finding source (a "finding_type").
 
-    NOTE: "plugin" is internal terminology. User-facing commands use "findings".
-    The severity_label is fetched from the v_plugins_with_severity view, not stored in plugins table.
+    NOTE: "finding_type" is internal terminology. User-facing commands use "findings".
+    The severity_label is fetched from the v_finding_types_with_severity view, not stored in finding_types table.
 
-    ``plugin_id`` is TEXT and namespaced per source from schema v5 on: a Nessus
-    plugin id stays bare (``'57608'``), a nuclei template id is prefixed
-    (``'nuclei:apache-detect'``). Use :attr:`source` rather than inspecting the
-    prefix at call sites.
+    ``finding_type_id`` is TEXT and namespaced per source from schema v5 on, for
+    **every** source -- Nessus included (``'nessus:57608'``,
+    ``'nuclei:apache-detect'``). No source is the default, so a bare token
+    (``'57608'``) is not a valid id anywhere. Use :attr:`source` rather than
+    inspecting the prefix at call sites.
     """
 
-    plugin_id: str
-    plugin_name: str = ""
+    finding_type_id: str
+    finding_type_name: str = ""
     severity_int: int = 0
     severity_label: str = (
-        ""  # Populated from v_plugins_with_severity view, not stored in plugins table
+        ""  # Populated from v_finding_types_with_severity view, not stored in finding_types table
     )
     has_metasploit: bool = False
     cvss3_score: Optional[float] = None
     cvss2_score: Optional[float] = None
     metasploit_names: Optional[list[str]] = None  # JSON array
     cves: Optional[list[str]] = None  # JSON array
-    plugin_url: Optional[str] = None
-    metadata_fetched_at: Optional[str] = None
+    #: Raw ``finding_types.details_url`` as stored. Readers almost always want
+    #: the :attr:`details_url` property instead, which falls back to the
+    #: per-source template when nothing was stored.
+    stored_details_url: Optional[str] = None
 
     @classmethod
-    def from_row(cls, row: sqlite3.Row) -> Plugin:
-        """Create Plugin from database row.
+    def from_row(cls, row: sqlite3.Row) -> FindingType:
+        """Create FindingType from database row.
 
         Args:
             row: SQLite row
 
         Returns:
-            Plugin instance
+            FindingType instance
         """
         metasploit_names_json = row["metasploit_names"]
         metasploit_names = (
@@ -328,29 +338,28 @@ class Plugin:
         cves = json.loads(cves_json) if cves_json else None
 
         return cls(
-            plugin_id=row["plugin_id"],
-            plugin_name=row["plugin_name"],
+            finding_type_id=row["finding_type_id"],
+            finding_type_name=row["finding_type_name"],
             severity_int=row["severity_int"],
             severity_label=(
                 row["severity_label"] if "severity_label" in row.keys() else ""
-            ),  # Optional, from v_plugins_with_severity view
+            ),  # Optional, from v_finding_types_with_severity view
             has_metasploit=bool(row["has_metasploit"]),
             cvss3_score=row["cvss3_score"],
             cvss2_score=row["cvss2_score"],
             metasploit_names=metasploit_names,
             cves=cves,
-            plugin_url=row["plugin_url"],
-            metadata_fetched_at=row["metadata_fetched_at"],
+            stored_details_url=row["details_url"],
         )
 
     def save(self, conn: Optional[sqlite3.Connection] = None) -> Optional[str]:
-        """Insert or update plugin in database (upsert).
+        """Insert or update finding_type in database (upsert).
 
         Args:
             conn: Database connection
 
         Returns:
-            plugin_id (or None if not set)
+            finding_type_id (or None if not set)
         """
         metasploit_names_json = (
             json.dumps(self.metasploit_names) if self.metasploit_names else None
@@ -360,68 +369,69 @@ class Plugin:
         with db_transaction(conn) as c:
             c.execute(
                 """
-                INSERT OR REPLACE INTO plugins (
-                    plugin_id, source_id, plugin_name, severity_int,
+                INSERT OR REPLACE INTO finding_types (
+                    finding_type_id, source_id, finding_type_name, severity_int,
                     has_metasploit, cvss3_score, cvss2_score, metasploit_names, cves,
-                    plugin_url, metadata_fetched_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    details_url
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    str(self.plugin_id),
-                    plugin_source_id(self.plugin_id),
-                    self.plugin_name,
+                    str(self.finding_type_id),
+                    finding_type_source_id(self.finding_type_id),
+                    self.finding_type_name,
                     self.severity_int,
                     self.has_metasploit,
                     self.cvss3_score,
                     self.cvss2_score,
                     metasploit_names_json,
                     cves_json,
-                    self.plugin_url,
-                    self.metadata_fetched_at,
+                    self.stored_details_url,
                 ),
             )
 
-        return self.plugin_id
+        return self.finding_type_id
 
     def __post_init__(self) -> None:
-        # plugins.plugin_id is TEXT (schema v5). Normalizing here means a caller
+        # finding_types.finding_type_id is TEXT (schema v5). Normalizing here means a caller
         # that passes the integer 57608 and a row read back as '57608' compare
         # equal, hash alike and key the same dict -- the alternative is an
         # int/str split that only shows up at a comparison far from the cause.
-        self.plugin_id = str(self.plugin_id)
+        self.finding_type_id = str(self.finding_type_id)
 
     @property
     def source(self) -> str:
-        """Name of the source this plugin came from (``nessus``, ``nuclei``).
+        """Name of the source this finding_type came from (``nessus``, ``nuclei``).
 
-        Derived from the ``plugin_id`` namespace rather than read back from
-        ``plugins.source_id``; the stored column exists so SQL can filter on
+        Derived from the ``finding_type_id`` namespace rather than read back from
+        ``finding_types.source_id``; the stored column exists so SQL can filter on
         source with an index, and the two are kept consistent by
         :meth:`save`.
         """
-        return plugin_source(self.plugin_id)
+        return finding_type_source(self.finding_type_id)
 
     @property
     def details_url(self) -> Optional[str]:
         """Best known details page, or None when the source has no template."""
-        return plugin_details_url(self.plugin_id, self.plugin_url)
+        return finding_type_details_url(self.finding_type_id, self.stored_details_url)
 
     @classmethod
     def get_by_id(
-        cls, plugin_id: str, conn: Optional[sqlite3.Connection] = None
-    ) -> Optional[Plugin]:
-        """Retrieve plugin by ID.
+        cls, finding_type_id: str, conn: Optional[sqlite3.Connection] = None
+    ) -> Optional[FindingType]:
+        """Retrieve finding_type by ID.
 
         Args:
-            plugin_id: Plugin ID
+            finding_type_id: FindingType ID
             conn: Database connection
 
         Returns:
-            Plugin instance or None if not found
+            FindingType instance or None if not found
         """
         with db_transaction(conn) as c:
             row = query_one(
-                c, "SELECT * FROM plugins WHERE plugin_id = ?", (plugin_id,)
+                c,
+                "SELECT * FROM finding_types WHERE finding_type_id = ?",
+                (finding_type_id,),
             )
             return cls.from_row(row) if row else None
 
@@ -450,26 +460,29 @@ def count_review_states(findings: Iterable["Finding"]) -> tuple[int, int, int, i
 
 @dataclass
 class Finding:
-    """Represents a finding (plugin instance) for a specific scan.
+    """Represents a finding (finding_type instance) for a specific scan.
 
     Host and port counts are computed via the v_finding_stats view rather than stored as columns.
     """
 
     finding_id: Optional[int] = None
-    scan_id: int = 0
-    plugin_id: str = ""
+    dataset_id: int = 0
+    finding_type_id: str = ""
     review_state: str = REVIEW_STATE_UNREVIEWED  # 'unreviewed', 'in_progress', 'done'
     reviewed_at: Optional[str] = None
-    reviewed_by: Optional[str] = None
+    #: ``finding_sources.source_id`` of the channel that moved this finding to
+    #: ``done`` -- 4 (operator/TUI) or 5 (agent/MCP). NULL whenever the finding
+    #: is not done. Written only by :meth:`update_review_state`.
+    completed_by: Optional[int] = None
     review_notes: Optional[str] = None
-    # Transient (not stored in DB): extra finding_ids from other selected scans.
-    # Set by get_by_scan_ids_merged() (and query.py merged results) so all host/port
-    # queries cover every selected scan.
+    # Transient (not stored in DB): extra finding_ids from other selected datasets.
+    # Set by get_by_dataset_ids_merged() (and query.py merged results) so all host/port
+    # queries cover every selected dataset.
     extra_finding_ids: list[int] = field(default_factory=list)
 
     def __post_init__(self) -> None:
-        # See Plugin.__post_init__: findings.plugin_id is TEXT from v5 on.
-        self.plugin_id = str(self.plugin_id)
+        # See FindingType.__post_init__: findings.finding_type_id is TEXT from v5 on.
+        self.finding_type_id = str(self.finding_type_id)
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> Finding:
@@ -483,11 +496,11 @@ class Finding:
         """
         return cls(
             finding_id=row["finding_id"],
-            scan_id=row["scan_id"],
-            plugin_id=row["plugin_id"],
+            dataset_id=row["dataset_id"],
+            finding_type_id=row["finding_type_id"],
             review_state=row["review_state"],
             reviewed_at=row["reviewed_at"],
-            reviewed_by=row["reviewed_by"],
+            completed_by=row["completed_by"],
             review_notes=row["review_notes"],
         )
 
@@ -506,16 +519,16 @@ class Finding:
                 cursor = c.execute(
                     """
                     INSERT INTO findings (
-                        scan_id, plugin_id, review_state,
-                        reviewed_at, reviewed_by, review_notes
+                        dataset_id, finding_type_id, review_state,
+                        reviewed_at, completed_by, review_notes
                     ) VALUES (?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        self.scan_id,
-                        self.plugin_id,
+                        self.dataset_id,
+                        self.finding_type_id,
                         self.review_state,
                         self.reviewed_at,
-                        self.reviewed_by,
+                        self.completed_by,
                         self.review_notes,
                     ),
                 )
@@ -525,13 +538,13 @@ class Finding:
                 c.execute(
                     """
                     UPDATE findings
-                    SET review_state=?, reviewed_at=?, reviewed_by=?, review_notes=?
+                    SET review_state=?, reviewed_at=?, completed_by=?, review_notes=?
                     WHERE finding_id=?
                     """,
                     (
                         self.review_state,
                         self.reviewed_at,
-                        self.reviewed_by,
+                        self.completed_by,
                         self.review_notes,
                         self.finding_id,
                     ),
@@ -573,6 +586,7 @@ class Finding:
     def transition_review_state(
         self,
         new_state: str,
+        actor: str,
         notes: Optional[str] = None,
         conn: Optional[sqlite3.Connection] = None,
     ) -> None:
@@ -583,11 +597,16 @@ class Finding:
 
         Args:
             new_state: Target review state
+            actor: Channel making the change -- ``SOURCE_OPERATOR`` from the
+                TUI or ``SOURCE_AGENT`` from an MCP client. Required: the
+                channel is never defaulted, so a new caller cannot silently
+                file an agent's change under the operator's name.
             notes: Optional review notes
             conn: Database connection
 
         Raises:
             InvalidReviewTransition: If the transition is not allowed.
+            ValueError: If ``actor`` is not an authored (channel) source.
         """
         allowed = REVIEW_TRANSITIONS.get(self.review_state, ())
         if new_state not in allowed:
@@ -595,26 +614,46 @@ class Finding:
                 f"Cannot change review state from {self.review_state!r} to "
                 f"{new_state!r}; allowed next state(s): {list(allowed)}"
             )
-        self.update_review_state(new_state, notes=notes, conn=conn)
+        self.update_review_state(new_state, actor, notes=notes, conn=conn)
 
     def update_review_state(
         self,
         new_state: str,
+        actor: str,
         notes: Optional[str] = None,
         conn: Optional[sqlite3.Connection] = None,
     ) -> None:
-        """Set review state and timestamp without a workflow check.
+        """Set review state, timestamp and attribution without a workflow check.
 
         Use ``transition_review_state()`` for user-initiated changes; this raw
-        setter is for syncing sibling findings in multi-scan mode.
+        setter is for syncing sibling findings in multi-dataset mode, which must
+        pass the **same** actor rather than deriving a new one.
+
+        ``completed_by`` is written only when the finding lands on ``done``, and
+        cleared again (with ``reviewed_at``) on any move away from it, so the
+        column never claims someone completed a finding that is back in review.
 
         Args:
             new_state: New review state ('unreviewed', 'in_progress', 'done')
+            actor: Channel making the change (see
+                :meth:`transition_review_state`)
             notes: Optional review notes
             conn: Database connection
+
+        Raises:
+            ValueError: If ``actor`` is not an authored (channel) source.
         """
+        actor_id = channel_source_id(actor)
         self.review_state = new_state
-        self.reviewed_at = now_iso()
+        if new_state == REVIEW_STATE_DONE:
+            self.reviewed_at = now_iso()
+            self.completed_by = actor_id
+        elif new_state == REVIEW_STATE_UNREVIEWED:
+            self.reviewed_at = None
+            self.completed_by = None
+        else:
+            self.reviewed_at = now_iso()
+            self.completed_by = None
         if notes:
             self.review_notes = self._with_appended_note(notes)
 
@@ -643,49 +682,49 @@ class Finding:
         self.save(conn)
 
     @classmethod
-    def get_by_scan_with_plugin(
+    def get_by_dataset_with_finding_type(
         cls,
-        scan_id: int,
+        dataset_id: int,
         severity_dir: Optional[str] = None,
         severity_dirs: Optional[list[str]] = None,
         review_state: Optional[str] = None,
-        plugin_name_filter: Optional[str] = None,
+        finding_type_name_filter: Optional[str] = None,
         has_metasploit: Optional[bool] = None,
-        plugin_ids: Optional[list[str]] = None,
+        finding_type_ids: Optional[list[str]] = None,
         conn: Optional[sqlite3.Connection] = None,
-    ) -> list[tuple[Finding, Plugin]]:
-        """Retrieve findings with plugin info for a scan.
+    ) -> list[tuple[Finding, FindingType]]:
+        """Retrieve findings with finding_type info for a dataset.
 
         Args:
-            scan_id: Scan ID to filter by
+            dataset_id: Dataset ID to filter by
             severity_dir: Optional single severity directory filter (e.g., "3_High")
             severity_dirs: Optional list of severity directories to filter by (e.g., ["4_Critical", "3_High"])
             review_state: Optional review state filter ('unreviewed', 'in_progress', 'done')
-            plugin_name_filter: Optional case-insensitive substring to match plugin names
-            has_metasploit: Optional filter for metasploit plugins
-            plugin_ids: Optional list of specific plugin IDs to include
+            finding_type_name_filter: Optional case-insensitive substring to match finding_type names
+            has_metasploit: Optional filter for metasploit finding_types
+            finding_type_ids: Optional list of specific finding_type IDs to include
             conn: Database connection
 
         Returns:
-            List of (Finding, Plugin) tuples
+            List of (Finding, FindingType) tuples
         """
         with db_transaction(conn) as c:
-            # Build query with JOIN (use v_plugins_with_severity view to get severity_label)
+            # Build query with JOIN (use v_finding_types_with_severity view to get severity_label)
             query = """
                 SELECT
-                    f.finding_id, f.scan_id, f.plugin_id,
-                    f.review_state, f.reviewed_at, f.reviewed_by, f.review_notes,
-                    p.plugin_id as p_plugin_id, p.plugin_name, p.severity_int, p.severity_label,
+                    f.finding_id, f.dataset_id, f.finding_type_id,
+                    f.review_state, f.reviewed_at, f.completed_by, f.review_notes,
+                    p.finding_type_id as p_finding_type_id, p.finding_type_name, p.severity_int, p.severity_label,
                     p.has_metasploit, p.cvss3_score, p.cvss2_score, p.cves,
-                    p.plugin_url, p.metadata_fetched_at, p.metasploit_names
+                    p.details_url, p.metasploit_names
                 FROM findings f
-                INNER JOIN v_plugins_with_severity p ON f.plugin_id = p.plugin_id
-                WHERE f.scan_id = ?
+                INNER JOIN v_finding_types_with_severity p ON f.finding_type_id = p.finding_type_id
+                WHERE f.dataset_id = ?
             """
-            params: list[Any] = [scan_id]
+            params: list[Any] = [dataset_id]
 
             # Add optional filters
-            # severity_dir filter uses severity_int from v_plugins_with_severity
+            # severity_dir filter uses severity_int from v_finding_types_with_severity
             if severity_dir is not None:
                 # Parse severity_dir format like "4_Critical" to extract severity_int
                 try:
@@ -711,121 +750,120 @@ class Finding:
                 query += " AND f.review_state = ?"
                 params.append(review_state)
 
-            if plugin_name_filter is not None:
-                query += " AND p.plugin_name LIKE ?"
-                params.append(f"%{plugin_name_filter}%")
+            if finding_type_name_filter is not None:
+                query += " AND p.finding_type_name LIKE ?"
+                params.append(f"%{finding_type_name_filter}%")
 
             if has_metasploit is not None:
                 query += " AND p.has_metasploit = ?"
                 params.append(1 if has_metasploit else 0)
 
-            if plugin_ids is not None and len(plugin_ids) > 0:
-                placeholders = ",".join("?" * len(plugin_ids))
-                query += f" AND f.plugin_id IN ({placeholders})"
-                params.extend(plugin_ids)
+            if finding_type_ids is not None and len(finding_type_ids) > 0:
+                placeholders = ",".join("?" * len(finding_type_ids))
+                query += f" AND f.finding_type_id IN ({placeholders})"
+                params.extend(finding_type_ids)
 
-            # Order by plugin_id for consistent results
-            query += f" ORDER BY {plugin_id_order_sql('p.plugin_id')}"
+            # Order by finding_type_id for consistent results
+            query += f" ORDER BY {finding_type_id_order_sql('p.finding_type_id')}"
 
             rows = query_all(c, query, tuple(params))
 
             results = []
             for row in rows:
                 # Create Finding from row (columns 0-6, host_count/port_count removed from query)
-                plugin_file = cls(
+                finding_type_file = cls(
                     finding_id=row[0],
-                    scan_id=row[1],
-                    plugin_id=row[2],
+                    dataset_id=row[1],
+                    finding_type_id=row[2],
                     review_state=row[3],
                     reviewed_at=row[4],
-                    reviewed_by=row[5],
+                    completed_by=row[5],
                     review_notes=row[6],
                 )
 
-                # Create Plugin from row (columns 7-17)
+                # Create FindingType from row (columns 7-16)
                 cves_json = row[14]
                 cves = json.loads(cves_json) if cves_json else None
-                msf_names_json = row[17]
+                msf_names_json = row[16]
                 msf_names = json.loads(msf_names_json) if msf_names_json else None
 
-                plugin = Plugin(
-                    plugin_id=row[7],
-                    plugin_name=row[8],
+                finding_type = FindingType(
+                    finding_type_id=row[7],
+                    finding_type_name=row[8],
                     severity_int=row[9],
                     severity_label=row[10],
                     has_metasploit=bool(row[11]),
                     cvss3_score=row[12],
                     cvss2_score=row[13],
                     cves=cves,
-                    plugin_url=row[15],
-                    metadata_fetched_at=row[16],
+                    stored_details_url=row[15],
                     metasploit_names=msf_names,
                 )
 
-                results.append((plugin_file, plugin))
+                results.append((finding_type_file, finding_type))
 
             return results
 
     @classmethod
-    def get_by_scan_ids_merged(
+    def get_by_dataset_ids_merged(
         cls,
-        scan_ids: list[int],
+        dataset_ids: list[int],
         severity_dir: Optional[str] = None,
         severity_dirs: Optional[list[str]] = None,
         has_metasploit: Optional[bool] = None,
-        plugin_ids: Optional[list[str]] = None,
+        finding_type_ids: Optional[list[str]] = None,
         conn: Optional[sqlite3.Connection] = None,
-    ) -> tuple[list[tuple["Finding", "Plugin"]], dict[str, list["Finding"]]]:
-        """Retrieve findings across multiple scans, merged and deduplicated by plugin_id.
+    ) -> tuple[list[tuple["Finding", "FindingType"]], dict[str, list["Finding"]]]:
+        """Retrieve findings across multiple datasets, merged and deduplicated by finding_type_id.
 
-        Queries findings for all provided scan IDs and groups results by plugin_id.
-        One representative Finding (from the scan with the lowest scan_id) is selected
-        per plugin_id for display purposes, while all Finding instances across scans
-        are returned for full cross-scan visibility.
+        Queries findings for all provided dataset IDs and groups results by finding_type_id.
+        One representative Finding (from the dataset with the lowest dataset_id) is selected
+        per finding_type_id for display purposes, while all Finding instances across datasets
+        are returned for full cross-dataset visibility.
 
         Args:
-            scan_ids: List of scan IDs to query across.
+            dataset_ids: List of dataset IDs to query across.
             severity_dir: Optional single severity directory filter (e.g., "3_High").
             severity_dirs: Optional list of severity directories to filter by
                 (e.g., ["4_Critical", "3_High"]).
-            has_metasploit: Optional filter for plugins with Metasploit modules.
-            plugin_ids: Optional list of specific plugin IDs to include.
+            has_metasploit: Optional filter for finding_types with Metasploit modules.
+            finding_type_ids: Optional list of specific finding_type IDs to include.
             conn: Database connection.
 
         Returns:
             A tuple of:
-            - display_list: list of (Finding, Plugin) tuples — one representative
-              Finding per plugin_id (from the scan with the lowest scan_id), with
+            - display_list: list of (Finding, FindingType) tuples — one representative
+              Finding per finding_type_id (from the dataset with the lowest dataset_id), with
               ``extra_finding_ids`` set to the sibling finding IDs from the other
-              scans so host/port queries span all selected scans.
-            - all_instances: dict mapping plugin_id → list of all Finding objects
-              across all selected scans, ordered by scan_id ascending.
+              datasets so host/port queries span all selected datasets.
+            - all_instances: dict mapping finding_type_id → list of all Finding objects
+              across all selected datasets, ordered by dataset_id ascending.
 
         Examples:
-            display_list, all_instances = Finding.get_by_scan_ids_merged(
-                scan_ids=[1, 2, 3],
+            display_list, all_instances = Finding.get_by_dataset_ids_merged(
+                dataset_ids=[1, 2, 3],
                 severity_dirs=["4_Critical", "3_High"],
             )
-            for finding, plugin in display_list:
-                other_scans = all_instances[plugin.plugin_id]
+            for finding, finding_type in display_list:
+                other_datasets = all_instances[finding_type.finding_type_id]
         """
-        if not scan_ids:
+        if not dataset_ids:
             return [], {}
 
         with db_transaction(conn) as c:
-            placeholders = ",".join("?" * len(scan_ids))
+            placeholders = ",".join("?" * len(dataset_ids))
             query = f"""
                 SELECT
-                    f.finding_id, f.scan_id, f.plugin_id,
-                    f.review_state, f.reviewed_at, f.reviewed_by, f.review_notes,
-                    p.plugin_id as p_plugin_id, p.plugin_name, p.severity_int, p.severity_label,
+                    f.finding_id, f.dataset_id, f.finding_type_id,
+                    f.review_state, f.reviewed_at, f.completed_by, f.review_notes,
+                    p.finding_type_id as p_finding_type_id, p.finding_type_name, p.severity_int, p.severity_label,
                     p.has_metasploit, p.cvss3_score, p.cvss2_score, p.cves,
-                    p.plugin_url, p.metadata_fetched_at, p.metasploit_names
+                    p.details_url, p.metasploit_names
                 FROM findings f
-                INNER JOIN v_plugins_with_severity p ON f.plugin_id = p.plugin_id
-                WHERE f.scan_id IN ({placeholders})
+                INNER JOIN v_finding_types_with_severity p ON f.finding_type_id = p.finding_type_id
+                WHERE f.dataset_id IN ({placeholders})
             """
-            params: list[Any] = list(scan_ids)
+            params: list[Any] = list(dataset_ids)
 
             # Add optional filters
             if severity_dir is not None:
@@ -851,28 +889,28 @@ class Finding:
                 query += " AND p.has_metasploit = ?"
                 params.append(1 if has_metasploit else 0)
 
-            if plugin_ids is not None and len(plugin_ids) > 0:
-                pid_placeholders = ",".join("?" * len(plugin_ids))
-                query += f" AND f.plugin_id IN ({pid_placeholders})"
-                params.extend(plugin_ids)
+            if finding_type_ids is not None and len(finding_type_ids) > 0:
+                pid_placeholders = ",".join("?" * len(finding_type_ids))
+                query += f" AND f.finding_type_id IN ({pid_placeholders})"
+                params.extend(finding_type_ids)
 
-            # Order by plugin_id then scan_id so grouping logic finds lowest scan_id first
-            query += f" ORDER BY {plugin_id_order_sql('p.plugin_id')}, f.scan_id ASC"
+            # Order by finding_type_id then dataset_id so grouping logic finds lowest dataset_id first
+            query += f" ORDER BY {finding_type_id_order_sql('p.finding_type_id')}, f.dataset_id ASC"
 
             rows = query_all(c, query, tuple(params))
 
-            # Group rows by plugin_id; track all Finding instances and one Plugin per plugin_id
+            # Group rows by finding_type_id; track all Finding instances and one FindingType per finding_type_id
             all_instances: dict[str, list[Finding]] = {}
-            plugin_map: dict[str, Plugin] = {}
+            finding_type_map: dict[str, FindingType] = {}
 
             for row in rows:
                 finding = cls(
                     finding_id=row[0],
-                    scan_id=row[1],
-                    plugin_id=row[2],
+                    dataset_id=row[1],
+                    finding_type_id=row[2],
                     review_state=row[3],
                     reviewed_at=row[4],
-                    reviewed_by=row[5],
+                    completed_by=row[5],
                     review_notes=row[6],
                 )
 
@@ -880,61 +918,60 @@ class Finding:
 
                 if pid not in all_instances:
                     all_instances[pid] = []
-                    # First row for this plugin_id has the lowest scan_id (due to ORDER BY)
+                    # First row for this finding_type_id has the lowest dataset_id (due to ORDER BY)
                     cves_json = row[14]
                     cves = json.loads(cves_json) if cves_json else None
-                    msf_names_json = row[17]
+                    msf_names_json = row[16]
                     msf_names = json.loads(msf_names_json) if msf_names_json else None
-                    plugin_map[pid] = Plugin(
-                        plugin_id=row[7],
-                        plugin_name=row[8],
+                    finding_type_map[pid] = FindingType(
+                        finding_type_id=row[7],
+                        finding_type_name=row[8],
                         severity_int=row[9],
                         severity_label=row[10],
                         has_metasploit=bool(row[11]),
                         cvss3_score=row[12],
                         cvss2_score=row[13],
                         cves=cves,
-                        plugin_url=row[15],
-                        metadata_fetched_at=row[16],
+                        stored_details_url=row[15],
                         metasploit_names=msf_names,
                     )
 
                 all_instances[pid].append(finding)
 
-            # Build display_list: representative Finding (lowest scan_id) paired with Plugin.
-            # Attach sibling finding_ids so host/port queries cover all selected scans.
-            display_list: list[tuple[Finding, Plugin]] = []
+            # Build display_list: representative Finding (lowest dataset_id) paired with FindingType.
+            # Attach sibling finding_ids so host/port queries cover all selected datasets.
+            display_list: list[tuple[Finding, FindingType]] = []
             for pid, instances in all_instances.items():
                 rep = instances[0]
                 rep.extra_finding_ids = [
                     f.finding_id for f in instances[1:] if f.finding_id is not None
                 ]
-                display_list.append((rep, plugin_map[pid]))
+                display_list.append((rep, finding_type_map[pid]))
 
             return display_list, all_instances
 
     @classmethod
-    def count_by_scan_severity(
+    def count_by_dataset_severity(
         cls,
-        scan_id: int,
+        dataset_id: int,
         severity_dir: str,
-        plugin_ids: Optional[list[str]] = None,
+        finding_type_ids: Optional[list[str]] = None,
         conn: Optional[sqlite3.Connection] = None,
         *,
-        scan_ids: Optional[list[int]] = None,
+        dataset_ids: Optional[list[int]] = None,
     ) -> tuple[int, int, int, int]:
         """Count findings in a severity directory by review state.
 
-        In multi-scan mode a plugin is counted once; its state is taken from
+        In multi-dataset mode a finding_type is counted once; its state is taken from
         the furthest-along instance (done > in_progress > unreviewed), matching
-        how review-state changes are broadcast to all selected scans.
+        how review-state changes are broadcast to all selected datasets.
 
         Args:
-            scan_id: Scan ID to count files for (ignored when scan_ids is provided)
+            dataset_id: Dataset ID to count files for (ignored when dataset_ids is provided)
             severity_dir: Severity directory (e.g., "3_High")
-            plugin_ids: Optional list of plugin IDs to filter by (for host filtering)
+            finding_type_ids: Optional list of finding_type IDs to filter by (for host filtering)
             conn: Database connection
-            scan_ids: Optional list of scan IDs for multi-scan queries (overrides scan_id)
+            dataset_ids: Optional list of dataset IDs for multi-dataset queries (overrides dataset_id)
 
         Returns:
             Tuple of (unreviewed, in_progress, done, total)
@@ -944,16 +981,20 @@ class Finding:
         except (ValueError, IndexError):
             return (0, 0, 0, 0)
 
-        effective_ids = list(scan_ids) if scan_ids and len(scan_ids) > 1 else [scan_id]
+        effective_ids = (
+            list(dataset_ids) if dataset_ids and len(dataset_ids) > 1 else [dataset_id]
+        )
         id_placeholders = ",".join("?" * len(effective_ids))
         params: list[Any] = effective_ids + [severity_int]
 
-        plugin_filter = ""
-        if plugin_ids:
-            plugin_filter = f" AND pf.plugin_id IN ({','.join('?' * len(plugin_ids))})"
-            params += list(plugin_ids)
+        finding_type_filter = ""
+        if finding_type_ids:
+            finding_type_filter = (
+                f" AND pf.finding_type_id IN ({','.join('?' * len(finding_type_ids))})"
+            )
+            params += list(finding_type_ids)
 
-        # One row per plugin with its most advanced state (rank 2=done, 1=in_progress, 0=unreviewed)
+        # One row per finding_type with its most advanced state (rank 2=done, 1=in_progress, 0=unreviewed)
         query = f"""
             SELECT
                 SUM(CASE WHEN rank = 0 THEN 1 ELSE 0 END),
@@ -961,15 +1002,15 @@ class Finding:
                 SUM(CASE WHEN rank = 2 THEN 1 ELSE 0 END),
                 COUNT(*)
             FROM (
-                SELECT pf.plugin_id,
+                SELECT pf.finding_type_id,
                        MAX(CASE pf.review_state
                                WHEN '{REVIEW_STATE_DONE}' THEN 2
                                WHEN '{REVIEW_STATE_IN_PROGRESS}' THEN 1
                                ELSE 0 END) AS rank
                 FROM findings pf
-                JOIN plugins p ON pf.plugin_id = p.plugin_id
-                WHERE pf.scan_id IN ({id_placeholders}) AND p.severity_int = ?{plugin_filter}
-                GROUP BY pf.plugin_id
+                JOIN finding_types p ON pf.finding_type_id = p.finding_type_id
+                WHERE pf.dataset_id IN ({id_placeholders}) AND p.severity_int = ?{finding_type_filter}
+                GROUP BY pf.finding_type_id
             )
         """
         with db_transaction(conn) as c:
@@ -979,100 +1020,102 @@ class Finding:
         return (row[0] or 0, row[1] or 0, row[2] or 0, row[3])
 
     @classmethod
-    def count_by_scan(
+    def count_by_dataset(
         cls,
-        scan_id: int,
+        dataset_id: int,
         conn: Optional[sqlite3.Connection] = None,
         *,
-        scan_ids: Optional[list[int]] = None,
+        dataset_ids: Optional[list[int]] = None,
     ) -> tuple[int, int]:
-        """Count total and Done findings across all severities for a scan.
+        """Count total and Done findings across all severities for a dataset.
 
         Args:
-            scan_id: Scan ID to count findings for (ignored when scan_ids is provided)
+            dataset_id: Dataset ID to count findings for (ignored when dataset_ids is provided)
             conn: Database connection
-            scan_ids: Optional list of scan IDs for multi-scan queries (overrides scan_id);
-                uses COUNT(DISTINCT plugin_id) to deduplicate across scans
+            dataset_ids: Optional list of dataset IDs for multi-dataset queries (overrides dataset_id);
+                uses COUNT(DISTINCT finding_type_id) to deduplicate across datasets
 
         Returns:
             Tuple of (total_findings, done_findings)
             where reviewed means review_state == 'done'
         """
         with db_transaction(conn) as c:
-            if scan_ids and len(scan_ids) > 1:
-                placeholders = ",".join("?" * len(scan_ids))
+            if dataset_ids and len(dataset_ids) > 1:
+                placeholders = ",".join("?" * len(dataset_ids))
                 total_row = query_one(
                     c,
-                    f"SELECT COUNT(DISTINCT plugin_id) FROM findings WHERE scan_id IN ({placeholders})",
-                    tuple(scan_ids),
+                    f"SELECT COUNT(DISTINCT finding_type_id) FROM findings WHERE dataset_id IN ({placeholders})",
+                    tuple(dataset_ids),
                 )
                 total_count = total_row[0] if total_row else 0
                 reviewed_row = query_one(
                     c,
-                    f"SELECT COUNT(DISTINCT plugin_id) FROM findings WHERE scan_id IN ({placeholders}) AND review_state = 'done'",
-                    tuple(scan_ids),
+                    f"SELECT COUNT(DISTINCT finding_type_id) FROM findings WHERE dataset_id IN ({placeholders}) AND review_state = 'done'",
+                    tuple(dataset_ids),
                 )
                 reviewed_count = reviewed_row[0] if reviewed_row else 0
             else:
                 total_row = query_one(
-                    c, "SELECT COUNT(*) FROM findings WHERE scan_id = ?", (scan_id,)
+                    c,
+                    "SELECT COUNT(*) FROM findings WHERE dataset_id = ?",
+                    (dataset_id,),
                 )
                 total_count = total_row[0] if total_row else 0
                 reviewed_row = query_one(
                     c,
-                    "SELECT COUNT(*) FROM findings WHERE scan_id = ? AND review_state = 'done'",
-                    (scan_id,),
+                    "SELECT COUNT(*) FROM findings WHERE dataset_id = ? AND review_state = 'done'",
+                    (dataset_id,),
                 )
                 reviewed_count = reviewed_row[0] if reviewed_row else 0
 
             return total_count, reviewed_count
 
     @classmethod
-    def get_severity_dirs_for_scan(
+    def get_severity_names_for_dataset(
         cls,
-        scan_id: int,
+        dataset_id: int,
         conn: Optional[sqlite3.Connection] = None,
         *,
-        plugin_ids: Optional[list[str]] = None,
-        scan_ids: Optional[list[int]] = None,
+        finding_type_ids: Optional[list[str]] = None,
+        dataset_ids: Optional[list[int]] = None,
     ) -> list[str]:
-        """Get distinct severity directories for a scan, sorted by severity level.
+        """Get distinct severity directories for a dataset, sorted by severity level.
 
-        Reconstructs severity directory names from plugins table.
+        Reconstructs severity directory names from finding_types table.
         Returns names like ["4_Critical", "3_High", "2_Medium", "1_Low", "0_Info"].
 
         Args:
-            scan_id: Scan ID to query (ignored when scan_ids is provided)
+            dataset_id: Dataset ID to query (ignored when dataset_ids is provided)
             conn: Database connection
-            plugin_ids: Optional list of plugin IDs to filter by (for host filtering)
-            scan_ids: Optional list of scan IDs for multi-scan queries (overrides scan_id)
+            finding_type_ids: Optional list of finding_type IDs to filter by (for host filtering)
+            dataset_ids: Optional list of dataset IDs for multi-dataset queries (overrides dataset_id)
 
         Returns:
             List of severity directory names sorted by severity (highest first)
         """
         with db_transaction(conn) as c:
-            if scan_ids and len(scan_ids) > 1:
-                id_placeholders = ",".join("?" * len(scan_ids))
+            if dataset_ids and len(dataset_ids) > 1:
+                id_placeholders = ",".join("?" * len(dataset_ids))
                 query = f"""
                     SELECT DISTINCT p.severity_int, p.severity_label
                     FROM findings pf
-                    JOIN v_plugins_with_severity p ON pf.plugin_id = p.plugin_id
-                    WHERE pf.scan_id IN ({id_placeholders})
+                    JOIN v_finding_types_with_severity p ON pf.finding_type_id = p.finding_type_id
+                    WHERE pf.dataset_id IN ({id_placeholders})
                 """
-                params: list[Any] = list(scan_ids)
+                params: list[Any] = list(dataset_ids)
             else:
                 query = """
                     SELECT DISTINCT p.severity_int, p.severity_label
                     FROM findings pf
-                    JOIN v_plugins_with_severity p ON pf.plugin_id = p.plugin_id
-                    WHERE pf.scan_id = ?
+                    JOIN v_finding_types_with_severity p ON pf.finding_type_id = p.finding_type_id
+                    WHERE pf.dataset_id = ?
                 """
-                params = [scan_id]
+                params = [dataset_id]
 
-            if plugin_ids is not None and len(plugin_ids) > 0:
-                placeholders = ",".join("?" * len(plugin_ids))
-                query += f" AND pf.plugin_id IN ({placeholders})"
-                params.extend(plugin_ids)
+            if finding_type_ids is not None and len(finding_type_ids) > 0:
+                placeholders = ",".join("?" * len(finding_type_ids))
+                query += f" AND pf.finding_type_id IN ({placeholders})"
+                params.extend(finding_type_ids)
 
             query += " ORDER BY p.severity_int DESC"
 
@@ -1201,7 +1244,7 @@ class Finding:
         virtual host separate (one IP may own many) while matching exactly the
         number of lines :meth:`get_hosts_and_ports` renders.
 
-        Use :meth:`Scan.get_all_with_stats` (distinct ``ip_address``) when you
+        Use :meth:`Dataset.get_all_with_stats` (distinct ``ip_address``) when you
         want machines rather than targets.
 
         Args:
@@ -1345,28 +1388,28 @@ class Finding:
 
             return lines
 
-    def get_plugin_outputs_by_host(
+    def get_evidence_by_host(
         self, conn: Optional[sqlite3.Connection] = None
     ) -> list[tuple[str, Optional[int], Optional[str]]]:
-        """Retrieve all plugin outputs grouped by host:port.
+        """Retrieve all finding_type outputs grouped by host:port.
 
-        Queries the finding_affected_hosts table and returns plugin output for each
+        Queries the finding_affected_hosts table and returns finding_type output for each
         host:port combination. Used by the Finding Details UI action.
 
         Args:
             conn: Database connection
 
         Returns:
-            List of (host, port, plugin_output) tuples, sorted (IPs first, then hostnames)
+            List of (host, port, evidence) tuples, sorted (IPs first, then hostnames)
             Example: [
                 ("192.168.1.1", 80, "Path: C:\\...\\nInstalled version: 9.52"),
                 ("192.168.1.1", 443, "Server: nginx/1.18.0"),
-                ("example.com", 80, None)  # No plugin output for this host
+                ("example.com", 80, None)  # No finding_type output for this host
             ]
         """
         if self.finding_id is None:
             log_error(
-                "Cannot get plugin outputs for unsaved Finding (finding_id is None)"
+                "Cannot get finding_type outputs for unsaved Finding (finding_id is None)"
             )
             return []
 
@@ -1379,7 +1422,7 @@ class Finding:
                 SELECT DISTINCT
                     h.scan_target,
                     fah.port_number,
-                    fah.plugin_output
+                    fah.evidence
                 FROM finding_affected_hosts fah
                 JOIN hosts h ON fah.host_id = h.host_id
                 WHERE fah.finding_id IN ({placeholders})
@@ -1396,7 +1439,7 @@ class Finding:
             if not rows:
                 return []
 
-            # Return as list of tuples (host, port, plugin_output)
+            # Return as list of tuples (host, port, evidence)
             return [(row[0], row[1], row[2]) for row in rows]
 
 
@@ -1640,7 +1683,7 @@ class SeverityLevel:
     """Represents a severity level (normalized lookup table).
 
     This model provides a single source of truth for severity metadata,
-    eliminating the need to store severity_label in every plugin record.
+    eliminating the need to store severity_label in every finding_type record.
     """
 
     severity_int: int
@@ -1772,103 +1815,14 @@ class ArtifactType:
             return cls.from_row(row) if row else None
 
 
-# ========== Model: AuditLog ==========
-
-
-@dataclass
-class AuditLog:
-    """Represents an audit log entry (change tracking).
-
-    Reader for the audit_log table. The table is reserved: no triggers or code
-    write to it yet, so it is currently always empty.
-    """
-
-    audit_id: Optional[int] = None
-    table_name: str = ""
-    record_id: int = 0
-    action: str = ""  # INSERT, UPDATE, DELETE
-    changed_by: Optional[str] = None
-    changed_at: Optional[str] = None
-    old_values: Optional[dict[str, Any]] = None  # JSON object
-    new_values: Optional[dict[str, Any]] = None  # JSON object
-
-    @classmethod
-    def from_row(cls, row: sqlite3.Row) -> AuditLog:
-        """Create AuditLog from database row.
-
-        Args:
-            row: SQLite row
-
-        Returns:
-            AuditLog instance
-        """
-        old_values_json = row["old_values"]
-        old_values = json.loads(old_values_json) if old_values_json else None
-
-        new_values_json = row["new_values"]
-        new_values = json.loads(new_values_json) if new_values_json else None
-
-        return cls(
-            audit_id=row["audit_id"],
-            table_name=row["table_name"],
-            record_id=row["record_id"],
-            action=row["action"],
-            changed_by=row["changed_by"],
-            changed_at=row["changed_at"],
-            old_values=old_values,
-            new_values=new_values,
-        )
-
-    @classmethod
-    def get_by_table_and_record(
-        cls, table_name: str, record_id: int, conn: Optional[sqlite3.Connection] = None
-    ) -> list[AuditLog]:
-        """Retrieve audit log entries for a specific table record.
-
-        Args:
-            table_name: Table name
-            record_id: Record ID
-            conn: Database connection
-
-        Returns:
-            List of AuditLog instances ordered by timestamp
-        """
-        with db_transaction(conn) as c:
-            rows = query_all(
-                c,
-                "SELECT * FROM audit_log WHERE table_name = ? AND record_id = ? ORDER BY changed_at ASC",
-                (table_name, record_id),
-            )
-            return [cls.from_row(row) for row in rows]
-
-    @classmethod
-    def get_recent(
-        cls, limit: int = 100, conn: Optional[sqlite3.Connection] = None
-    ) -> list[AuditLog]:
-        """Retrieve recent audit log entries.
-
-        Args:
-            limit: Maximum number of entries to return
-            conn: Database connection
-
-        Returns:
-            List of AuditLog instances ordered by timestamp (newest first)
-        """
-        with db_transaction(conn) as c:
-            rows = query_all(
-                c, "SELECT * FROM audit_log ORDER BY changed_at DESC LIMIT ?", (limit,)
-            )
-            return [cls.from_row(row) for row in rows]
-
-
 # ========== Model: Host ==========
 
 
 @dataclass
 class Host:
-    """Represents a unique host across all scans.
+    """Represents a unique host across all datasets.
 
-    Supports both IP-targeted and FQDN-targeted scans:
+    Supports both IP-targeted and FQDN-targeted datasets:
     - ip_address: Always the resolved IP (from host-ip tag in Nessus)
     - scan_target: What was scanned (IP or FQDN from ReportHost@name)
     - Composite unique: same IP via same target = same host
@@ -1983,7 +1937,7 @@ class Host:
 
         Args:
             ip_address: Resolved IP address
-            scan_target: Scan target (IP or FQDN)
+            scan_target: Dataset target (IP or FQDN)
             conn: Database connection (optional)
 
         Returns:
@@ -2027,7 +1981,7 @@ class Host:
         May return multiple hosts if same FQDN resolved to different IPs.
 
         Args:
-            scan_target: Scan target (IP or FQDN)
+            scan_target: Dataset target (IP or FQDN)
             conn: Database connection (optional)
 
         Returns:
@@ -2043,7 +1997,7 @@ class Host:
     def get_all_with_stats(
         cls, conn: Optional[sqlite3.Connection] = None
     ) -> list[dict]:
-        """Get all hosts with finding counts (cross-scan query).
+        """Get all hosts with finding counts (cross-dataset query).
 
         Returns:
             List of dicts with host info and statistics
@@ -2062,12 +2016,12 @@ class Host:
                     h.first_seen,
                     h.last_seen,
                     COUNT(DISTINCT fah.finding_id) as finding_count,
-                    COUNT(DISTINCT f.scan_id) as scan_count,
+                    COUNT(DISTINCT f.dataset_id) as dataset_count,
                     MAX(p.severity_int) as max_severity
                 FROM hosts h
                 LEFT JOIN finding_affected_hosts fah ON h.host_id = fah.host_id
                 LEFT JOIN findings f ON fah.finding_id = f.finding_id
-                LEFT JOIN plugins p ON f.plugin_id = p.plugin_id
+                LEFT JOIN finding_types p ON f.finding_type_id = p.finding_type_id
                 GROUP BY h.host_id
                 ORDER BY finding_count DESC
             """,
@@ -2075,35 +2029,35 @@ class Host:
             return [dict(row) for row in rows]
 
     @classmethod
-    def get_plugin_ids_for_scan(
+    def get_finding_type_ids_for_dataset(
         cls,
         ip_address: str,
-        scan_id: int,
+        dataset_id: int,
         partial_match: bool = False,
         conn: Optional[sqlite3.Connection] = None,
         *,
-        scan_ids: Optional[list[int]] = None,
+        dataset_ids: Optional[list[int]] = None,
     ) -> list[str]:
-        """Get plugin IDs for findings affecting a specific host in one or more scans.
+        """Get finding_type IDs for findings affecting a specific host in one or more datasets.
 
         Args:
             ip_address: IP address to search
-            scan_id: Scan ID to filter by (ignored when scan_ids has more than one entry)
+            dataset_id: Dataset ID to filter by (ignored when dataset_ids has more than one entry)
             partial_match: If True, use LIKE for substring matching
             conn: Database connection (optional)
-            scan_ids: Optional list of scan IDs for multi-scan queries (overrides scan_id)
+            dataset_ids: Optional list of dataset IDs for multi-dataset queries (overrides dataset_id)
 
         Returns:
-            List of distinct plugin_id values for findings affecting this host
+            List of distinct finding_type_id values for findings affecting this host
         """
-        order = plugin_id_order_sql("f.plugin_id")
+        order = finding_type_id_order_sql("f.finding_type_id")
 
-        if scan_ids and len(scan_ids) > 1:
-            scan_clause = f"f.scan_id IN ({','.join('?' * len(scan_ids))})"
-            params: list[Any] = list(scan_ids)
+        if dataset_ids and len(dataset_ids) > 1:
+            dataset_clause = f"f.dataset_id IN ({','.join('?' * len(dataset_ids))})"
+            params: list[Any] = list(dataset_ids)
         else:
-            scan_clause = "f.scan_id = ?"
-            params = [scan_id]
+            dataset_clause = "f.dataset_id = ?"
+            params = [dataset_id]
 
         if partial_match:
             host_clause = "h.ip_address LIKE ?"
@@ -2113,37 +2067,37 @@ class Host:
             params.append(ip_address)
 
         query = f"""
-            SELECT DISTINCT f.plugin_id
+            SELECT DISTINCT f.finding_type_id
             FROM finding_affected_hosts fah
             JOIN findings f ON fah.finding_id = f.finding_id
             JOIN hosts h ON fah.host_id = h.host_id
-            WHERE {scan_clause} AND {host_clause}
+            WHERE {dataset_clause} AND {host_clause}
             ORDER BY {order}
         """
         with db_transaction(conn) as c:
             rows = query_all(c, query, tuple(params))
-            return [row["plugin_id"] for row in rows]
+            return [row["finding_type_id"] for row in rows]
 
     @classmethod
-    def identifiers_for_scans(
-        cls, scan_ids: list[int], conn: Optional[sqlite3.Connection] = None
+    def identifiers_for_datasets(
+        cls, dataset_ids: list[int], conn: Optional[sqlite3.Connection] = None
     ) -> list[str]:
-        """Every host name/address seen in the given scans (findings + services).
+        """Every host name/address seen in the given datasets (findings + services).
 
         Returns IPs, scan targets, FQDNs, NetBIOS names and reverse DNS names,
         de-duplicated. The workflow contribution leak scan treats each of these as
         engagement data that must never appear in an exported workflow.
 
         Args:
-            scan_ids: Scans to collect hosts from (empty list → empty result)
+            dataset_ids: Datasets to collect hosts from (empty list → empty result)
             conn: Database connection (optional)
 
         Returns:
             List of non-empty identifier strings.
         """
-        if not scan_ids:
+        if not dataset_ids:
             return []
-        placeholders = ",".join("?" * len(scan_ids))
+        placeholders = ",".join("?" * len(dataset_ids))
         query = f"""
             SELECT h.ip_address, h.scan_target, h.fqdn, h.netbios_name, h.reverse_dns
             FROM hosts h
@@ -2151,15 +2105,15 @@ class Host:
                 SELECT fah.host_id
                 FROM finding_affected_hosts fah
                 JOIN findings f ON fah.finding_id = f.finding_id
-                WHERE f.scan_id IN ({placeholders})
+                WHERE f.dataset_id IN ({placeholders})
                 UNION
                 SELECT hs.host_id FROM host_services hs
-                WHERE hs.scan_id IN ({placeholders})
+                WHERE hs.dataset_id IN ({placeholders})
             )
             ORDER BY h.host_id
         """
         with db_transaction(conn) as c:
-            rows = query_all(c, query, tuple(scan_ids) * 2)
+            rows = query_all(c, query, tuple(dataset_ids) * 2)
         return _dedupe_identifiers(rows)
 
 
@@ -2245,16 +2199,16 @@ class Port:
 # ========== Query Helpers: Host Services ==========
 
 
-def get_http_urls_for_scan(
-    scan_id: int, conn: Optional[sqlite3.Connection] = None
+def get_http_urls_for_dataset(
+    dataset_id: int, conn: Optional[sqlite3.Connection] = None
 ) -> list[str]:
-    """Query HTTP/HTTPS URLs discovered in a scan.
+    """Query HTTP/HTTPS URLs discovered in a dataset.
 
     Uses the v_http_services view to identify web services and
     construct URLs from host:port data.
 
     Args:
-        scan_id: Scan ID to query
+        dataset_id: Dataset ID to query
         conn: Database connection
 
     Returns:
@@ -2266,10 +2220,10 @@ def get_http_urls_for_scan(
             """
             SELECT DISTINCT scan_target, port_number, http_scheme
             FROM v_http_services
-            WHERE scan_id = ? AND http_scheme IS NOT NULL
+            WHERE dataset_id = ? AND http_scheme IS NOT NULL
             ORDER BY scan_target, port_number
             """,
-            (scan_id,),
+            (dataset_id,),
         )
 
         urls = []
@@ -2887,7 +2841,13 @@ class FindingVerdict:
     verdict_label: str = ""
     note: Optional[str] = None
     created_at: Optional[str] = None
-    created_by: Optional[str] = None
+    #: ``finding_sources.source_id`` of the channel that recorded this verdict
+    #: -- 4 (operator/TUI) or 5 (agent/MCP). Derived from the channel, never
+    #: supplied by a caller.
+    created_by: Optional[int] = None
+    #: Resolved ``finding_sources.source_name`` for :attr:`created_by`, present
+    #: when read through ``v_finding_current_verdict``.
+    created_by_name: Optional[str] = None
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> FindingVerdict:
@@ -2900,6 +2860,9 @@ class FindingVerdict:
             note=row["note"],
             created_at=row["created_at"],
             created_by=row["created_by"] if "created_by" in keys else None,
+            created_by_name=(
+                row["created_by_name"] if "created_by_name" in keys else None
+            ),
         )
 
     @classmethod
@@ -2907,16 +2870,30 @@ class FindingVerdict:
         cls,
         finding_id: int,
         verdict_label: str,
+        actor: str,
         note: Optional[str] = None,
-        created_by: Optional[str] = None,
         evidence: Optional[list[VerdictEvidence]] = None,
         conn: Optional[sqlite3.Connection] = None,
     ) -> FindingVerdict:
         """Record a new verdict (and optional evidence) for a finding.
 
+        Args:
+            finding_id: Finding the verdict is about.
+            verdict_label: One of the ``verdict_types`` labels.
+            actor: Channel recording the verdict -- ``SOURCE_OPERATOR`` from the
+                TUI or ``SOURCE_AGENT`` from an MCP client. Required and
+                derived from the channel, never accepted from a caller: a
+                self-reported actor is worse than none, because it reads as
+                evidence while carrying no guarantee.
+            note: Optional free-text note.
+            evidence: Optional supporting evidence rows.
+            conn: Database connection.
+
         Raises:
             InvalidVerdict: if ``verdict_label`` is not a known verdict type.
+            ValueError: if ``actor`` is not an authored (channel) source.
         """
+        created_by = channel_source_id(actor)
         with db_transaction(conn) as c:
             type_id = VerdictType.id_for_label(verdict_label, c)
             if type_id is None:

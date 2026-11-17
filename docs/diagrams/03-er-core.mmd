@@ -2,20 +2,20 @@
 title: Cerno core schema
 ---
 erDiagram
-    scans {
-        INTEGER scan_id PK
-        TEXT scan_name UK
+    datasets {
+        INTEGER dataset_id PK
+        TEXT dataset_name UK
         TEXT source_file_hash
         TIMESTAMP created_at
     }
     finding_sources {
-        INTEGER source_id PK "1=nessus, 2=nuclei"
+        INTEGER source_id PK "1=nessus..5=agent"
         TEXT source_name UK
     }
-    plugins {
-        TEXT plugin_id PK "'nessus:57608' | 'nuclei:apache-detect'"
+    finding_types {
+        TEXT finding_type_id PK "'nessus:57608' | 'burp:00200300' | 'agent:7'"
         INTEGER source_id FK
-        TEXT plugin_name
+        TEXT finding_type_name
         INTEGER severity_int FK
         BOOLEAN has_metasploit
         REAL cvss3_score
@@ -23,8 +23,8 @@ erDiagram
     }
     findings {
         INTEGER finding_id PK
-        INTEGER scan_id FK
-        TEXT plugin_id FK
+        INTEGER dataset_id FK
+        TEXT finding_type_id FK
         TEXT review_state "unreviewed|in_progress|done"
         TEXT review_notes
     }
@@ -33,14 +33,14 @@ erDiagram
         INTEGER finding_id FK
         INTEGER host_id FK
         INTEGER port_number FK
-        TEXT plugin_output
+        TEXT evidence
     }
     hosts {
         INTEGER host_id PK
         TEXT ip_address UK
         TEXT netbios_name
         TEXT fqdn
-        TIMESTAMP first_seen "cross-scan history"
+        TIMESTAMP first_seen "cross-dataset history"
         TIMESTAMP last_seen
     }
     ports {
@@ -49,7 +49,7 @@ erDiagram
     }
     host_services {
         INTEGER host_service_id PK
-        INTEGER scan_id FK
+        INTEGER dataset_id FK
         INTEGER host_id FK
         INTEGER port_number FK
         TEXT protocol
@@ -57,24 +57,24 @@ erDiagram
     }
     sessions {
         INTEGER session_id PK
-        INTEGER scan_id FK
+        INTEGER dataset_id FK
         TIMESTAMP session_start
         TIMESTAMP session_end "NULL while open"
     }
-    session_scans {
+    session_datasets {
         INTEGER session_id PK
-        INTEGER scan_id PK
+        INTEGER dataset_id PK
     }
 
-    scans   ||--o{ findings               : "CASCADE"
-    plugins ||--o{ findings               : "shared across scans"
-    finding_sources ||--o{ plugins        : "lookup"
+    datasets   ||--o{ findings               : "CASCADE"
+    finding_types ||--o{ findings               : "shared across datasets"
+    finding_sources ||--o{ finding_types        : "lookup"
     findings ||--o{ finding_affected_hosts : "CASCADE"
     hosts   ||--o{ finding_affected_hosts : "normalized"
     ports   ||--o{ finding_affected_hosts : "normalized"
-    scans   ||--o{ host_services          : "CASCADE"
+    datasets   ||--o{ host_services          : "CASCADE"
     hosts   ||--o{ host_services          : ""
     ports   ||--o{ host_services          : ""
-    scans   ||--o{ sessions               : "CASCADE"
-    sessions ||--o{ session_scans         : "CASCADE (multi-scan)"
-    scans   ||--o{ session_scans          : "CASCADE"
+    datasets   ||--o{ sessions               : "CASCADE"
+    sessions ||--o{ session_datasets         : "CASCADE (multi-dataset)"
+    datasets   ||--o{ session_datasets          : "CASCADE"

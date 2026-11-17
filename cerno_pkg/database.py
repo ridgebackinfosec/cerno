@@ -4,7 +4,7 @@ This module provides SQLite connection management, schema initialization,
 and transaction helpers for tracking findings, review state, tool executions,
 and artifacts.
 
-Database location: ~/.cerno/cerno.db (global, cross-scan queries)
+Database location: ~/.cerno/cerno.db (global, cross-dataset queries)
 """
 
 from __future__ import annotations
@@ -33,19 +33,19 @@ def get_database_path() -> Path:
 
 
 DATABASE_PATH = get_database_path()
-"""Global database path for all scans."""
+"""Global database path for all datasets."""
 
 
 # ========== Schema ==========
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 """Schema version, stored in ``PRAGMA user_version``.
 
 Note: Database is created directly in normalized structure.
 Future versions may implement migrations, but current approach is
 to create the final schema on initialization. A database created by an
 older schema version is rejected by ``initialize_database()`` with
-``SchemaVersionError`` and must be re-created (re-import scans).
+``SchemaVersionError`` and must be re-created (re-import datasets).
 
 History:
 - 1: Initial normalized schema
@@ -58,17 +58,28 @@ History:
      verdict_types / nse_verdicts / port_states lookup tables, and the
      v_finding_current_verdict / v_finding_verified_stats /
      v_nse_results_with_verdict views
-- 5: Multi-source findings: ``plugins.plugin_id`` widened to TEXT and
-     namespaced per source ('57608' for Nessus, 'nuclei:apache-detect' for
-     nuclei), ``plugins.source_id`` + the ``finding_sources`` lookup table
-     added, and ``findings.plugin_id`` widened to match
+- 5: Multi-source findings: ``finding_types.finding_type_id`` widened to TEXT and
+     namespaced per source -- every source, Nessus included ('nessus:57608',
+     'nuclei:apache-detect'), ``finding_types.source_id`` + the ``finding_sources`` lookup table
+     added, and ``findings.finding_type_id`` widened to match
+- 6: Vocabulary: ``scans`` -> ``datasets`` (and ``session_scans`` ->
+     ``session_datasets``, ``scan_id`` -> ``dataset_id``), ``plugins`` ->
+     ``finding_types`` (``plugin_id`` -> ``finding_type_id``, ``plugin_output``
+     -> ``evidence``, ``plugin_url`` -> ``details_url``). Attribution:
+     ``findings.reviewed_by`` TEXT -> ``findings.completed_by`` INTEGER and
+     ``finding_verdicts.created_by`` TEXT -> INTEGER, both FK to
+     ``finding_sources`` and constrained to the operator/agent channels.
+     Dropped: ``audit_log`` and ``workflow_executions`` (never written) and
+     ``finding_types.metadata_fetched_at`` (never written). View columns
+     renamed so their names stop lying: ``host_count`` -> ``target_count``,
+     ``affected_hosts`` -> ``affected_targets``, ``files_in_progress`` /
+     ``files_done`` -> ``findings_in_progress`` / ``findings_done``
 
 Schema features:
-- Normalized host and port tables (cross-scan tracking)
+- Normalized host and port tables (cross-dataset tracking)
 - Lookup tables (severity_levels, artifact_types, verdict_types, nse_verdicts,
   port_states)
 - SQL views for computed statistics
-- audit_log table (reserved; no triggers or writers yet)
 
 Note: SCHEMA_SQL has been split into SCHEMA_SQL_TABLES and SCHEMA_SQL_VIEWS
       for organization purposes.
@@ -84,9 +95,9 @@ SCHEMA_SQL_TABLES = """
 -- column-by-column documentation lives in docs/DATABASE.md
 -- This creates all tables (but NOT views - those are created separately)
 
-CREATE TABLE IF NOT EXISTS scans (
-    scan_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    scan_name TEXT NOT NULL UNIQUE,
+CREATE TABLE IF NOT EXISTS datasets (
+    dataset_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    dataset_name TEXT NOT NULL UNIQUE,
     source_file_path TEXT,
     source_file_hash TEXT,
     export_root TEXT NOT NULL,
@@ -94,54 +105,58 @@ CREATE TABLE IF NOT EXISTS scans (
     last_reviewed_at TIMESTAMP
 );
 
-CREATE INDEX IF NOT EXISTS idx_scans_name ON scans(scan_name);
+CREATE INDEX IF NOT EXISTS idx_datasets_name ON datasets(dataset_name);
 
-CREATE TABLE IF NOT EXISTS plugins (
-    plugin_id TEXT PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS finding_types (
+    finding_type_id TEXT PRIMARY KEY,
     source_id INTEGER NOT NULL DEFAULT 1,
-    plugin_name TEXT NOT NULL,
+    finding_type_name TEXT NOT NULL,
     severity_int INTEGER NOT NULL,
     has_metasploit BOOLEAN DEFAULT 0,
     cvss3_score REAL,
     cvss2_score REAL,
     metasploit_names TEXT,
     cves TEXT,
-    plugin_url TEXT,
-    metadata_fetched_at TIMESTAMP,
+    details_url TEXT,
     CONSTRAINT severity_range CHECK (severity_int BETWEEN 0 AND 4),
     FOREIGN KEY (severity_int) REFERENCES severity_levels(severity_int),
     FOREIGN KEY (source_id) REFERENCES finding_sources(source_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_plugins_severity ON plugins(severity_int);
-CREATE INDEX IF NOT EXISTS idx_plugins_metasploit ON plugins(has_metasploit);
-CREATE INDEX IF NOT EXISTS idx_plugins_source ON plugins(source_id);
+CREATE INDEX IF NOT EXISTS idx_finding_types_severity ON finding_types(severity_int);
+CREATE INDEX IF NOT EXISTS idx_finding_types_metasploit ON finding_types(has_metasploit);
+CREATE INDEX IF NOT EXISTS idx_finding_types_source ON finding_types(source_id);
 
 CREATE TABLE IF NOT EXISTS findings (
     finding_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    scan_id INTEGER NOT NULL,
-    plugin_id TEXT NOT NULL,
+    dataset_id INTEGER NOT NULL,
+    finding_type_id TEXT NOT NULL,
     review_state TEXT NOT NULL DEFAULT 'unreviewed',
     reviewed_at TIMESTAMP,
-    reviewed_by TEXT,
+    -- Which channel moved this finding to 'done': finding_sources.source_id
+    -- 4 (operator, the TUI) or 5 (agent, an MCP client). NULL until done,
+    -- and cleared again on any transition away from done.
+    completed_by INTEGER,
     review_notes TEXT,
-    FOREIGN KEY (scan_id) REFERENCES scans(scan_id) ON DELETE CASCADE,
-    FOREIGN KEY (plugin_id) REFERENCES plugins(plugin_id),
+    FOREIGN KEY (dataset_id) REFERENCES datasets(dataset_id) ON DELETE CASCADE,
+    FOREIGN KEY (finding_type_id) REFERENCES finding_types(finding_type_id),
+    FOREIGN KEY (completed_by) REFERENCES finding_sources(source_id),
     CONSTRAINT valid_review_state CHECK (review_state IN ('unreviewed', 'in_progress', 'done')),
-    CONSTRAINT unique_scan_plugin UNIQUE (scan_id, plugin_id)
+    CONSTRAINT completed_by_is_a_channel CHECK (completed_by IS NULL OR completed_by IN (4, 5)),
+    CONSTRAINT unique_dataset_finding_type UNIQUE (dataset_id, finding_type_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_findings_scan ON findings(scan_id);
-CREATE INDEX IF NOT EXISTS idx_findings_plugin ON findings(plugin_id);
+CREATE INDEX IF NOT EXISTS idx_findings_dataset ON findings(dataset_id);
+CREATE INDEX IF NOT EXISTS idx_findings_finding_type ON findings(finding_type_id);
 CREATE INDEX IF NOT EXISTS idx_findings_review_state ON findings(review_state);
-CREATE INDEX IF NOT EXISTS idx_findings_scan_plugin ON findings(scan_id, plugin_id);
+CREATE INDEX IF NOT EXISTS idx_findings_dataset_finding_type ON findings(dataset_id, finding_type_id);
 
 CREATE TABLE IF NOT EXISTS finding_affected_hosts (
     fah_id INTEGER PRIMARY KEY AUTOINCREMENT,
     finding_id INTEGER NOT NULL,
     host_id INTEGER NOT NULL,
     port_number INTEGER,
-    plugin_output TEXT,
+    evidence TEXT,
     FOREIGN KEY (finding_id) REFERENCES findings(finding_id) ON DELETE CASCADE,
     FOREIGN KEY (host_id) REFERENCES hosts(host_id),
     FOREIGN KEY (port_number) REFERENCES ports(port_number),
@@ -154,23 +169,23 @@ CREATE INDEX IF NOT EXISTS idx_fah_port ON finding_affected_hosts(port_number);
 
 CREATE TABLE IF NOT EXISTS sessions (
     session_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    scan_id INTEGER NOT NULL,
+    dataset_id INTEGER NOT NULL,
     session_start TIMESTAMP NOT NULL,
     session_end TIMESTAMP,
-    FOREIGN KEY (scan_id) REFERENCES scans(scan_id) ON DELETE CASCADE
+    FOREIGN KEY (dataset_id) REFERENCES datasets(dataset_id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_sessions_scan ON sessions(scan_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_dataset ON sessions(dataset_id);
 
-CREATE TABLE IF NOT EXISTS session_scans (
+CREATE TABLE IF NOT EXISTS session_datasets (
     session_id INTEGER NOT NULL,
-    scan_id    INTEGER NOT NULL,
-    PRIMARY KEY (session_id, scan_id),
+    dataset_id    INTEGER NOT NULL,
+    PRIMARY KEY (session_id, dataset_id),
     FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE,
-    FOREIGN KEY (scan_id)    REFERENCES scans(scan_id)    ON DELETE CASCADE
+    FOREIGN KEY (dataset_id)    REFERENCES datasets(dataset_id)    ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_session_scans_scan_id ON session_scans(scan_id);
+CREATE INDEX IF NOT EXISTS idx_session_datasets_dataset_id ON session_datasets(dataset_id);
 
 CREATE TABLE IF NOT EXISTS tool_executions (
     execution_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -212,21 +227,10 @@ CREATE TABLE IF NOT EXISTS artifacts (
 CREATE INDEX IF NOT EXISTS idx_artifacts_execution ON artifacts(execution_id);
 CREATE INDEX IF NOT EXISTS idx_artifacts_type ON artifacts(artifact_type_id);
 
-CREATE TABLE IF NOT EXISTS workflow_executions (
-    workflow_execution_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    finding_id INTEGER,
-    workflow_name TEXT NOT NULL,
-    executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    completed BOOLEAN DEFAULT 0,
-    results TEXT,
-    FOREIGN KEY (finding_id) REFERENCES findings(finding_id) ON DELETE CASCADE
-);
 
-CREATE INDEX IF NOT EXISTS idx_workflow_executions_finding ON workflow_executions(finding_id);
-
--- Finding sources lookup table (which scanner produced a plugin row)
--- plugins.plugin_id is namespaced per source ('57608' for Nessus,
--- 'nuclei:apache-detect' for nuclei), so source_id is strictly derivable from
+-- Finding sources lookup table (which scanner produced a finding_type row)
+-- finding_types.finding_type_id is namespaced per source -- every source,
+-- Nessus included ('nessus:57608', 'nuclei:apache-detect'), so source_id is strictly derivable from
 -- that prefix. It is stored anyway, deliberately: it gives query.py an indexed
 -- SQL predicate and real referential integrity, where the alternative is a
 -- LIKE 'nuclei:%' scan on every source-filtered query. See docs/DATABASE.md.
@@ -253,23 +257,9 @@ CREATE TABLE IF NOT EXISTS artifact_types (
     parser_module TEXT
 );
 
--- Audit log for tracking changes to critical tables
-CREATE TABLE IF NOT EXISTS audit_log (
-    audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    table_name TEXT NOT NULL,
-    record_id INTEGER NOT NULL,
-    action TEXT CHECK(action IN ('INSERT', 'UPDATE', 'DELETE')),
-    changed_by TEXT,
-    changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    old_values TEXT,
-    new_values TEXT
-);
 
-CREATE INDEX IF NOT EXISTS idx_audit_table_record ON audit_log(table_name, record_id);
-CREATE INDEX IF NOT EXISTS idx_audit_changed_at ON audit_log(changed_at);
-
--- Hosts table (normalized host data across scans)
--- Supports both IP-targeted and FQDN-targeted scans:
+-- Hosts table (normalized host data across datasets)
+-- Supports both IP-targeted and FQDN-targeted datasets:
 --   - ip_address: Always the resolved IP (from host-ip tag)
 --   - scan_target: What was scanned (IP or FQDN from ReportHost@name)
 --   - Composite unique: same IP via same target = same host
@@ -299,24 +289,24 @@ CREATE TABLE IF NOT EXISTS ports (
     description TEXT
 );
 
--- Host services table (per-scan service discovery from Nessus)
+-- Host services table (per-dataset service discovery from Nessus)
 -- Maps (host_id, port_number, protocol) to the svc_name discovered by Nessus
 -- Same port may have different services on different hosts, so this is
 -- normalized per-host rather than stored in the global ports table
 CREATE TABLE IF NOT EXISTS host_services (
     host_service_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    scan_id INTEGER NOT NULL,
+    dataset_id INTEGER NOT NULL,
     host_id INTEGER NOT NULL,
     port_number INTEGER NOT NULL,
     protocol TEXT NOT NULL DEFAULT 'tcp',
     svc_name TEXT NOT NULL,
-    FOREIGN KEY (scan_id) REFERENCES scans(scan_id) ON DELETE CASCADE,
+    FOREIGN KEY (dataset_id) REFERENCES datasets(dataset_id) ON DELETE CASCADE,
     FOREIGN KEY (host_id) REFERENCES hosts(host_id),
     FOREIGN KEY (port_number) REFERENCES ports(port_number),
-    UNIQUE(scan_id, host_id, port_number, protocol)
+    UNIQUE(dataset_id, host_id, port_number, protocol)
 );
 
-CREATE INDEX IF NOT EXISTS idx_host_services_scan ON host_services(scan_id);
+CREATE INDEX IF NOT EXISTS idx_host_services_dataset ON host_services(dataset_id);
 CREATE INDEX IF NOT EXISTS idx_host_services_host ON host_services(host_id);
 CREATE INDEX IF NOT EXISTS idx_host_services_svc ON host_services(svc_name);
 
@@ -465,9 +455,15 @@ CREATE TABLE IF NOT EXISTS finding_verdicts (
     verdict_type_id INTEGER NOT NULL,
     note            TEXT,
     created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    created_by      TEXT,
+    -- Which channel recorded this verdict: finding_sources.source_id,
+    -- 4 (operator) or 5 (agent). Derived from the channel, never supplied
+    -- by the caller.
+    created_by      INTEGER,
     FOREIGN KEY (finding_id) REFERENCES findings(finding_id) ON DELETE CASCADE,
-    FOREIGN KEY (verdict_type_id) REFERENCES verdict_types(verdict_type_id)
+    FOREIGN KEY (verdict_type_id) REFERENCES verdict_types(verdict_type_id),
+    FOREIGN KEY (created_by) REFERENCES finding_sources(source_id),
+    CONSTRAINT verdict_created_by_is_a_channel
+        CHECK (created_by IS NULL OR created_by IN (4, 5))
 );
 
 CREATE INDEX IF NOT EXISTS idx_finding_verdicts_finding ON finding_verdicts(finding_id);
@@ -498,48 +494,48 @@ SCHEMA_SQL_VIEWS = """
 CREATE VIEW IF NOT EXISTS v_finding_stats AS
 SELECT
     f.finding_id,
-    f.scan_id,
-    f.plugin_id,
+    f.dataset_id,
+    f.finding_type_id,
     f.review_state,
     f.reviewed_at,
-    f.reviewed_by,
+    f.completed_by,
     f.review_notes,
     -- Scan targets, not machines: hosts.scan_target is what a tool is pointed
     -- at, and virtual hosting puts several on one IP. host_id would key the
     -- (ip, target) pair and double-count a machine known by both.
-    COUNT(DISTINCT h.scan_target) as host_count,
+    COUNT(DISTINCT h.scan_target) as target_count,
     COUNT(DISTINCT fah.port_number) as port_count
 FROM findings f
 LEFT JOIN finding_affected_hosts fah ON f.finding_id = fah.finding_id
 LEFT JOIN hosts h ON fah.host_id = h.host_id
-GROUP BY f.finding_id, f.scan_id, f.plugin_id, f.review_state,
-         f.reviewed_at, f.reviewed_by, f.review_notes;
+GROUP BY f.finding_id, f.dataset_id, f.finding_type_id, f.review_state,
+         f.reviewed_at, f.completed_by, f.review_notes;
 
 -- Session statistics (replaces aggregate columns in sessions table)
 CREATE VIEW IF NOT EXISTS v_session_stats AS
 SELECT
     s.session_id,
-    s.scan_id,
+    s.dataset_id,
     s.session_start,
     s.session_end,
     (julianday(s.session_end) - julianday(s.session_start)) * 86400 AS duration_seconds,
-    COUNT(DISTINCT CASE WHEN f.review_state = 'in_progress' THEN f.finding_id END) as files_in_progress,
-    COUNT(DISTINCT CASE WHEN f.review_state = 'done' THEN f.finding_id END) as files_done,
+    COUNT(DISTINCT CASE WHEN f.review_state = 'in_progress' THEN f.finding_id END) as findings_in_progress,
+    COUNT(DISTINCT CASE WHEN f.review_state = 'done' THEN f.finding_id END) as findings_done,
     COUNT(DISTINCT te.execution_id) as tools_executed,
-    COUNT(DISTINCT CASE WHEN p.cves IS NOT NULL THEN p.plugin_id END) as cves_extracted
+    COUNT(DISTINCT CASE WHEN p.cves IS NOT NULL THEN p.finding_type_id END) as cves_extracted
 FROM sessions s
-LEFT JOIN findings f ON s.scan_id = f.scan_id
+LEFT JOIN findings f ON s.dataset_id = f.dataset_id
     AND f.reviewed_at >= s.session_start
     AND (s.session_end IS NULL OR f.reviewed_at <= s.session_end)
 LEFT JOIN tool_executions te ON s.session_id = te.session_id
-LEFT JOIN plugins p ON f.plugin_id = p.plugin_id
-GROUP BY s.session_id, s.scan_id, s.session_start, s.session_end;
+LEFT JOIN finding_types p ON f.finding_type_id = p.finding_type_id
+GROUP BY s.session_id, s.dataset_id, s.session_start, s.session_end;
 
--- Plugins with severity labels (replaces severity_label column in plugins)
-CREATE VIEW IF NOT EXISTS v_plugins_with_severity AS
+-- Finding types with severity labels (replaces severity_label column in finding_types)
+CREATE VIEW IF NOT EXISTS v_finding_types_with_severity AS
 SELECT
-    p.plugin_id,
-    p.plugin_name,
+    p.finding_type_id,
+    p.finding_type_name,
     p.severity_int,
     sl.severity_label,
     sl.color_hint,
@@ -548,13 +544,12 @@ SELECT
     p.cvss2_score,
     p.cves,
     p.metasploit_names,
-    p.plugin_url,
-    p.metadata_fetched_at,
+    p.details_url,
     p.source_id
-FROM plugins p
+FROM finding_types p
 JOIN severity_levels sl ON p.severity_int = sl.severity_int;
 
--- Host findings summary (cross-scan tracking - new capability)
+-- Host findings summary (cross-dataset tracking - new capability)
 CREATE VIEW IF NOT EXISTS v_host_findings AS
 SELECT
     h.host_id,
@@ -565,14 +560,14 @@ SELECT
     h.fqdn,
     h.first_seen,
     h.last_seen,
-    COUNT(DISTINCT f.scan_id) as scan_count,
+    COUNT(DISTINCT f.dataset_id) as dataset_count,
     COUNT(DISTINCT f.finding_id) as finding_count,
     COUNT(DISTINCT fah.port_number) as port_count,
     MAX(p.severity_int) as max_severity
 FROM hosts h
 LEFT JOIN finding_affected_hosts fah ON h.host_id = fah.host_id
 LEFT JOIN findings f ON fah.finding_id = f.finding_id
-LEFT JOIN plugins p ON f.plugin_id = p.plugin_id
+LEFT JOIN finding_types p ON f.finding_type_id = p.finding_type_id
 GROUP BY h.host_id, h.ip_address, h.scan_target, h.scan_target_type,
          h.netbios_name, h.fqdn, h.first_seen, h.last_seen;
 
@@ -593,64 +588,64 @@ SELECT
 FROM artifacts a
 LEFT JOIN artifact_types at ON a.artifact_type_id = at.artifact_type_id;
 
--- Scan plugin summary (for cross-scan comparison)
--- Shows all plugins present in each scan with host/port counts
-CREATE VIEW IF NOT EXISTS v_scan_plugin_summary AS
+-- Dataset finding_type summary (for cross-dataset comparison)
+-- Shows all finding_types present in each dataset with host/port counts
+CREATE VIEW IF NOT EXISTS v_dataset_finding_type_summary AS
 SELECT
-    f.scan_id,
-    s.scan_name,
-    s.created_at as scan_date,
-    f.plugin_id,
-    p.plugin_name,
+    f.dataset_id,
+    s.dataset_name,
+    s.created_at as dataset_date,
+    f.finding_type_id,
+    p.finding_type_name,
     p.severity_int,
     sl.severity_label,
     p.has_metasploit,
     p.cvss3_score,
-    -- Scan targets, not machines (see v_finding_stats.host_count).
-    COUNT(DISTINCT h.scan_target) as affected_hosts,
+    -- Scan targets, not machines (see v_finding_stats.target_count).
+    COUNT(DISTINCT h.scan_target) as affected_targets,
     COUNT(DISTINCT fah.port_number) as affected_ports
 FROM findings f
-JOIN scans s ON f.scan_id = s.scan_id
-JOIN plugins p ON f.plugin_id = p.plugin_id
+JOIN datasets s ON f.dataset_id = s.dataset_id
+JOIN finding_types p ON f.finding_type_id = p.finding_type_id
 JOIN severity_levels sl ON p.severity_int = sl.severity_int
 LEFT JOIN finding_affected_hosts fah ON f.finding_id = fah.finding_id
 LEFT JOIN hosts h ON fah.host_id = h.host_id
-GROUP BY f.scan_id, s.scan_name, s.created_at, f.plugin_id, p.plugin_name,
+GROUP BY f.dataset_id, s.dataset_name, s.created_at, f.finding_type_id, p.finding_type_name,
          p.severity_int, sl.severity_label, p.has_metasploit, p.cvss3_score;
 
--- Host scan findings (for host vulnerability history)
--- Shows per-host statistics broken down by scan
--- Uses COUNT(DISTINCT) to count unique plugins per severity (not rows in junction table)
-CREATE VIEW IF NOT EXISTS v_host_scan_findings AS
+-- Host dataset findings (for host vulnerability history)
+-- Shows per-host statistics broken down by dataset
+-- Uses COUNT(DISTINCT) to count unique finding_types per severity (not rows in junction table)
+CREATE VIEW IF NOT EXISTS v_host_dataset_findings AS
 SELECT
     h.host_id,
     h.ip_address,
     h.scan_target,
     h.scan_target_type,
-    f.scan_id,
-    s.scan_name,
-    s.created_at as scan_date,
-    COUNT(DISTINCT f.plugin_id) as finding_count,
+    f.dataset_id,
+    s.dataset_name,
+    s.created_at as dataset_date,
+    COUNT(DISTINCT f.finding_type_id) as finding_count,
     MAX(p.severity_int) as max_severity,
-    COUNT(DISTINCT CASE WHEN p.severity_int = 4 THEN f.plugin_id END) as critical_count,
-    COUNT(DISTINCT CASE WHEN p.severity_int = 3 THEN f.plugin_id END) as high_count,
-    COUNT(DISTINCT CASE WHEN p.severity_int = 2 THEN f.plugin_id END) as medium_count,
-    COUNT(DISTINCT CASE WHEN p.severity_int = 1 THEN f.plugin_id END) as low_count,
-    COUNT(DISTINCT CASE WHEN p.severity_int = 0 THEN f.plugin_id END) as info_count
+    COUNT(DISTINCT CASE WHEN p.severity_int = 4 THEN f.finding_type_id END) as critical_count,
+    COUNT(DISTINCT CASE WHEN p.severity_int = 3 THEN f.finding_type_id END) as high_count,
+    COUNT(DISTINCT CASE WHEN p.severity_int = 2 THEN f.finding_type_id END) as medium_count,
+    COUNT(DISTINCT CASE WHEN p.severity_int = 1 THEN f.finding_type_id END) as low_count,
+    COUNT(DISTINCT CASE WHEN p.severity_int = 0 THEN f.finding_type_id END) as info_count
 FROM hosts h
 JOIN finding_affected_hosts fah ON h.host_id = fah.host_id
 JOIN findings f ON fah.finding_id = f.finding_id
-JOIN scans s ON f.scan_id = s.scan_id
-JOIN plugins p ON f.plugin_id = p.plugin_id
+JOIN datasets s ON f.dataset_id = s.dataset_id
+JOIN finding_types p ON f.finding_type_id = p.finding_type_id
 GROUP BY h.host_id, h.ip_address, h.scan_target, h.scan_target_type,
-         f.scan_id, s.scan_name, s.created_at;
+         f.dataset_id, s.dataset_name, s.created_at;
 
 -- HTTP/HTTPS services view (for URL generation and tool suggestions)
 -- Identifies web services using svc_name heuristics matching Nessus conventions
 CREATE VIEW IF NOT EXISTS v_http_services AS
 SELECT
     hs.host_service_id,
-    hs.scan_id,
+    hs.dataset_id,
     h.host_id,
     h.scan_target,
     hs.port_number,
@@ -679,9 +674,11 @@ SELECT
     vt.label AS verdict_label,
     fv.note,
     fv.created_at,
-    fv.created_by
+    fv.created_by,
+    cs.source_name AS created_by_name
 FROM finding_verdicts fv
 JOIN verdict_types vt ON fv.verdict_type_id = vt.verdict_type_id
+LEFT JOIN finding_sources cs ON fv.created_by = cs.source_id
 WHERE fv.created_at = (
     SELECT MAX(fv2.created_at)
     FROM finding_verdicts fv2
@@ -793,7 +790,7 @@ def db_transaction(
 
     Example:
         with db_transaction() as conn:
-            conn.execute("INSERT INTO scans ...")
+            conn.execute("INSERT INTO datasets ...")
             conn.execute("INSERT INTO findings ...")
         # Auto-committed on success, rolled back on exception
     """
@@ -839,8 +836,10 @@ def _check_schema_version(conn: sqlite3.Connection, db_path: Path) -> None:
         raise SchemaVersionError(
             f"Database schema at {db_path} is version {db_version}, but this "
             f"version of Cerno requires schema version {SCHEMA_VERSION}. "
-            f"Back up and delete {db_path}, then re-import your scans "
-            f"with 'cerno import nessus <file>' / 'cerno import nuclei <file>'."
+            f"Back up and delete {db_path}, then re-import your datasets with "
+            f"'cerno import nessus|nuclei|burp <file>'. Hand-authored findings "
+            f"(operator:/agent:) came from no file and cannot be re-imported -- "
+            f"copy them out of the backup before you discard it."
         )
 
 
@@ -860,10 +859,12 @@ LOOKUP_SEEDS: tuple[tuple[str, list[tuple]], ...] = (
             (0, "Info", 0, "#4682B4"),
         ],
     ),
-    # Import sources (plugins.plugin_id is namespaced per source)
+    # Finding sources (finding_types.finding_type_id is namespaced per source).
+    # 1-3 are imported from a scanner; 4-5 are hand-authored, split by the
+    # channel that wrote them -- the TUI (operator) or an MCP client (agent).
     (
         "INSERT OR IGNORE INTO finding_sources (source_id, source_name) VALUES (?, ?)",
-        [(1, "nessus"), (2, "nuclei")],
+        [(1, "nessus"), (2, "nuclei"), (3, "burp"), (4, "operator"), (5, "agent")],
     ),
     (
         "INSERT OR IGNORE INTO artifact_types "
@@ -911,10 +912,10 @@ LOOKUP_SEEDS: tuple[tuple[str, list[tuple]], ...] = (
 )
 
 
-def plugin_id_order_sql(column: str) -> str:
-    """``ORDER BY`` fragment that sorts a namespaced ``plugin_id`` sensibly.
+def finding_type_id_order_sql(column: str) -> str:
+    """``ORDER BY`` fragment that sorts a namespaced ``finding_type_id`` sensibly.
 
-    ``plugins.plugin_id`` is TEXT and every id is namespaced
+    ``finding_types.finding_type_id`` is TEXT and every id is namespaced
     (``'nessus:57608'``, ``'nuclei:apache-detect'``), so sorting it directly is
     lexicographic and ``'nessus:9'`` would land after ``'nessus:10114'``.
 
@@ -976,7 +977,7 @@ def initialize_database(database_path: Optional[Path] = None) -> bool:
 
     Raises:
         SchemaVersionError: If the database was created by an older schema
-            version (it must be deleted and scans re-imported).
+            version (it must be deleted and datasets re-imported).
     """
     db_path = database_path or DATABASE_PATH
 
@@ -1093,11 +1094,11 @@ def check_database_health(database_path: Optional[Path] = None) -> bool:
 
             # Check tables exist
             cursor = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='scans'"
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='datasets'"
             )
             if not cursor.fetchone():
                 log_error(
-                    "Database health check failed: missing required 'scans' table"
+                    "Database health check failed: missing required 'datasets' table"
                 )
                 log_error(
                     "This is non-fatal - initialization will attempt to repair the schema"

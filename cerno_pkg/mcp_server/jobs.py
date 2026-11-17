@@ -1,7 +1,7 @@
 """In-memory async job model for long-running MCP executions.
 
 ``execute_command`` is synchronous (it blocks the tool call up to the clamped
-timeout). Long scans and scoped batches need a fire-and-poll model with
+timeout). Long datasets and scoped batches need a fire-and-poll model with
 cancellation: ``start_execution`` returns a ``job_id`` immediately and the work
 runs on the event loop via ``asyncio.to_thread``; the caller then polls
 ``get_execution_status`` / ``list_jobs`` and may ``cancel_execution``.

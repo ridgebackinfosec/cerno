@@ -1,5 +1,7 @@
 """Tests for result ingestion (cerno_pkg.ingest)."""
 
+from cerno_pkg.constants import SOURCE_OPERATOR
+
 import sqlite3
 from pathlib import Path
 
@@ -25,20 +27,25 @@ def _seed_nmap_execution(
     tool_name: str = "nmap",
     command_text: str = "nmap -oA x",
 ) -> int:
-    """Seed a scan/plugin/finding + nmap execution with an nmap_xml artifact.
+    """Seed a dataset/finding_type/finding + nmap execution with an nmap_xml artifact.
 
     ``tool_name``/``command_text`` let a test mimic how the MCP server logs runs
     (every run as tool_name="mcp", the real binary only in command_text).
 
     Returns the execution_id.
     """
-    conn.execute("INSERT INTO scans (scan_name, export_root) VALUES ('s', '/tmp')")
-    scan_id = conn.execute("SELECT scan_id FROM scans").fetchone()["scan_id"]
     conn.execute(
-        "INSERT INTO plugins (plugin_id, plugin_name, severity_int) VALUES ('nessus:100', 'SMB', 3)"
+        "INSERT INTO datasets (dataset_name, export_root) VALUES ('s', '/tmp')"
+    )
+    dataset_id = conn.execute("SELECT dataset_id FROM datasets").fetchone()[
+        "dataset_id"
+    ]
+    conn.execute(
+        "INSERT INTO finding_types (finding_type_id, finding_type_name, severity_int) VALUES ('nessus:100', 'SMB', 3)"
     )
     conn.execute(
-        "INSERT INTO findings (scan_id, plugin_id) VALUES (?, 'nessus:100')", (scan_id,)
+        "INSERT INTO findings (dataset_id, finding_type_id) VALUES (?, 'nessus:100')",
+        (dataset_id,),
     )
     finding_id = conn.execute("SELECT finding_id FROM findings").fetchone()[
         "finding_id"
@@ -91,14 +98,17 @@ class TestIngestNmap:
         self, temp_db: sqlite3.Connection
     ) -> None:
         temp_db.execute(
-            "INSERT INTO scans (scan_name, export_root) VALUES ('s', '/tmp')"
+            "INSERT INTO datasets (dataset_name, export_root) VALUES ('s', '/tmp')"
         )
-        sid = temp_db.execute("SELECT scan_id FROM scans").fetchone()["scan_id"]
+        sid = temp_db.execute("SELECT dataset_id FROM datasets").fetchone()[
+            "dataset_id"
+        ]
         temp_db.execute(
-            "INSERT INTO plugins (plugin_id, plugin_name, severity_int) VALUES ('nessus:1','P',1)"
+            "INSERT INTO finding_types (finding_type_id, finding_type_name, severity_int) VALUES ('nessus:1','P',1)"
         )
         temp_db.execute(
-            "INSERT INTO findings (scan_id, plugin_id) VALUES (?,'nessus:1')", (sid,)
+            "INSERT INTO findings (dataset_id, finding_type_id) VALUES (?,'nessus:1')",
+            (sid,),
         )
         fid = temp_db.execute("SELECT finding_id FROM findings").fetchone()[
             "finding_id"
@@ -221,6 +231,7 @@ class TestReingestStability:
         FindingVerdict.set(
             finding_id,
             "confirmed",
+            SOURCE_OPERATOR,
             evidence=[VerdictEvidence(execution_id=eid, nse_result_id=nse_pk)],
             conn=temp_db,
         )
@@ -279,15 +290,20 @@ def _seed_nuclei_execution(
     command_text: str = "nuclei -l t.txt -jle out.jsonl",
     artifact_type: str = "nuclei_json",
 ) -> int:
-    """Seed a scan/plugin/finding + nuclei execution with a nuclei_json artifact."""
-    conn.execute("INSERT INTO scans (scan_name, export_root) VALUES ('s', '/tmp')")
-    scan_id = conn.execute("SELECT scan_id FROM scans").fetchone()["scan_id"]
+    """Seed a dataset/finding_type/finding + nuclei execution with a nuclei_json artifact."""
     conn.execute(
-        "INSERT INTO plugins (plugin_id, plugin_name, severity_int) "
+        "INSERT INTO datasets (dataset_name, export_root) VALUES ('s', '/tmp')"
+    )
+    dataset_id = conn.execute("SELECT dataset_id FROM datasets").fetchone()[
+        "dataset_id"
+    ]
+    conn.execute(
+        "INSERT INTO finding_types (finding_type_id, finding_type_name, severity_int) "
         "VALUES ('nessus:100', 'HTTP', 2)"
     )
     conn.execute(
-        "INSERT INTO findings (scan_id, plugin_id) VALUES (?, 'nessus:100')", (scan_id,)
+        "INSERT INTO findings (dataset_id, finding_type_id) VALUES (?, 'nessus:100')",
+        (dataset_id,),
     )
     finding_id = conn.execute("SELECT finding_id FROM findings").fetchone()[
         "finding_id"
@@ -452,15 +468,19 @@ class TestTuiRunArtifactsIngest:
     """
 
     def _seed_execution(self, conn: sqlite3.Connection, tool_name: str) -> int:
-        conn.execute("INSERT INTO scans (scan_name, export_root) VALUES ('s', '/tmp')")
-        scan_id = conn.execute("SELECT scan_id FROM scans").fetchone()["scan_id"]
         conn.execute(
-            "INSERT INTO plugins (plugin_id, plugin_name, severity_int) "
+            "INSERT INTO datasets (dataset_name, export_root) VALUES ('s', '/tmp')"
+        )
+        dataset_id = conn.execute("SELECT dataset_id FROM datasets").fetchone()[
+            "dataset_id"
+        ]
+        conn.execute(
+            "INSERT INTO finding_types (finding_type_id, finding_type_name, severity_int) "
             "VALUES ('nessus:100', 'HTTP', 2)"
         )
         conn.execute(
-            "INSERT INTO findings (scan_id, plugin_id) VALUES (?, 'nessus:100')",
-            (scan_id,),
+            "INSERT INTO findings (dataset_id, finding_type_id) VALUES (?, 'nessus:100')",
+            (dataset_id,),
         )
         finding_id = conn.execute("SELECT finding_id FROM findings").fetchone()[
             "finding_id"
@@ -479,12 +499,12 @@ class TestTuiRunArtifactsIngest:
         self, temp_db: sqlite3.Connection, tmp_path
     ) -> None:
         from cerno_pkg.ops import log_artifacts_for_run
-        from cerno_pkg.tools import nuclei_scan_output
+        from cerno_pkg.tools import nuclei_dataset_output
 
         eid = self._seed_execution(temp_db, "nuclei")
         oabase = tmp_path / "run"
         # The command builder and the artifact logger must agree on this path.
-        Path(nuclei_scan_output(oabase)).write_text(
+        Path(nuclei_dataset_output(oabase)).write_text(
             (NUCLEI_FIXTURES / "web_scan.jsonl").read_text(), encoding="utf-8"
         )
 
@@ -503,11 +523,11 @@ class TestTuiRunArtifactsIngest:
     ) -> None:
         """The whole point: register the way the TUI does, then ingest."""
         from cerno_pkg.ops import log_artifacts_for_run
-        from cerno_pkg.tools import nuclei_scan_output
+        from cerno_pkg.tools import nuclei_dataset_output
 
         eid = self._seed_execution(temp_db, "nuclei")
         oabase = tmp_path / "run"
-        Path(nuclei_scan_output(oabase)).write_text(
+        Path(nuclei_dataset_output(oabase)).write_text(
             (NUCLEI_FIXTURES / "web_scan.jsonl").read_text(), encoding="utf-8"
         )
         log_artifacts_for_run("nuclei", eid, oabase, conn=temp_db)

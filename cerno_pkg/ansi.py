@@ -243,7 +243,7 @@ def style_if_enabled(style_name: str, config: Optional["CernoConfig"] = None) ->
 
 
 # ========== Untrusted-text sanitization ==========
-# Scan-derived text (plugin names, hostnames, scan names, NetExec values, tool
+# Dataset-derived text (finding_type names, hostnames, dataset names, NetExec values, tool
 # output) is attacker-influenced: it arrives from third-party .nessus files and
 # CLI arguments. Interpolating it raw into Rich markup lets a name containing
 # square brackets crash rendering, silently swallow text, restyle output or
@@ -336,7 +336,7 @@ def print_verbatim(text: str) -> None:
       console width, injecting newlines into what is meant to be copyable.
 
     So this deliberately uses the builtin ``print``. Do not "upgrade" it to a
-    Rich console call: Rich markup-parses any bare ``str``, and a scan-derived
+    Rich console call: Rich markup-parses any bare ``str``, and a dataset-derived
     payload containing ``[/]`` raises ``MarkupError``.
 
     Args:
@@ -464,7 +464,7 @@ def breadcrumb(*parts: str, max_width: int = 78) -> str:
     """Create a breadcrumb navigation string from parts.
 
     Args:
-        *parts: Navigation parts (e.g., "Scan", "Severity", "Files")
+        *parts: Navigation parts (e.g., "Dataset", "Severity", "Files")
         max_width: Maximum width before truncation (default: 78)
 
     Returns:
