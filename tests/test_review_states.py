@@ -1,5 +1,7 @@
 """Tests for the finding review workflow (unreviewed -> in_progress -> done -> unreviewed)."""
 
+from cerno_pkg.constants import SOURCE_OPERATOR
+
 import itertools
 import sqlite3
 
@@ -12,8 +14,8 @@ from cerno_pkg.fs import move_review_state
 from cerno_pkg.models import (
     Finding,
     InvalidReviewTransition,
-    Plugin,
-    Scan,
+    FindingType,
+    Dataset,
     count_review_states,
 )
 
@@ -25,11 +27,15 @@ ALLOWED = {
 
 
 def _seed_finding(conn, state="unreviewed") -> Finding:
-    """Insert one scan + plugin + finding in the given review state."""
-    scan_id = Scan(scan_name="s1", export_root="/tmp").save(conn)
-    assert scan_id is not None
-    Plugin(plugin_id="nessus:1001", plugin_name="Test", severity_int=3).save(conn)
-    finding = Finding(scan_id=scan_id, plugin_id="nessus:1001", review_state=state)
+    """Insert one scan + finding_type + finding in the given review state."""
+    dataset_id = Dataset(dataset_name="s1", export_root="/tmp").save(conn)
+    assert dataset_id is not None
+    FindingType(
+        finding_type_id="nessus:1001", finding_type_name="Test", severity_int=3
+    ).save(conn)
+    finding = Finding(
+        dataset_id=dataset_id, finding_type_id="nessus:1001", review_state=state
+    )
     finding.save(conn)
     return finding
 
@@ -85,14 +91,16 @@ class TestReviewStateCheckConstraint:
             _seed_finding(temp_db, state)
 
     def test_import_default_is_unreviewed(self, temp_db):
-        scan_id = Scan(scan_name="s", export_root="/tmp").save(temp_db)
-        Plugin(plugin_id="nessus:7", plugin_name="p", severity_int=1).save(temp_db)
+        dataset_id = Dataset(dataset_name="s", export_root="/tmp").save(temp_db)
+        FindingType(
+            finding_type_id="nessus:7", finding_type_name="p", severity_int=1
+        ).save(temp_db)
         temp_db.execute(
-            "INSERT INTO findings (scan_id, plugin_id) VALUES (?, 'nessus:7')",
-            (scan_id,),
+            "INSERT INTO findings (dataset_id, finding_type_id) VALUES (?, 'nessus:7')",
+            (dataset_id,),
         )
         row = temp_db.execute(
-            "SELECT review_state FROM findings WHERE plugin_id = 'nessus:7'"
+            "SELECT review_state FROM findings WHERE finding_type_id = 'nessus:7'"
         ).fetchone()
         assert row[0] == "unreviewed"
 
@@ -105,11 +113,11 @@ class TestTransitionReviewState:
     def test_only_workflow_transitions_allowed(self, temp_db, src, dst):
         finding = _seed_finding(temp_db, src)
         if (src, dst) in ALLOWED:
-            finding.transition_review_state(dst, conn=temp_db)
+            finding.transition_review_state(dst, SOURCE_OPERATOR, conn=temp_db)
             assert finding.review_state == dst
         else:
             with pytest.raises(InvalidReviewTransition):
-                finding.transition_review_state(dst, conn=temp_db)
+                finding.transition_review_state(dst, SOURCE_OPERATOR, conn=temp_db)
             assert finding.review_state == src
 
     def test_invalid_transition_is_value_error(self):
@@ -143,7 +151,9 @@ class TestAppendNote:
     def test_update_review_state_notes_append_not_overwrite(self, temp_db):
         finding = _seed_finding(temp_db)
         finding.append_note("manual note", temp_db)
-        finding.update_review_state("in_progress", notes="review note", conn=temp_db)
+        finding.update_review_state(
+            "in_progress", SOURCE_OPERATOR, notes="review note", conn=temp_db
+        )
         raw = self._reload_notes(temp_db, finding)
         assert "manual note" in raw
         assert "review note" in raw
@@ -152,7 +162,7 @@ class TestAppendNote:
     def test_update_review_state_without_notes_leaves_notes_untouched(self, temp_db):
         finding = _seed_finding(temp_db)
         finding.append_note("only note", temp_db)
-        finding.update_review_state("in_progress", conn=temp_db)
+        finding.update_review_state("in_progress", SOURCE_OPERATOR, conn=temp_db)
         raw = self._reload_notes(temp_db, finding)
         lines = [ln for ln in raw.splitlines() if ln.strip()]
         assert lines == [raw.splitlines()[0]]
@@ -198,42 +208,52 @@ def test_count_review_states():
 @pytest.mark.integration
 class TestCountByScanSeverity:
     def test_counts_each_status(self, temp_db):
-        scan_id = Scan(scan_name="s", export_root="/tmp").save(temp_db)
-        assert scan_id is not None
+        dataset_id = Dataset(dataset_name="s", export_root="/tmp").save(temp_db)
+        assert dataset_id is not None
         for pid, state in (
             ("nessus:1", "unreviewed"),
             ("nessus:2", "in_progress"),
             ("nessus:3", "done"),
             ("nessus:4", "done"),
         ):
-            Plugin(plugin_id=pid, plugin_name=f"p{pid}", severity_int=3).save(temp_db)
-            Finding(scan_id=scan_id, plugin_id=pid, review_state=state).save(temp_db)
-        assert Finding.count_by_scan_severity(scan_id, "3_High", conn=temp_db) == (
+            FindingType(
+                finding_type_id=pid, finding_type_name=f"p{pid}", severity_int=3
+            ).save(temp_db)
+            Finding(
+                dataset_id=dataset_id, finding_type_id=pid, review_state=state
+            ).save(temp_db)
+        assert Finding.count_by_dataset_severity(
+            dataset_id, "3_High", conn=temp_db
+        ) == (
             1,
             1,
             2,
             4,
         )
-        assert Finding.count_by_scan_severity(scan_id, "2_Medium", conn=temp_db) == (
+        assert Finding.count_by_dataset_severity(
+            dataset_id, "2_Medium", conn=temp_db
+        ) == (
             0,
             0,
             0,
             0,
         )
 
-    def test_multi_scan_uses_most_advanced_instance(self, temp_db):
-        a = Scan(scan_name="a", export_root="/tmp").save(temp_db)
-        b = Scan(scan_name="b", export_root="/tmp").save(temp_db)
+    def test_multi_dataset_uses_most_advanced_instance(self, temp_db):
+        a = Dataset(dataset_name="a", export_root="/tmp").save(temp_db)
+        b = Dataset(dataset_name="b", export_root="/tmp").save(temp_db)
         assert a is not None and b is not None
-        Plugin(plugin_id="nessus:1", plugin_name="p1", severity_int=3).save(temp_db)
-        Finding(scan_id=a, plugin_id="nessus:1", review_state="unreviewed").save(
-            temp_db
-        )
-        Finding(scan_id=b, plugin_id="nessus:1", review_state="in_progress").save(
-            temp_db
-        )
-        counts = Finding.count_by_scan_severity(
-            a, "3_High", conn=temp_db, scan_ids=[a, b]
+        FindingType(
+            finding_type_id="nessus:1", finding_type_name="p1", severity_int=3
+        ).save(temp_db)
+        Finding(
+            dataset_id=a, finding_type_id="nessus:1", review_state="unreviewed"
+        ).save(temp_db)
+        Finding(
+            dataset_id=b, finding_type_id="nessus:1", review_state="in_progress"
+        ).save(temp_db)
+        counts = Finding.count_by_dataset_severity(
+            a, "3_High", conn=temp_db, dataset_ids=[a, b]
         )
         assert counts == (0, 1, 0, 1)
 
@@ -294,30 +314,40 @@ class TestFilterFindingCandidates:
     def _records():
         return [
             (
-                Finding(plugin_id="nessus:1", review_state="unreviewed"),
-                Plugin(plugin_id="nessus:1", plugin_name="SSL Weak Cipher"),
+                Finding(finding_type_id="nessus:1", review_state="unreviewed"),
+                FindingType(
+                    finding_type_id="nessus:1", finding_type_name="SSL Weak Cipher"
+                ),
             ),
             (
-                Finding(plugin_id="nessus:2", review_state="in_progress"),
-                Plugin(plugin_id="nessus:2", plugin_name="SSL Self-Signed"),
+                Finding(finding_type_id="nessus:2", review_state="in_progress"),
+                FindingType(
+                    finding_type_id="nessus:2", finding_type_name="SSL Self-Signed"
+                ),
             ),
             (
-                Finding(plugin_id="nessus:3", review_state="in_progress"),
-                Plugin(plugin_id="nessus:3", plugin_name="SMB Signing"),
+                Finding(finding_type_id="nessus:3", review_state="in_progress"),
+                FindingType(
+                    finding_type_id="nessus:3", finding_type_name="SMB Signing"
+                ),
             ),
             (
-                Finding(plugin_id="nessus:4", review_state="done"),
-                Plugin(plugin_id="nessus:4", plugin_name="SSL Expired Cert"),
+                Finding(finding_type_id="nessus:4", review_state="done"),
+                FindingType(
+                    finding_type_id="nessus:4", finding_type_name="SSL Expired Cert"
+                ),
             ),
             (
-                Finding(plugin_id="nessus:5", review_state="done"),
-                Plugin(plugin_id="nessus:5", plugin_name="SMB Null Session"),
+                Finding(finding_type_id="nessus:5", review_state="done"),
+                FindingType(
+                    finding_type_id="nessus:5", finding_type_name="SMB Null Session"
+                ),
             ),
         ]
 
     @staticmethod
     def _ids(records):
-        return [p.plugin_id for (_f, p) in records]
+        return [p.finding_type_id for (_f, p) in records]
 
     def test_no_filters_returns_the_whole_pool(self):
         """With no status filter, every record in the pool survives.
@@ -521,3 +551,70 @@ class TestRecordVerdict:
         moved = fs.record_verdict(finding)
         assert moved is False
         assert self._current(db_path, finding.finding_id) is None
+
+
+@pytest.mark.integration
+class TestCompletionAttribution:
+    """`findings.completed_by` records which channel moved a finding to Done.
+
+    The point of the column is that it is trustworthy, so these tests pin the
+    two things that make it so: the actor is required (never defaulted), and it
+    does not linger once the finding leaves Done.
+    """
+
+    def test_operator_move_to_done_records_the_operator_channel(self, temp_db):
+        from cerno_pkg.constants import SOURCE_IDS
+
+        finding = _seed_finding(temp_db, state="in_progress")
+        finding.transition_review_state("done", SOURCE_OPERATOR, conn=temp_db)
+        row = temp_db.execute(
+            "SELECT completed_by FROM findings WHERE finding_id = ?",
+            (finding.finding_id,),
+        ).fetchone()
+        assert row["completed_by"] == SOURCE_IDS[SOURCE_OPERATOR]
+
+    def test_agent_move_to_done_records_the_agent_channel(self, temp_db):
+        from cerno_pkg.constants import SOURCE_AGENT, SOURCE_IDS
+
+        finding = _seed_finding(temp_db, state="in_progress")
+        finding.transition_review_state("done", SOURCE_AGENT, conn=temp_db)
+        row = temp_db.execute(
+            "SELECT completed_by FROM findings WHERE finding_id = ?",
+            (finding.finding_id,),
+        ).fetchone()
+        assert row["completed_by"] == SOURCE_IDS[SOURCE_AGENT]
+
+    def test_moving_back_out_of_done_clears_the_attribution(self, temp_db):
+        """Otherwise the column claims someone completed a finding in review."""
+        finding = _seed_finding(temp_db, state="in_progress")
+        finding.transition_review_state("done", SOURCE_OPERATOR, conn=temp_db)
+        finding.transition_review_state("unreviewed", SOURCE_OPERATOR, conn=temp_db)
+        row = temp_db.execute(
+            "SELECT completed_by, reviewed_at FROM findings WHERE finding_id = ?",
+            (finding.finding_id,),
+        ).fetchone()
+        assert row["completed_by"] is None
+        assert row["reviewed_at"] is None
+
+    def test_in_progress_carries_no_completion(self, temp_db):
+        finding = _seed_finding(temp_db)
+        finding.transition_review_state("in_progress", SOURCE_OPERATOR, conn=temp_db)
+        row = temp_db.execute(
+            "SELECT completed_by FROM findings WHERE finding_id = ?",
+            (finding.finding_id,),
+        ).fetchone()
+        assert row["completed_by"] is None
+
+    def test_a_scanner_source_is_not_an_acting_channel(self, temp_db):
+        """nessus did not move anything to Done."""
+        from cerno_pkg.constants import SOURCE_NESSUS
+
+        finding = _seed_finding(temp_db, state="in_progress")
+        with pytest.raises(ValueError, match="not an acting channel"):
+            finding.transition_review_state("done", SOURCE_NESSUS, conn=temp_db)
+
+    def test_the_actor_is_required(self, temp_db):
+        """A default would let a caller silently file an agent move as the operator."""
+        finding = _seed_finding(temp_db, state="in_progress")
+        with pytest.raises(TypeError):
+            finding.transition_review_state("done", conn=temp_db)  # type: ignore[call-arg]

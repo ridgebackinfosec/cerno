@@ -1,6 +1,6 @@
 """Cerno MCP (Model Context Protocol) server package.
 
-Exposes Cerno's scan database and tooling over the Model Context Protocol via
+Exposes Cerno's findings database and tooling over the Model Context Protocol via
 local stdio transport, so any MCP client can query findings, build target
 lists, generate/execute security-tool commands, and mutate review state.
 

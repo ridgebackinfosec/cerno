@@ -82,12 +82,6 @@ erDiagram
     ports {
         INTEGER port_number PK "see core schema"
     }
-    workflow_executions {
-        INTEGER workflow_execution_id PK
-        INTEGER finding_id FK
-        TEXT workflow_name "RESERVED - no writer"
-    }
-
     findings        ||--o{ tool_executions       : "SET NULL"
     sessions        ||--o{ tool_executions       : "SET NULL"
     tool_executions ||--o{ artifacts             : "SET NULL"
@@ -97,10 +91,10 @@ erDiagram
     tool_executions ||--o{ nxc_flag_observations : "CASCADE (idempotent)"
     findings        ||--o{ finding_verdicts      : "CASCADE"
     finding_verdicts ||--o{ verdict_evidence     : "CASCADE"
+    finding_sources  ||--o{ finding_verdicts     : "created_by channel"
     tool_executions  ||--o{ verdict_evidence     : "SET NULL"
     artifacts        ||--o{ verdict_evidence     : "SET NULL"
     nse_script_results ||--o{ verdict_evidence   : "SET NULL"
-    findings        ||--o{ workflow_executions   : "CASCADE"
     hosts           ||--o{ verified_ports        : "normalized"
     ports           ||--o{ verified_ports        : "normalized"
     hosts           ||--o{ nse_script_results    : "normalized"

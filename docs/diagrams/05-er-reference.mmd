@@ -14,8 +14,8 @@ erDiagram
         INTEGER source_id PK "5 seeded rows"
         TEXT source_name UK "nessus|nuclei|burp|operator|agent"
     }
-    plugins {
-        TEXT plugin_id PK "namespaced per source"
+    finding_types {
+        TEXT finding_type_id PK "namespaced per source"
         INTEGER severity_int FK
         INTEGER source_id FK
     }
@@ -73,8 +73,8 @@ erDiagram
         TEXT content
     }
 
-    severity_levels ||--o{ plugins            : "lookup"
-    finding_sources ||--o{ plugins            : "lookup"
+    severity_levels ||--o{ finding_types            : "lookup"
+    finding_sources ||--o{ finding_types            : "lookup"
     artifact_types  ||--o{ artifacts          : "lookup"
     verdict_types   ||--o{ finding_verdicts   : "lookup"
     nse_verdicts    ||--o{ nse_script_results : "lookup"

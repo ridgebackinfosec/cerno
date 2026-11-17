@@ -9,15 +9,15 @@ with no special cases downstream.
 Two things make this a module rather than a flag on another importer, and they
 are the same two that justify :mod:`cerno_pkg.nuclei_import`:
 
-* **Plugin identity.** ``plugins`` is global across scans and keyed by
-  ``plugin_id``, so a Burp issue type is namespaced (``burp:00200300``) to keep
+* **FindingType identity.** ``finding_types`` is global across datasets and keyed by
+  ``finding_type_id``, so a Burp issue type is namespaced (``burp:00200300``) to keep
   it from colliding with a Nessus plugin number or a nuclei template id. See
-  :data:`cerno_pkg.constants.PLUGIN_ID_PREFIXES`, and
+  :data:`cerno_pkg.constants.FINDING_TYPE_ID_PREFIXES`, and
   :func:`cerno_pkg.burp_parse.type_to_ref` for why the ref is hex.
 * **Evidence merging.** One issue type routinely fires on many parameters of
   the same host:port, but ``finding_affected_hosts`` has a
   ``UNIQUE (finding_id, host_id, port_number)`` constraint. Those instances are
-  merged into a single row's ``plugin_output``, because inserting them
+  merged into a single row's ``evidence``, because inserting them
   separately would make ``INSERT OR REPLACE`` keep only the last and silently
   discard the operator's evidence.
 
@@ -37,13 +37,13 @@ from .ansi import info
 from .burp_parse import (
     ParsedBurpInstance,
     ParsedBurpIssue,
-    format_plugin_output,
+    format_evidence,
     parse_burp_file,
 )
-from .constants import PLUGIN_ID_PREFIXES, SOURCE_BURP
+from .constants import FINDING_TYPE_ID_PREFIXES, SOURCE_BURP
 from .database import compute_file_hash, db_transaction
 from .logging_setup import log_error, log_info, log_timing
-from .models import Finding, Host, Plugin, Port, Scan, now_iso
+from .models import Finding, Host, FindingType, Port, Dataset, now_iso
 
 # ExportResult is reused verbatim rather than redefined: the CLI and the MCP
 # tool handle every importer's result identically, and a third near-identical
@@ -52,9 +52,9 @@ from .nessus_import import ExportResult, sanitize_filename
 from .parsing import prefer_service, scan_target_type, unbracket
 
 
-def _namespaced_plugin_id(type_ref: str) -> str:
-    """Return the global ``plugins.plugin_id`` for a Burp issue type ref."""
-    return PLUGIN_ID_PREFIXES[SOURCE_BURP] + type_ref
+def _namespaced_finding_type_id(type_ref: str) -> str:
+    """Return the global ``finding_types.finding_type_id`` for a Burp issue type ref."""
+    return FINDING_TYPE_ID_PREFIXES[SOURCE_BURP] + type_ref
 
 
 def _group_by_target(
@@ -62,7 +62,7 @@ def _group_by_target(
 ) -> "OrderedDict[tuple[str, str, Optional[int]], list[ParsedBurpInstance]]":
     """Group an issue's instances by the host:port they will be stored against.
 
-    Insertion-ordered so the merged ``plugin_output`` reads in report order.
+    Insertion-ordered so the merged ``evidence`` reads in report order.
     """
     grouped: "OrderedDict[tuple[str, str, Optional[int]], list[ParsedBurpInstance]]" = (
         OrderedDict()
@@ -77,28 +77,28 @@ def import_burp_file(
     burp_file: Path,
     output_dir: Path,
     *,
-    scan_name: Optional[str] = None,
+    dataset_name: Optional[str] = None,
     min_severity: int = 0,
 ) -> ExportResult:
     """Import a Burp Suite XML report into the database.
 
     Args:
         burp_file: Path to a Burp "Report issues" XML export.
-        output_dir: Directory recorded as the scan's ``export_root``. No files
+        output_dir: Directory recorded as the dataset's ``export_root``. No files
             are written there by this importer.
-        scan_name: Scan name to use. Defaults to the file's stem, since a Burp
-            report carries no scan name of its own (unlike a ``.nessus``
+        dataset_name: Dataset name to use. Defaults to the file's stem, since a Burp
+            report carries no dataset name of its own (unlike a ``.nessus``
             ``Report@name``).
         min_severity: Drop issue types below this ``severity_int`` (0-4). Burp
             tops out at High (3), so a floor of 4 drops everything.
 
     Returns:
-        An :class:`~cerno_pkg.nessus_import.ExportResult`. ``plugins_exported``
+        An :class:`~cerno_pkg.nessus_import.ExportResult`. ``finding_types_exported``
         counts issue types (one finding each), ``total_hosts`` counts host:port
         rows written. A missing, empty, malformed or non-Burp file yields a
-        zeroed result and writes nothing at all -- not even a scan row.
+        zeroed result and writes nothing at all -- not even a dataset row.
     """
-    resolved_name = scan_name or sanitize_filename(burp_file.stem)
+    resolved_name = dataset_name or sanitize_filename(burp_file.stem)
     log_info(f"Importing Burp report from {burp_file}")
 
     parsed = parse_burp_file(burp_file)
@@ -140,24 +140,24 @@ def import_burp_file(
         f"Burp import complete: {len(issues)} issue types, {total_hosts} host entries"
     )
     return ExportResult(
-        plugins_exported=len(issues),
+        finding_types_exported=len(issues),
         total_hosts=total_hosts,
-        scan_name=resolved_name,
+        dataset_name=resolved_name,
         severities=severities,
     )
 
 
 def _write_to_database(
     burp_file: Path,
-    scan_name: str,
+    dataset_name: str,
     output_dir: Path,
     issues: list[ParsedBurpIssue],
 ) -> int:
     """Write parsed issues to the database. Returns host:port rows written."""
     try:
         with db_transaction() as conn:
-            scan = Scan(
-                scan_name=scan_name,
+            dataset = Dataset(
+                dataset_name=dataset_name,
                 source_file_path=str(burp_file.resolve()),
                 source_file_hash=(
                     compute_file_hash(burp_file) if burp_file.exists() else None
@@ -165,50 +165,54 @@ def _write_to_database(
                 export_root=str(output_dir),
                 created_at=now_iso(),
             )
-            existing = Scan.get_by_name(scan_name, conn)
+            existing = Dataset.get_by_name(dataset_name, conn)
             if existing:
-                scan.scan_id = existing.scan_id
-                scan.created_at = existing.created_at
-                log_info(f"Updating existing scan: {scan_name}")
+                dataset.dataset_id = existing.dataset_id
+                dataset.created_at = existing.created_at
+                log_info(f"Updating existing dataset: {dataset_name}")
             else:
-                log_info(f"Creating new scan: {scan_name}")
+                log_info(f"Creating new dataset: {dataset_name}")
 
-            scan_id = scan.save(conn)
-            if scan_id is None:
-                log_error("Failed to save scan - scan_id is None")
+            dataset_id = dataset.save(conn)
+            if dataset_id is None:
+                log_error("Failed to save scan - dataset_id is None")
                 return 0
 
             if existing:
-                # Re-import replaces this scan's findings (cascading to
-                # finding_affected_hosts); hosts/ports/plugins are global and
+                # Re-import replaces this dataset's findings (cascading to
+                # finding_affected_hosts); hosts/ports/finding_types are global and
                 # accretive, exactly as in the other importers.
-                conn.execute("DELETE FROM findings WHERE scan_id = ?", (scan_id,))
+                conn.execute("DELETE FROM findings WHERE dataset_id = ?", (dataset_id,))
                 # host_services has no FK to findings, so it does not cascade;
                 # clear it explicitly or a re-import leaves stale services behind.
-                conn.execute("DELETE FROM host_services WHERE scan_id = ?", (scan_id,))
+                conn.execute(
+                    "DELETE FROM host_services WHERE dataset_id = ?", (dataset_id,)
+                )
 
-            # host_services is UNIQUE(scan_id, host_id, port_number, protocol),
+            # host_services is UNIQUE(dataset_id, host_id, port_number, protocol),
             # so one service wins per host:port. Collected while walking the
             # instances and inserted once at the end.
             service_records: Dict[tuple[int, int, str], str] = {}
             rows_written = 0
             for issue in issues:
-                plugin_id = _namespaced_plugin_id(issue.type_ref)
-                Plugin(
-                    plugin_id=plugin_id,
-                    plugin_name=issue.name,
+                finding_type_id = _namespaced_finding_type_id(issue.type_ref)
+                FindingType(
+                    finding_type_id=finding_type_id,
+                    finding_type_name=issue.name,
                     severity_int=issue.severity_int,
                     has_metasploit=False,  # Burp carries no Metasploit data
                     cvss3_score=None,  # nor a CVSS score
                     cvss2_score=None,
                     metasploit_names=None,
                     cves=issue.cves or None,
-                    plugin_url=issue.url,
+                    stored_details_url=issue.url,
                 ).save(conn)
 
-                finding_id = Finding(scan_id=scan_id, plugin_id=plugin_id).save(conn)
+                finding_id = Finding(
+                    dataset_id=dataset_id, finding_type_id=finding_type_id
+                ).save(conn)
                 if finding_id is None:
-                    log_error(f"Failed to save finding for {plugin_id}")
+                    log_error(f"Failed to save finding for {finding_type_id}")
                     continue
 
                 for (ip_address, host, port), instances in _group_by_target(
@@ -227,7 +231,7 @@ def _write_to_database(
                         # Record the service behind this host:port. Without
                         # this a Burp-only scan reports no web services at all,
                         # so get_web_targets, list_services,
-                        # FindingQuery.service and the scan/{id}/hosts resource
+                        # FindingQuery.service and the dataset/{id}/hosts resource
                         # all come back empty -- and a web-app engagement may
                         # import nothing but a Burp report.
                         for instance in instances:
@@ -240,20 +244,20 @@ def _write_to_database(
                     conn.execute(
                         """
                         INSERT OR REPLACE INTO finding_affected_hosts (
-                            finding_id, host_id, port_number, plugin_output
+                            finding_id, host_id, port_number, evidence
                         ) VALUES (?, ?, ?, ?)
                         """,
-                        (finding_id, host_id, port, format_plugin_output(instances)),
+                        (finding_id, host_id, port, format_evidence(instances)),
                     )
                     rows_written += 1
 
             if service_records:
                 conn.executemany(
                     """INSERT OR IGNORE INTO host_services
-                       (scan_id, host_id, port_number, protocol, svc_name)
+                       (dataset_id, host_id, port_number, protocol, svc_name)
                        VALUES (?, ?, ?, ?, ?)""",
                     [
-                        (scan_id, host_id, port, protocol, svc_name)
+                        (dataset_id, host_id, port, protocol, svc_name)
                         for (host_id, port, protocol), svc_name in sorted(
                             service_records.items()
                         )
@@ -262,7 +266,7 @@ def _write_to_database(
                 log_info(f"Inserting {len(service_records)} service mappings...")
 
             log_info(
-                f"Database updated: {len(issues)} Burp issue types, scan_id={scan_id}"
+                f"Database updated: {len(issues)} Burp issue types, dataset_id={dataset_id}"
             )
             return rows_written
     except Exception as exc:

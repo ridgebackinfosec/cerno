@@ -1,13 +1,15 @@
 """Tests for cerno_pkg.models module."""
 
+from cerno_pkg.constants import SOURCE_OPERATOR
+
 import json
 from datetime import datetime
 
 import pytest
 
 from cerno_pkg.models import (
-    Scan,
-    Plugin,
+    Dataset,
+    FindingType,
     Finding,
     ToolExecution,
     Artifact,
@@ -18,73 +20,73 @@ from cerno_pkg.models import (
 class TestScanModel:
     """Tests for Scan model."""
 
-    def test_scan_save_creates_record(self, temp_db):
+    def test_dataset_save_creates_record(self, temp_db):
         """Test saving a new scan."""
-        scan = Scan(
-            scan_name="test_scan",
+        dataset = Dataset(
+            dataset_name="test_dataset",
             source_file_path="/tmp/test.nessus",
             export_root="/tmp/exports",
         )
 
-        scan_id = scan.save(temp_db)
+        dataset_id = dataset.save(temp_db)
 
-        assert scan_id is not None
-        assert scan_id > 0
+        assert dataset_id is not None
+        assert dataset_id > 0
 
-    def test_scan_get_by_name(self, temp_db):
+    def test_dataset_get_by_name(self, temp_db):
         """Test retrieving scan by name."""
         # Create scan
-        scan = Scan(
-            scan_name="test_scan",
+        dataset = Dataset(
+            dataset_name="test_dataset",
             source_file_path="/tmp/test.nessus",
             export_root="/tmp/exports",
         )
-        scan.save(temp_db)
+        dataset.save(temp_db)
 
         # Retrieve it
-        retrieved = Scan.get_by_name("test_scan", temp_db)
+        retrieved = Dataset.get_by_name("test_dataset", temp_db)
 
         assert retrieved is not None
-        assert retrieved.scan_name == "test_scan"
+        assert retrieved.dataset_name == "test_dataset"
         assert retrieved.source_file_path == "/tmp/test.nessus"
 
-    def test_scan_get_by_name_nonexistent(self, temp_db):
+    def test_dataset_get_by_name_nonexistent(self, temp_db):
         """Test retrieving nonexistent scan returns None."""
-        result = Scan.get_by_name("nonexistent", temp_db)
+        result = Dataset.get_by_name("nonexistent", temp_db)
         assert result is None
 
-    def test_scan_get_by_id(self, temp_db):
+    def test_dataset_get_by_id(self, temp_db):
         """Test retrieving scan by ID."""
-        scan = Scan(scan_name="test_scan", export_root="/tmp")
-        scan_id = scan.save(temp_db)
-        assert scan_id is not None
-        assert isinstance(scan_id, int)
+        dataset = Dataset(dataset_name="test_dataset", export_root="/tmp")
+        dataset_id = dataset.save(temp_db)
+        assert dataset_id is not None
+        assert isinstance(dataset_id, int)
 
-        retrieved = Scan.get_by_id(scan_id, temp_db)
+        retrieved = Dataset.get_by_id(dataset_id, temp_db)
 
         assert retrieved is not None
-        assert retrieved.scan_id == scan_id
-        assert retrieved.scan_name == "test_scan"
+        assert retrieved.dataset_id == dataset_id
+        assert retrieved.dataset_name == "test_dataset"
 
-    def test_scan_get_all_empty(self, temp_db):
-        """Test get_all returns empty list when no scans."""
-        scans = Scan.get_all(temp_db)
-        assert scans == []
+    def test_dataset_get_all_empty(self, temp_db):
+        """Test get_all returns empty list when no datasets."""
+        datasets = Dataset.get_all(temp_db)
+        assert datasets == []
 
-    def test_scan_get_all_orders_by_last_reviewed(self, temp_db):
-        """Test get_all returns scans ordered by last_reviewed_at DESC."""
+    def test_dataset_get_all_orders_by_last_reviewed(self, temp_db):
+        """Test get_all returns datasets ordered by last_reviewed_at DESC."""
         from datetime import datetime, timedelta
 
-        # Create 3 scans with different last_reviewed_at
-        scan1 = Scan(scan_name="old_scan", export_root="/tmp/old")
-        scan1_id = scan1.save(temp_db)
-        assert scan1_id is not None
+        # Create 3 datasets with different last_reviewed_at
+        dataset1 = Dataset(dataset_name="old_dataset", export_root="/tmp/old")
+        dataset1_id = dataset1.save(temp_db)
+        assert dataset1_id is not None
 
-        scan2 = Scan(scan_name="recent_scan", export_root="/tmp/recent")
-        scan2_id = scan2.save(temp_db)
-        assert scan2_id is not None
+        dataset2 = Dataset(dataset_name="recent_dataset", export_root="/tmp/recent")
+        dataset2_id = dataset2.save(temp_db)
+        assert dataset2_id is not None
 
-        scan3 = Scan(scan_name="never_reviewed", export_root="/tmp/never")
+        scan3 = Dataset(dataset_name="never_reviewed", export_root="/tmp/never")
         scan3_id = scan3.save(temp_db)
         assert scan3_id is not None
 
@@ -93,115 +95,121 @@ class TestScanModel:
         recent_time = (datetime.now() - timedelta(hours=1)).isoformat()
 
         temp_db.execute(
-            "UPDATE scans SET last_reviewed_at = ? WHERE scan_id = ?",
-            (old_time, scan1_id),
+            "UPDATE datasets SET last_reviewed_at = ? WHERE dataset_id = ?",
+            (old_time, dataset1_id),
         )
         temp_db.execute(
-            "UPDATE scans SET last_reviewed_at = ? WHERE scan_id = ?",
-            (recent_time, scan2_id),
+            "UPDATE datasets SET last_reviewed_at = ? WHERE dataset_id = ?",
+            (recent_time, dataset2_id),
         )
         temp_db.commit()
 
-        # Get all scans
-        scans = Scan.get_all(temp_db)
+        # Get all datasets
+        datasets = Dataset.get_all(temp_db)
 
-        # Should be ordered: recent_scan, old_scan, never_reviewed (NULLS LAST)
-        assert len(scans) == 3
-        assert scans[0].scan_name == "recent_scan"
-        assert scans[1].scan_name == "old_scan"
-        assert scans[2].scan_name == "never_reviewed"
+        # Should be ordered: recent_dataset, old_dataset, never_reviewed (NULLS LAST)
+        assert len(datasets) == 3
+        assert datasets[0].dataset_name == "recent_dataset"
+        assert datasets[1].dataset_name == "old_dataset"
+        assert datasets[2].dataset_name == "never_reviewed"
 
-    def test_scan_update_existing(self, temp_db):
+    def test_dataset_update_existing(self, temp_db):
         """Test updating existing scan."""
-        scan = Scan(scan_name="test_scan", export_root="/tmp")
-        scan_id = scan.save(temp_db)
-        assert scan_id is not None
+        dataset = Dataset(dataset_name="test_dataset", export_root="/tmp")
+        dataset_id = dataset.save(temp_db)
+        assert dataset_id is not None
 
         # Update
-        scan.scan_id = scan_id
-        scan.source_file_hash = "abc123"
-        scan.save(temp_db)
+        dataset.dataset_id = dataset_id
+        dataset.source_file_hash = "abc123"
+        dataset.save(temp_db)
 
         # Retrieve and verify
-        retrieved = Scan.get_by_id(scan_id, temp_db)
+        retrieved = Dataset.get_by_id(dataset_id, temp_db)
         assert retrieved is not None
         assert retrieved.source_file_hash == "abc123"
 
-    def test_scan_unique_constraint(self, temp_db):
-        """Test that scan names must be unique."""
-        scan1 = Scan(scan_name="test_scan", export_root="/tmp")
-        scan1.save(temp_db)
+    def test_dataset_unique_constraint(self, temp_db):
+        """Test that dataset names must be unique."""
+        dataset1 = Dataset(dataset_name="test_dataset", export_root="/tmp")
+        dataset1.save(temp_db)
 
-        scan2 = Scan(scan_name="test_scan", export_root="/tmp2")
+        dataset2 = Dataset(dataset_name="test_dataset", export_root="/tmp2")
 
         with pytest.raises(Exception):  # Should raise IntegrityError
-            scan2.save(temp_db)
+            dataset2.save(temp_db)
 
 
 class TestPluginModel:
-    """Tests for Plugin model."""
+    """Tests for FindingType model."""
 
-    def test_plugin_save_creates_record(self, temp_db):
-        """Test saving a new plugin."""
-        plugin = Plugin(
-            plugin_id="nessus:12345",
-            plugin_name="Test Plugin",
+    def test_finding_type_save_creates_record(self, temp_db):
+        """Test saving a new finding_type."""
+        finding_type = FindingType(
+            finding_type_id="nessus:12345",
+            finding_type_name="Test FindingType",
             severity_int=2,
             cvss3_score=5.3,
         )
 
-        plugin.save(temp_db)
+        finding_type.save(temp_db)
 
         # Verify saved
         cursor = temp_db.execute(
-            "SELECT plugin_name FROM plugins WHERE plugin_id = ?", ("nessus:12345",)
+            "SELECT finding_type_name FROM finding_types WHERE finding_type_id = ?",
+            ("nessus:12345",),
         )
         result = cursor.fetchone()
-        assert result["plugin_name"] == "Test Plugin"
+        assert result["finding_type_name"] == "Test FindingType"
 
-    def test_plugin_get_by_id(self, temp_db):
-        """Test retrieving plugin by ID."""
-        plugin = Plugin(
-            plugin_id="nessus:12345", plugin_name="Test Plugin", severity_int=2
+    def test_finding_type_get_by_id(self, temp_db):
+        """Test retrieving finding_type by ID."""
+        finding_type = FindingType(
+            finding_type_id="nessus:12345",
+            finding_type_name="Test FindingType",
+            severity_int=2,
         )
-        plugin.save(temp_db)
+        finding_type.save(temp_db)
 
-        retrieved = Plugin.get_by_id("nessus:12345", temp_db)
+        retrieved = FindingType.get_by_id("nessus:12345", temp_db)
 
         assert retrieved is not None
-        assert retrieved.plugin_id == "nessus:12345"
-        assert retrieved.plugin_name == "Test Plugin"
+        assert retrieved.finding_type_id == "nessus:12345"
+        assert retrieved.finding_type_name == "Test FindingType"
 
-    def test_plugin_cve_list_serialization(self, temp_db):
+    def test_finding_type_cve_list_serialization(self, temp_db):
         """Test CVE list is serialized to JSON."""
-        plugin = Plugin(
-            plugin_id="nessus:12345",
-            plugin_name="Test Plugin",
+        finding_type = FindingType(
+            finding_type_id="nessus:12345",
+            finding_type_name="Test FindingType",
             severity_int=2,
             cves=["CVE-2024-0001", "CVE-2024-0002"],
         )
-        plugin.save(temp_db)
+        finding_type.save(temp_db)
 
         # Check stored as JSON
         cursor = temp_db.execute(
-            "SELECT cves FROM plugins WHERE plugin_id = ?", ("nessus:12345",)
+            "SELECT cves FROM finding_types WHERE finding_type_id = ?",
+            ("nessus:12345",),
         )
         result = cursor.fetchone()
         cves = json.loads(result["cves"])
         assert cves == ["CVE-2024-0001", "CVE-2024-0002"]
 
-    def test_plugin_update_with_cves(self, temp_db):
-        """Test updating plugin with CVE list."""
-        plugin = Plugin(
-            plugin_id="nessus:12345", plugin_name="Test Plugin", severity_int=2
+    def test_finding_type_update_with_cves(self, temp_db):
+        """Test updating finding_type with CVE list."""
+        finding_type = FindingType(
+            finding_type_id="nessus:12345",
+            finding_type_name="Test FindingType",
+            severity_int=2,
         )
-        plugin.save(temp_db)
+        finding_type.save(temp_db)
 
         # Update with CVEs
-        plugin.cves = ["CVE-2024-0001"]
-        plugin.save(temp_db)
+        finding_type.cves = ["CVE-2024-0001"]
+        finding_type.save(temp_db)
 
-        retrieved = Plugin.get_by_id("nessus:12345", temp_db)
+        retrieved = FindingType.get_by_id("nessus:12345", temp_db)
         assert retrieved is not None
         assert retrieved.cves == ["CVE-2024-0001"]
 
@@ -210,17 +218,19 @@ class TestFindingModel:
     """Tests for Finding model."""
 
     def test_finding_save_creates_record(self, temp_db):
-        """Test saving a new plugin file."""
+        """Test saving a new finding_type file."""
         # Create dependencies
-        scan = Scan(scan_name="test_scan", export_root="/tmp")
-        scan_id = scan.save(temp_db)
-        assert scan_id is not None
+        dataset = Dataset(dataset_name="test_dataset", export_root="/tmp")
+        dataset_id = dataset.save(temp_db)
+        assert dataset_id is not None
 
-        plugin = Plugin(plugin_id="nessus:12345", plugin_name="Test", severity_int=2)
-        plugin.save(temp_db)
+        finding_type = FindingType(
+            finding_type_id="nessus:12345", finding_type_name="Test", severity_int=2
+        )
+        finding_type.save(temp_db)
 
-        # Create plugin file (host_count computed by view, not stored)
-        pf = Finding(scan_id=scan_id, plugin_id="nessus:12345")
+        # Create finding_type file (host_count computed by view, not stored)
+        pf = Finding(dataset_id=dataset_id, finding_type_id="nessus:12345")
 
         finding_id = pf.save(temp_db)
 
@@ -229,30 +239,34 @@ class TestFindingModel:
 
     @pytest.mark.skip(reason="file_path column not present in current schema")
     def test_finding_get_by_path(self):
-        """Test retrieving plugin file by path."""
+        """Test retrieving finding_type file by path."""
         # This test is skipped because Finding.get_by_path() was removed when
         # The file_path column is not present in the current schema.
-        # Database now uses scan_id + plugin_id as the primary lookup method.
+        # Database now uses dataset_id + finding_type_id as the primary lookup method.
         pytest.skip("get_by_path method no longer exists")
 
     def test_finding_update_review_state(self, temp_db):
-        """Test updating plugin file review state."""
+        """Test updating finding_type file review state."""
         # Setup
-        scan = Scan(scan_name="test_scan", export_root="/tmp")
-        scan_id = scan.save(temp_db)
-        assert scan_id is not None
-        plugin = Plugin(plugin_id="nessus:12345", plugin_name="Test", severity_int=2)
-        plugin.save(temp_db)
+        dataset = Dataset(dataset_name="test_dataset", export_root="/tmp")
+        dataset_id = dataset.save(temp_db)
+        assert dataset_id is not None
+        finding_type = FindingType(
+            finding_type_id="nessus:12345", finding_type_name="Test", severity_int=2
+        )
+        finding_type.save(temp_db)
 
         pf = Finding(
-            scan_id=scan_id, plugin_id="nessus:12345", review_state="unreviewed"
+            dataset_id=dataset_id,
+            finding_type_id="nessus:12345",
+            review_state="unreviewed",
         )
         finding_id = pf.save(temp_db)
         assert finding_id is not None
 
         # Update review state
         pf.finding_id = finding_id
-        pf.update_review_state("done", notes="All fixed", conn=temp_db)
+        pf.update_review_state("done", SOURCE_OPERATOR, notes="All fixed", conn=temp_db)
 
         # Verify
         retrieved = Finding.get_by_id(finding_id, temp_db)
@@ -262,15 +276,17 @@ class TestFindingModel:
 
     def test_finding_default_review_state(self, temp_db):
         """Test default review state is 'unreviewed'."""
-        scan = Scan(scan_name="test_scan", export_root="/tmp")
-        scan_id = scan.save(temp_db)
-        assert scan_id is not None
-        plugin = Plugin(plugin_id="nessus:12345", plugin_name="Test", severity_int=2)
-        plugin.save(temp_db)
+        dataset = Dataset(dataset_name="test_dataset", export_root="/tmp")
+        dataset_id = dataset.save(temp_db)
+        assert dataset_id is not None
+        finding_type = FindingType(
+            finding_type_id="nessus:12345", finding_type_name="Test", severity_int=2
+        )
+        finding_type.save(temp_db)
 
         pf = Finding(
-            scan_id=scan_id,
-            plugin_id="nessus:12345",
+            dataset_id=dataset_id,
+            finding_type_id="nessus:12345",
         )
         finding_id = pf.save(temp_db)
         assert finding_id is not None
@@ -279,107 +295,117 @@ class TestFindingModel:
         assert retrieved is not None
         assert retrieved.review_state == "unreviewed"
 
-    def test_get_severity_dirs_for_scan_empty(self, temp_db):
-        """Test get_severity_dirs_for_scan returns empty list when no files exist."""
-        # Create scan without any plugin files
-        scan = Scan(scan_name="empty_scan", export_root="/tmp")
-        scan_id = scan.save(temp_db)
-        assert scan_id is not None
+    def test_get_severity_dirs_for_dataset_empty(self, temp_db):
+        """Test get_severity_names_for_dataset returns empty list when no files exist."""
+        # Create scan without any finding_type files
+        dataset = Dataset(dataset_name="empty_dataset", export_root="/tmp")
+        dataset_id = dataset.save(temp_db)
+        assert dataset_id is not None
 
         # Query severity directories
-        severity_dirs = Finding.get_severity_dirs_for_scan(scan_id, temp_db)
+        severity_dirs = Finding.get_severity_names_for_dataset(dataset_id, temp_db)
 
         assert severity_dirs == []
 
-    def test_get_severity_dirs_for_scan_with_data(self, temp_db):
-        """Test get_severity_dirs_for_scan returns sorted severity directories."""
+    def test_get_severity_dirs_for_dataset_with_data(self, temp_db):
+        """Test get_severity_names_for_dataset returns sorted severity directories."""
         # Setup scan
-        scan = Scan(scan_name="test_scan", export_root="/tmp")
-        scan_id = scan.save(temp_db)
-        assert scan_id is not None
+        dataset = Dataset(dataset_name="test_dataset", export_root="/tmp")
+        dataset_id = dataset.save(temp_db)
+        assert dataset_id is not None
 
-        # Create plugins with different severities
-        plugin1 = Plugin(
-            plugin_id="nessus:1001", plugin_name="Critical Plugin", severity_int=4
+        # Create finding_types with different severities
+        finding_type1 = FindingType(
+            finding_type_id="nessus:1001",
+            finding_type_name="Critical FindingType",
+            severity_int=4,
         )
-        plugin1.save(temp_db)
-        plugin2 = Plugin(
-            plugin_id="nessus:1002", plugin_name="High Plugin", severity_int=3
+        finding_type1.save(temp_db)
+        finding_type2 = FindingType(
+            finding_type_id="nessus:1002",
+            finding_type_name="High FindingType",
+            severity_int=3,
         )
-        plugin2.save(temp_db)
-        plugin3 = Plugin(
-            plugin_id="nessus:1003", plugin_name="Medium Plugin", severity_int=2
+        finding_type2.save(temp_db)
+        finding_type3 = FindingType(
+            finding_type_id="nessus:1003",
+            finding_type_name="Medium FindingType",
+            severity_int=2,
         )
-        plugin3.save(temp_db)
-        plugin4 = Plugin(
-            plugin_id="nessus:1004", plugin_name="Info Plugin", severity_int=0
+        finding_type3.save(temp_db)
+        finding_type4 = FindingType(
+            finding_type_id="nessus:1004",
+            finding_type_name="Info FindingType",
+            severity_int=0,
         )
-        plugin4.save(temp_db)
+        finding_type4.save(temp_db)
 
-        # Create plugin files with severity directories
-        assert isinstance(scan_id, int)
+        # Create finding_type files with severity directories
+        assert isinstance(dataset_id, int)
         pf1 = Finding(
-            scan_id=scan_id,
-            plugin_id="nessus:1001",
+            dataset_id=dataset_id,
+            finding_type_id="nessus:1001",
         )
         pf1.save(temp_db)
 
         pf2 = Finding(
-            scan_id=scan_id,
-            plugin_id="nessus:1002",
+            dataset_id=dataset_id,
+            finding_type_id="nessus:1002",
         )
         pf2.save(temp_db)
 
         pf3 = Finding(
-            scan_id=scan_id,
-            plugin_id="nessus:1003",
+            dataset_id=dataset_id,
+            finding_type_id="nessus:1003",
         )
         pf3.save(temp_db)
 
         pf4 = Finding(
-            scan_id=scan_id,
-            plugin_id="nessus:1004",
+            dataset_id=dataset_id,
+            finding_type_id="nessus:1004",
         )
         pf4.save(temp_db)
 
         # Query severity directories
-        severity_dirs = Finding.get_severity_dirs_for_scan(scan_id, temp_db)
+        severity_dirs = Finding.get_severity_names_for_dataset(dataset_id, temp_db)
 
         # Should be sorted from highest to lowest severity
         assert severity_dirs == ["4_Critical", "3_High", "2_Medium", "0_Info"]
 
     @pytest.mark.skip(
-        reason="Cannot create duplicate scan_id+plugin_id due to UNIQUE constraint"
+        reason="Cannot create duplicate dataset_id+finding_type_id due to UNIQUE constraint"
     )
-    def test_get_severity_dirs_for_scan_deduplicates(self, temp_db):
-        """Test get_severity_dirs_for_scan deduplicates severity directories."""
+    def test_get_severity_dirs_for_dataset_deduplicates(self, temp_db):
+        """Test get_severity_names_for_dataset deduplicates severity directories."""
         # Setup scan
-        scan = Scan(scan_name="test_scan", export_root="/tmp")
-        scan_id = scan.save(temp_db)
-        assert scan_id is not None
-        assert isinstance(scan_id, int)
+        dataset = Dataset(dataset_name="test_dataset", export_root="/tmp")
+        dataset_id = dataset.save(temp_db)
+        assert dataset_id is not None
+        assert isinstance(dataset_id, int)
 
-        # Create plugin
-        plugin = Plugin(
-            plugin_id="nessus:1001", plugin_name="High Plugin", severity_int=3
+        # Create finding_type
+        finding_type = FindingType(
+            finding_type_id="nessus:1001",
+            finding_type_name="High FindingType",
+            severity_int=3,
         )
-        plugin.save(temp_db)
+        finding_type.save(temp_db)
 
-        # Create multiple plugin files with same severity
+        # Create multiple finding_type files with same severity
         pf1 = Finding(
-            scan_id=scan_id,
-            plugin_id="nessus:1001",
+            dataset_id=dataset_id,
+            finding_type_id="nessus:1001",
         )
         pf1.save(temp_db)
 
         pf2 = Finding(
-            scan_id=scan_id,
-            plugin_id="nessus:1001",
+            dataset_id=dataset_id,
+            finding_type_id="nessus:1001",
         )
         pf2.save(temp_db)
 
         # Query severity directories
-        severity_dirs = Finding.get_severity_dirs_for_scan(scan_id, temp_db)
+        severity_dirs = Finding.get_severity_names_for_dataset(dataset_id, temp_db)
 
         # Should only return one instance of "3_High"
         assert severity_dirs == ["3_High"]
@@ -387,16 +413,18 @@ class TestFindingModel:
     def test_get_hosts_and_ports_empty(self, temp_db):
         """Test get_hosts_and_ports returns empty when no hosts exist."""
         # Setup
-        scan = Scan(scan_name="test_scan", export_root="/tmp")
-        scan_id = scan.save(temp_db)
-        assert scan_id is not None
-        assert isinstance(scan_id, int)
-        plugin = Plugin(plugin_id="nessus:12345", plugin_name="Test", severity_int=2)
-        plugin.save(temp_db)
+        dataset = Dataset(dataset_name="test_dataset", export_root="/tmp")
+        dataset_id = dataset.save(temp_db)
+        assert dataset_id is not None
+        assert isinstance(dataset_id, int)
+        finding_type = FindingType(
+            finding_type_id="nessus:12345", finding_type_name="Test", severity_int=2
+        )
+        finding_type.save(temp_db)
 
         pf = Finding(
-            scan_id=scan_id,
-            plugin_id="nessus:12345",
+            dataset_id=dataset_id,
+            finding_type_id="nessus:12345",
         )
         finding_id = pf.save(temp_db)
         pf.finding_id = finding_id
@@ -410,14 +438,16 @@ class TestFindingModel:
     def test_get_hosts_and_ports_with_data(self, temp_db):
         """Test get_hosts_and_ports retrieves hosts and ports from database."""
         # Setup
-        scan = Scan(scan_name="test_scan", export_root="/tmp")
-        scan_id = scan.save(temp_db)
-        assert scan_id is not None
-        assert isinstance(scan_id, int)
-        plugin = Plugin(plugin_id="nessus:12345", plugin_name="Test", severity_int=2)
-        plugin.save(temp_db)
+        dataset = Dataset(dataset_name="test_dataset", export_root="/tmp")
+        dataset_id = dataset.save(temp_db)
+        assert dataset_id is not None
+        assert isinstance(dataset_id, int)
+        finding_type = FindingType(
+            finding_type_id="nessus:12345", finding_type_name="Test", severity_int=2
+        )
+        finding_type.save(temp_db)
 
-        pf = Finding(scan_id=scan_id, plugin_id="nessus:12345")
+        pf = Finding(dataset_id=dataset_id, finding_type_id="nessus:12345")
         finding_id = pf.save(temp_db)
         pf.finding_id = finding_id
 
@@ -430,14 +460,14 @@ class TestFindingModel:
         )
         port_id_80 = Port.get_or_create(80, conn=temp_db)
         temp_db.execute(
-            "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, plugin_output) VALUES (?, ?, ?, ?)",
+            "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, evidence) VALUES (?, ?, ?, ?)",
             (finding_id, host_id_1, port_id_80, None),
         )
 
         # Insert 192.168.1.1:443
         port_id_443 = Port.get_or_create(443, conn=temp_db)
         temp_db.execute(
-            "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, plugin_output) VALUES (?, ?, ?, ?)",
+            "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, evidence) VALUES (?, ?, ?, ?)",
             (finding_id, host_id_1, port_id_443, None),
         )
 
@@ -446,7 +476,7 @@ class TestFindingModel:
             "192.168.1.2", "192.168.1.2", "ipv4", conn=temp_db
         )
         temp_db.execute(
-            "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, plugin_output) VALUES (?, ?, ?, ?)",
+            "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, evidence) VALUES (?, ?, ?, ?)",
             (finding_id, host_id_2, port_id_80, None),
         )
 
@@ -455,7 +485,7 @@ class TestFindingModel:
             "93.184.216.34", "example.com", "fqdn", conn=temp_db
         )
         temp_db.execute(
-            "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, plugin_output) VALUES (?, ?, ?, ?)",
+            "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, evidence) VALUES (?, ?, ?, ?)",
             (finding_id, host_id_3, port_id_443, None),
         )
         temp_db.commit()
@@ -482,16 +512,18 @@ class TestFindingModel:
     def test_get_hosts_and_ports_ipv6(self, temp_db):
         """Test get_hosts_and_ports handles IPv6 addresses."""
         # Setup
-        scan = Scan(scan_name="test_scan", export_root="/tmp")
-        scan_id = scan.save(temp_db)
-        assert scan_id is not None
-        assert isinstance(scan_id, int)
-        plugin = Plugin(plugin_id="nessus:12345", plugin_name="Test", severity_int=2)
-        plugin.save(temp_db)
+        dataset = Dataset(dataset_name="test_dataset", export_root="/tmp")
+        dataset_id = dataset.save(temp_db)
+        assert dataset_id is not None
+        assert isinstance(dataset_id, int)
+        finding_type = FindingType(
+            finding_type_id="nessus:12345", finding_type_name="Test", severity_int=2
+        )
+        finding_type.save(temp_db)
 
         pf = Finding(
-            scan_id=scan_id,
-            plugin_id="nessus:12345",
+            dataset_id=dataset_id,
+            finding_type_id="nessus:12345",
         )
         finding_id = pf.save(temp_db)
         pf.finding_id = finding_id
@@ -505,7 +537,7 @@ class TestFindingModel:
         )
         port_id_80 = Port.get_or_create(80, conn=temp_db)
         temp_db.execute(
-            "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, plugin_output) VALUES (?, ?, ?, ?)",
+            "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, evidence) VALUES (?, ?, ?, ?)",
             (finding_id, host_id_ipv6, port_id_80, None),
         )
 
@@ -514,7 +546,7 @@ class TestFindingModel:
             "192.168.1.1", "192.168.1.1", "ipv4", conn=temp_db
         )
         temp_db.execute(
-            "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, plugin_output) VALUES (?, ?, ?, ?)",
+            "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, evidence) VALUES (?, ?, ?, ?)",
             (finding_id, host_id_ipv4, port_id_80, None),
         )
         temp_db.commit()
@@ -531,16 +563,18 @@ class TestFindingModel:
     def test_get_all_host_port_lines_empty(self, temp_db):
         """Test get_all_host_port_lines returns empty list when no hosts."""
         # Setup
-        scan = Scan(scan_name="test_scan", export_root="/tmp")
-        scan_id = scan.save(temp_db)
-        assert scan_id is not None
-        assert isinstance(scan_id, int)
-        plugin = Plugin(plugin_id="nessus:12345", plugin_name="Test", severity_int=2)
-        plugin.save(temp_db)
+        dataset = Dataset(dataset_name="test_dataset", export_root="/tmp")
+        dataset_id = dataset.save(temp_db)
+        assert dataset_id is not None
+        assert isinstance(dataset_id, int)
+        finding_type = FindingType(
+            finding_type_id="nessus:12345", finding_type_name="Test", severity_int=2
+        )
+        finding_type.save(temp_db)
 
         pf = Finding(
-            scan_id=scan_id,
-            plugin_id="nessus:12345",
+            dataset_id=dataset_id,
+            finding_type_id="nessus:12345",
         )
         finding_id = pf.save(temp_db)
         pf.finding_id = finding_id
@@ -553,16 +587,18 @@ class TestFindingModel:
     def test_get_all_host_port_lines_with_data(self, temp_db):
         """Test get_all_host_port_lines returns formatted host:port strings."""
         # Setup
-        scan = Scan(scan_name="test_scan", export_root="/tmp")
-        scan_id = scan.save(temp_db)
-        assert scan_id is not None
-        assert isinstance(scan_id, int)
-        plugin = Plugin(plugin_id="nessus:12345", plugin_name="Test", severity_int=2)
-        plugin.save(temp_db)
+        dataset = Dataset(dataset_name="test_dataset", export_root="/tmp")
+        dataset_id = dataset.save(temp_db)
+        assert dataset_id is not None
+        assert isinstance(dataset_id, int)
+        finding_type = FindingType(
+            finding_type_id="nessus:12345", finding_type_name="Test", severity_int=2
+        )
+        finding_type.save(temp_db)
 
         pf = Finding(
-            scan_id=scan_id,
-            plugin_id="nessus:12345",
+            dataset_id=dataset_id,
+            finding_type_id="nessus:12345",
         )
         finding_id = pf.save(temp_db)
         pf.finding_id = finding_id
@@ -576,14 +612,14 @@ class TestFindingModel:
         )
         port_id_80 = Port.get_or_create(80, conn=temp_db)
         temp_db.execute(
-            "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, plugin_output) VALUES (?, ?, ?, ?)",
+            "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, evidence) VALUES (?, ?, ?, ?)",
             (finding_id, host_id_1, port_id_80, None),
         )
 
         # Insert 192.168.1.1:443
         port_id_443 = Port.get_or_create(443, conn=temp_db)
         temp_db.execute(
-            "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, plugin_output) VALUES (?, ?, ?, ?)",
+            "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, evidence) VALUES (?, ?, ?, ?)",
             (finding_id, host_id_1, port_id_443, None),
         )
 
@@ -592,7 +628,7 @@ class TestFindingModel:
             "93.184.216.34", "example.com", "fqdn", conn=temp_db
         )
         temp_db.execute(
-            "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, plugin_output) VALUES (?, ?, ?, ?)",
+            "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, evidence) VALUES (?, ?, ?, ?)",
             (finding_id, host_id_2, port_id_80, None),
         )
         temp_db.commit()
@@ -614,16 +650,18 @@ class TestFindingModel:
     def test_get_all_host_port_lines_ipv6_bracketed(self, temp_db):
         """Test get_all_host_port_lines adds brackets to IPv6 addresses."""
         # Setup
-        scan = Scan(scan_name="test_scan", export_root="/tmp")
-        scan_id = scan.save(temp_db)
-        assert scan_id is not None
-        assert isinstance(scan_id, int)
-        plugin = Plugin(plugin_id="nessus:12345", plugin_name="Test", severity_int=2)
-        plugin.save(temp_db)
+        dataset = Dataset(dataset_name="test_dataset", export_root="/tmp")
+        dataset_id = dataset.save(temp_db)
+        assert dataset_id is not None
+        assert isinstance(dataset_id, int)
+        finding_type = FindingType(
+            finding_type_id="nessus:12345", finding_type_name="Test", severity_int=2
+        )
+        finding_type.save(temp_db)
 
         pf = Finding(
-            scan_id=scan_id,
-            plugin_id="nessus:12345",
+            dataset_id=dataset_id,
+            finding_type_id="nessus:12345",
         )
         finding_id = pf.save(temp_db)
         pf.finding_id = finding_id
@@ -635,7 +673,7 @@ class TestFindingModel:
         host_id = Host.get_or_create("2001:db8::1", "2001:db8::1", "ipv6", conn=temp_db)
         port_id = Port.get_or_create(80, conn=temp_db)
         temp_db.execute(
-            "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, plugin_output) VALUES (?, ?, ?, ?)",
+            "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, evidence) VALUES (?, ?, ?, ?)",
             (finding_id, host_id, port_id, None),
         )
         temp_db.commit()
@@ -650,16 +688,18 @@ class TestFindingModel:
     def test_get_all_host_port_lines_no_port(self, temp_db):
         """Test get_all_host_port_lines handles entries without ports."""
         # Setup
-        scan = Scan(scan_name="test_scan", export_root="/tmp")
-        scan_id = scan.save(temp_db)
-        assert scan_id is not None
-        assert isinstance(scan_id, int)
-        plugin = Plugin(plugin_id="nessus:12345", plugin_name="Test", severity_int=2)
-        plugin.save(temp_db)
+        dataset = Dataset(dataset_name="test_dataset", export_root="/tmp")
+        dataset_id = dataset.save(temp_db)
+        assert dataset_id is not None
+        assert isinstance(dataset_id, int)
+        finding_type = FindingType(
+            finding_type_id="nessus:12345", finding_type_name="Test", severity_int=2
+        )
+        finding_type.save(temp_db)
 
         pf = Finding(
-            scan_id=scan_id,
-            plugin_id="nessus:12345",
+            dataset_id=dataset_id,
+            finding_type_id="nessus:12345",
         )
         finding_id = pf.save(temp_db)
         pf.finding_id = finding_id
@@ -670,7 +710,7 @@ class TestFindingModel:
         # Insert 192.168.1.1 with no port
         host_id = Host.get_or_create("192.168.1.1", "192.168.1.1", "ipv4", conn=temp_db)
         temp_db.execute(
-            "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, plugin_output) VALUES (?, ?, ?, ?)",
+            "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, evidence) VALUES (?, ?, ?, ?)",
             (finding_id, host_id, None, None),
         )
         temp_db.commit()
@@ -722,12 +762,12 @@ class TestToolExecutionModel:
     def test_tool_execution_with_session_link(self, temp_db):
         """Test tool execution linked to session."""
         # Create session
-        scan = Scan(scan_name="test_scan", export_root="/tmp")
-        scan_id = scan.save(temp_db)
+        dataset = Dataset(dataset_name="test_dataset", export_root="/tmp")
+        dataset_id = dataset.save(temp_db)
 
         cursor = temp_db.execute(
-            "INSERT INTO sessions (scan_id, session_start) VALUES (?, datetime('now'))",
-            (scan_id,),
+            "INSERT INTO sessions (dataset_id, session_start) VALUES (?, datetime('now'))",
+            (dataset_id,),
         )
         session_id = cursor.lastrowid
         temp_db.commit()
@@ -851,7 +891,7 @@ class TestArtifactModel:
             execution_id=exec_id,
             artifact_path="/tmp/scan.xml",
             artifact_type_id=1,  # nmap_xml
-            metadata={"scan_type": "SYN", "hosts_up": 5},
+            metadata={"dataset_type": "SYN", "hosts_up": 5},
         )
         artifact_id = artifact.save(temp_db)
 
@@ -861,7 +901,7 @@ class TestArtifactModel:
         )
         result = cursor.fetchone()
         metadata = json.loads(result["metadata"]) if result["metadata"] else None
-        assert metadata == {"scan_type": "SYN", "hosts_up": 5}
+        assert metadata == {"dataset_type": "SYN", "hosts_up": 5}
 
 
 class TestTimestampFunctions:
@@ -890,28 +930,30 @@ class TestModelRelationships:
     """Tests for model relationships and cascading."""
 
     @pytest.mark.integration
-    def test_delete_scan_cascades_to_files(self, temp_db):
-        """Test deleting scan removes plugin files."""
-        # Create chain: scan -> plugin -> finding
-        scan = Scan(scan_name="test_scan", export_root="/tmp")
-        scan_id = scan.save(temp_db)
-        assert scan_id is not None
-        assert isinstance(scan_id, int)
+    def test_delete_dataset_cascades_to_files(self, temp_db):
+        """Test deleting scan removes finding_type files."""
+        # Create chain: scan -> finding_type -> finding
+        dataset = Dataset(dataset_name="test_dataset", export_root="/tmp")
+        dataset_id = dataset.save(temp_db)
+        assert dataset_id is not None
+        assert isinstance(dataset_id, int)
 
-        plugin = Plugin(plugin_id="nessus:12345", plugin_name="Test", severity_int=2)
-        plugin.save(temp_db)
+        finding_type = FindingType(
+            finding_type_id="nessus:12345", finding_type_name="Test", severity_int=2
+        )
+        finding_type.save(temp_db)
 
         pf = Finding(
-            scan_id=scan_id,
-            plugin_id="nessus:12345",
+            dataset_id=dataset_id,
+            finding_type_id="nessus:12345",
         )
         pf.save(temp_db)
 
         # Delete scan
-        temp_db.execute("DELETE FROM scans WHERE scan_id = ?", (scan_id,))
+        temp_db.execute("DELETE FROM datasets WHERE dataset_id = ?", (dataset_id,))
         temp_db.commit()
 
-        # Plugin file should be gone
+        # FindingType file should be gone
         cursor = temp_db.execute("SELECT COUNT(*) as count FROM findings")
         assert cursor.fetchone()["count"] == 0
 
@@ -981,13 +1023,15 @@ def vhost_finding(temp_db):
     Targets:  shop/blog/api.example, www.example -> 4
     host_ids: 3 vhosts + 2 round-robin rows -> 5
     """
-    from cerno_pkg.models import Finding, Host, Plugin, Port, Scan
+    from cerno_pkg.models import Finding, Host, FindingType, Port, Dataset
 
-    scan_id = Scan(scan_name="vhosts", export_root="/tmp").save(temp_db)
-    Plugin(plugin_id="nuclei:tls-version", plugin_name="TLS", severity_int=1).save(
-        temp_db
-    )
-    finding_id = Finding(scan_id=scan_id, plugin_id="nuclei:tls-version").save(temp_db)
+    dataset_id = Dataset(dataset_name="vhosts", export_root="/tmp").save(temp_db)
+    FindingType(
+        finding_type_id="nuclei:tls-version", finding_type_name="TLS", severity_int=1
+    ).save(temp_db)
+    finding_id = Finding(
+        dataset_id=dataset_id, finding_type_id="nuclei:tls-version"
+    ).save(temp_db)
     Port.get_or_create(443, conn=temp_db)
 
     pairs = [
@@ -1005,7 +1049,7 @@ def vhost_finding(temp_db):
             (finding_id, host_id, 443),
         )
     temp_db.commit()
-    return scan_id, finding_id
+    return dataset_id, finding_id
 
 
 @pytest.mark.integration
@@ -1013,7 +1057,7 @@ def test_count_targets_counts_every_vhost(vhost_finding, temp_db):
     """Each vhost is its own target, so all three on one IP count separately."""
     from cerno_pkg.models import Finding
 
-    _scan_id, finding_id = vhost_finding
+    _dataset_id, finding_id = vhost_finding
     assert Finding.count_targets([finding_id], temp_db) == 4
 
 
@@ -1022,7 +1066,7 @@ def test_count_targets_matches_host_list_length(vhost_finding, temp_db):
     """The footer count must equal the number of lines the [V] host list renders."""
     from cerno_pkg.models import Finding
 
-    _scan_id, finding_id = vhost_finding
+    _dataset_id, finding_id = vhost_finding
     finding = Finding.get_by_id(finding_id, temp_db)
     hosts, _ports = finding.get_hosts_and_ports(temp_db)
 
@@ -1038,13 +1082,13 @@ def test_count_targets_empty_for_no_ids(temp_db):
 
 
 @pytest.mark.integration
-def test_scan_unique_hosts_counts_machines_not_targets(vhost_finding, temp_db):
-    """`cerno scan list` reports machines by resolved IP, so vhosts collapse."""
-    from cerno_pkg.models import Scan
+def test_dataset_unique_hosts_counts_machines_not_targets(vhost_finding, temp_db):
+    """`cerno dataset list` reports machines by resolved IP, so vhosts collapse."""
+    from cerno_pkg.models import Dataset
 
-    scans = {s["scan_name"]: s for s in Scan.get_all_with_stats(temp_db)}
+    datasets = {s["dataset_name"]: s for s in Dataset.get_all_with_stats(temp_db)}
     # 3 machines behind 4 targets / 5 (ip, target) pairs.
-    assert scans["vhosts"]["unique_hosts"] == 3
+    assert datasets["vhosts"]["unique_hosts"] == 3
 
 
 @pytest.mark.integration
@@ -1052,7 +1096,7 @@ def test_port_distribution_agrees_with_host_list(vhost_finding, temp_db):
     """Distribution counts targets, matching the "N across M port(s)" N above it."""
     from cerno_pkg.models import Finding
 
-    _scan_id, finding_id = vhost_finding
+    _dataset_id, finding_id = vhost_finding
     finding = Finding.get_by_id(finding_id, temp_db)
     hosts, _ports = finding.get_hosts_and_ports(temp_db)
     distribution = finding.get_port_distribution(temp_db)

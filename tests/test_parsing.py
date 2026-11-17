@@ -10,10 +10,10 @@ from cerno_pkg.parsing import (
     is_hostname,
     is_valid_token,
     parse_hosts_ports,
-    plugin_details_url,
-    plugin_ref,
-    plugin_source,
-    plugin_source_id,
+    finding_type_details_url,
+    finding_type_ref,
+    finding_type_source,
+    finding_type_source_id,
 )
 
 
@@ -294,10 +294,10 @@ def test_ip_type_detection(ip, is_v4, is_v6):
 
 @pytest.mark.unit
 class TestPluginIdentity:
-    """Every plugin_id names its source; nothing is assumed to be Nessus."""
+    """Every finding_type_id names its source; nothing is assumed to be Nessus."""
 
     @pytest.mark.parametrize(
-        "plugin_id,source",
+        "finding_type_id,source",
         [
             ("nessus:57608", SOURCE_NESSUS),
             ("nuclei:apache-detect", SOURCE_NUCLEI),
@@ -306,41 +306,43 @@ class TestPluginIdentity:
             ("nuclei:57608", SOURCE_NUCLEI),
         ],
     )
-    def test_prefix_decides_the_source(self, plugin_id, source):
-        assert plugin_source(plugin_id) == source
+    def test_prefix_decides_the_source(self, finding_type_id, source):
+        assert finding_type_source(finding_type_id) == source
 
-    @pytest.mark.parametrize("plugin_id", ["57608", "", "apache-detect", "57608:x"])
-    def test_unprefixed_id_is_unknown_not_nessus(self, plugin_id):
+    @pytest.mark.parametrize(
+        "finding_type_id", ["57608", "", "apache-detect", "57608:x"]
+    )
+    def test_unprefixed_id_is_unknown_not_nessus(self, finding_type_id):
         """The old implementation defaulted to Nessus, mislabelling bad ids."""
-        assert plugin_source(plugin_id) == SOURCE_UNKNOWN
+        assert finding_type_source(finding_type_id) == SOURCE_UNKNOWN
 
     def test_source_id_resolves_for_known_sources(self):
-        assert plugin_source_id("nessus:57608") == 1
-        assert plugin_source_id("nuclei:apache-detect") == 2
+        assert finding_type_source_id("nessus:57608") == 1
+        assert finding_type_source_id("nuclei:apache-detect") == 2
 
-    @pytest.mark.parametrize("plugin_id", ["57608", "", "whatever"])
-    def test_source_id_raises_on_unprefixed_id(self, plugin_id):
+    @pytest.mark.parametrize("finding_type_id", ["57608", "", "whatever"])
+    def test_source_id_raises_on_unprefixed_id(self, finding_type_id):
         """The write-side guard: nothing unprefixed may reach the database."""
         with pytest.raises(ValueError, match="no source prefix"):
-            plugin_source_id(plugin_id)
+            finding_type_source_id(finding_type_id)
 
     def test_ref_strips_the_prefix(self):
-        assert plugin_ref("nessus:57608") == "57608"
-        assert plugin_ref("nuclei:apache-detect") == "apache-detect"
+        assert finding_type_ref("nessus:57608") == "57608"
+        assert finding_type_ref("nuclei:apache-detect") == "apache-detect"
 
     def test_details_url_uses_the_source_native_ref(self):
         """The Tenable URL takes the bare number, never the namespaced id."""
         assert (
-            plugin_details_url("nessus:57608")
+            finding_type_details_url("nessus:57608")
             == "https://www.tenable.com/plugins/nessus/57608"
         )
 
     def test_stored_url_wins_over_the_template(self):
         assert (
-            plugin_details_url("nessus:57608", "https://example.test/x")
+            finding_type_details_url("nessus:57608", "https://example.test/x")
             == "https://example.test/x"
         )
 
     def test_unknown_source_has_no_details_url(self):
         """Read paths degrade to no link rather than fabricating a dead one."""
-        assert plugin_details_url("57608") is None
+        assert finding_type_details_url("57608") is None

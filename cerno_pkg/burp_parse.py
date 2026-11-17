@@ -9,7 +9,7 @@ same contract.
 **The identity is the hex type index.** Burp's XML stores its issue type in
 decimal (``<type>2097920</type>``), but PortSwigger publishes it -- and keys its
 knowledge base on it -- in 8-digit hex (``00200300``). Using the hex form as the
-``plugin_ref`` makes the details URL derivable from the id alone, exactly like
+``finding_type_ref`` makes the details URL derivable from the id alone, exactly like
 the Nessus plugin number and the nuclei template id. Two type indexes identify
 nothing specific and are handled separately; see
 :data:`cerno_pkg.constants.BURP_GENERIC_TYPES`.
@@ -72,7 +72,7 @@ __all__ = [
     "ParsedBurpIssue",
     "extract_cwes",
     "find_cves",
-    "format_plugin_output",
+    "format_evidence",
     "html_to_text",
     "kb_url",
     "parse_burp_file",
@@ -88,8 +88,8 @@ __all__ = [
 #: High rather than above it.
 #:
 #: Anything unrecognised floors to Info for the same reason the nuclei parser
-#: does it: ``plugins.severity_int`` CHECKs ``BETWEEN 0 AND 4`` *and* foreign-keys
-#: ``severity_levels``, while ``v_plugins_with_severity`` is an INNER JOIN -- so
+#: does it: ``finding_types.severity_int`` CHECKs ``BETWEEN 0 AND 4`` *and* foreign-keys
+#: ``severity_levels``, while ``v_finding_types_with_severity`` is an INNER JOIN -- so
 #: an unmapped value would make the finding silently vanish from every query
 #: rather than fail loudly.
 SEVERITY_BY_LABEL: dict[str, int] = {
@@ -237,13 +237,13 @@ def _slug(name: str) -> str:
 
 
 def type_to_ref(raw: Any, name: str) -> Optional[str]:
-    """Return the ``plugin_ref`` for a Burp issue, or None if unusable.
+    """Return the ``finding_type_ref`` for a Burp issue, or None if unusable.
 
     The decimal ``type`` becomes the 8-digit hex index PortSwigger publishes.
     A :data:`~cerno_pkg.constants.BURP_GENERIC_TYPES` index identifies nothing
     on its own -- every extension-generated issue reports ``0x08000000`` -- so a
     slug of the issue name is appended to keep two unrelated findings from
-    merging onto one ``plugins`` row.
+    merging onto one ``finding_types`` row.
 
     Returns:
         ``"00200300"``, ``"08000000-jwt-none-algorithm-accepted"``, or None for
@@ -308,7 +308,7 @@ def find_cves(raw: Optional[str]) -> list[str]:
     """Pull valid CVE ids out of free text.
 
     Burp classifies by CWE, but its references and prose do sometimes name a
-    CVE. Capturing those into the existing ``plugins.cves`` column is what lets
+    CVE. Capturing those into the existing ``finding_types.cves`` column is what lets
     a Burp finding cross-reference a Nessus one for the same vulnerability.
     """
     found = {match.upper() for match in _CVE_RE.findall(str(raw or ""))}
@@ -393,14 +393,14 @@ def _decode_payload(elem: Optional[ET.Element], max_bytes: int) -> Optional[str]
     return _truncate(raw, max_bytes)
 
 
-def format_plugin_output(instances: list[ParsedBurpInstance]) -> str:
+def format_evidence(instances: list[ParsedBurpInstance]) -> str:
     """Render one issue type's instances for one host:port into one block.
 
     Every instance keeps its location, confidence and detail, followed by its
     HTTP exchange -- the longest content last, so the operator reads the
     triage-relevant lines first. Instances beyond
     :data:`~cerno_pkg.constants.BURP_MAX_INSTANCES_RENDERED` are summarised by a
-    count: they all share one ``plugin_output`` cell, and a dozen full HTTP
+    count: they all share one ``evidence`` cell, and a dozen full HTTP
     exchanges in a terminal panel is not evidence anyone reads.
     """
     blocks: list[str] = []

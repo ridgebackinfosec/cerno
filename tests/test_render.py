@@ -206,7 +206,7 @@ def test_show_reviewed_help_is_gone():
     "mode,label",
     [
         ("severity", "Severity"),
-        ("plugin_id", "Finding ID"),
+        ("finding_type_id", "Finding ID"),
         ("name", "Name"),
         ("hosts", "Hosts"),
     ],
@@ -240,15 +240,15 @@ def test_empty_state_status_mismatch(monkeypatch):
     assert "[I]" in text
 
 
-def _preview_plugin(plugin_url):
-    from cerno_pkg.models import Plugin
+def _preview_finding_type(details_url):
+    from cerno_pkg.models import FindingType
 
-    return Plugin(
-        plugin_id="nessus:41028",
-        plugin_name="SNMP Agent Default Community Name (public)",
+    return FindingType(
+        finding_type_id="nessus:41028",
+        finding_type_name="SNMP Agent Default Community Name (public)",
         severity_int=3,
         severity_label="High",
-        plugin_url=plugin_url,
+        stored_details_url=details_url,
     )
 
 
@@ -259,7 +259,7 @@ def _preview_finding():
     return finding
 
 
-def _render_preview(monkeypatch, plugin_url):
+def _render_preview(monkeypatch, details_url):
     import cerno_pkg.render as render_module
 
     console = _record_console(monkeypatch, render_module)
@@ -267,13 +267,13 @@ def _render_preview(monkeypatch, plugin_url):
         render_module, "render_nxc_enrichment_summary", lambda hosts: None
     )
     render_module.display_finding_preview(
-        _preview_plugin(plugin_url), _preview_finding(), None, Path("x.txt")
+        _preview_finding_type(details_url), _preview_finding(), None, Path("x.txt")
     )
     return console
 
 
 @pytest.mark.unit
-def test_finding_preview_shows_plugin_url(monkeypatch):
+def test_finding_preview_shows_finding_type_url(monkeypatch):
     console = _render_preview(
         monkeypatch, "https://www.tenable.com/plugins/nessus/41028"
     )
@@ -283,7 +283,7 @@ def test_finding_preview_shows_plugin_url(monkeypatch):
 
 
 @pytest.mark.unit
-def test_finding_preview_plugin_url_fallback(monkeypatch):
+def test_finding_preview_finding_type_url_fallback(monkeypatch):
     console = _render_preview(monkeypatch, None)
     assert (
         "Finding Details: https://tenable.com/plugins/nessus/41028"
@@ -306,7 +306,7 @@ def test_finding_preview_link_target_is_full_url(monkeypatch):
         render_module, "render_nxc_enrichment_summary", lambda hosts: None
     )
     render_module.display_finding_preview(
-        _preview_plugin("https://www.tenable.com/plugins/nessus/41028"),
+        _preview_finding_type("https://www.tenable.com/plugins/nessus/41028"),
         _preview_finding(),
         None,
         Path("x.txt"),
@@ -457,18 +457,20 @@ def test_finding_footer_no_tools_keeps_conditional_row_items(monkeypatch):
 
 
 def _finding_list_output(ids, *, width: int = 200) -> str:
-    """Render the findings list for the given plugin ids and return the text."""
+    """Render the findings list for the given finding_type ids and return the text."""
     import io
 
     from rich.console import Console
 
     from cerno_pkg import render as render_mod
-    from cerno_pkg.models import Finding, Plugin
+    from cerno_pkg.models import Finding, FindingType
 
     display = [
         (
-            Finding(finding_id=i, scan_id=1, plugin_id=pid),
-            Plugin(plugin_id=pid, plugin_name=f"Finding {i}", severity_int=2),
+            Finding(finding_id=i, dataset_id=1, finding_type_id=pid),
+            FindingType(
+                finding_type_id=pid, finding_type_name=f"Finding {i}", severity_int=2
+            ),
         )
         for i, pid in enumerate(ids, 1)
     ]

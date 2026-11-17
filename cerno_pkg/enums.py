@@ -22,6 +22,6 @@ class SortMode(str, Enum):
     """Sort mode for findings lists."""
 
     SEVERITY = "severity"
-    PLUGIN_ID = "plugin_id"
+    PLUGIN_ID = "finding_type_id"
     NAME = "name"
     HOSTS = "hosts"

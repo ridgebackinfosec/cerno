@@ -15,7 +15,7 @@ from cerno_pkg.nuclei_parse import (
     NUCLEI_TEMPLATE_URL_BASE,
     classify_cvss,
     extract_cves,
-    format_plugin_output,
+    format_evidence,
     normalize_port,
     parse_nuclei_file,
     resolve_template_url,
@@ -351,14 +351,14 @@ class TestFormatPluginOutput:
     def test_single_match(self) -> None:
         result = parse_nuclei_file(FIXTURES / "web_scan.json")
         by_id = {t.template_id: t for t in result.templates}
-        text = format_plugin_output(by_id["ssl-dns-names"].matches)
+        text = format_evidence(by_id["ssl-dns-names"].matches)
         assert "matched-at: example.com:443" in text
         assert "extracted: example.com" in text
 
     def test_merged_matches_retain_every_matcher_name(self) -> None:
         result = parse_nuclei_file(FIXTURES / "web_scan.json")
         by_id = {t.template_id: t for t in result.templates}
-        text = format_plugin_output(by_id["http-missing-security-headers"].matches)
+        text = format_evidence(by_id["http-missing-security-headers"].matches)
         for name in (
             "content-security-policy",
             "strict-transport-security",
@@ -372,11 +372,11 @@ class TestFormatPluginOutput:
     def test_merged_matches_retain_distinct_extracted_results(self) -> None:
         result = parse_nuclei_file(FIXTURES / "web_scan.json")
         by_id = {t.template_id: t for t in result.templates}
-        text = format_plugin_output(by_id["tls-version"].matches)
+        text = format_evidence(by_id["tls-version"].matches)
         assert "tls12" in text and "tls13" in text
 
     def test_empty_matches(self) -> None:
-        assert format_plugin_output([]) == ""
+        assert format_evidence([]) == ""
 
     def test_identical_curl_commands_are_not_repeated(self) -> None:
         """6 matches on one URL share one curl; printing it 6x buries the matchers."""
@@ -384,13 +384,13 @@ class TestFormatPluginOutput:
         by_id = {t.template_id: t for t in result.templates}
         matches = by_id["http-missing-security-headers"].matches
         assert len(matches) == 6
-        text = format_plugin_output(matches)
+        text = format_evidence(matches)
         assert text.count("curl: ") == 1
 
     def test_curl_commands_come_after_the_match_evidence(self) -> None:
         result = parse_nuclei_file(FIXTURES / "web_scan.json")
         by_id = {t.template_id: t for t in result.templates}
-        text = format_plugin_output(by_id["http-missing-security-headers"].matches)
+        text = format_evidence(by_id["http-missing-security-headers"].matches)
         assert text.index("matcher: ") < text.index("curl: ")
 
 
