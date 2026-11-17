@@ -9,7 +9,7 @@ from cerno_pkg.database import (
     db_transaction,
     initialize_database,
     compute_file_hash,
-    plugin_id_order_sql,
+    finding_type_id_order_sql,
     query_one,
     query_all,
 )
@@ -67,22 +67,22 @@ class TestDatabaseTransaction:
         """Test that transaction commits when no exception."""
         with db_transaction(temp_db) as conn:
             conn.execute(
-                "INSERT INTO scans (scan_name, export_root) VALUES (?, ?)",
-                ("test_scan", "/tmp/test"),
+                "INSERT INTO datasets (dataset_name, export_root) VALUES (?, ?)",
+                ("test_dataset", "/tmp/test"),
             )
 
         # Verify data was committed
-        cursor = temp_db.execute("SELECT scan_name FROM scans")
+        cursor = temp_db.execute("SELECT dataset_name FROM datasets")
         result = cursor.fetchone()
-        assert result["scan_name"] == "test_scan"
+        assert result["dataset_name"] == "test_dataset"
 
     def test_transaction_rolls_back_on_error(self, temp_db):
         """Test that transaction rolls back on exception."""
         try:
             with db_transaction(temp_db) as conn:
                 conn.execute(
-                    "INSERT INTO scans (scan_name, export_root) VALUES (?, ?)",
-                    ("test_scan", "/tmp/test"),
+                    "INSERT INTO datasets (dataset_name, export_root) VALUES (?, ?)",
+                    ("test_dataset", "/tmp/test"),
                 )
                 # Force an error
                 raise ValueError("Test error")
@@ -90,7 +90,7 @@ class TestDatabaseTransaction:
             pass
 
         # Verify data was NOT committed
-        cursor = temp_db.execute("SELECT COUNT(*) as count FROM scans")
+        cursor = temp_db.execute("SELECT COUNT(*) as count FROM datasets")
         result = cursor.fetchone()
         assert result["count"] == 0
 
@@ -98,19 +98,19 @@ class TestDatabaseTransaction:
         """Test nested transaction behavior."""
         with db_transaction(temp_db) as conn:
             conn.execute(
-                "INSERT INTO scans (scan_name, export_root) VALUES (?, ?)",
+                "INSERT INTO datasets (dataset_name, export_root) VALUES (?, ?)",
                 ("scan1", "/tmp/test1"),
             )
 
             # Inner transaction should share same connection
             with db_transaction(conn) as inner_conn:
                 inner_conn.execute(
-                    "INSERT INTO scans (scan_name, export_root) VALUES (?, ?)",
+                    "INSERT INTO datasets (dataset_name, export_root) VALUES (?, ?)",
                     ("scan2", "/tmp/test2"),
                 )
 
         # Both should be committed
-        cursor = temp_db.execute("SELECT COUNT(*) as count FROM scans")
+        cursor = temp_db.execute("SELECT COUNT(*) as count FROM datasets")
         result = cursor.fetchone()
         assert result["count"] == 2
 
@@ -132,8 +132,8 @@ class TestSchemaInitialization:
         tables = [row[0] for row in cursor.fetchall()]
 
         expected_tables = [
-            "scans",
-            "plugins",
+            "datasets",
+            "finding_types",
             "findings",
             "finding_affected_hosts",
             "sessions",
@@ -170,31 +170,31 @@ class TestForeignKeyConstraints:
         """Test that deleting scan cascades to findings."""
         # Insert scan
         cursor = temp_db.execute(
-            "INSERT INTO scans (scan_name, export_root) VALUES (?, ?)",
-            ("test_scan", "/tmp/test"),
+            "INSERT INTO datasets (dataset_name, export_root) VALUES (?, ?)",
+            ("test_dataset", "/tmp/test"),
         )
-        scan_id = cursor.lastrowid
+        dataset_id = cursor.lastrowid
 
-        # Insert plugin (severity_label fetched from view, not stored)
+        # Insert finding_type (severity_label fetched from view, not stored)
         temp_db.execute(
-            "INSERT INTO plugins (plugin_id, plugin_name, severity_int) VALUES (?, ?, ?)",
-            ("nessus:12345", "Test Plugin", 2),
+            "INSERT INTO finding_types (finding_type_id, finding_type_name, severity_int) VALUES (?, ?, ?)",
+            ("nessus:12345", "Test FindingType", 2),
         )
 
-        # Insert plugin file
+        # Insert finding_type file
         temp_db.execute(
-            """INSERT INTO findings (scan_id, plugin_id)
+            """INSERT INTO findings (dataset_id, finding_type_id)
                VALUES (?, ?)""",
-            (scan_id, "nessus:12345"),
+            (dataset_id, "nessus:12345"),
         )
 
         temp_db.commit()
 
         # Delete scan
-        temp_db.execute("DELETE FROM scans WHERE scan_id = ?", (scan_id,))
+        temp_db.execute("DELETE FROM datasets WHERE dataset_id = ?", (dataset_id,))
         temp_db.commit()
 
-        # Plugin files should be deleted
+        # FindingType files should be deleted
         cursor = temp_db.execute("SELECT COUNT(*) as count FROM findings")
         result = cursor.fetchone()
         assert result["count"] == 0
@@ -203,9 +203,9 @@ class TestForeignKeyConstraints:
         """Test that invalid foreign keys are rejected."""
         with pytest.raises(sqlite3.IntegrityError):
             temp_db.execute(
-                """INSERT INTO findings (scan_id, plugin_id)
+                """INSERT INTO findings (dataset_id, finding_type_id)
                    VALUES (?, ?)""",
-                (9999, "nessus:12345"),  # scan_id 9999 doesn't exist
+                (9999, "nessus:12345"),  # dataset_id 9999 doesn't exist
             )
             temp_db.commit()
 
@@ -262,22 +262,26 @@ class TestQueryHelpers:
     def test_query_one_returns_single_row(self, temp_db):
         """Test query_one returns single row."""
         temp_db.execute(
-            "INSERT INTO scans (scan_name, export_root) VALUES (?, ?)",
-            ("test_scan", "/tmp/test"),
+            "INSERT INTO datasets (dataset_name, export_root) VALUES (?, ?)",
+            ("test_dataset", "/tmp/test"),
         )
         temp_db.commit()
 
         result = query_one(
-            temp_db, "SELECT scan_name FROM scans WHERE scan_name = ?", ("test_scan",)
+            temp_db,
+            "SELECT dataset_name FROM datasets WHERE dataset_name = ?",
+            ("test_dataset",),
         )
 
         assert result is not None
-        assert result["scan_name"] == "test_scan"
+        assert result["dataset_name"] == "test_dataset"
 
     def test_query_one_returns_none_when_empty(self, temp_db):
         """Test query_one returns None when no results."""
         result = query_one(
-            temp_db, "SELECT scan_name FROM scans WHERE scan_name = ?", ("nonexistent",)
+            temp_db,
+            "SELECT dataset_name FROM datasets WHERE dataset_name = ?",
+            ("nonexistent",),
         )
 
         assert result is None
@@ -285,24 +289,26 @@ class TestQueryHelpers:
     def test_query_all_returns_multiple_rows(self, temp_db):
         """Test query_all returns multiple rows."""
         temp_db.execute(
-            "INSERT INTO scans (scan_name, export_root) VALUES (?, ?)",
+            "INSERT INTO datasets (dataset_name, export_root) VALUES (?, ?)",
             ("scan1", "/tmp/test1"),
         )
         temp_db.execute(
-            "INSERT INTO scans (scan_name, export_root) VALUES (?, ?)",
+            "INSERT INTO datasets (dataset_name, export_root) VALUES (?, ?)",
             ("scan2", "/tmp/test2"),
         )
         temp_db.commit()
 
-        results = query_all(temp_db, "SELECT scan_name FROM scans ORDER BY scan_name")
+        results = query_all(
+            temp_db, "SELECT dataset_name FROM datasets ORDER BY dataset_name"
+        )
 
         assert len(results) == 2
-        assert results[0]["scan_name"] == "scan1"
-        assert results[1]["scan_name"] == "scan2"
+        assert results[0]["dataset_name"] == "scan1"
+        assert results[1]["dataset_name"] == "scan2"
 
     def test_query_all_returns_empty_list(self, temp_db):
         """Test query_all returns empty list when no results."""
-        results = query_all(temp_db, "SELECT scan_name FROM scans")
+        results = query_all(temp_db, "SELECT dataset_name FROM datasets")
 
         assert results == []
 
@@ -319,8 +325,8 @@ class TestConcurrency:
         # Insert test data
         conn = get_connection(db_path)
         conn.execute(
-            "INSERT INTO scans (scan_name, export_root) VALUES (?, ?)",
-            ("test_scan", "/tmp/test"),
+            "INSERT INTO datasets (dataset_name, export_root) VALUES (?, ?)",
+            ("test_dataset", "/tmp/test"),
         )
         conn.commit()
         conn.close()
@@ -329,11 +335,11 @@ class TestConcurrency:
         conn1 = get_connection(db_path)
         conn2 = get_connection(db_path)
 
-        cursor1 = conn1.execute("SELECT scan_name FROM scans")
-        cursor2 = conn2.execute("SELECT scan_name FROM scans")
+        cursor1 = conn1.execute("SELECT dataset_name FROM datasets")
+        cursor2 = conn2.execute("SELECT dataset_name FROM datasets")
 
-        assert cursor1.fetchone()["scan_name"] == "test_scan"
-        assert cursor2.fetchone()["scan_name"] == "test_scan"
+        assert cursor1.fetchone()["dataset_name"] == "test_dataset"
+        assert cursor2.fetchone()["dataset_name"] == "test_dataset"
 
         conn1.close()
         conn2.close()
@@ -349,12 +355,12 @@ class TestConcurrency:
 
         # Start a write transaction (don't commit yet)
         write_conn.execute(
-            "INSERT INTO scans (scan_name, export_root) VALUES (?, ?)",
+            "INSERT INTO datasets (dataset_name, export_root) VALUES (?, ?)",
             ("scan1", "/tmp/test1"),
         )
 
         # Read connection should still work (sees old data)
-        cursor = read_conn.execute("SELECT COUNT(*) as count FROM scans")
+        cursor = read_conn.execute("SELECT COUNT(*) as count FROM datasets")
         # Should see 0 (uncommitted write not visible)
         assert cursor.fetchone()["count"] == 0
 
@@ -362,7 +368,7 @@ class TestConcurrency:
         write_conn.commit()
 
         # Now read should see new data
-        cursor = read_conn.execute("SELECT COUNT(*) as count FROM scans")
+        cursor = read_conn.execute("SELECT COUNT(*) as count FROM datasets")
         assert cursor.fetchone()["count"] == 1
 
         write_conn.close()
@@ -396,7 +402,7 @@ def test_schema_sql_reference_matches_database_py():
 
 @pytest.mark.unit
 class TestPluginIdOrdering:
-    """plugin_id is TEXT, so ordering it needs the numeric part cast."""
+    """finding_type_id is TEXT, so ordering it needs the numeric part cast."""
 
     IDS = [
         "nessus:9",
@@ -409,7 +415,7 @@ class TestPluginIdOrdering:
     def _ordered(self, conn):
         conn.execute("CREATE TABLE t (pid TEXT)")
         conn.executemany("INSERT INTO t VALUES (?)", [(i,) for i in self.IDS])
-        sql = f"SELECT pid FROM t ORDER BY {plugin_id_order_sql('pid')}"
+        sql = f"SELECT pid FROM t ORDER BY {finding_type_id_order_sql('pid')}"
         return [r[0] for r in conn.execute(sql)]
 
     def test_numeric_refs_sort_numerically_not_lexicographically(self):
@@ -508,3 +514,89 @@ class TestViewsAreRecreatedOnInit:
         assert (
             declared and declared <= present
         ), f"missing: {sorted(declared - present)}"
+
+
+@pytest.mark.integration
+class TestSchemaV6Vocabulary:
+    """The 4.0.0 vocabulary rename, asserted against a fresh database.
+
+    These are the facts a user upgrading to 4.0.0 depends on: the renamed
+    objects exist, the dropped ones are gone, and an older database is refused
+    rather than silently half-read.
+    """
+
+    def test_fresh_database_reports_schema_version_6(self, tmp_path):
+        from cerno_pkg import database as db
+
+        path = tmp_path / "v6.db"
+        db.initialize_database(path)
+        conn = sqlite3.connect(path)
+        try:
+            assert conn.execute("PRAGMA user_version").fetchone()[0] == 6
+        finally:
+            conn.close()
+
+    def test_an_older_database_is_refused(self, tmp_path):
+        from cerno_pkg import database as db
+
+        path = tmp_path / "v5.db"
+        db.initialize_database(path)
+        conn = sqlite3.connect(path)
+        try:
+            conn.execute("PRAGMA user_version = 5")
+            conn.commit()
+        finally:
+            conn.close()
+        with pytest.raises(db.SchemaVersionError):
+            db.initialize_database(path)
+
+    def test_renamed_tables_exist_and_dropped_ones_do_not(self, tmp_path):
+        from cerno_pkg import database as db
+
+        path = tmp_path / "shape.db"
+        db.initialize_database(path)
+        conn = sqlite3.connect(path)
+        try:
+            tables = {
+                r[0]
+                for r in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )
+            }
+        finally:
+            conn.close()
+        assert {"datasets", "finding_types", "session_datasets"} <= tables
+        # the old spellings, and the two tables nothing ever wrote to
+        assert not tables & {
+            "scans",
+            "plugins",
+            "session_scans",
+            "audit_log",
+            "workflow_executions",
+        }
+
+    def test_view_columns_no_longer_lie(self, tmp_path):
+        """`host_count` counted scan targets, and `files_*` counted findings."""
+        from cerno_pkg import database as db
+
+        path = tmp_path / "views6.db"
+        db.initialize_database(path)
+        conn = sqlite3.connect(path)
+        try:
+            stats = {r[1] for r in conn.execute("PRAGMA table_info(v_finding_stats)")}
+            sess = {r[1] for r in conn.execute("PRAGMA table_info(v_session_stats)")}
+        finally:
+            conn.close()
+        assert "target_count" in stats and "host_count" not in stats
+        assert {"findings_in_progress", "findings_done"} <= sess
+        assert not sess & {"files_in_progress", "files_done"}
+
+    def test_the_check_constraint_matches_the_seeded_channel_ids(self):
+        """The schema CHECK hardcodes (4, 5); this fails if a reseed moves them.
+
+        Without this, renumbering the seeds would make every attribution write
+        fail a CHECK at runtime instead of here.
+        """
+        from cerno_pkg.constants import AUTHORED_SOURCES, SOURCE_IDS
+
+        assert sorted(SOURCE_IDS[s] for s in AUTHORED_SOURCES) == [4, 5]

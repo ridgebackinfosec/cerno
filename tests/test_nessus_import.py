@@ -9,7 +9,7 @@ from cerno_pkg.nessus_import import (
     ExportResult,
     cvss_to_sev,
     import_nessus_file,
-    extract_scan_name_from_nessus,
+    extract_dataset_name_from_nessus,
     is_ip,
     sanitize_filename,
     severity_label_from_int,
@@ -192,9 +192,9 @@ class TestSanitizeFilename:
         assert result == "A" * 50
 
     def test_empty_name(self):
-        """Empty names become 'plugin'."""
-        assert sanitize_filename("") == "plugin"
-        assert sanitize_filename("   ") == "plugin"
+        """Empty names become 'finding_type'."""
+        assert sanitize_filename("") == "finding_type"
+        assert sanitize_filename("   ") == "finding_type"
 
     def test_unicode_handling(self):
         """Unicode characters are handled safely."""
@@ -240,20 +240,20 @@ class TestTruthy:
 
 
 class TestExtractScanNameFromNessus:
-    """Tests for extract_scan_name_from_nessus() XML parsing."""
+    """Tests for extract_dataset_name_from_nessus() XML parsing."""
 
     def test_extract_from_sample_nessus(self, sample_nessus_xml):
-        """Scan name is extracted from sample .nessus file and sanitized."""
-        scan_name = extract_scan_name_from_nessus(sample_nessus_xml)
+        """Dataset name is extracted from sample .nessus file and sanitized."""
+        dataset_name = extract_dataset_name_from_nessus(sample_nessus_xml)
         # Function returns sanitized name (spaces become underscores)
-        assert scan_name == "Test_Scan"
+        assert dataset_name == "Test_Scan"
 
     def test_missing_file(self, temp_dir):
         """Missing file falls back to filename stem (sanitized)."""
         missing_file = temp_dir / "missing.nessus"
         # Function doesn't raise - it falls back to filename stem
-        scan_name = extract_scan_name_from_nessus(missing_file)
-        assert scan_name == "missing"
+        dataset_name = extract_dataset_name_from_nessus(missing_file)
+        assert dataset_name == "missing"
 
     def test_invalid_xml(self, temp_dir):
         """Invalid XML falls back to filename stem (sanitized)."""
@@ -261,8 +261,8 @@ class TestExtractScanNameFromNessus:
         invalid_xml.write_text("not xml at all")
 
         # Function doesn't raise - it falls back to filename stem
-        scan_name = extract_scan_name_from_nessus(invalid_xml)
-        assert scan_name == "invalid"
+        dataset_name = extract_dataset_name_from_nessus(invalid_xml)
+        assert dataset_name == "invalid"
 
 
 # ========== Export Integration Tests ==========
@@ -283,17 +283,17 @@ class TestNessusImport:
 
         # Check result structure
         assert isinstance(result, ExportResult)
-        assert result.plugins_exported > 0
+        assert result.finding_types_exported > 0
 
         # Check database records were created
-        from cerno_pkg.models import Scan, Finding
+        from cerno_pkg.models import Dataset, Finding
 
-        scan = Scan.get_by_name(result.scan_name, temp_db)
-        assert scan is not None
-        assert scan.scan_name == result.scan_name
+        dataset = Dataset.get_by_name(result.dataset_name, temp_db)
+        assert dataset is not None
+        assert dataset.dataset_name == result.dataset_name
 
-        # Verify plugin files were created in database for each severity
-        # Use get_by_scan_with_plugin to filter by severity_int via JOIN
+        # Verify finding_type files were created in database for each severity
+        # Use get_by_dataset_with_finding_type to filter by severity_int via JOIN
         for sev_int in result.severities.keys():
             # Construct severity_dir format for filtering (e.g., "4_Critical")
             from cerno_pkg.nessus_import import severity_label_from_int
@@ -301,26 +301,26 @@ class TestNessusImport:
             sev_label = severity_label_from_int(sev_int)
             sev_dir = f"{sev_int}_{sev_label}"
 
-            # Query plugin files for this severity
-            assert scan.scan_id is not None
-            sev_files = Finding.get_by_scan_with_plugin(
-                scan.scan_id, temp_db, severity_dirs=[sev_dir]
+            # Query finding_type files for this severity
+            assert dataset.dataset_id is not None
+            sev_files = Finding.get_by_dataset_with_finding_type(
+                dataset.dataset_id, temp_db, severity_dirs=[sev_dir]
             )
             assert len(sev_files) > 0
 
     @pytest.mark.skip(reason="File-based export deprecated; database-only mode now")
     @pytest.mark.integration
     def test_export_creates_findings(self, minimal_nessus_fixture, temp_dir):
-        """Test that plugin files are created."""
+        """Test that finding_type files are created."""
         result = import_nessus_file(
             minimal_nessus_fixture, temp_dir, use_database=False
         )
 
-        scan_dir = temp_dir / result.scan_name
+        dataset_dir = temp_dir / result.dataset_name
 
-        # Count plugin files created
-        txt_files = list(scan_dir.rglob("*.txt"))
-        assert len(txt_files) == result.plugins_exported
+        # Count finding_type files created
+        txt_files = list(dataset_dir.rglob("*.txt"))
+        assert len(txt_files) == result.finding_types_exported
 
         # Verify files have content
         assert all(f.stat().st_size > 0 for f in txt_files)
@@ -328,19 +328,19 @@ class TestNessusImport:
     @pytest.mark.skip(reason="File-based export deprecated; database-only mode now")
     @pytest.mark.integration
     def test_export_file_content_format(self, minimal_nessus_fixture, temp_dir):
-        """Test that plugin file content is correctly formatted."""
+        """Test that finding_type file content is correctly formatted."""
         result = import_nessus_file(
             minimal_nessus_fixture, temp_dir, include_ports=True, use_database=False
         )
 
-        scan_dir = temp_dir / result.scan_name
+        dataset_dir = temp_dir / result.dataset_name
 
-        # Find any plugin file
-        txt_files = list(scan_dir.rglob("*.txt"))
+        # Find any finding_type file
+        txt_files = list(dataset_dir.rglob("*.txt"))
         assert len(txt_files) > 0
 
-        plugin_file = txt_files[0]
-        content = plugin_file.read_text()
+        finding_type_file = txt_files[0]
+        content = finding_type_file.read_text()
 
         # File should have at least one host entry
         lines = [line.strip() for line in content.split("\n") if line.strip()]
@@ -363,14 +363,14 @@ class TestNessusImport:
             minimal_nessus_fixture, temp_dir, include_ports=False, use_database=False
         )
 
-        scan_dir = temp_dir / result.scan_name
+        dataset_dir = temp_dir / result.dataset_name
 
-        # Find any plugin file
-        txt_files = list(scan_dir.rglob("*.txt"))
+        # Find any finding_type file
+        txt_files = list(dataset_dir.rglob("*.txt"))
         assert len(txt_files) > 0
 
-        plugin_file = txt_files[0]
-        content = plugin_file.read_text()
+        finding_type_file = txt_files[0]
+        content = finding_type_file.read_text()
 
         # Should have hosts without ports
         lines = [line.strip() for line in content.split("\n") if line.strip()]
@@ -394,9 +394,9 @@ class TestNessusImport:
         )
 
         assert isinstance(result, ExportResult)
-        assert result.plugins_exported > 0
+        assert result.finding_types_exported > 0
         assert result.total_hosts > 0
-        assert len(result.scan_name) > 0
+        assert len(result.dataset_name) > 0
 
         # Check severity counts
         assert isinstance(result.severities, dict)
@@ -410,14 +410,14 @@ class TestNessusImport:
             minimal_nessus_fixture, temp_dir, use_database=False
         )
 
-        scan_dir = temp_dir / result.scan_name
+        dataset_dir = temp_dir / result.dataset_name
 
-        # Check any plugin file for duplicates
-        txt_files = list(scan_dir.rglob("*.txt"))
+        # Check any finding_type file for duplicates
+        txt_files = list(dataset_dir.rglob("*.txt"))
         assert len(txt_files) > 0
 
-        plugin_file = txt_files[0]
-        content = plugin_file.read_text()
+        finding_type_file = txt_files[0]
+        content = finding_type_file.read_text()
         lines = [line.strip() for line in content.split("\n") if line.strip()]
 
         # Should not have duplicates
@@ -428,16 +428,16 @@ class TestNessusImport:
     def test_export_handles_special_characters_in_name(
         self, sample_nessus_xml, temp_dir
     ):
-        """Test that special characters in plugin names are sanitized."""
+        """Test that special characters in finding_type names are sanitized."""
         # This test uses the fixture from conftest.py
         result = import_nessus_file(sample_nessus_xml, temp_dir, use_database=False)
 
         # Check that files were created with sanitized names
-        scan_dir = temp_dir / result.scan_name
-        assert scan_dir.exists()
+        dataset_dir = temp_dir / result.dataset_name
+        assert dataset_dir.exists()
 
         # Find created files
-        files = list(scan_dir.rglob("*.txt"))
+        files = list(dataset_dir.rglob("*.txt"))
         assert len(files) > 0
 
         # Filenames should not contain invalid characters
@@ -449,20 +449,20 @@ class TestNessusImport:
     @pytest.mark.skip(reason="File-based export deprecated; database-only mode now")
     @pytest.mark.slow
     @pytest.mark.integration
-    def test_export_large_scan(self, goad_nessus_fixture, temp_dir):
+    def test_export_large_dataset(self, goad_nessus_fixture, temp_dir):
         """Test exporting large real-world scan (GOAD)."""
         result = import_nessus_file(goad_nessus_fixture, temp_dir, use_database=False)
 
-        assert result.plugins_exported > 0
+        assert result.finding_types_exported > 0
         assert result.total_hosts > 0
 
         # Verify scan directory was created
-        scan_dir = temp_dir / result.scan_name
-        assert scan_dir.exists()
+        dataset_dir = temp_dir / result.dataset_name
+        assert dataset_dir.exists()
 
         # Verify files were created
-        txt_files = list(scan_dir.rglob("*.txt"))
-        assert len(txt_files) == result.plugins_exported
+        txt_files = list(dataset_dir.rglob("*.txt"))
+        assert len(txt_files) == result.finding_types_exported
 
 
 class TestNessusImportDatabaseIntegration:
@@ -502,23 +502,23 @@ class TestNessusImportDatabaseIntegration:
         """Test that export writes to database."""
         result = import_nessus_file(minimal_nessus_fixture, temp_dir, use_database=True)
 
-        assert result.plugins_exported > 0
+        assert result.finding_types_exported > 0
 
         # Verify scan exists
-        cursor = temp_db.execute("SELECT scan_name FROM scans")
-        scan = cursor.fetchone()
-        assert scan is not None
-        assert len(scan["scan_name"]) > 0
+        cursor = temp_db.execute("SELECT dataset_name FROM datasets")
+        dataset = cursor.fetchone()
+        assert dataset is not None
+        assert len(dataset["dataset_name"]) > 0
 
-        # Verify plugins were inserted
-        cursor = temp_db.execute("SELECT COUNT(*) as count FROM plugins")
-        plugin_count = cursor.fetchone()["count"]
-        assert plugin_count == result.plugins_exported
+        # Verify finding_types were inserted
+        cursor = temp_db.execute("SELECT COUNT(*) as count FROM finding_types")
+        finding_type_count = cursor.fetchone()["count"]
+        assert finding_type_count == result.finding_types_exported
 
-        # Verify plugin files were inserted
+        # Verify finding_type files were inserted
         cursor = temp_db.execute("SELECT COUNT(*) as count FROM findings")
         file_count = cursor.fetchone()["count"]
-        assert file_count == result.plugins_exported
+        assert file_count == result.finding_types_exported
 
         # Verify hosts were inserted
         cursor = temp_db.execute("SELECT COUNT(*) as count FROM finding_affected_hosts")
@@ -532,17 +532,17 @@ class TestNessusImportDatabaseIntegration:
         nessus_file.write_text(
             """<?xml version="1.0" ?>
 <NessusClientData_v2>
-  <Report name="IPv6 Scan">
+  <Report name="IPv6 Dataset">
     <ReportHost name="2001:db8::1">
       <HostProperties>
         <tag name="host-ip">2001:db8::1</tag>
       </HostProperties>
-      <ReportItem port="0" svc_name="general" protocol="tcp" severity="0" pluginID="19506" pluginName="Nessus Scan Information">
-        <plugin_output>General host information</plugin_output>
+      <ReportItem port="0" svc_name="general" protocol="tcp" severity="0" pluginID="19506" pluginName="Nessus Dataset Information">
+        <evidence>General host information</evidence>
       </ReportItem>
       <ReportItem port="443" svc_name="https" protocol="tcp" severity="2" pluginID="12345" pluginName="TLS Test Finding">
         <cvss3_base_score>5.3</cvss3_base_score>
-        <plugin_output>TLS service detected</plugin_output>
+        <evidence>TLS service detected</evidence>
       </ReportItem>
     </ReportHost>
   </Report>
@@ -553,7 +553,7 @@ class TestNessusImportDatabaseIntegration:
 
         result = import_nessus_file(nessus_file, temp_dir, use_database=True)
 
-        assert result.plugins_exported == 2
+        assert result.finding_types_exported == 2
 
         host_row = temp_db.execute(
             "SELECT ip_address, scan_target, scan_target_type FROM hosts"
@@ -579,16 +579,16 @@ class TestNessusImportDatabaseIntegration:
         )
         assert demo_nessus.exists()
 
-        scan_name = extract_scan_name_from_nessus(demo_nessus)
+        dataset_name = extract_dataset_name_from_nessus(demo_nessus)
         result = import_nessus_file(
             demo_nessus,
             temp_dir,
-            scan_name=scan_name,
+            dataset_name=dataset_name,
             use_database=True,
         )
 
-        assert result.scan_name == "Cerno_Demo_Expanded_Scan"
-        assert result.plugins_exported == 45
+        assert result.dataset_name == "Cerno_Demo_Expanded"
+        assert result.finding_types_exported == 45
         assert result.severities == {
             4: 5,
             3: 10,
@@ -597,56 +597,56 @@ class TestNessusImportDatabaseIntegration:
             0: 3,
         }
 
-        scan = temp_db.execute(
-            "SELECT scan_id, scan_name FROM scans WHERE scan_name = ?",
-            ("Cerno_Demo_Expanded_Scan",),
+        dataset = temp_db.execute(
+            "SELECT dataset_id, dataset_name FROM datasets WHERE dataset_name = ?",
+            ("Cerno_Demo_Expanded",),
         ).fetchone()
-        assert scan is not None
+        assert dataset is not None
 
         host_count = temp_db.execute("SELECT COUNT(*) AS count FROM hosts").fetchone()[
             "count"
         ]
         assert host_count == 42
 
-        cve_plugins = {
-            row["plugin_id"]: row["cves"]
+        cve_finding_types = {
+            row["finding_type_id"]: row["cves"]
             for row in temp_db.execute(
-                "SELECT plugin_id, cves FROM plugins WHERE cves IS NOT NULL"
+                "SELECT finding_type_id, cves FROM finding_types WHERE cves IS NOT NULL"
             ).fetchall()
         }
-        assert "nessus:20007" in cve_plugins
-        assert "CVE-2014-3566" in cve_plugins["nessus:20007"]
-        assert "nessus:42263" in cve_plugins
-        assert "CVE-1999-0619" in cve_plugins["nessus:42263"]
+        assert "nessus:20007" in cve_finding_types
+        assert "CVE-2014-3566" in cve_finding_types["nessus:20007"]
+        assert "nessus:42263" in cve_finding_types
+        assert "CVE-1999-0619" in cve_finding_types["nessus:42263"]
 
-        telnet_plugin = temp_db.execute("""
+        telnet_finding_type = temp_db.execute("""
             SELECT has_metasploit, metasploit_names
-            FROM plugins
-            WHERE plugin_id = 'nessus:42263'
+            FROM finding_types
+            WHERE finding_type_id = 'nessus:42263'
             """).fetchone()
-        assert telnet_plugin is not None
-        assert telnet_plugin["has_metasploit"] == 1
+        assert telnet_finding_type is not None
+        assert telnet_finding_type["has_metasploit"] == 1
         assert (
             "auxiliary/scanner/telnet/telnet_version"
-            in telnet_plugin["metasploit_names"]
+            in telnet_finding_type["metasploit_names"]
         )
 
         ssl_hosts = temp_db.execute("""
             SELECT COUNT(*) AS count
             FROM finding_affected_hosts fah
             JOIN findings f ON f.finding_id = fah.finding_id
-            WHERE f.plugin_id = 'nessus:20007'
+            WHERE f.finding_type_id = 'nessus:20007'
             """).fetchone()["count"]
         assert ssl_hosts == 8
 
         output_row = temp_db.execute("""
-            SELECT fah.plugin_output
+            SELECT fah.evidence
             FROM finding_affected_hosts fah
             JOIN findings f ON f.finding_id = fah.finding_id
-            WHERE f.plugin_id = 'nessus:41028'
+            WHERE f.finding_type_id = 'nessus:41028'
             """).fetchone()
         assert output_row is not None
-        assert "Community string accepted: public" in output_row["plugin_output"]
+        assert "Community string accepted: public" in output_row["evidence"]
 
     @pytest.mark.integration
     def test_initial_demo_nessus_fixture_imports_expected_baseline_data(
@@ -658,16 +658,16 @@ class TestNessusImportDatabaseIntegration:
         )
         assert demo_nessus.exists()
 
-        scan_name = extract_scan_name_from_nessus(demo_nessus)
+        dataset_name = extract_dataset_name_from_nessus(demo_nessus)
         result = import_nessus_file(
             demo_nessus,
             temp_dir,
-            scan_name=scan_name,
+            dataset_name=dataset_name,
             use_database=True,
         )
 
-        assert result.scan_name == "Cerno_Demo_Initial_Scan"
-        assert result.plugins_exported == 11
+        assert result.dataset_name == "Cerno_Demo_Initial"
+        assert result.finding_types_exported == 11
         assert result.severities == {
             4: 1,
             3: 3,
@@ -714,7 +714,7 @@ class TestNessusImportDatabaseIntegration:
 
         monkeypatch.setattr(nxc_db, "_nxc_manager", None)
         result = import_nessus_file(minimal_nessus_fixture, temp_dir, use_database=True)
-        assert result.plugins_exported > 0
+        assert result.finding_types_exported > 0
         assert nxc_db._nxc_manager is None
 
 
@@ -738,8 +738,8 @@ class TestNessusImportEdgeCases:
         )
 
         assert output_dir.exists()
-        scan_dir = output_dir / result.scan_name
-        assert scan_dir.exists()
+        dataset_dir = output_dir / result.dataset_name
+        assert dataset_dir.exists()
 
     @pytest.mark.integration
     def test_export_idempotent(self, minimal_nessus_fixture, temp_dir):
@@ -755,8 +755,8 @@ class TestNessusImportEdgeCases:
         )
 
         # Both should succeed
-        assert result1.scan_name == result2.scan_name
-        assert result1.plugins_exported == result2.plugins_exported
+        assert result1.dataset_name == result2.dataset_name
+        assert result1.finding_types_exported == result2.finding_types_exported
 
 
 class TestCVEAndMetasploitExtraction:
@@ -796,7 +796,7 @@ class TestCVEAndMetasploitExtraction:
         """Create a .nessus file with CVEs and Metasploit module names."""
         nessus_content = """<?xml version="1.0" ?>
 <NessusClientData_v2>
-  <Report name="Test Scan">
+  <Report name="Test Dataset">
     <ReportHost name="192.168.1.10">
       <ReportItem port="19" protocol="tcp" pluginID="10043" pluginName="Chargen Service Detection" severity="2">
         <cve>CVE-1999-0103</cve>
@@ -829,132 +829,133 @@ class TestCVEAndMetasploitExtraction:
         self, nessus_with_cves_and_msf, temp_dir, temp_db
     ):
         """Verify CVEs are extracted from .nessus XML during import."""
-        from cerno_pkg.models import Plugin
+        from cerno_pkg.models import FindingType
 
         _result = import_nessus_file(
             nessus_with_cves_and_msf, temp_dir, use_database=True
         )
 
-        # Plugin 65821 should have 2 CVEs
-        plugin = Plugin.get_by_id("nessus:65821", conn=temp_db)
+        # FindingType 65821 should have 2 CVEs
+        finding_type = FindingType.get_by_id("nessus:65821", conn=temp_db)
 
-        assert plugin is not None, "Plugin 65821 should exist"
-        assert plugin.cves is not None, "CVEs should be populated"
-        assert "CVE-2013-2566" in plugin.cves
-        assert "CVE-2015-2808" in plugin.cves
-        assert len(plugin.cves) == 2
+        assert finding_type is not None, "FindingType 65821 should exist"
+        assert finding_type.cves is not None, "CVEs should be populated"
+        assert "CVE-2013-2566" in finding_type.cves
+        assert "CVE-2015-2808" in finding_type.cves
+        assert len(finding_type.cves) == 2
 
         # Verify CVEs are sorted
-        assert plugin.cves == sorted(plugin.cves)
-
-        # Verify metadata_fetched_at is None (CVEs from XML, not web)
-        assert plugin.metadata_fetched_at is None
+        assert finding_type.cves == sorted(finding_type.cves)
 
     @pytest.mark.integration
     def test_import_extracts_metasploit_names_from_xml(
         self, nessus_with_cves_and_msf, temp_dir, temp_db
     ):
         """Verify Metasploit module names are extracted from .nessus XML during import."""
-        from cerno_pkg.models import Plugin
+        from cerno_pkg.models import FindingType
 
         _result = import_nessus_file(
             nessus_with_cves_and_msf, temp_dir, use_database=True
         )
 
-        # Plugin 10043 should have 1 Metasploit module
-        plugin_10043 = Plugin.get_by_id("nessus:10043", conn=temp_db)
+        # FindingType 10043 should have 1 Metasploit module
+        finding_type_10043 = FindingType.get_by_id("nessus:10043", conn=temp_db)
 
-        assert plugin_10043 is not None, "Plugin 10043 should exist"
-        assert plugin_10043.has_metasploit is True
-        assert plugin_10043.metasploit_names is not None
-        assert "Chargen Probe Utility" in plugin_10043.metasploit_names
-        assert len(plugin_10043.metasploit_names) == 1
+        assert finding_type_10043 is not None, "FindingType 10043 should exist"
+        assert finding_type_10043.has_metasploit is True
+        assert finding_type_10043.metasploit_names is not None
+        assert "Chargen Probe Utility" in finding_type_10043.metasploit_names
+        assert len(finding_type_10043.metasploit_names) == 1
 
-        # Plugin 42873 should have 2 Metasploit modules
-        plugin_42873 = Plugin.get_by_id("nessus:42873", conn=temp_db)
+        # FindingType 42873 should have 2 Metasploit modules
+        finding_type_42873 = FindingType.get_by_id("nessus:42873", conn=temp_db)
 
-        assert plugin_42873 is not None, "Plugin 42873 should exist"
-        assert plugin_42873.has_metasploit is True
-        assert plugin_42873.metasploit_names is not None
-        assert "SMB Login Check Scanner" in plugin_42873.metasploit_names
+        assert finding_type_42873 is not None, "FindingType 42873 should exist"
+        assert finding_type_42873.has_metasploit is True
+        assert finding_type_42873.metasploit_names is not None
+        assert "SMB Login Check Scanner" in finding_type_42873.metasploit_names
         assert (
             "MS17-010 EternalBlue SMB Remote Windows Kernel Pool Corruption"
-            in plugin_42873.metasploit_names
+            in finding_type_42873.metasploit_names
         )
-        assert len(plugin_42873.metasploit_names) == 2
+        assert len(finding_type_42873.metasploit_names) == 2
 
         # Verify names are sorted
-        assert plugin_42873.metasploit_names == sorted(plugin_42873.metasploit_names)
+        assert finding_type_42873.metasploit_names == sorted(
+            finding_type_42873.metasploit_names
+        )
 
     @pytest.mark.integration
-    def test_import_handles_plugins_without_cves(
+    def test_import_handles_finding_types_without_cves(
         self, nessus_with_cves_and_msf, temp_dir, temp_db
     ):
-        """Verify plugins without CVEs store None, not empty list."""
-        from cerno_pkg.models import Plugin
+        """Verify finding_types without CVEs store None, not empty list."""
+        from cerno_pkg.models import FindingType
 
         _result = import_nessus_file(
             nessus_with_cves_and_msf, temp_dir, use_database=True
         )
 
-        # Plugin 42873 has no CVEs in our fixture
-        plugin = Plugin.get_by_id("nessus:42873", conn=temp_db)
+        # FindingType 42873 has no CVEs in our fixture
+        finding_type = FindingType.get_by_id("nessus:42873", conn=temp_db)
 
-        assert plugin is not None, "Plugin 42873 should exist"
-        assert plugin.cves is None, "Plugin without CVEs should have None"
+        assert finding_type is not None, "FindingType 42873 should exist"
+        assert finding_type.cves is None, "FindingType without CVEs should have None"
 
     @pytest.mark.integration
-    def test_import_handles_plugins_without_metasploit_names(
+    def test_import_handles_finding_types_without_metasploit_names(
         self, nessus_with_cves_and_msf, temp_dir, temp_db
     ):
-        """Verify plugins without Metasploit names store None, not empty list."""
-        from cerno_pkg.models import Plugin
+        """Verify finding_types without Metasploit names store None, not empty list."""
+        from cerno_pkg.models import FindingType
 
         _result = import_nessus_file(
             nessus_with_cves_and_msf, temp_dir, use_database=True
         )
 
-        # Plugin 65821 has no Metasploit names (has_metasploit=false)
-        plugin = Plugin.get_by_id("nessus:65821", conn=temp_db)
+        # FindingType 65821 has no Metasploit names (has_metasploit=false)
+        finding_type = FindingType.get_by_id("nessus:65821", conn=temp_db)
 
-        assert plugin is not None, "Plugin 65821 should exist"
-        assert plugin.has_metasploit is False
+        assert finding_type is not None, "FindingType 65821 should exist"
+        assert finding_type.has_metasploit is False
         assert (
-            plugin.metasploit_names is None
-        ), "Plugin without Metasploit names should have None"
+            finding_type.metasploit_names is None
+        ), "FindingType without Metasploit names should have None"
 
     @pytest.mark.integration
     def test_reimport_overwrites_cves_and_metasploit_names(
         self, nessus_with_cves_and_msf, temp_dir, temp_db
     ):
         """Verify CVEs and Metasploit names are refreshed from XML on re-import."""
-        from cerno_pkg.models import Plugin
+        from cerno_pkg.models import FindingType
 
         # First import
         import_nessus_file(nessus_with_cves_and_msf, temp_dir, use_database=True)
 
         # Manually modify CVEs and Metasploit names to simulate stale data
-        plugin = Plugin.get_by_id("nessus:65821", conn=temp_db)
-        assert plugin is not None
-        plugin.cves = ["CVE-STALE-DATA"]
-        plugin.save(conn=temp_db)
+        finding_type = FindingType.get_by_id("nessus:65821", conn=temp_db)
+        assert finding_type is not None
+        finding_type.cves = ["CVE-STALE-DATA"]
+        finding_type.save(conn=temp_db)
         temp_db.commit()
 
         # Verify stale data was saved
-        plugin_check = Plugin.get_by_id("nessus:65821", conn=temp_db)
-        assert plugin_check is not None
-        assert plugin_check.cves == ["CVE-STALE-DATA"], "Stale data should be saved"
+        finding_type_check = FindingType.get_by_id("nessus:65821", conn=temp_db)
+        assert finding_type_check is not None
+        assert finding_type_check.cves == [
+            "CVE-STALE-DATA"
+        ], "Stale data should be saved"
 
-        plugin_10043 = Plugin.get_by_id("nessus:10043", conn=temp_db)
-        assert plugin_10043 is not None
-        plugin_10043.metasploit_names = ["STALE_MODULE"]
-        plugin_10043.save(conn=temp_db)
+        finding_type_10043 = FindingType.get_by_id("nessus:10043", conn=temp_db)
+        assert finding_type_10043 is not None
+        finding_type_10043.metasploit_names = ["STALE_MODULE"]
+        finding_type_10043.save(conn=temp_db)
         temp_db.commit()
 
         # Verify stale data was saved
-        plugin_check_10043 = Plugin.get_by_id("nessus:10043", conn=temp_db)
-        assert plugin_check_10043 is not None
-        assert plugin_check_10043.metasploit_names == [
+        finding_type_check_10043 = FindingType.get_by_id("nessus:10043", conn=temp_db)
+        assert finding_type_check_10043 is not None
+        assert finding_type_check_10043.metasploit_names == [
             "STALE_MODULE"
         ], "Stale data should be saved"
 
@@ -962,19 +963,18 @@ class TestCVEAndMetasploitExtraction:
         import_nessus_file(nessus_with_cves_and_msf, temp_dir, use_database=True)
 
         # CVEs should be refreshed from XML (overwriting stale data)
-        plugin = Plugin.get_by_id("nessus:65821", conn=temp_db)
-        assert plugin is not None
-        assert plugin.cves is not None
-        assert plugin.cves == ["CVE-2013-2566", "CVE-2015-2808"]
-        assert "CVE-STALE-DATA" not in plugin.cves
-        assert plugin.metadata_fetched_at is None  # No web scraping
+        finding_type = FindingType.get_by_id("nessus:65821", conn=temp_db)
+        assert finding_type is not None
+        assert finding_type.cves is not None
+        assert finding_type.cves == ["CVE-2013-2566", "CVE-2015-2808"]
+        assert "CVE-STALE-DATA" not in finding_type.cves
 
         # Metasploit names should be refreshed from XML
-        plugin_10043 = Plugin.get_by_id("nessus:10043", conn=temp_db)
-        assert plugin_10043 is not None
-        assert plugin_10043.metasploit_names is not None
-        assert plugin_10043.metasploit_names == ["Chargen Probe Utility"]
-        assert "STALE_MODULE" not in plugin_10043.metasploit_names
+        finding_type_10043 = FindingType.get_by_id("nessus:10043", conn=temp_db)
+        assert finding_type_10043 is not None
+        assert finding_type_10043.metasploit_names is not None
+        assert finding_type_10043.metasploit_names == ["Chargen Probe Utility"]
+        assert "STALE_MODULE" not in finding_type_10043.metasploit_names
 
         # Findings should be replaced cleanly, not duplicated or left stale
         cursor = temp_db.execute("SELECT COUNT(*) as count FROM findings")

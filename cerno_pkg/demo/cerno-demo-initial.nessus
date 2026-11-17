@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <NessusClientData_v2>
-  <Report name="Cerno Demo Initial Scan">
+  <Report name="Cerno Demo Initial">
     <ReportHost name="198.51.100.10">
       <HostProperties>
         <tag name="host-ip">198.51.100.10</tag>

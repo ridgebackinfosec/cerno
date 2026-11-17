@@ -1,6 +1,7 @@
 """Rich markup and terminal-escape injection from untrusted scan data.
 
-Plugin names, hostnames and scan names come from third-party ``.nessus`` files.
+FindingType names, hostnames and dataset names come from third-party ``.nessus``
+files.
 They were interpolated straight into Rich markup strings, which meant a name
 containing square brackets could crash rendering, silently lose text, restyle
 output, or inject a clickable hyperlink into the operator's terminal.
@@ -22,8 +23,8 @@ from rich.console import Console
 
 from cerno_pkg import ansi, render
 from cerno_pkg.ansi import C, safe_text
-from cerno_pkg.cross_scan import HostVulnerabilityHistory, ScanSnapshot
-from cerno_pkg.models import Finding, Plugin
+from cerno_pkg.cross_dataset import HostVulnerabilityHistory, DatasetSnapshot
+from cerno_pkg.models import Finding, FindingType
 from cerno_pkg.nxc_db import NxcHostData, NxcShare
 
 # Hostile / awkward values, all of which survive a .nessus round-trip verbatim.
@@ -142,14 +143,16 @@ class TestRenderNxcHostPanelHostileHost:
 
 @pytest.mark.unit
 class TestFindingPreviewHostilePluginName:
-    """display_finding_preview titles its panel with plugin.plugin_name."""
+    """display_finding_preview titles its panel with finding_type.finding_type_name."""
 
     @staticmethod
     def _preview(name: str, capsys) -> str:
-        plugin = Plugin(plugin_id="nessus:90001", plugin_name=name, severity_int=3)
-        finding = Finding(finding_id=1, scan_id=1, plugin_id="nessus:90001")
+        finding_type = FindingType(
+            finding_type_id="nessus:90001", finding_type_name=name, severity_int=3
+        )
+        finding = Finding(finding_id=1, dataset_id=1, finding_type_id="nessus:90001")
         finding.get_hosts_and_ports = lambda *a, **k: ([], "")  # type: ignore[method-assign]
-        render.display_finding_preview(plugin, finding, None, None)  # type: ignore[arg-type]
+        render.display_finding_preview(finding_type, finding, None, None)  # type: ignore[arg-type]
         return capsys.readouterr().out
 
     def test_unbalanced_tag_does_not_crash(self, capsys):
@@ -194,25 +197,27 @@ class TestTableRenderersHostileNames:
     ``table.add_row(...)`` cell, which looks nothing like markup in the source.
     The 2.12.0 sweep searched for f-strings *containing* tags and so fixed the
     panel titles while missing every table, which is how the findings list
-    shipped able to crash on a plugin name from a ``.nessus`` file.
+    shipped able to crash on a finding_type name from a ``.nessus`` file.
 
     Each case asserts BOTH that nothing raised AND that the bracketed text
     reached the screen intact. Asserting only "no crash" would let a silent
     text-swallowing regression through, which is the worse failure for a triage
-    tool: a plugin name quietly loses characters with no error at all.
+    tool: a finding_type name quietly loses characters with no error at all.
     """
 
     @pytest.mark.parametrize("name,token", HOSTILE_CASES)
     def test_finding_list_table(self, monkeypatch, name, token):
         """The main findings list — this is the one that crashed."""
-        plugin = Plugin(plugin_id="nessus:99001", plugin_name=name, severity_int=4)
-        finding = Finding(finding_id=1, scan_id=1, plugin_id="nessus:99001")
+        finding_type = FindingType(
+            finding_type_id="nessus:99001", finding_type_name=name, severity_int=4
+        )
+        finding = Finding(finding_id=1, dataset_id=1, finding_type_id="nessus:99001")
 
         out = _capture(
             monkeypatch,
             render,
             lambda: render.render_finding_list_table(
-                [(finding, plugin)], "severity", lambda pf: (1, "445")
+                [(finding, finding_type)], "severity", lambda pf: (1, "445")
             ),
         )
 
@@ -221,15 +226,17 @@ class TestTableRenderersHostileNames:
     @pytest.mark.parametrize(
         "name,token",
         [
-            pytest.param("SMB [deprecated] Scan", "[deprecated]", id="style-word"),
-            pytest.param("SMB [red] Scan", "[red]", id="colour-word"),
+            pytest.param("SMB [deprecated] Dataset", "[deprecated]", id="style-word"),
+            pytest.param("SMB [red] Dataset", "[red]", id="colour-word"),
             pytest.param(
-                "Log4j [CVE-2021-44228] Scan", "[CVE-2021-44228]", id="benign-brackets"
+                "Log4j [CVE-2021-44228] Dataset",
+                "[CVE-2021-44228]",
+                id="benign-brackets",
             ),
         ],
     )
-    def test_scan_table(self, monkeypatch, name, token):
-        """Scan-selection menu; the name comes from the .nessus / filename.
+    def test_dataset_table(self, monkeypatch, name, token):
+        """Dataset-selection menu; the name comes from the .nessus / filename.
 
         This renderer takes ``Path`` objects and prints ``.name``, a single path
         component, which on POSIX cannot contain ``/``. So the closing-tag and
@@ -239,14 +246,14 @@ class TestTableRenderersHostileNames:
         out = _capture(
             monkeypatch,
             render,
-            lambda: render.render_scan_table([Path("/tmp") / name]),
+            lambda: render.render_dataset_table([Path("/tmp") / name]),
         )
 
         assert token in out
 
     @pytest.mark.parametrize("name,token", HOSTILE_CASES)
     def test_compare_group_table(self, monkeypatch, name, token):
-        """`[H]` compare groups join plugin names into one cell."""
+        """`[H]` compare groups join finding_type names into one cell."""
         out = _capture(
             monkeypatch,
             render,
@@ -279,8 +286,8 @@ class TestTableRenderersHostileNames:
         assert token in _render(panel)
 
     @pytest.mark.parametrize("name,token", HOSTILE_CASES)
-    def test_host_history_scan_names(self, monkeypatch, name, token):
-        """`cerno scan history` timeline rows carry the scan name."""
+    def test_host_history_dataset_names(self, monkeypatch, name, token):
+        """`cerno dataset history` timeline rows carry the dataset name."""
         history = HostVulnerabilityHistory(
             host_id=1,
             ip_address="10.0.0.1",
@@ -288,11 +295,11 @@ class TestTableRenderersHostileNames:
             scan_target_type="ipv4",
             first_seen="2026-10-01",
             last_seen="2026-10-02",
-            scans=[
-                ScanSnapshot(
-                    scan_id=1,
-                    scan_name=name,
-                    scan_date="2026-10-01",
+            datasets=[
+                DatasetSnapshot(
+                    dataset_id=1,
+                    dataset_name=name,
+                    dataset_date="2026-10-01",
                     finding_count=1,
                     max_severity=4,
                     critical_count=1,
@@ -311,19 +318,23 @@ class TestTableRenderersHostileNames:
 
 @pytest.mark.integration
 class TestOverlapGroupTableHostileNames:
-    """`[O]` overlap groups render plugin names as the root/covered cells."""
+    """`[O]` overlap groups render finding_type names as the root/covered cells."""
 
     @staticmethod
     def _seed_superset(conn, hostile_name: str) -> list:
         """Two findings where the hostile-named one covers the other's hosts."""
-        conn.execute("INSERT INTO scans (scan_name, export_root) VALUES ('s','/tmp')")
-        scan_id = conn.execute("SELECT scan_id FROM scans").fetchone()["scan_id"]
         conn.execute(
-            "INSERT INTO plugins (plugin_id, plugin_name, severity_int) VALUES (?,?,4)",
+            "INSERT INTO datasets (dataset_name, export_root) VALUES ('s','/tmp')"
+        )
+        dataset_id = conn.execute("SELECT dataset_id FROM datasets").fetchone()[
+            "dataset_id"
+        ]
+        conn.execute(
+            "INSERT INTO finding_types (finding_type_id, finding_type_name, severity_int) VALUES (?,?,4)",
             ("nessus:100", hostile_name),
         )
         conn.execute(
-            "INSERT INTO plugins (plugin_id, plugin_name, severity_int) "
+            "INSERT INTO finding_types (finding_type_id, finding_type_name, severity_int) "
             "VALUES ('nessus:101','Covered Finding',3)"
         )
         for ip in ("10.0.0.1", "10.0.0.2"):
@@ -337,16 +348,17 @@ class TestOverlapGroupTableHostileNames:
         conn.execute("INSERT OR IGNORE INTO ports (port_number) VALUES (445)")
 
         findings = []
-        for plugin_id, ips in (
+        for finding_type_id, ips in (
             ("nessus:100", ("10.0.0.1", "10.0.0.2")),
             ("nessus:101", ("10.0.0.1",)),
         ):
             conn.execute(
-                "INSERT INTO findings (scan_id, plugin_id) VALUES (?,?)",
-                (scan_id, plugin_id),
+                "INSERT INTO findings (dataset_id, finding_type_id) VALUES (?,?)",
+                (dataset_id, finding_type_id),
             )
             fid = conn.execute(
-                "SELECT finding_id FROM findings WHERE plugin_id = ?", (plugin_id,)
+                "SELECT finding_id FROM findings WHERE finding_type_id = ?",
+                (finding_type_id,),
             ).fetchone()["finding_id"]
             for ip in ips:
                 host_id = conn.execute(
@@ -368,14 +380,16 @@ class TestOverlapGroupTableHostileNames:
         fids = self._seed_superset(temp_db, name)
         pairs = [
             (
-                Finding(finding_id=fids[0], scan_id=1, plugin_id="nessus:100"),
-                Plugin(plugin_id="nessus:100", plugin_name=name, severity_int=4),
+                Finding(finding_id=fids[0], dataset_id=1, finding_type_id="nessus:100"),
+                FindingType(
+                    finding_type_id="nessus:100", finding_type_name=name, severity_int=4
+                ),
             ),
             (
-                Finding(finding_id=fids[1], scan_id=1, plugin_id="nessus:101"),
-                Plugin(
-                    plugin_id="nessus:101",
-                    plugin_name="Covered Finding",
+                Finding(finding_id=fids[1], dataset_id=1, finding_type_id="nessus:101"),
+                FindingType(
+                    finding_type_id="nessus:101",
+                    finding_type_name="Covered Finding",
                     severity_int=3,
                 ),
             ),
@@ -394,7 +408,7 @@ class TestOverlapGroupTableHostileNames:
 class TestManualCopyFallback:
     """The clipboard-failure fallback dumps text for the operator to copy.
 
-    It must not be markup-parsed (a scan-derived payload containing ``[/]``
+    It must not be markup-parsed (a dataset-derived payload containing ``[/]``
     raises ``MarkupError``) and must not be *altered* either -- escaping it
     would corrupt what gets copied, and Rich's width wrapping would inject
     newlines. Hence byte-exact assertions here rather than substring ones.
@@ -482,20 +496,22 @@ class TestNucleiEscapesAreNeutralizedAtRender:
         assert "OK" in out
 
     def test_unbalanced_markup_in_a_template_name_does_not_crash_render(self) -> None:
-        plugin = Plugin(
-            plugin_id="nuclei:esc-template",
-            plugin_name=NUCLEI_ESC_NAME,
+        finding_type = FindingType(
+            finding_type_id="nuclei:esc-template",
+            finding_type_name=NUCLEI_ESC_NAME,
             severity_int=1,
         )
-        finding = Finding(finding_id=1, scan_id=1, plugin_id="nuclei:esc-template")
+        finding = Finding(
+            finding_id=1, dataset_id=1, finding_type_id="nuclei:esc-template"
+        )
         finding.get_hosts_and_ports = lambda *a, **k: ([], "")  # type: ignore[method-assign]
-        render.display_finding_preview(plugin, finding, None, None)  # type: ignore[arg-type]
+        render.display_finding_preview(finding_type, finding, None, None)  # type: ignore[arg-type]
 
-    def test_merged_plugin_output_with_escapes_renders(self) -> None:
-        """format_plugin_output is stored raw, so the renderer must cope."""
-        from cerno_pkg.nuclei_parse import ParsedNucleiMatch, format_plugin_output
+    def test_merged_finding_type_output_with_escapes_renders(self) -> None:
+        """format_evidence is stored raw, so the renderer must cope."""
+        from cerno_pkg.nuclei_parse import ParsedNucleiMatch, format_evidence
 
-        text = format_plugin_output(
+        text = format_evidence(
             [
                 ParsedNucleiMatch(
                     host="h.example.com",
@@ -511,12 +527,152 @@ class TestNucleiEscapesAreNeutralizedAtRender:
         assert "\x1b" in text  # stored verbatim
         assert "\x1b" not in safe_text(text)  # neutralized for display
 
-    def test_nuclei_plugin_id_is_not_markup_parsed(self, capsys) -> None:
+    def test_nuclei_finding_type_id_is_not_markup_parsed(self, capsys) -> None:
         """A template id with brackets must not restyle or vanish from the panel."""
         hostile = "nuclei:[bold]weird[/bold]-template"
-        plugin = Plugin(plugin_id=hostile, plugin_name="Weird", severity_int=0)
-        finding = Finding(finding_id=1, scan_id=1, plugin_id=hostile)
+        finding_type = FindingType(
+            finding_type_id=hostile, finding_type_name="Weird", severity_int=0
+        )
+        finding = Finding(finding_id=1, dataset_id=1, finding_type_id=hostile)
         finding.get_hosts_and_ports = lambda *a, **k: ([], "")  # type: ignore[method-assign]
-        render.display_finding_preview(plugin, finding, None, None)  # type: ignore[arg-type]
+        render.display_finding_preview(finding_type, finding, None, None)  # type: ignore[arg-type]
         out = capsys.readouterr().out
         assert "[bold]weird[/bold]" in out
+
+
+# A Burp issue name / response body carrying terminal escapes and Rich markup.
+# A Burp response is lifted verbatim from a live target, so it is the most
+# directly attacker-controlled text Cerno stores: an attacker who can shape a
+# response body picks these bytes.
+BURP_ESC_NAME = "Stored \x1b[31mXSS\x1b[0m [/] in header"
+BURP_ESC_RESPONSE = (
+    "HTTP/1.1 200 OK\r\n\r\n<html>\x1b]0;pwned\x07 [bold red]owned[/] \x1b[1;32m!"
+)
+
+
+@pytest.mark.unit
+class TestBurpEscapesAreNeutralizedAtRender:
+    """The importer stores Burp evidence verbatim; rendering must neutralize it."""
+
+    def test_safe_text_strips_every_escape_from_an_issue_name(self) -> None:
+        out = safe_text(BURP_ESC_NAME)
+        assert "\x1b" not in out
+        assert "XSS" in out and "header" in out
+
+    def test_safe_text_strips_escapes_from_a_response_body(self) -> None:
+        out = safe_text(BURP_ESC_RESPONSE)
+        assert "\x1b" not in out
+        assert "\x07" not in out
+        assert "owned" in out
+
+    def test_unbalanced_markup_in_an_issue_name_does_not_crash_render(self) -> None:
+        finding_type = FindingType(
+            finding_type_id="burp:00200100",
+            finding_type_name=BURP_ESC_NAME,
+            severity_int=3,
+        )
+        finding = Finding(finding_id=1, dataset_id=1, finding_type_id="burp:00200100")
+        finding.get_hosts_and_ports = lambda *a, **k: ([], "")  # type: ignore[method-assign]
+        render.display_finding_preview(finding_type, finding, None, None)  # type: ignore[arg-type]
+
+    def test_merged_finding_type_output_with_escapes_renders(self) -> None:
+        """format_evidence is stored raw, so the renderer must cope."""
+        from cerno_pkg.burp_parse import ParsedBurpInstance, format_evidence
+
+        text = format_evidence(
+            [
+                ParsedBurpInstance(
+                    host="h.example.com",
+                    ip=None,
+                    port=443,
+                    scheme="https",
+                    path="/",
+                    location="/ [User-Agent header]",
+                    confidence="Certain",
+                    detail="payload [/] echoed",
+                    request="GET / HTTP/1.1",
+                    response=BURP_ESC_RESPONSE,
+                )
+            ]
+        )
+        assert "\x1b" in text  # stored verbatim
+        assert "\x1b" not in safe_text(text)  # neutralized for display
+
+    def test_burp_finding_type_id_is_not_markup_parsed(self, capsys) -> None:
+        """A slugged extension ref with brackets must not vanish from the panel."""
+        hostile = "burp:08000000-[bold]weird[/bold]-check"
+        finding_type = FindingType(
+            finding_type_id=hostile, finding_type_name="Weird", severity_int=0
+        )
+        finding = Finding(finding_id=1, dataset_id=1, finding_type_id=hostile)
+        finding.get_hosts_and_ports = lambda *a, **k: ([], "")  # type: ignore[method-assign]
+        render.display_finding_preview(finding_type, finding, None, None)  # type: ignore[arg-type]
+        out = capsys.readouterr().out
+        assert "[bold]weird[/bold]" in out
+
+
+# An operator finding's title and description carry whatever was typed -- or,
+# when the MCP client wrote it, whatever an agent lifted out of tool output.
+# That makes this the same hazard class as scan text, not merely a typo risk.
+OPERATOR_ESC_TITLE = "Weak \x1b[31mJWT\x1b[0m [/] validation"
+OPERATOR_ESC_DESCRIPTION = (
+    "Response said \x1b]0;pwned\x07 [bold red]alg=none[/] accepted \x1b[1;32m!"
+)
+
+
+@pytest.mark.unit
+class TestAuthoredFindingEscapesAreNeutralizedAtRender:
+    """Authored text is stored verbatim; rendering must neutralize it.
+
+    This matters more for ``agent:`` than for ``operator:``: an agent writes a
+    title by summarizing tool output, which is attacker-influenced, so a
+    hostile hostname or banner can reach the title without anyone typing it.
+    """
+
+    def test_safe_text_strips_every_escape_from_a_title(self) -> None:
+        out = safe_text(OPERATOR_ESC_TITLE)
+        assert "\x1b" not in out
+        assert "JWT" in out and "validation" in out
+
+    def test_safe_text_strips_escapes_from_a_description(self) -> None:
+        out = safe_text(OPERATOR_ESC_DESCRIPTION)
+        assert "\x1b" not in out
+        assert "\x07" not in out
+        assert "alg=none" in out
+
+    def test_unbalanced_markup_in_a_title_does_not_crash_render(self) -> None:
+        finding_type = FindingType(
+            finding_type_id="operator:1",
+            finding_type_name=OPERATOR_ESC_TITLE,
+            severity_int=3,
+        )
+        finding = Finding(finding_id=1, dataset_id=1, finding_type_id="operator:1")
+        finding.get_hosts_and_ports = lambda *a, **k: ([], "")  # type: ignore[method-assign]
+        render.display_finding_preview(finding_type, finding, None, None)  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize("source", ["operator", "agent"])
+    def test_hostile_text_survives_the_round_trip_to_the_database(
+        self, temp_db, source
+    ) -> None:
+        """The writer stores what was entered; only display is sanitized."""
+        from cerno_pkg.authored_findings import (
+            AuthoredFindingInput,
+            create_authored_finding,
+        )
+
+        _finding_type_id, finding_id = create_authored_finding(
+            AuthoredFindingInput(
+                title=OPERATOR_ESC_TITLE,
+                severity_int=3,
+                targets=[("10.0.0.21", 443)],
+                description=OPERATOR_ESC_DESCRIPTION,
+            ),
+            source,
+            conn=temp_db,
+        )
+        stored = temp_db.execute(
+            "SELECT evidence FROM finding_affected_hosts WHERE finding_id = ?",
+            (finding_id,),
+        ).fetchone()[0]
+        assert "\x1b" in stored  # stored verbatim
+        assert "\x1b" not in safe_text(stored)  # neutralized for display

@@ -98,7 +98,7 @@ def register_all_tools() -> None:
             name="nuclei",
             description="Template-based vulnerability scanner",
             workflow_builder=tools.build_nuclei_workflow,
-            command_builder=tools.build_nuclei_scan_cmd,
+            command_builder=tools.build_nuclei_dataset_cmd,
             requires=["nuclei"],
             menu_order=3,
             options={
@@ -123,7 +123,7 @@ def register_all_tools() -> None:
             menu_order=4,
             options={
                 "is_search_tool": True,
-                "requires_plugin_url": True,
+                "requires_finding_type_url": True,
             },
         )
     )

@@ -173,15 +173,15 @@ class CernoConfig:
     Replaces the removed ``cerno review -q/--quiet`` flag: banner suppression is
     a standing preference, not a per-run decision."""
 
-    scan_list_wide: bool = field(
+    dataset_list_wide: bool = field(
         default=False,
         metadata={
             "section": "Review & Display",
             "kind": "bool",
-            "help": "`scan list` shows every severity column",
+            "help": "`dataset list` shows every severity column",
         },
     )
-    """Render the full per-severity breakdown in `cerno scan list` (default: False).
+    """Render the full per-severity breakdown in `cerno dataset list` (default: False).
 
     Replaces the removed ``--wide``/``--details`` flags. ``--json`` is unaffected:
     it short-circuits before any table is built."""
@@ -353,6 +353,22 @@ class CernoConfig:
     still wins per the MCP config contract. Validated at use, not load: a
     hand-edited config.yaml can hold anything."""
 
+    burp_min_severity: int = field(
+        default=0,
+        metadata={
+            "section": "Tools & Workflows",
+            "kind": "int",
+            "help": "Drop Burp findings below this severity (0-3)",
+        },
+    )
+    """Minimum severity kept when importing a Burp report (default: 0 = keep all).
+
+    0=Info, 1=Low, 2=Medium, 3=High. Burp has no Critical, so a floor of 4
+    drops every issue. Applied by ``cerno import burp`` and as the default for
+    the MCP ``import_burp`` tool, whose explicit ``min_severity`` argument still
+    wins per the MCP config contract. Validated at use, not load: a hand-edited
+    config.yaml can hold anything."""
+
     # Logging
     debug_logging: bool = field(
         default=False,
@@ -398,7 +414,7 @@ class CernoConfig:
     )
     """Enable Claude Assistant interactive chat panel in review TUI (default: False).
 
-    Opt-in because the assistant sends finding/host/plugin-output context to the
+    Opt-in because the assistant sends finding/host/finding_type-output context to the
     local `claude` CLI; the TUI shows a data-path disclosure and persists consent
     on first use."""
 
@@ -423,7 +439,7 @@ class CernoConfig:
             "help": "Allow MCP server to mutate state",
         },
     )
-    """Allow the `cerno mcp` server to MUTATE state — update review state, import scans,
+    """Allow the `cerno mcp` server to MUTATE state — update review state, import datasets,
     ingest results, set verdicts (default: False).
     When False, those tools are not registered and the server is effectively read-only."""
 
@@ -543,14 +559,14 @@ class CernoConfig:
         metadata={
             "section": "MCP Server",
             "kind": "bool",
-            "help": "Refuse execute_command targets outside the scan hosts / scope",
+            "help": "Refuse execute_command targets outside the dataset hosts / scope",
         },
     )
     """Refuse MCP execute_command / start_execution / execute_batch runs whose IP or
     CIDR targets fall outside scope (default: True). In-scope = every host in the
-    ``hosts`` table (from imported scans) plus any range in ``mcp_scope_extra``. IP and
+    ``hosts`` table (from imported datasets) plus any range in ``mcp_scope_extra``. IP and
     CIDR literals (positional args, URL hosts, ``-iL`` file entries) are checked
-    fail-closed; a bare hostname that is neither a known scan host nor an IP is allowed
+    fail-closed; a bare hostname that is neither a known dataset host nor an IP is allowed
     with a warning (it cannot be resolved to scope without DNS). Set False to disable
     the check entirely. Only consulted when mcp_allow_execution is True."""
 
@@ -564,7 +580,7 @@ class CernoConfig:
             "placeholder": "(none)",
         },
     )
-    """Additional in-scope targets beyond the imported scan hosts, as a list of CIDRs,
+    """Additional in-scope targets beyond the imported dataset hosts, as a list of CIDRs,
     IP addresses, or hostnames (default: empty). Widens what mcp_enforce_scope permits.
     Ignored when mcp_enforce_scope is False."""
 
@@ -626,7 +642,7 @@ class CernoConfig:
 #: Config keys the ``cerno mcp`` server intentionally does NOT apply. They are
 #: terminal/TUI concepts with no MCP meaning: colour/terminal handling, the TUI's
 #: pre-selected tool menu, the in-TUI Claude chat, remote-scan pivot serving, and
-#: the scan-summary "top ports" table. Every other key is honored by the MCP
+#: the dataset-summary "top ports" table. Every other key is honored by the MCP
 #: server, with precedence explicit tool argument > config value > hardcoded
 #: default. ``tests/test_mcp_config.py`` guards that every field is classified.
 MCP_NOT_APPLICABLE_KEYS: frozenset[str] = frozenset(
@@ -640,9 +656,9 @@ MCP_NOT_APPLICABLE_KEYS: frozenset[str] = frozenset(
         "pivot_http_port",
         "top_ports_count",
         # Terminal presentation only: the MCP server renders no banner and no
-        # `scan list` table (list_scans returns structured rows either way).
+        # `dataset list` table (list_datasets returns structured rows either way).
         "show_banner",
-        "scan_list_wide",
+        "dataset_list_wide",
         # Gates the review TUI's [T] action. The MCP server has its own, stricter
         # execution gate (mcp_allow_execution + the exec allow/denylists); honoring
         # this key there too would mean one flag silently weakening the other, and

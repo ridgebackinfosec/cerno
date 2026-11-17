@@ -41,7 +41,7 @@ Cerno exposes the same underlying capabilities two ways:
 - **MCP server** — `cerno mcp` (`cerno_pkg/mcp_server/server.py`).
 
 **The MCP tools/resources/prompts are thin adapters over the *same* functions the
-TUI uses** — `cerno_pkg/models.py`, `database.py`, `cross_scan.py`, `tools.py`,
+TUI uses** — `cerno_pkg/models.py`, `database.py`, `cross_dataset.py`, `tools.py`,
 `nxc_db.py`, `workflow_mapper.py` and `claude_assistant.py`. That shared core is
 the contract between the two interfaces. A change to a shared function
 (signature, return shape, or its database-access behavior) can break the
@@ -85,7 +85,7 @@ The MCP server speaks JSON-RPC over **stdout**, so MCP code paths must never
 ## Database changes
 
 Cerno's schema is created directly (no migrations yet), so schema changes
-require a major version bump and users re-importing scans. See the
+require a major version bump and users re-importing datasets. See the
 [Database Design Principles](CLAUDE.md#database-design-principles) in `CLAUDE.md`
 and [docs/DATABASE.md](docs/DATABASE.md). Mirror every DDL change in the
 reference `schema.sql` (a test checks it defines the same tables, views and

@@ -1,9 +1,9 @@
-"""Host, port and plugin-identity parsing for scan findings.
+"""Host, port and finding_type-identity parsing for scan findings.
 
 This module provides functions to parse host:port combinations from
-plugin data (database and reference files), supporting IPv4, IPv6 (bracketed),
+finding_type data (database and reference files), supporting IPv4, IPv6 (bracketed),
 and hostname formats, plus the helpers that interpret a namespaced
-``plugins.plugin_id`` (see :data:`cerno_pkg.constants.PLUGIN_ID_PREFIXES`).
+``finding_types.finding_type_id`` (see :data:`cerno_pkg.constants.FINDING_TYPE_ID_PREFIXES`).
 """
 
 from __future__ import annotations
@@ -13,8 +13,11 @@ import re
 from typing import TYPE_CHECKING, Any, Optional
 
 from .constants import (
-    PLUGIN_ID_PREFIXES,
-    PLUGIN_URL_TEMPLATES,
+    AUTHORED_SOURCES,
+    BURP_GENERIC_TYPES,
+    FINDING_TYPE_ID_PREFIXES,
+    DETAILS_URL_TEMPLATES,
+    SOURCE_BURP,
     SOURCE_IDS,
     SOURCE_UNKNOWN,
 )
@@ -23,7 +26,7 @@ if TYPE_CHECKING:
     from .workflow_mapper import WorkflowMapper
 
 
-# ====== Scan overview helpers ======
+# ====== Dataset overview helpers ======
 _HNAME_RE = re.compile(
     r"^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
     r"(?:\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$"
@@ -162,6 +165,60 @@ def detect_host_type(host: str) -> str:
     return "hostname"
 
 
+# ====== Importer helpers (shared by the nuclei and Burp importers) ======
+SCHEME_PORTS: dict[str, int] = {"http": 80, "https": 443}
+"""Default port per URL scheme, for records that omit an explicit port."""
+
+SCHEME_SERVICES: frozenset[str] = frozenset(SCHEME_PORTS)
+"""Services derived from a real URL scheme, which outrank a bare record type.
+
+These are exactly the tokens ``v_http_services`` recognises by name, which is
+why a scheme-derived service is worth preferring: it is what makes a web-only
+scan's targets visible to ``get_web_targets`` and ``FindingQuery.service``.
+"""
+
+
+def unbracket(host: str) -> str:
+    """Strip the brackets a scanner puts around a literal IPv6 target.
+
+    ``hosts.ip_address`` and ``hosts.scan_target`` store bare addresses, so
+    ``[2001:db8::1]`` must become ``2001:db8::1`` before it is written -- a
+    bracketed form would key a second, duplicate host row.
+    """
+    if host.startswith("[") and host.endswith("]"):
+        return host[1:-1]
+    return host
+
+
+def scan_target_type(host: str) -> str:
+    """Map a host to the ``hosts.scan_target_type`` CHECK vocabulary.
+
+    :func:`detect_host_type` says ``'hostname'``; the column's CHECK constraint
+    says ``'fqdn'``. Brackets are stripped first so an IPv6 literal is
+    recognised as one.
+    """
+    detected = detect_host_type(unbracket(host))
+    return "fqdn" if detected == "hostname" else detected
+
+
+def prefer_service(current: Optional[str], candidate: str) -> str:
+    """Pick the more informative of two services seen on one host:port.
+
+    A host:port can be reported several times with different fidelity -- an
+    http nuclei template or a Burp issue gives a real URL scheme, an ssl
+    template gives only its record ``type``. ``host_services`` is UNIQUE per
+    host:port, so a winner must be chosen: an explicit ``http``/``https``
+    scheme beats anything else, because it says what the service actually is.
+    Without this the winner would come down to the order rows happen to be
+    inserted in.
+    """
+    if current is None:
+        return candidate
+    if candidate in SCHEME_SERVICES and current not in SCHEME_SERVICES:
+        return candidate
+    return current
+
+
 def is_valid_token(
     token: str,
 ) -> tuple[bool, Optional[str], Optional[str]]:
@@ -286,33 +343,33 @@ def build_item_set(
     return items
 
 
-# ====== Plugin identity (multi-source) ======
-def plugin_source(plugin_id: Any) -> str:
-    """Return the name of the source a ``plugins.plugin_id`` came from.
+# ====== FindingType identity (multi-source) ======
+def finding_type_source(finding_type_id: Any) -> str:
+    """Return the name of the source a ``finding_types.finding_type_id`` came from.
 
-    ``plugin_id`` is TEXT and namespaced per source for *every* source, Nessus
+    ``finding_type_id`` is TEXT and namespaced per source for *every* source, Nessus
     included (``'nessus:57608'``, ``'nuclei:apache-detect'``). There is no
     default source: an id with no recognised prefix is reported as
     :data:`~cerno_pkg.constants.SOURCE_UNKNOWN` rather than assumed to be
     Nessus, so a bad or future id surfaces instead of being mislabelled.
 
     Examples:
-        >>> plugin_source("nessus:57608")
+        >>> finding_type_source("nessus:57608")
         'nessus'
-        >>> plugin_source("nuclei:apache-detect")
+        >>> finding_type_source("nuclei:apache-detect")
         'nuclei'
-        >>> plugin_source("57608")
+        >>> finding_type_source("57608")
         'unknown'
     """
-    text = str(plugin_id)
-    for source, prefix in PLUGIN_ID_PREFIXES.items():
+    text = str(finding_type_id)
+    for source, prefix in FINDING_TYPE_ID_PREFIXES.items():
         if text.startswith(prefix):
             return source
     return SOURCE_UNKNOWN
 
 
-def plugin_source_id(plugin_id: Any) -> int:
-    """Return the ``finding_sources.source_id`` for a ``plugin_id``.
+def finding_type_source_id(finding_type_id: Any) -> int:
+    """Return the ``finding_sources.source_id`` for a ``finding_type_id``.
 
     Raises:
         ValueError: If the id carries no recognised source prefix. This is the
@@ -320,56 +377,90 @@ def plugin_source_id(plugin_id: Any) -> int:
             source, so an unprefixed one fails here with a clear message rather
             than tripping a foreign-key error further down.
     """
-    source = plugin_source(plugin_id)
+    source = finding_type_source(finding_type_id)
     try:
         return SOURCE_IDS[source]
     except KeyError:
         raise ValueError(
-            f"plugin_id {plugin_id!r} has no source prefix. Expected one of "
-            f"{', '.join(sorted(PLUGIN_ID_PREFIXES.values()))} "
+            f"finding_type_id {finding_type_id!r} has no source prefix. Expected one of "
+            f"{', '.join(sorted(FINDING_TYPE_ID_PREFIXES.values()))} "
             f"(e.g. 'nessus:57608')."
         ) from None
 
 
-def plugin_ref(plugin_id: Any) -> str:
+def channel_source_id(actor: str) -> int:
+    """Return the ``finding_sources.source_id`` for an acting **channel**.
+
+    A channel is the interface that performed an action: ``SOURCE_OPERATOR``
+    (the TUI) or ``SOURCE_AGENT`` (an MCP client). This is the write-side guard
+    for attribution columns (``findings.completed_by``,
+    ``finding_verdicts.created_by``), which are constrained to those two ids.
+
+    A scanner source is refused: nessus did not move a finding to done, and
+    letting one through would put a value in the column that the schema CHECK
+    rejects anyway -- with a far less helpful message.
+
+    Raises:
+        ValueError: If ``actor`` is not an authored (channel) source.
+    """
+    if actor not in AUTHORED_SOURCES:
+        raise ValueError(
+            f"actor {actor!r} is not an acting channel. Expected one of "
+            f"{', '.join(sorted(AUTHORED_SOURCES))}."
+        )
+    return SOURCE_IDS[actor]
+
+
+def finding_type_ref(finding_type_id: Any) -> str:
     """Return the source-native identifier, with its namespace prefix removed.
 
     This is the value the source itself uses — what Tenable publishes as a
-    plugin number, or what nuclei calls a template id — so it is what goes
+    finding_type number, or what nuclei calls a template id — so it is what goes
     into a details URL or a report.
 
     Examples:
-        >>> plugin_ref("nessus:57608")
+        >>> finding_type_ref("nessus:57608")
         '57608'
-        >>> plugin_ref("nuclei:apache-detect")
+        >>> finding_type_ref("nuclei:apache-detect")
         'apache-detect'
     """
-    text = str(plugin_id)
-    for prefix in PLUGIN_ID_PREFIXES.values():
+    text = str(finding_type_id)
+    for prefix in FINDING_TYPE_ID_PREFIXES.values():
         if text.startswith(prefix):
             return text[len(prefix) :]
     return text
 
 
-def plugin_details_url(
-    plugin_id: Any, stored_url: Optional[str] = None
+def finding_type_details_url(
+    finding_type_id: Any, stored_url: Optional[str] = None
 ) -> Optional[str]:
-    """Best known details page for a plugin, or None if the source has none.
+    """Best known details page for a finding_type, or None if the source has none.
 
     Prefers the URL captured at import time; otherwise builds one from the
     source's template. Returning None matters: callers must not fall back to
     the Tenable base URL, which would fabricate a dead link for a finding that
     did not come from Nessus.
+
+    One ref is deliberately excluded from its source's template: a Burp
+    extension-generated issue carries a :data:`~cerno_pkg.constants.BURP_GENERIC_TYPES`
+    type with a name slug appended (``burp:08000000-jwt-none-algorithm``), and
+    PortSwigger publishes no knowledge-base page for it. The importer stores no
+    URL for those, so without this guard the template would run anyway and
+    produce a 404 link.
     """
     if stored_url:
         return stored_url
-    template = PLUGIN_URL_TEMPLATES.get(plugin_source(plugin_id))
-    return template.format(ref=plugin_ref(plugin_id)) if template else None
+    source = finding_type_source(finding_type_id)
+    ref = finding_type_ref(finding_type_id)
+    if source == SOURCE_BURP and ref.split("-", 1)[0] in BURP_GENERIC_TYPES:
+        return None
+    template = DETAILS_URL_TEMPLATES.get(source)
+    return template.format(ref=ref) if template else None
 
 
-def extract_plugin_id_from_filename(name_or_path) -> Optional[str]:
+def extract_finding_type_id_from_filename(name_or_path) -> Optional[str]:
     """
-    Extract a leading Nessus plugin ID from a (legacy) plugin filename.
+    Extract a leading Nessus plugin ID from a (legacy) finding_type filename.
 
     Only a leading run of digits is recognized (e.g. "12345.txt" or
     "12345_Plugin_Name.txt"). Prefixed names are not handled.
@@ -378,12 +469,12 @@ def extract_plugin_id_from_filename(name_or_path) -> Optional[str]:
         name_or_path: Filename string or Path object
 
     Returns:
-        Plugin ID string if found, None otherwise
+        FindingType ID string if found, None otherwise
 
     Examples:
-        >>> extract_plugin_id_from_filename("12345.txt")
+        >>> extract_finding_type_id_from_filename("12345.txt")
         '12345'
-        >>> extract_plugin_id_from_filename("REVIEW_COMPLETE-12345.txt") is None
+        >>> extract_finding_type_id_from_filename("REVIEW_COMPLETE-12345.txt") is None
         True
     """
     # Handle both Path and str
@@ -392,7 +483,7 @@ def extract_plugin_id_from_filename(name_or_path) -> Optional[str]:
     else:
         name = str(name_or_path)
 
-    # Extract leading numeric plugin ID
+    # Extract leading numeric finding_type ID
     match = re.match(r"^(\d+)", name)
     return match.group(1) if match else None
 
@@ -404,29 +495,29 @@ def group_findings_by_workflow(
     Group findings by their workflow name.
 
     Args:
-        files: List of (Finding, Plugin) tuples from database query
+        files: List of (Finding, FindingType) tuples from database query
         workflow_mapper: WorkflowMapper instance
 
     Returns:
-        Dict mapping workflow_name -> list of (Finding, Plugin) tuples
+        Dict mapping workflow_name -> list of (Finding, FindingType) tuples
         Findings without workflows are excluded.
 
     Example:
         >>> # With database tuples:
-        >>> files = [(Finding(...), Plugin(...)), ...]
+        >>> files = [(Finding(...), FindingType(...)), ...]
         >>> groups = group_findings_by_workflow(files, mapper)
         >>> groups
-        {"SMB Signing Not Required": [(Finding(...), Plugin(...)), ...], ...}
+        {"SMB Signing Not Required": [(Finding(...), FindingType(...)), ...], ...}
     """
     from collections import defaultdict
 
     groups = defaultdict(list)
 
-    for plugin_file, plugin in files:
-        # Get plugin ID from database record instead of filename parsing
-        plugin_id = str(plugin.plugin_id)
-        workflow = workflow_mapper.get_workflow(plugin_id)
+    for finding_type_file, finding_type in files:
+        # Get finding_type ID from database record instead of filename parsing
+        finding_type_id = str(finding_type.finding_type_id)
+        workflow = workflow_mapper.get_workflow(finding_type_id)
         if workflow:
-            groups[workflow.workflow_name].append((plugin_file, plugin))
+            groups[workflow.workflow_name].append((finding_type_file, finding_type))
 
     return dict(groups)

@@ -206,7 +206,7 @@ def test_show_reviewed_help_is_gone():
     "mode,label",
     [
         ("severity", "Severity"),
-        ("plugin_id", "Finding ID"),
+        ("finding_type_id", "Finding ID"),
         ("name", "Name"),
         ("hosts", "Hosts"),
     ],
@@ -240,15 +240,15 @@ def test_empty_state_status_mismatch(monkeypatch):
     assert "[I]" in text
 
 
-def _preview_plugin(plugin_url):
-    from cerno_pkg.models import Plugin
+def _preview_finding_type(details_url):
+    from cerno_pkg.models import FindingType
 
-    return Plugin(
-        plugin_id="nessus:41028",
-        plugin_name="SNMP Agent Default Community Name (public)",
+    return FindingType(
+        finding_type_id="nessus:41028",
+        finding_type_name="SNMP Agent Default Community Name (public)",
         severity_int=3,
         severity_label="High",
-        plugin_url=plugin_url,
+        stored_details_url=details_url,
     )
 
 
@@ -259,7 +259,7 @@ def _preview_finding():
     return finding
 
 
-def _render_preview(monkeypatch, plugin_url):
+def _render_preview(monkeypatch, details_url):
     import cerno_pkg.render as render_module
 
     console = _record_console(monkeypatch, render_module)
@@ -267,13 +267,13 @@ def _render_preview(monkeypatch, plugin_url):
         render_module, "render_nxc_enrichment_summary", lambda hosts: None
     )
     render_module.display_finding_preview(
-        _preview_plugin(plugin_url), _preview_finding(), None, Path("x.txt")
+        _preview_finding_type(details_url), _preview_finding(), None, Path("x.txt")
     )
     return console
 
 
 @pytest.mark.unit
-def test_finding_preview_shows_plugin_url(monkeypatch):
+def test_finding_preview_shows_finding_type_url(monkeypatch):
     console = _render_preview(
         monkeypatch, "https://www.tenable.com/plugins/nessus/41028"
     )
@@ -283,7 +283,7 @@ def test_finding_preview_shows_plugin_url(monkeypatch):
 
 
 @pytest.mark.unit
-def test_finding_preview_plugin_url_fallback(monkeypatch):
+def test_finding_preview_finding_type_url_fallback(monkeypatch):
     console = _render_preview(monkeypatch, None)
     assert (
         "Finding Details: https://tenable.com/plugins/nessus/41028"
@@ -306,7 +306,7 @@ def test_finding_preview_link_target_is_full_url(monkeypatch):
         render_module, "render_nxc_enrichment_summary", lambda hosts: None
     )
     render_module.display_finding_preview(
-        _preview_plugin("https://www.tenable.com/plugins/nessus/41028"),
+        _preview_finding_type("https://www.tenable.com/plugins/nessus/41028"),
         _preview_finding(),
         None,
         Path("x.txt"),
@@ -457,18 +457,20 @@ def test_finding_footer_no_tools_keeps_conditional_row_items(monkeypatch):
 
 
 def _finding_list_output(ids, *, width: int = 200) -> str:
-    """Render the findings list for the given plugin ids and return the text."""
+    """Render the findings list for the given finding_type ids and return the text."""
     import io
 
     from rich.console import Console
 
     from cerno_pkg import render as render_mod
-    from cerno_pkg.models import Finding, Plugin
+    from cerno_pkg.models import Finding, FindingType
 
     display = [
         (
-            Finding(finding_id=i, scan_id=1, plugin_id=pid),
-            Plugin(plugin_id=pid, plugin_name=f"Finding {i}", severity_int=2),
+            Finding(finding_id=i, dataset_id=1, finding_type_id=pid),
+            FindingType(
+                finding_type_id=pid, finding_type_name=f"Finding {i}", severity_int=2
+            ),
         )
         for i, pid in enumerate(ids, 1)
     ]
@@ -545,3 +547,78 @@ class TestFindingIdColumn:
         at_200 = _finding_list_output([self.LONG], width=200)
         assert self.LONG not in at_80
         assert self.LONG in at_200
+
+
+# ---------------------------------------------------------------------------
+# Operator-entered findings
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_findings_list_footer_offers_add_finding(monkeypatch):
+    """[+] is the only way into the create flow, so it must always be shown."""
+    out = _footer_text(monkeypatch, unique_cve_count=0, unique_host_count=0)
+    assert "[+]" in out
+    assert "Add finding" in out
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("term_width", [200, 80])
+def test_add_finding_survives_both_layouts(monkeypatch, term_width):
+    """It shares a row with [M], which is assembled differently per width."""
+    from cerno_pkg import ansi, render as render_module
+
+    console = _record_console(monkeypatch, render_module)
+    monkeypatch.setattr(ansi, "get_terminal_width", lambda: term_width)
+    render_module.render_actions_footer(
+        group_applied=False,
+        candidates_count=3,
+        sort_mode="severity",
+        can_next=False,
+        can_prev=False,
+        unique_cve_count=0,
+        unique_host_count=0,
+    )
+    out = console.export_text()
+    assert "Add finding" in out
+    assert "CVEs" in out  # the rest of the row survived
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("term_width", [200, 80])
+def test_update_is_offered_only_for_an_operator_finding(monkeypatch, term_width):
+    """A scanner finding is a record of what the scanner reported.
+
+    Showing [U] on one would promise an edit handle_finding_view refuses.
+    """
+    from cerno_pkg import ansi, render as render_module
+
+    for is_operator, expected in ((True, True), (False, False)):
+        console = _record_console(monkeypatch, render_module)
+        monkeypatch.setattr(ansi, "get_terminal_width", lambda: term_width)
+        render_module.render_finding_actions_footer(
+            review_state="unreviewed", is_authored_finding=is_operator
+        )
+        out = console.export_text()
+        assert ("Update finding" in out) is expected
+        # The row it shares must survive either way.
+        assert "Record verdict" in out
+
+
+@pytest.mark.unit
+def test_actions_help_documents_add_finding(monkeypatch):
+    from cerno_pkg import render as render_module
+
+    console = _record_console(monkeypatch, render_module)
+    render_module.show_actions_help(
+        group_applied=False,
+        candidates_count=1,
+        unique_cve_count=0,
+        unique_host_count=0,
+        sort_mode="severity",
+        can_next=False,
+        can_prev=False,
+    )
+    out = console.export_text()
+    assert "Add finding" in out
+    assert "Operator" in out

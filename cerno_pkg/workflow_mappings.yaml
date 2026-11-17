@@ -5,7 +5,7 @@
 # for verifying specific vulnerabilities.
 #
 # Format:
-#   finding_id: Single ID ("nessus:57608") or comma-separated
+#   finding_type_id: Single ID ("nessus:57608") or comma-separated
 #               ("nessus:57608,nessus:10079,nuclei:apache-detect"). Every id
 #               carries its source prefix; a bare number does not load.
 #   workflow_name: Human-readable name for the workflow
@@ -13,7 +13,7 @@
 #   steps: List of verification steps with commands and notes
 #   references: List of reference URLs
 # 
-  # - finding_id: ""
+  # - finding_type_id: ""
   #   workflow_name: ""
   #   description: ""
   #   steps:
@@ -28,7 +28,7 @@
 version: "1.0"
 
 workflows:
-  - finding_id: "nessus:40984"
+  - finding_type_id: "nessus:40984"
     workflow_name: "Investigate Browsable Web Directories"
     description: "Check for any filenames and content with confidential data."
     steps:
@@ -44,7 +44,7 @@ workflows:
       - "https://www.tenable.com/plugins/nessus/40984"
       - "https://www.blackhillsinfosec.com/rooting-for-secrets-with-trufflehog/"
 
-  - finding_id: "nessus:10759"
+  - finding_type_id: "nessus:10759"
     workflow_name: "Web Server HTTP Header Internal IP Disclosure"
     description: "Occurs when a web server includes internal IP addresses in HTTP response headers, unintentionally exposing internal network details that can aid attackers in mapping or targeting internal infrastructure."
     steps:
@@ -62,7 +62,7 @@ workflows:
       - "https://www.tenable.com/plugins/nessus/10759"
 
   # SMB Signing Not Required (nessus:57608)
-  - finding_id: "nessus:57608"
+  - finding_type_id: "nessus:57608"
     workflow_name: "SMB Signing Not Required"
     description: "Remote SMB server does not enforce message signing"
     steps:
@@ -88,7 +88,7 @@ workflows:
       - "https://www.tenable.com/plugins/nessus/57608"
       - "https://attack.mitre.org/techniques/T1557/001/"
 
-  - finding_id: "nessus:10114"
+  - finding_type_id: "nessus:10114"
     workflow_name: "ICMP Timestamp Request Remote Date Disclosure"
     description: "Occurs when a system responds to ICMP timestamp requests with its local time, allowing remote attackers to infer the device’s timezone, system clock, and potentially aiding in reconnaissance or timing attacks."
     steps:
@@ -123,7 +123,7 @@ workflows:
       - "https://github.com/DefensiveOrigins/icmp-timestamp"
       - "https://datatracker.ietf.org/doc/html/rfc792"
 
-  - finding_id: "nessus:41028"
+  - finding_type_id: "nessus:41028"
     workflow_name: "SNMP Default Community Strings"
     description: "Default SNMP community string usage could allow for configuration read through SNMP queries and possibly a full SNMP MIB tree walk."
     steps:
@@ -147,7 +147,7 @@ workflows:
       - "https://github.com/trailofbits/onesixtyone"
       - "https://github.com/net-snmp/net-snmp"
 
-  - finding_id: "nessus:20007,nessus:26928,nessus:31705,nessus:42873,nessus:65821,nessus:78479,nessus:81606,nessus:83738,nessus:83875,nessus:89058,nessus:104743,nessus:157288"
+  - finding_type_id: "nessus:20007,nessus:26928,nessus:31705,nessus:42873,nessus:65821,nessus:78479,nessus:81606,nessus:83738,nessus:83875,nessus:89058,nessus:104743,nessus:157288"
     workflow_name: "Weak SSL/TLS Configurations"
     description: "Weak or deprecated SSL/TLS configurations — including outdated protocol versions, weak/anonymous/export cipher suites, and exploitable vulnerabilities — should be remediated."
     steps:
@@ -171,7 +171,7 @@ workflows:
       - "https://www.tenable.com/plugins/nessus/157288"
       - "https://www.blackhillsinfosec.com/testing-tls-and-certificates/"
 
-  - finding_id: "nessus:42263"
+  - finding_type_id: "nessus:42263"
     workflow_name: "Unencrypted Telnet Server"
     description: "The primary risk posed by unencrypted network protocols is that an attacker can eavesdrop on communication and extract any information in it, such as confidential data and credentials."
     steps:
@@ -191,7 +191,7 @@ workflows:
     references:
       - "https://www.tenable.com/plugins/nessus/42263"
 
-  - finding_id: "nessus:187315"
+  - finding_type_id: "nessus:187315"
     workflow_name: "Terrapin Weakness"
     description: "SSH vulnerability that could permit MITM style attacks"
     steps:
@@ -212,7 +212,7 @@ workflows:
       - "https://nvd.nist.gov/vuln/detail/CVE-2023-48795"
       - "https://terrapin-attack.com/"
 
-  - finding_id: "nessus:90317,nessus:70658,nessus:153953,nessus:71049"
+  - finding_type_id: "nessus:90317,nessus:70658,nessus:153953,nessus:71049"
     workflow_name: "SSH Service Verification"
     description: "SSH service is accepting weak ciphers, key exchange algorithms, or MAC algorithms, and/or accepts password authentication. These misconfigurations can expose the service to brute force, MITM, or cryptographic downgrade attacks."
     steps:
@@ -246,7 +246,7 @@ workflows:
       - "https://github.com/jtesta/ssh-audit"
       - "https://attack.mitre.org/techniques/T1110/001/"
 
-  - finding_id: "nessus:35297,nessus:91263"
+  - finding_type_id: "nessus:35297,nessus:91263"
     workflow_name: "SSL Service Requests Client Certificate"
     description: "Confirm the server sends a TLS CertificateRequest and determine whether a client certificate is optional or required."
     steps:
@@ -264,7 +264,7 @@ workflows:
       - "https://www.tenable.com/plugins/nessus/35297"
       - "https://www.tenable.com/plugins/nessus/91263"
 
-  - finding_id: "nessus:56984,nuclei:tls-version"
+  - finding_type_id: "nessus:56984,nuclei:tls-version"
     workflow_name: "SSL / TLS Versions Supported"
     description: "Enumerate which SSL/TLS protocol versions the service accepts and flag any legacy versions (SSLv2/SSLv3/TLS 1.0/TLS 1.1)."
     steps:
@@ -283,7 +283,7 @@ workflows:
       - "https://github.com/projectdiscovery/nuclei-templates/blob/main/ssl/tls-version.yaml"
       - "https://nmap.org/nsedoc/scripts/ssl-enum-ciphers.html"
 
-  - finding_id: "nessus:95631"
+  - finding_type_id: "nessus:95631"
     workflow_name: "SSL Certificate Signed Using Weak Hashing Algorithm (Known CA)"
     description: "Determine whether the weak (SHA-1/MD5) signature is on a certificate clients actually validate (leaf or intermediate) or only on a self-signed trust anchor."
     steps:
@@ -295,7 +295,7 @@ workflows:
     references:
       - "https://www.tenable.com/plugins/nessus/95631"
 
-  - finding_id: "nessus:142960,nessus:84502,nuclei:weak-hsts-detect"
+  - finding_type_id: "nessus:142960,nessus:84502,nuclei:weak-hsts-detect"
     workflow_name: "HSTS Missing From HTTPS Server (RFC 6797)"
     description: "Confirm whether HTTPS responses carry a Strict-Transport-Security header with an adequate max-age."
     steps:
@@ -310,7 +310,7 @@ workflows:
       - "https://github.com/projectdiscovery/nuclei-templates/blob/main/http/misconfiguration/weak-hsts-detect.yaml"
       - "https://datatracker.ietf.org/doc/html/rfc6797"
 
-  - finding_id: "nessus:298485"
+  - finding_type_id: "nessus:298485"
     workflow_name: "Oracle E-Business Suite Detection"
     description: "Confirm Oracle EBS is really exposed, ruling out catch-all / soft-404 sites that answer every path the same way."
     steps:
@@ -329,7 +329,7 @@ workflows:
     references:
       - "https://www.tenable.com/plugins/nessus/298485"
 
-  - finding_id: "nessus:304671"
+  - finding_type_id: "nessus:304671"
     workflow_name: "nginx 1.3.0 < 1.28.2 / 1.29.x < 1.29.5 SSL Upstream Injection"
     description: "Version-based check: confirm the nginx version disclosed by the service falls in the affected range for CVE-2026-1642."
     steps:
@@ -358,7 +358,7 @@ workflows:
   # Added from Cerno-verified nuclei findings.
   # ---------------------------------------------------------------------------
 
-  - finding_id: "nuclei:http-missing-security-headers"
+  - finding_type_id: "nuclei:http-missing-security-headers"
     workflow_name: "HTTP Missing Security Headers"
     description: "Confirm which security response headers are absent. The nuclei template fires one matcher per missing header, so verify every header it named, not just HSTS."
     steps:
@@ -376,7 +376,7 @@ workflows:
       - "https://github.com/projectdiscovery/nuclei-templates/blob/main/http/misconfiguration/http-missing-security-headers.yaml"
       - "https://owasp.org/www-project-secure-headers/"
 
-  - finding_id: "nuclei:weak-csp-detect"
+  - finding_type_id: "nuclei:weak-csp-detect"
     workflow_name: "Weak Content Security Policy"
     description: "Read the Content-Security-Policy header and decide whether it actually restricts script execution."
     steps:
@@ -394,7 +394,7 @@ workflows:
       - "https://github.com/projectdiscovery/nuclei-templates/blob/main/http/misconfiguration/weak-csp-detect.yaml"
       - "https://cheatsheetseries.owasp.org/cheatsheets/Content_Security_Policy_Cheat_Sheet.html"
 
-  - finding_id: "nuclei:xss-deprecated-header"
+  - finding_type_id: "nuclei:xss-deprecated-header"
     workflow_name: "Deprecated X-XSS-Protection Header"
     description: "Confirm the response still sends the deprecated X-XSS-Protection header."
     steps:
@@ -407,7 +407,7 @@ workflows:
       - "https://github.com/projectdiscovery/nuclei-templates/blob/main/http/misconfiguration/xss-deprecated-header.yaml"
       - "https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/X-XSS-Protection"
 
-  - finding_id: "nuclei:options-method"
+  - finding_type_id: "nuclei:options-method"
     workflow_name: "Verify Advertised HTTP Methods and TRACE Handling"
     description: "Confirm which methods the server advertises via OPTIONS, then test whether TRACE is actually honored (Cross-Site Tracing)."
     steps:
@@ -425,7 +425,7 @@ workflows:
       - "https://github.com/projectdiscovery/nuclei-templates/blob/main/http/miscellaneous/options-method.yaml"
       - "https://owasp.org/www-community/attacks/Cross_Site_Tracing"
 
-  - finding_id: "nuclei:swagger-api"
+  - finding_type_id: "nuclei:swagger-api"
     workflow_name: "Public Swagger / OpenAPI Documentation"
     description: "Confirm the API documentation and machine-readable spec are retrievable without authentication, then use the spec to test whether the documented endpoints enforce authentication."
     steps:
@@ -453,7 +453,7 @@ workflows:
       - "https://github.com/projectdiscovery/nuclei-templates/blob/main/http/exposures/apis/swagger-api.yaml"
       - "https://owasp.org/API-Security/editions/2023/en/0xa9-improper-inventory-management/"
 
-  - finding_id: "nuclei:bigip-detect"
+  - finding_type_id: "nuclei:bigip-detect"
     workflow_name: "F5 BIG-IP Detection and Persistence Cookie Disclosure"
     description: "Confirm an F5 BIG-IP sits in front of the service and check whether its persistence cookie leaks internal pool member addresses."
     steps:
@@ -473,7 +473,7 @@ workflows:
       - "https://nmap.org/nsedoc/scripts/http-bigip-cookie.html"
       - "https://my.f5.com/manage/s/article/K14784"
 
-  - finding_id: "nuclei:ssl-issuer,nuclei:ssl-dns-names,nuclei:wildcard-tls"
+  - finding_type_id: "nuclei:ssl-issuer,nuclei:ssl-dns-names,nuclei:wildcard-tls"
     workflow_name: "TLS Certificate Review (Issuer, SANs, Wildcard)"
     description: "Pull the leaf certificate once to settle the certificate-inventory templates: issuer, subject alternative names, wildcard use and validity."
     steps:
@@ -493,7 +493,7 @@ workflows:
       - "https://github.com/projectdiscovery/nuclei-templates/blob/main/ssl/wildcard-tls.yaml"
       - "https://nmap.org/nsedoc/scripts/ssl-cert.html"
 
-  - finding_id: "nuclei:azure-domain-tenant"
+  - finding_type_id: "nuclei:azure-domain-tenant"
     workflow_name: "Microsoft Entra ID Tenant Discovery"
     description: "Confirm the customer's Entra ID tenant ID and build out identity reconnaissance from it. Steps 1-4 are passive OSINT against Microsoft's public endpoints and DNS, not against the target host; step 5 is active and needs explicit approval."
     steps:

@@ -1,5 +1,7 @@
 """Tests for cerno_pkg.fs module."""
 
+from cerno_pkg.constants import SOURCE_OPERATOR
+
 from unittest.mock import patch
 
 import pytest
@@ -77,16 +79,16 @@ class TestBuildResultsPaths:
             cerno_pkg.constants, "_results_root_cache", temp_dir / "results"
         )
 
-        scan_dir = temp_dir / "my_scan"
-        sev_dir = scan_dir / "4_Critical"
-        plugin_filename = "12345_Test_Plugin.txt"
+        dataset_dir = temp_dir / "my_dataset"
+        sev_dir = dataset_dir / "4_Critical"
+        finding_type_filename = "12345_Test_Plugin.txt"
 
         output_dir, output_base = build_results_paths(
-            scan_dir, sev_dir, plugin_filename
+            dataset_dir, sev_dir, finding_type_filename
         )
 
         assert output_dir.exists()
-        # Path structure: results/my_scan/Critical/12345_Test_Plugin
+        # Path structure: results/my_dataset/Critical/12345_Test_Plugin
         assert output_dir.name == "12345_Test_Plugin"
         assert "Critical" in str(output_dir)
         assert output_base.name.startswith("run-")
@@ -101,11 +103,11 @@ class TestBuildResultsPaths:
             cerno_pkg.constants, "_results_root_cache", temp_dir / "results"
         )
 
-        scan_dir = temp_dir / "scan"
-        sev_dir = scan_dir / "3_High"
-        plugin_filename = "99999_Another_Plugin.txt"
+        dataset_dir = temp_dir / "scan"
+        sev_dir = dataset_dir / "3_High"
+        finding_type_filename = "99999_Another_Plugin.txt"
 
-        output_dir, _ = build_results_paths(scan_dir, sev_dir, plugin_filename)
+        output_dir, _ = build_results_paths(dataset_dir, sev_dir, finding_type_filename)
 
         assert output_dir.exists()
         assert output_dir.is_dir()
@@ -313,3 +315,85 @@ def test_write_work_files_empty_udp_list_is_empty(tmp_path):
     _tcp_ips, udp_ips, _sockets = write_work_files(tmp_path, [], "", udp=True)
 
     assert udp_ips.read_text(encoding="utf-8") == ""
+
+
+# ---------------------------------------------------------------------------
+# Operator-entered findings: the [U] gate
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_update_interactive_refuses_a_finding_with_no_id(capsys):
+    """Nothing to write against; must warn rather than raise."""
+    from cerno_pkg.fs import update_authored_finding_interactive
+    from cerno_pkg.models import Finding
+
+    finding = Finding(finding_id=None, dataset_id=1, finding_type_id="operator:1")
+
+    assert update_authored_finding_interactive(finding) is False
+    assert "database id" in capsys.readouterr().out
+
+
+@pytest.mark.integration
+def test_update_interactive_writes_what_the_prompt_returned(temp_db, monkeypatch):
+    from cerno_pkg import fs
+    from cerno_pkg.models import Finding
+    from cerno_pkg.authored_findings import (
+        AuthoredFindingInput,
+        create_authored_finding,
+        load_authored_finding,
+    )
+    from cerno_pkg.constants import SOURCE_OPERATOR
+
+    _finding_type_id, finding_id = create_authored_finding(
+        AuthoredFindingInput(
+            title="Original",
+            severity_int=3,
+            targets=[("10.0.0.21", 443)],
+            description="before",
+        ),
+        SOURCE_OPERATOR,
+        conn=temp_db,
+    )
+
+    monkeypatch.setattr(
+        "cerno_pkg.tui.prompt_edit_finding",
+        lambda fid: AuthoredFindingInput(
+            title="Corrected",
+            severity_int=1,
+            targets=[("10.0.0.99", 22)],
+            description="after",
+        ),
+    )
+
+    finding = Finding(finding_id=finding_id, dataset_id=1, finding_type_id="operator:1")
+    assert fs.update_authored_finding_interactive(finding) is True
+
+    stored = load_authored_finding(finding_id, conn=temp_db)
+    assert stored.title == "Corrected"
+    assert stored.severity_int == 1
+    assert stored.targets == [("10.0.0.99", 22)]
+
+
+@pytest.mark.integration
+def test_update_interactive_cancels_cleanly(temp_db, monkeypatch):
+    """Ctrl+C at a prompt returns None, which must change nothing."""
+    from cerno_pkg import fs
+    from cerno_pkg.models import Finding
+    from cerno_pkg.authored_findings import (
+        AuthoredFindingInput,
+        create_authored_finding,
+        load_authored_finding,
+    )
+    from cerno_pkg.constants import SOURCE_OPERATOR
+
+    _finding_type_id, finding_id = create_authored_finding(
+        AuthoredFindingInput(title="Original", severity_int=3),
+        SOURCE_OPERATOR,
+        conn=temp_db,
+    )
+    monkeypatch.setattr("cerno_pkg.tui.prompt_edit_finding", lambda fid: None)
+
+    finding = Finding(finding_id=finding_id, dataset_id=1, finding_type_id="operator:1")
+    assert fs.update_authored_finding_interactive(finding) is False
+    assert load_authored_finding(finding_id, conn=temp_db).title == "Original"

@@ -372,7 +372,7 @@ def test_reset_installation_removes_every_cerno_file(tmp_path, monkeypatch):
     home = tmp_path / "home"
     cerno_dir = home / ".cerno"
     (cerno_dir / "artifacts").mkdir(parents=True)
-    (cerno_dir / "scans").mkdir()
+    (cerno_dir / "datasets").mkdir()
     for name in (
         "cerno.db",
         "cerno.db-wal",

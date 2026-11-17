@@ -1,6 +1,6 @@
 # MCP Server (BETA)
 
-`cerno mcp` exposes your Cerno scan database and tooling over the
+`cerno mcp` exposes your Cerno database and tooling over the
 [Model Context Protocol](https://modelcontextprotocol.io), so any MCP client
 (Claude CLI, Claude Desktop, etc.) can query findings, build target lists,
 generate tool commands, and — when explicitly enabled — execute tools and
@@ -79,13 +79,22 @@ resources, and prompts Cerno exposes.
 > the change to take effect. The active gating state is logged to
 > `~/.cerno/cerno.log` on startup.
 
+> **Applying a new version:** the same is true of the **code**. The client
+> launches `cerno mcp` as a long-lived stdio subprocess, so the running process
+> keeps whatever it started with — upgrading Cerno, or editing it under an
+> editable install, changes nothing until you reconnect. `get_capabilities`
+> reports `cerno_version` and `schema_version`; use them to confirm which build
+> a connection is actually serving. A client may also cache the tool listing it
+> fetched at handshake, so if tool descriptions look out of date, start a fresh
+> session rather than trusting a reconnect.
+
 ---
 
 ## Capabilities
 
 ### Tools
 
-> **What counts as a host.** `list_scans`'s `unique_hosts` counts **machines**
+> **What counts as a host.** `list_datasets`'s `unique_hosts` counts **machines**
 > (distinct resolved IP). `list_hosts` and `top_hosts` return one row per
 > **scan target** — per `(ip_address, scan_target)` pair — so `len()` of those
 > results is a target count, not a machine count, and one IP serving several
@@ -96,39 +105,85 @@ resources, and prompts Cerno exposes.
 
 | Category | Tools | Gated by |
 | --- | --- | --- |
-| Read | `list_scans`, `list_findings`, `search_findings`, `query_findings`, `get_finding_detail`, `get_finding_hosts`, `list_hosts`, `top_hosts`, `list_services`, `get_web_targets`, `list_cves`, `find_affected_by_cve`, `host_history`, `compare_scans`, `get_workflow`, `list_workflow_gaps`, `check_tools`, `list_executions`, `list_artifacts`, `get_finding_artifacts`, `read_artifact`, `get_finding_verdict`, `get_notes`, `get_config`, `get_capabilities` | always available |
+| Read | `list_datasets`, `list_findings`, `search_findings`, `query_findings`, `get_finding_detail`, `get_finding_hosts`, `list_hosts`, `top_hosts`, `list_services`, `get_web_targets`, `list_cves`, `find_affected_by_cve`, `host_history`, `compare_datasets`, `get_workflow`, `list_workflow_gaps`, `check_tools`, `list_executions`, `list_artifacts`, `get_finding_artifacts`, `read_artifact`, `get_finding_verdict`, `get_notes`, `get_config`, `get_capabilities` | always available |
 | NetExec | `get_host_nxc`, `list_nxc_credentials` (credentials as refs, never secrets; shares; security flags; needs a configured NetExec workspace) | always available |
 | Generate | `generate_nmap_cmd`, `generate_netexec_cmd`, `generate_msf_search`, `prepare_workflow`, `plan_batch` (return commands or a dry-run plan; never run anything) | always available |
 | Contribute | `get_workflow_candidate` (draft a sanitized workflow from the commands run against a finding), `export_workflow_contribution` (write it as a local, PR-ready YAML file; never submits). See [Workflow contributions](#workflow-contributions) | always available |
 | Execute | `execute_command` (runs a command, captures output, logs it; reports progress). Target binary must match `mcp_exec_allowlist` and no binary in the chain may match `mcp_exec_denylist` (common wrappers such as `sudo`/`env`/`timeout` are unwrapped); `timeout` clamped to [1, 3600]s; optional `finding_id` attributes the run (then surfaced by `get_finding_artifacts`, verdict evidence and [workflow contributions](#workflow-contributions); always pass it when verifying a finding). For an nmap command (`-oA` present) it registers the output files as artifacts and records `host_count`/`ports` even when no hosts are up, and refuses to overwrite an existing run's `-oA` output (use a fresh `generate_nmap_cmd` path). `start_execution`, `get_execution_status`, `cancel_execution`, `list_jobs`: the same run as a background job. See [Jobs and batch](#jobs-and-batch) | `mcp_allow_execution` |
 | Batch | `execute_batch` (runs every runnable command from a `plan_batch` query) | `mcp_allow_execution` **and** `mcp_allow_batch` |
-| Mutate | `set_review_state` (`unreviewed` → `in_progress` → `done` → `unreviewed`; other changes rejected), `add_note` (append-only), `set_finding_verdict`, `ingest_results`, `import_nessus`, `import_nuclei` | `mcp_allow_mutations` |
+| Mutate | `set_review_state` (`unreviewed` → `in_progress` → `done` → `unreviewed`; other changes rejected), `add_note` (append-only), `set_finding_verdict`, `ingest_results`, `import_nessus`, `import_nuclei`, `import_burp`, `create_finding`, `update_finding` | `mcp_allow_mutations` |
 | Reveal | `reveal_credential` (returns a credential's **cleartext** secret; audited) | `mcp_allow_cred_reveal` |
 
 Notes:
 
-- `list_findings` takes `merged` (dedup multi-scan results by finding, matching
-  the TUI), `limit`, and `offset` for paging.
-- `query_findings` AND-combines optional predicates: `scan_ids` (omit for all
-  scans), `severity_int`/`severity_min`, `review_state`, `verdict`
+- `list_findings` takes `merged` (dedup multi-dataset results by finding type,
+  matching the TUI), `limit`, and `offset` for paging. Its rows carry neither
+  `dataset_name` nor `has_workflow` — `query_findings` adds both.
+- **Every findings list is ordered worst-severity-first** — `list_findings`,
+  `search_findings`, `query_findings` and `list_workflow_gaps` alike — so a
+  page cut short by `limit` keeps the highest severities, and the same scope
+  asked through any two of them pages identically. Ordering by finding type id
+  instead would sort by source prefix (`agent` < `burp` < `nessus` < `nuclei` <
+  `operator`), which is severity-blind.
+- `query_findings` AND-combines optional predicates: `dataset_ids` (omit for all
+  datasets), `severity_int`/`severity_min`, `review_state`, `verdict`
   (`confirmed`/`false_positive`/`unable`/`none`), `cve` (exact id), `port`,
-  `service`, `host`, `plugin_name`, `source` (`nessus`/`nuclei`),
+  `service`, `host`, `finding_type_name`, `source`
+  (`nessus`/`nuclei`/`burp`/`operator`/`agent`),
   `has_metasploit`, `has_workflow`, plus `merged`/`limit`/`offset`.
-  `plan_batch`/`execute_batch` take the same predicates.
-- `list_workflow_gaps(scan_ids, severity_min)` lists findings with **no** mapped
-  workflow, worst first (the complement of `query_findings(has_workflow=True)`).
-- `import_nuclei(nuclei_path, scan_name=None, min_severity=None)` ingests a nuclei
+  `plan_batch`/`execute_batch` take the same predicates. `merged` dedups by
+  finding type across every dataset in scope, the all-datasets default
+  included.
+- `list_workflow_gaps(dataset_ids, severity_min)` lists findings with **no** mapped
+  workflow, worst first, one row per unmapped finding type — so it is the
+  complement of `query_findings(has_workflow=True, merged=True)`, not of the
+  unmerged form.
+- `import_nuclei(nuclei_path, dataset_name=None, min_severity=None)` ingests a nuclei
   results file. Either shape works — a JSON array (`-je`) or newline-delimited
   records (`-jle`/`-jsonl`) — detected from the contents, not the extension.
-  `scan_name` defaults to the file stem, since nuclei output carries no scan name,
+  `dataset_name` defaults to the file stem, since nuclei output carries no dataset name,
   and `min_severity` omitted falls back to the `nuclei_min_severity` config key
   (default `0` = keep all).
   One finding is created per template; a template that matched the same host:port
-  several times keeps every match's evidence in that host's plugin output.
+  several times keeps every match's evidence on that host's row.
+- `import_burp(burp_path, dataset_name=None, min_severity=None)` ingests a Burp Suite
+  "Report issues" XML export. `dataset_name` defaults to the file stem, since a Burp
+  report carries no dataset name, and `min_severity` omitted falls back to the
+  `burp_min_severity` config key (default `0` = keep all). Burp's scale tops out
+  at High (3), so a floor of 4 drops everything, and issues the tester marked as
+  false positives in Burp are skipped regardless.
+  One finding is created per *issue type*, identified by the 8-digit hex type
+  index PortSwigger publishes (`burp:00200300`); every instance on one host:port
+  is merged into that host's evidence, request and response included and
+  truncated. A file whose root element is not `<issues>` is reported as not being
+  a Burp report rather than importing nothing silently.
+- `create_finding(title, severity_int, targets=None, description="", cves=None, reference_url=None)`
+  records something the scanners did not: a misconfiguration you spotted, a
+  chained issue, a manual exploitation result. `severity_int` is 0-4 and
+  `targets` are `"host"` or `"host:port"` strings, which may be omitted
+  entirely for an engagement-level observation.
+
+  **The finding is attributed to the agent.** It gets an `agent:` id in a
+  shared `Agent` scan, created on first use, kept apart from the `operator:`
+  findings the tester enters by hand in the TUI — so a claim an agent made
+  stays distinguishable from one a tester verified. It is otherwise reviewable,
+  verdictable and workflow-matchable like any other finding. The id is
+  sequential per source (`agent:1`), not derived from the title, so renaming
+  never moves it, and the two sources number independently: `agent:1` and
+  `operator:1` are different findings.
+- `update_finding(finding_id, ...)` edits one in place; only the arguments
+  given change. Pass `reference_url=""` to remove a reference (omitting it
+  keeps the stored one). **Both** hand-authored namespaces are editable, so a
+  correction the operator asks for can be applied directly — but the id never
+  moves, so an edit does not reattribute a finding: an edited `agent:` finding
+  stays `agent:`. A finding from a scanner is **refused** — it records what the
+  scanner reported; use `set_finding_verdict` on one instead. There is no
+  delete tool for the same reason a wrong hand-authored finding is corrected
+  rather than erased.
   `get_workflow` takes the finding id as a **string**, because every id is
-  source-namespaced (`"nessus:57608"`, `"nuclei:apache-detect"`). A bare number
-  matches nothing.
-- `compare_scans` refuses two scans from different sources: their finding ids share
+  source-namespaced (`"nessus:57608"`, `"nuclei:apache-detect"`,
+  `"burp:00200300"`, `"operator:3"`, `"agent:7"`). A bare number matches nothing.
+- `compare_datasets` refuses two datasets from different sources: their finding ids share
   no namespace, so every finding would be reported as both new and resolved.
 - `generate_nmap_cmd` takes `nse_option` as NSE script names or categories,
   comma-separated (e.g. `smb-security-mode,smb2-security-mode` or `vuln`); a
@@ -138,8 +193,8 @@ Notes:
 - `prepare_workflow(finding_id)` fills the finding's mapped workflow
   (`<TARGET>`/`<PORT>`/`<USERNAME>`/`<PASSWORD>`/`<INTERFACE>`/`<DOMAIN>`) and marks
   each command executable or manual (with a reason).
-- `search_findings` searches **all** scans at once (no `scan_ids`); each result
-  carries its `scan_name`.
+- `search_findings` searches **all** datasets at once (no `dataset_ids`); each result
+  carries its `dataset_name`.
 - `get_finding_detail` caps per-host output at `max_hosts` (default 100) and
   reports `affected_total` / `affected_truncated`.
 - `get_capabilities` reports which gated capabilities are live (execution,
@@ -165,6 +220,7 @@ default:
 | `custom_workflows_path` | Merged over the bundled workflows (custom wins on conflict) for `get_workflow`, `prepare_workflow`, `list_workflow_gaps`, `query_findings(has_workflow=…)`, `plan_batch`/`execute_batch`, the `cerno://finding/{id}/workflow` resource, and the finding prompts |
 | `custom_workflows_exclusive` | `true` loads **only** `custom_workflows_path`, skipping the bundled set, for every tool in the row above. Set without a path it warns and falls back to bundled |
 | `nuclei_min_severity` | Default `min_severity` for `import_nuclei` when the argument is omitted |
+| `burp_min_severity` | Default `min_severity` for `import_burp` when the argument is omitted |
 | `default_netexec_protocol` | Protocol for `generate_netexec_cmd` when `protocol` is omitted (else `smb`), and for the bare `"netexec"` batch strategy |
 | `nmap_default_profile` | NSE scripts for `generate_nmap_cmd` when `nse_option` is omitted (`nse_option=""` = no scripts); a UDP profile (SNMP/IPMI) also turns on `-sU` unless `udp` is given |
 | `default_page_size` | Default `limit` for `list_findings`, `query_findings`, `search_findings` (minimum 8; else 500). Page past it with `offset` |
@@ -172,7 +228,7 @@ default:
 | `custom_workflows_path` (contributions) | Also decides "new" vs "enhanced" vs nothing-to-contribute for `get_workflow_candidate` and the `workflow_candidate` verdict hint |
 | `contribution_export_dir` | Where `export_workflow_contribution` writes files (default `<results_root>/contributions`) |
 | `mcp_batch_concurrency` / `mcp_batch_timeout` | Defaults for `execute_batch`'s `concurrency` (default 3, clamped to [1, 8]) and `per_command_timeout` (default 300s, clamped to [1, 3600]) |
-| `mcp_enforce_scope` / `mcp_scope_extra` | When `mcp_enforce_scope` is on (default), `execute_command`/`start_execution`/`execute_batch` refuse IP/CIDR targets outside the scan hosts plus `mcp_scope_extra` ranges; unresolved hostnames are allowed and returned in `scope_warnings` |
+| `mcp_enforce_scope` / `mcp_scope_extra` | When `mcp_enforce_scope` is on (default), `execute_command`/`start_execution`/`execute_batch` refuse IP/CIDR targets outside the dataset hosts plus `mcp_scope_extra` ranges; unresolved hostnames are allowed and returned in `scope_warnings` |
 | `nxc_workspace_path` / `nxc_enrichment_enabled` | NetExec workspace for `get_host_nxc`, `list_nxc_credentials`, credential refs, `@cred:` injection, `reveal_credential` and nxc ingest. With enrichment off, all of these report NetExec as unavailable |
 | `log_path` / `debug_logging` | Where (and how verbosely) the server logs; stdout is reserved for JSON-RPC |
 | `proxychains_enabled` / `proxychains_host` / `proxychains_port` | `execute_command(use_proxy=true)` wraps the run in `proxychains4 -q -f ~/.cerno/proxychains4.conf` (SOCKS5 host:port) when `proxychains_enabled` is on; otherwise `use_proxy` is ignored. `check_tools` reports the installed proxychains-ng version |
@@ -191,10 +247,10 @@ the custom workflow YAML file itself are picked up on the next call.
 Operator-pinnable context (read-only), attachable in clients that render MCP
 resources:
 
-- `cerno://scans` — scan index (JSON)
-- `cerno://scan/{id}/hosts` — discovered `host:port` lines
-- `cerno://scan/{id}/cves` — unique CVEs mapped to plugins (JSON)
-- `cerno://finding/{id}/output` — raw per-host plugin output
+- `cerno://datasets` — dataset index (JSON)
+- `cerno://dataset/{id}/hosts` — discovered `host:port` lines
+- `cerno://dataset/{id}/cves` — unique CVEs mapped to finding_types (JSON)
+- `cerno://finding/{id}/output` — raw per-host evidence
 - `cerno://finding/{id}/workflow` — verification workflow for the finding
 - `cerno://finding/{id}/verdict` — current verification verdict, history and evidence (JSON)
 - `cerno://finding/{id}/results` — evidence ingested from runs attributed to this finding: live-verified open ports, NSE verdicts and nuclei template matches (JSON)
@@ -210,8 +266,8 @@ One-click templates in clients that render MCP prompts:
 - `verify_finding` — step-by-step verification loop for one finding (check the
   mapped workflow, run attributed commands, ingest, record a verdict, move the
   review state, offer a workflow contribution)
-- `triage_scope` — report brief across one or more scans (comma-separated
-  `scan_ids`, e.g. `1,3`; merged and deduplicated by finding), optionally one severity
+- `triage_scope` — report brief across one or more datasets (comma-separated
+  `dataset_ids`, e.g. `1,3`; merged and deduplicated by finding type), optionally one severity
 
 Both finding prompts tell the client to pass `finding_id` on every execution and
 to offer `get_workflow_candidate` when a verdict reports a candidate.
@@ -225,7 +281,7 @@ box. Enable only the capabilities you want:
 
 ```bash
 cerno config set mcp_allow_execution true        # execute_command + background jobs
-cerno config set mcp_allow_mutations true        # set_review_state, add_note, set_finding_verdict, ingest_results, import_nessus, import_nuclei
+cerno config set mcp_allow_mutations true        # set_review_state, add_note, set_finding_verdict, ingest_results, import_nessus, import_nuclei, import_burp, create_finding, update_finding
 cerno config set mcp_allow_batch true            # execute_batch (also needs mcp_allow_execution)
 cerno config set mcp_allow_cred_injection true   # resolve @cred:<ref>@ placeholders at run time
 cerno config set mcp_allow_cred_reveal true      # reveal_credential (returns cleartext)
@@ -236,7 +292,7 @@ cerno config set mcp_exec_denylist "rm,dd,sh"    # binaries execute_command may 
 | Flag | Unlocks |
 | --- | --- |
 | `mcp_allow_execution` | `execute_command`, `start_execution`, `get_execution_status`, `cancel_execution`, `list_jobs` |
-| `mcp_allow_mutations` | `set_review_state`, `add_note`, `set_finding_verdict`, `ingest_results`, `import_nessus`, `import_nuclei` (importing writes scans/findings, so it counts as a mutation). With execution also on, runs are auto-ingested best-effort |
+| `mcp_allow_mutations` | `set_review_state`, `add_note`, `set_finding_verdict`, `ingest_results`, `import_nessus`, `import_nuclei`, `import_burp`, `create_finding`, `update_finding` (importing and authoring both write datasets/findings, so they count as mutations). With execution also on, runs are auto-ingested best-effort |
 | `mcp_allow_batch` | `execute_batch`, only when `mcp_allow_execution` is also on. It authorizes the fan-out across a query; every command still passes the exec policy, the credential gate and the per-command timeout |
 | `mcp_allow_cred_injection` | `execute_command`/`start_execution`/`execute_batch` may resolve `@cred:<ref>@` placeholders to real secrets server-side. Independent of execution |
 | `mcp_allow_cred_reveal` | `reveal_credential`. Strictly more sensitive than injection, and gated separately: injection being on does **not** enable reveal |
@@ -296,15 +352,15 @@ When `mcp_enforce_scope` is on (the default), every `execute_command`,
 before it launches — including batch and finding-attributed runs, on a single code
 path.
 
-- **In scope** = every host from your imported scans (`ip_address`, `scan_target`,
+- **In scope** = every host from your imported datasets (`ip_address`, `scan_target`,
   `fqdn`, `netbios_name`) plus any CIDR / IP / hostname in `mcp_scope_extra`.
 - **Targets** are read from the command after unwrapping `sudo`/`proxychains4`/…:
   positional IPv4/IPv6/CIDR arguments, URL hosts, and `-iL <file>` entries. The
   values of credential flags (`-u`, `-p`, `-d`, `-H`, `--username`, …) are skipped.
 - An **IP or CIDR** target not covered by the scope **refuses** the run, listing the
   offending targets. A CIDR is in scope only if fully contained in an
-  `mcp_scope_extra` range (a single scan host does not put its whole `/24` in scope).
-- A **bare hostname** that is neither a known scan host nor an IP is **allowed with a
+  `mcp_scope_extra` range (a single dataset host does not put its whole `/24` in scope).
+- A **bare hostname** that is neither a known dataset host nor an IP is **allowed with a
   warning** (returned in the response's `scope_warnings`): it cannot be resolved to
   scope without DNS.
 
@@ -435,7 +491,7 @@ you can contribute upstream.
    `start_execution`. TUI tool runs are attributed automatically.
 2. **Record a verdict.** `set_finding_verdict` and `get_finding_verdict` return
    `workflow_candidate: {available, reason}`. It is available only when the
-   verdict is `confirmed` or `false_positive` and either the plugin has no
+   verdict is `confirmed` or `false_positive` and either the finding type has no
    workflow (`reason: "new"`) or you ran a command the mapped workflow lacks
    (`reason: "enhanced"`). Cerno's own baseline commands (nmap without NSE
    scripts, bare nxc with auth/`--shares`) never count as divergence, and running
@@ -475,7 +531,7 @@ near-duplicate entry.
 
 The finding's own id always stays, and stays first, so this cannot retarget a
 contribution at an unrelated finding. Every id needs its source prefix
-(`parsing.plugin_source_id` rejects a bare `84502`), ids are de-duplicated, and
+(`parsing.finding_type_source_id` rejects a bare `84502`), ids are de-duplicated, and
 an id another entry already claims is accepted but flagged in `review_hints` —
 the mapper resolves ids through a dict, so two entries claiming one id would
 silently shadow one of them. A co-mapping also adds a hint to state in the PR
@@ -487,12 +543,12 @@ review, not asserted by tooling.
 checked for:
 
 - IPv4/IPv6 literals;
-- every host name/IP in the finding's scan(s), scan names and NetExec domains;
+- every host name/IP in the finding's dataset(s), dataset names and NetExec domains;
 - NetExec credential secret values and NT/`LM:NT` hash literals;
 - local paths (`~`, `/home/`, `/tmp/`, `.cerno`, `C:\` …).
 
 NetExec usernames are flagged in commands, step titles, notes and references, but
-not in `workflow_name`/`description`. Those come from plugin metadata, and a plugin
+not in `workflow_name`/`description`. Those come from finding-type metadata, and a finding type
 like "FTP Anonymous Login" shouldn't collide with an `anonymous` credential.
 Dictionary usernames (`anonymous`, `root`, `admin`, `guest` …) never count as
 engagement data. Contributed commands also get a strict check for any absolute

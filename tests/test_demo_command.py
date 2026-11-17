@@ -11,6 +11,7 @@ DEMO_ASSETS = (
     "cerno-demo-expanded.nessus",
     "cerno-demo-nuclei-initial.json",
     "cerno-demo-nuclei-expanded.json",
+    "cerno-demo-burp-scan.xml",
 )
 
 

@@ -41,7 +41,7 @@ settings exist. Defaults shown are the values you get on a fresh install.
 | `top_ports_count` | `5` | Top ports to show |
 | `no_color` | `False` | Disable ANSI colors |
 | `show_banner` | `True` | Show the startup banner |
-| `scan_list_wide` | `False` | `scan list` shows every severity column |
+| `dataset_list_wide` | `False` | `dataset list` shows every severity column |
 | `color_scheme` | `light` | Terminal background: light or dark |
 | `term_override` | `(not set)` | Force terminal type |
 | **Tools & Workflows** | | |
@@ -56,6 +56,7 @@ settings exist. Defaults shown are the values you get on a fresh install.
 | `nuclei_user_agent` | `Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0` | User-Agent nuclei sends (-H) |
 | `nuclei_concurrency` | `10` | nuclei template concurrency (-c) |
 | `nuclei_min_severity` | `0` | Drop nuclei findings below this severity (0-4) |
+| `burp_min_severity` | `0` | Drop Burp findings below this severity (0-3) |
 | **Logging** | | |
 | `debug_logging` | `False` | Enable DEBUG logs |
 | **NetExec Integration** | | |
@@ -74,7 +75,7 @@ settings exist. Defaults shown are the values you get on a fresh install.
 | `mcp_batch_concurrency` | `3` | Max commands execute_batch runs at once |
 | `mcp_batch_timeout` | `300` | Per-command timeout (s) for execute_batch |
 | `contribution_export_dir` | `<results_root>/contributions` | Directory for exported workflow contributions |
-| `mcp_enforce_scope` | `True` | Refuse execute_command targets outside the scan hosts / scope |
+| `mcp_enforce_scope` | `True` | Refuse execute_command targets outside the dataset hosts / scope |
 | `mcp_scope_extra` | `(none)` | Extra in-scope CIDRs / IPs / hostnames for execute_command |
 | **Proxychains4** | | |
 | `proxychains_enabled` | `False` | Route tools through proxychains4 (SOCKS5) |
@@ -181,7 +182,7 @@ Config file: ~/.cerno/config.yaml
 │   │ top_ports_count            │ 5                                   │ Top ports to show                   │ default │
 │   │ no_color                   │ False                               │ Disable ANSI colors                 │ default │
 │   │ show_banner                │ True                                │ Show the startup banner             │ default │
-│   │ scan_list_wide             │ False                               │ `scan list` shows every severity    │ default │
+│   │ dataset_list_wide          │ False                               │ `dataset list` shows every severity │ default │
 │   │                            │                                     │ column                              │         │
 │   │ color_scheme               │ light                               │ Terminal background: light or dark  │ default │
 │   │ term_override              │ (not set)                           │ Force terminal type                 │ default │
@@ -204,6 +205,8 @@ Config file: ~/.cerno/config.yaml
 │   │ nuclei_concurrency         │ 10                                  │ nuclei template concurrency (-c)    │ default │
 │   │ nuclei_min_severity        │ 0                                   │ Drop nuclei findings below this     │ default │
 │   │                            │                                     │ severity (0-4)                      │         │
+│   │ burp_min_severity          │ 0                                   │ Drop Burp findings below this       │ default │
+│   │                            │                                     │ severity (0-3)                      │         │
 ├───┼────────────────────────────┼─────────────────────────────────────┼─────────────────────────────────────┼─────────┤
 │   │ Logging                    │                                     │                                     │         │
 │   │ debug_logging              │ False                               │ Enable DEBUG logs                   │ default │
@@ -243,7 +246,7 @@ Config file: ~/.cerno/config.yaml
 │   │ contribution_export_dir    │ <results_root>/contributions        │ Directory for exported workflow     │ default │
 │   │                            │                                     │ contributions                       │         │
 │   │ mcp_enforce_scope          │ True                                │ Refuse execute_command targets      │ default │
-│   │                            │                                     │ outside the scan hosts / scope      │         │
+│   │                            │                                     │ outside the dataset hosts / scope   │         │
 │   │ mcp_scope_extra            │ (none)                              │ Extra in-scope CIDRs / IPs /        │ default │
 │   │                            │                                     │ hostnames for execute_command       │         │
 ├───┼────────────────────────────┼─────────────────────────────────────┼─────────────────────────────────────┼─────────┤

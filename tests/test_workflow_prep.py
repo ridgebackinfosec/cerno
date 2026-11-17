@@ -9,7 +9,7 @@ beyond binaries that reliably exist on Linux (``sh``).
 
 import pytest
 
-from cerno_pkg.models import Finding, Host, Plugin, Port, Scan
+from cerno_pkg.models import Finding, Host, FindingType, Port, Dataset
 from cerno_pkg.workflow_mapper import WorkflowMapper
 from cerno_pkg.workflow_prep import prepare_workflow
 
@@ -26,15 +26,17 @@ def _mapper_with(tmp_path, workflows):
 @pytest.fixture
 def finding(temp_db):
     c = temp_db
-    scan = Scan(scan_name="engagement", export_root="/tmp").save(c)
-    Plugin(
-        plugin_id="nessus:57608", plugin_name="SMB Signing Not Required", severity_int=3
+    dataset = Dataset(dataset_name="engagement", export_root="/tmp").save(c)
+    FindingType(
+        finding_type_id="nessus:57608",
+        finding_type_name="SMB Signing Not Required",
+        severity_int=3,
     ).save(c)
-    fid = Finding(scan_id=scan, plugin_id="nessus:57608").save(c)
+    fid = Finding(dataset_id=dataset, finding_type_id="nessus:57608").save(c)
     h = Host.get_or_create("10.0.0.1", "10.0.0.1", "ipv4", conn=c)
     Port.get_or_create(445, conn=c)
     c.execute(
-        "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, plugin_output) "
+        "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, evidence) "
         "VALUES (?, ?, 445, 'x')",
         (fid, h),
     )
@@ -46,18 +48,18 @@ def finding(temp_db):
 def finding_multi(temp_db):
     """A finding affecting two hosts on port 23 (for <TARGET> expansion tests)."""
     c = temp_db
-    scan = Scan(scan_name="engagement", export_root="/tmp").save(c)
-    Plugin(
-        plugin_id="nessus:42263",
-        plugin_name="Unencrypted Telnet Server",
+    dataset = Dataset(dataset_name="engagement", export_root="/tmp").save(c)
+    FindingType(
+        finding_type_id="nessus:42263",
+        finding_type_name="Unencrypted Telnet Server",
         severity_int=2,
     ).save(c)
-    fid = Finding(scan_id=scan, plugin_id="nessus:42263").save(c)
+    fid = Finding(dataset_id=dataset, finding_type_id="nessus:42263").save(c)
     Port.get_or_create(23, conn=c)
     for ip in ("10.0.0.1", "10.0.0.2"):
         h = Host.get_or_create(ip, ip, "ipv4", conn=c)
         c.execute(
-            "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, plugin_output) "
+            "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, evidence) "
             "VALUES (?, ?, 23, 'x')",
             (fid, h),
         )
@@ -85,7 +87,7 @@ def test_multi_host_joins_multi_target_and_expands_single_target(
         tmp_path,
         [
             {
-                "finding_id": "nessus:42263",
+                "finding_type_id": "nessus:42263",
                 "workflow_name": "Telnet",
                 "description": "d",
                 "steps": _MIXED_STEPS,
@@ -136,7 +138,7 @@ def _prep(finding, tmp_path, **kwargs):
         tmp_path,
         [
             {
-                "finding_id": "nessus:57608",
+                "finding_type_id": "nessus:57608",
                 "workflow_name": "SMB",
                 "description": "d",
                 "steps": _STEPS,
@@ -158,7 +160,7 @@ def _cmds(prepared):
 
 
 def test_returns_none_when_no_workflow_mapped(finding, tmp_path):
-    mapper = _mapper_with(tmp_path, [])  # no workflow for plugin 57608
+    mapper = _mapper_with(tmp_path, [])  # no workflow for finding_type 57608
     assert (
         prepare_workflow(
             finding["finding_id"], workflow_mapper=mapper, conn=finding["conn"]
@@ -224,12 +226,12 @@ def test_credential_placeholder_unresolved_without_credential(finding, tmp_path)
     assert "<USERNAME>" in cmd.filled or "<PASSWORD>" in cmd.filled
 
 
-def test_grouped_plugin_key_resolves(finding, tmp_path):
+def test_grouped_finding_type_key_resolves(finding, tmp_path):
     mapper = _mapper_with(
         tmp_path,
         [
             {
-                "finding_id": "nessus:90317,nessus:57608,nessus:70658",
+                "finding_type_id": "nessus:90317,nessus:57608,nessus:70658",
                 "workflow_name": "G",
                 "description": "d",
                 "steps": _STEPS,

@@ -21,24 +21,25 @@ from .constants import (
     REVIEW_STATE_DONE,
     REVIEW_STATE_IN_PROGRESS,
     REVIEW_TRANSITIONS,
+    SOURCE_OPERATOR,
     VERDICT_LABELS,
     get_results_root,
 )
 
 if TYPE_CHECKING:
-    from .models import Finding, Plugin
+    from .models import Finding, FindingType
     from .workflow_mapper import WorkflowMapper, Workflow
 
 
 _console_global = get_console()
 
 
-def finding_label(finding, plugin=None) -> str:
+def finding_label(finding, finding_type=None) -> str:
     """Return a ``Finding <id>: <name>`` label for a finding.
 
     **This is a contract, not just a label.** `[H]` Compare and `[O]`
     Overlapping return *lists of these strings* as their groups, and
-    ``tui.filter_finding_candidates`` re-derives the label from the ``Plugin``
+    ``tui.filter_finding_candidates`` re-derives the label from the ``FindingType``
     row and tests set membership against them. Two independent producers of the
     same literal format therefore have to agree exactly: change one and the
     group filter silently matches zero findings, with the
@@ -47,18 +48,20 @@ def finding_label(finding, plugin=None) -> str:
     Every one of those sites calls this function, so the format is defined
     once. Do not inline it again.
 
-    Note the no-plugin fallback omits the name, which the membership test can
+    Note the no-finding_type fallback omits the name, which the membership test can
     never produce -- unreachable in practice, since the callers always pass
     both halves.
     """
-    if plugin:
-        return f"Finding {plugin.plugin_id}: {plugin.plugin_name}"
-    return f"Finding {finding.plugin_id}"
+    if finding_type:
+        return (
+            f"Finding {finding_type.finding_type_id}: {finding_type.finding_type_name}"
+        )
+    return f"Finding {finding.finding_type_id}"
 
 
 def move_review_state(
     finding: "Finding",
-    plugin: Optional["Plugin"] = None,
+    finding_type: Optional["FindingType"] = None,
     *,
     target: Optional[str] = None,
     quiet: bool = False,
@@ -70,7 +73,7 @@ def move_review_state(
 
     Args:
         finding: Finding object to move
-        plugin: Optional Plugin object for display name
+        finding_type: Optional FindingType object for display name
         target: Status to move to; defaults to the next status in the cycle
         quiet: Suppress the per-finding success message (bulk operations)
 
@@ -85,7 +88,8 @@ def move_review_state(
         from .database import db_transaction
 
         with db_transaction() as conn:
-            finding.transition_review_state(target, conn=conn)
+            # The TUI is the operator channel; attribution is never defaulted.
+            finding.transition_review_state(target, SOURCE_OPERATOR, conn=conn)
     except Exception as e:
         from .logging_setup import log_error
 
@@ -94,7 +98,7 @@ def move_review_state(
         return None
 
     if not quiet:
-        ok(f"{moved}: {finding_label(finding, plugin)}")
+        ok(f"{moved}: {finding_label(finding, finding_type)}")
     return target
 
 
@@ -105,7 +109,56 @@ _VERDICT_CHOICES: dict[str, str] = {
 }
 
 
-def record_verdict(finding: "Finding", plugin: Optional["Plugin"] = None) -> bool:
+def update_authored_finding_interactive(finding: "Finding") -> bool:
+    """Prompt the operator to edit a hand-authored finding, and write it.
+
+    The counterpart to :func:`record_verdict`: prompt, write, report. Only
+    findings from :data:`~cerno_pkg.constants.AUTHORED_SOURCES` reach here --
+    the ``[U]`` action is hidden otherwise and :func:`handle_finding_view`
+    refuses an explicit ``u`` on anything else, because a scanner finding is a
+    record of what the scanner reported.
+
+    An ``agent:`` finding is editable here just like an ``operator:`` one: the
+    operator owns the engagement and must be able to correct what an agent
+    asserted. The finding keeps its original namespace, so the edit does not
+    reattribute it.
+
+    Returns:
+        True if the finding was changed (so the caller can refresh its view).
+    """
+    from .authored_findings import AuthoredFindingError, update_authored_finding
+    from .tui import prompt_edit_finding
+
+    fid = getattr(finding, "finding_id", None)
+    if not isinstance(fid, int):
+        warn("This finding has no database id - cannot edit it")
+        return False
+
+    edited = prompt_edit_finding(fid)
+    if edited is None:
+        return False
+
+    try:
+        finding_type_id = update_authored_finding(
+            fid,
+            title=edited.title,
+            severity_int=edited.severity_int,
+            targets=edited.targets,
+            description=edited.description,
+            cves=edited.cves,
+            reference_url=edited.reference_url,
+        )
+    except AuthoredFindingError as exc:
+        err(f"Could not update the finding: {exc}")
+        return False
+
+    ok(f"Updated {finding_type_id}.")
+    return True
+
+
+def record_verdict(
+    finding: "Finding", finding_type: Optional["FindingType"] = None
+) -> bool:
     """Prompt the operator to record a verification verdict for a finding.
 
     Writes an append-only verdict (truth value, distinct from review status) via
@@ -145,7 +198,8 @@ def record_verdict(finding: "Finding", plugin: Optional["Plugin"] = None) -> boo
     note = Prompt.ask("Note (optional)", default="").strip() or None
     try:
         with db_transaction() as conn:
-            FindingVerdict.set(fid, label, note=note, conn=conn)
+            # The TUI is the operator channel.
+            FindingVerdict.set(fid, label, SOURCE_OPERATOR, note=note, conn=conn)
     except Exception as e:
         from .logging_setup import log_error
 
@@ -165,7 +219,7 @@ def record_verdict(finding: "Finding", plugin: Optional["Plugin"] = None) -> boo
             while finding.review_state != REVIEW_STATE_DONE:
                 nxt = REVIEW_TRANSITIONS[finding.review_state][0]
                 move_review_state(
-                    finding, plugin, target=nxt, quiet=(nxt != REVIEW_STATE_DONE)
+                    finding, finding_type, target=nxt, quiet=(nxt != REVIEW_STATE_DONE)
                 )
                 if finding.review_state != nxt:
                     break  # a transition failed; stop advancing
@@ -174,25 +228,25 @@ def record_verdict(finding: "Finding", plugin: Optional["Plugin"] = None) -> boo
 
 
 def build_results_paths(
-    scan_dir: Path, sev_dir: Path, plugin_filename: str
+    dataset_dir: Path, sev_dir: Path, finding_type_filename: str
 ) -> tuple[Path, Path]:
     """Build output directory and base path for scan results.
 
-    Creates a structured output directory based on scan name, severity level,
-    and plugin name with a timestamped run identifier.
+    Creates a structured output directory based on dataset name, severity level,
+    and finding_type name with a timestamped run identifier.
 
     Args:
-        scan_dir: Directory containing the scan
+        dataset_dir: Directory containing the dataset
         sev_dir: Directory for the severity level
-        plugin_filename: Name of the plugin file
+        finding_type_filename: Name of the finding_type file
 
     Returns:
         Tuple of (output_directory, output_base_path) where output_base_path
         includes a timestamp prefix for unique run identification
     """
-    stem = Path(plugin_filename).stem
+    stem = Path(finding_type_filename).stem
     severity_label = pretty_severity_label(sev_dir.name)
-    output_dir = get_results_root() / scan_dir.name / severity_label / stem
+    output_dir = get_results_root() / dataset_dir.name / severity_label / stem
     output_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     output_base = output_dir / f"run-{timestamp}"
@@ -310,7 +364,7 @@ def display_workflow(workflow: "Workflow") -> None:
 
     # Header
     header(f"Verification Workflow: {workflow.workflow_name}")
-    info(f"Finding ID(s): {workflow.finding_id}")
+    info(f"Finding ID(s): {workflow.finding_type_id}")
     info(f"Description: {workflow.description}")
     _console_global.print()
 
@@ -360,10 +414,10 @@ def display_workflow(workflow: "Workflow") -> None:
 def handle_finding_view(
     chosen: Path,
     finding: Optional["Finding"] = None,
-    plugin: Optional["Plugin"] = None,
-    plugin_url: Optional[str] = None,
+    finding_type: Optional["FindingType"] = None,
+    details_url: Optional[str] = None,
     workflow_mapper: Optional["WorkflowMapper"] = None,
-    scan_dir: Optional[Path] = None,
+    dataset_dir: Optional[Path] = None,
     sev_dir: Optional[Path] = None,
     hosts: Optional[List[str]] = None,
     ports_str: Optional[str] = None,
@@ -375,16 +429,16 @@ def handle_finding_view(
     Workflow [W], NetExec data [N], Run tool [T], Ask Claude [A], Record verdict [R],
     Move status [M].
 
-    NOTE: This function uses Plugin and Finding database objects directly for all operations.
-    No filename parsing is performed - plugin_id comes from Plugin.plugin_id field.
+    NOTE: This function uses FindingType and Finding database objects directly for all operations.
+    No filename parsing is performed - finding_type_id comes from FindingType.finding_type_id field.
 
     Args:
-        chosen: Synthetic plugin file path (used only for display, not parsing)
+        chosen: Synthetic finding_type file path (used only for display, not parsing)
         finding: Finding database object (None if database not available)
-        plugin: Plugin metadata object (None if database not available) - used for CVE lookup, workflow check
-        plugin_url: Unused (kept for call compatibility); CVEs come from plugin.cves
-        workflow_mapper: Optional workflow mapper for plugin workflows
-        scan_dir: Scan directory for tool workflow
+        finding_type: FindingType metadata object (None if database not available) - used for CVE lookup, workflow check
+        details_url: Unused (kept for call compatibility); CVEs come from finding_type.cves
+        workflow_mapper: Optional workflow mapper for finding_type workflows
+        dataset_dir: Dataset directory for tool workflow
         sev_dir: Severity directory for tool workflow
         hosts: List of target hosts for tool workflow
         ports_str: Comma-separated ports for tool workflow
@@ -404,7 +458,7 @@ def handle_finding_view(
         grouped_payload_text,
         hosts_only_paged_text,
         hosts_only_payload_text,
-        build_plugin_output_details,
+        build_evidence_details,
         display_finding_preview,
         print_action_menu,
         menu_pager,
@@ -419,8 +473,17 @@ def handle_finding_view(
 
     # Check if workflow is available
     has_workflow = False
-    if workflow_mapper and plugin:
-        has_workflow = workflow_mapper.has_workflow(str(plugin.plugin_id))
+    if workflow_mapper and finding_type:
+        has_workflow = workflow_mapper.has_workflow(str(finding_type.finding_type_id))
+
+    # Only a hand-authored finding is editable; see the [U] branch below.
+    # Membership, not equality: `operator:` and `agent:` are both authored, and
+    # testing one of them would leave the other's findings uneditable.
+    from .constants import AUTHORED_SOURCES
+
+    is_authored_finding = (
+        finding_type is not None and finding_type.source in AUTHORED_SOURCES
+    )
 
     # Check Claude Assistant availability (cheap: shutil.which + config load)
     from .claude_assistant import check_claude_available
@@ -449,6 +512,7 @@ def handle_finding_view(
             claude_installed=claude_installed,
             use_proxy=use_proxy,
             no_tools=not _cfg.tools_enabled,
+            is_authored_finding=is_authored_finding,
         )
         try:
             action_choice = Prompt.ask("Choose action").strip().lower()
@@ -465,7 +529,7 @@ def handle_finding_view(
             if finding is None:
                 warn("Database not available - cannot change review state")
                 continue
-            if move_review_state(finding, plugin) == REVIEW_STATE_DONE:
+            if move_review_state(finding, finding_type) == REVIEW_STATE_DONE:
                 return "mark_complete"
             # Now In Progress (stay in view), or move_review_state() reported why not
             continue
@@ -475,8 +539,37 @@ def handle_finding_view(
             if finding is None:
                 warn("Database not available - cannot record a verdict")
                 continue
-            if record_verdict(finding, plugin):
+            if record_verdict(finding, finding_type):
                 return "mark_complete"
+            continue
+
+        # Handle Update finding action (hand-authored findings only)
+        if action_choice in ("u", "update"):
+            if finding is None:
+                warn("Database not available - cannot edit this finding")
+                continue
+            if not is_authored_finding:
+                warn(
+                    "Only hand-authored findings can be edited; this one came "
+                    "from a scanner."
+                )
+                info("Record a verdict with [R] instead.")
+                continue
+            if update_authored_finding_interactive(finding):
+                # Everything on screen is now stale: the finding_type row carries the
+                # new title and severity, and the targets may have changed
+                # under the tool workflow's feet. Re-read both and redraw the
+                # panel rather than leaving the operator looking at the old one.
+                from .models import FindingType as _Plugin
+
+                refreshed = _Plugin.get_by_id(str(finding.finding_type_id))
+                if refreshed is not None:
+                    finding_type = refreshed
+                hosts, ports_str = finding.get_hosts_and_ports()
+                if finding_type is not None:
+                    display_finding_preview(
+                        finding_type, finding, sev_dir, chosen, workflow_mapper
+                    )
             continue
 
         # Handle Run tool action
@@ -489,10 +582,10 @@ def handle_finding_view(
                     "Re-enable with: cerno config set tools_enabled true"
                 )
                 continue
-            if scan_dir is None or sev_dir is None or hosts is None:
+            if dataset_dir is None or sev_dir is None or hosts is None:
                 warn("Tool execution not available in this context.")
                 continue
-            if not plugin or not finding:
+            if not finding_type or not finding:
                 warn("Finding information not available for tool execution.")
                 continue
 
@@ -501,9 +594,9 @@ def handle_finding_view(
             # problem never drops the operator out of the review session.
             try:
                 run_tool_workflow(
-                    plugin,
+                    finding_type,
                     finding,
-                    scan_dir,
+                    dataset_dir,
                     sev_dir,
                     hosts,
                     ports_str or "",
@@ -539,7 +632,7 @@ def handle_finding_view(
                 if not ensure_enabled(_cfg):
                     continue
                 has_claude = True
-            if finding is None or plugin is None:
+            if finding is None or finding_type is None:
                 warn("Finding information not available for Claude Assistant.")
                 continue
             # Deferred import to avoid circular dependency (cerno.py imports fs.py)
@@ -547,13 +640,13 @@ def handle_finding_view(
                 from cerno import browse_claude_chat
 
                 _workflow = (
-                    workflow_mapper.get_workflow(str(plugin.plugin_id))
-                    if workflow_mapper and plugin
+                    workflow_mapper.get_workflow(str(finding_type.finding_type_id))
+                    if workflow_mapper and finding_type
                     else None
                 )
                 browse_claude_chat(
                     finding=finding,
-                    plugin=plugin,
+                    finding_type=finding_type,
                     hosts=hosts or [],
                     workflow=_workflow,
                 )
@@ -567,31 +660,35 @@ def handle_finding_view(
 
         # Handle workflow option
         if action_choice in ("w", "workflow"):
-            if not plugin:
+            if not finding_type:
                 warn("Finding information not available.")
                 continue
             if not has_workflow or workflow_mapper is None:
                 warn("No workflow available for this finding.")
                 continue
 
-            plugin_id = str(plugin.plugin_id)
-            workflow = workflow_mapper.get_workflow(plugin_id)
+            finding_type_id = str(finding_type.finding_type_id)
+            workflow = workflow_mapper.get_workflow(finding_type_id)
             if workflow:
                 display_workflow(workflow)
             continue
 
         # Handle CVE info option (read-only from database)
         if action_choice in ("e", "cve"):
-            # Use Plugin object already available as parameter
+            # Use FindingType object already available as parameter
             try:
                 header("CVE Information")
 
-                if plugin and plugin.cves:
-                    info(f"Found {len(plugin.cves)} CVE(s) for {plugin.plugin_id}:")
-                    for cve in plugin.cves:
+                if finding_type and finding_type.cves:
+                    info(
+                        f"Found {len(finding_type.cves)} CVE(s) for {finding_type.finding_type_id}:"
+                    )
+                    for cve in finding_type.cves:
                         info(f"{cve}")
-                elif plugin:
-                    warn(f"No CVEs associated with this finding ({plugin.plugin_id}).")
+                elif finding_type:
+                    warn(
+                        f"No CVEs associated with this finding ({finding_type.finding_type_id})."
+                    )
                 else:
                     warn("Finding information not available.")
             except Exception as exc:
@@ -602,20 +699,22 @@ def handle_finding_view(
         # Handle Finding Info action
         if action_choice in ("i", "info"):
             # Redisplay the preview panel
-            if plugin is None or sev_dir is None or finding is None:
-                warn("Plugin metadata not available - cannot display finding info")
+            if finding_type is None or sev_dir is None or finding is None:
+                warn("FindingType metadata not available - cannot display finding info")
                 continue
-            display_finding_preview(plugin, finding, sev_dir, chosen, workflow_mapper)
+            display_finding_preview(
+                finding_type, finding, sev_dir, chosen, workflow_mapper
+            )
             continue
 
         # Handle Finding Details action
         if action_choice in ("d", "details"):
-            if finding is None or plugin is None:
+            if finding is None or finding_type is None:
                 warn("Database not available - cannot display finding details")
                 continue
 
-            # Generate and display plugin output details
-            details_text = build_plugin_output_details(finding, plugin)
+            # Generate and display finding_type output details
+            details_text = build_evidence_details(finding, finding_type)
 
             if details_text:
                 menu_pager(details_text)
@@ -629,13 +728,13 @@ def handle_finding_view(
             warn("Invalid action choice.")
             continue
 
-        # Check if finding/plugin is available (database mode)
-        if finding is None or plugin is None:
+        # Check if finding/finding_type is available (database mode)
+        if finding is None or finding_type is None:
             warn("Database not available - cannot view file contents")
             continue
 
         # Default to grouped format (no prompt) for instant viewing
-        text = grouped_paged_text(finding, plugin)
+        text = grouped_paged_text(finding, finding_type)
         payload = grouped_payload_text(finding)
 
         # Display content immediately
@@ -671,10 +770,10 @@ def handle_finding_view(
 
             # Generate new format
             if format_choice in ("r", "raw"):
-                text = file_raw_paged_text(finding, plugin)
+                text = file_raw_paged_text(finding, finding_type)
                 payload = file_raw_payload_text(finding)
             elif format_choice in ("h", "hosts", "hosts-only"):
-                text = hosts_only_paged_text(finding, plugin)
+                text = hosts_only_paged_text(finding, finding_type)
                 payload = hosts_only_payload_text(finding)
             else:
                 continue  # Already in grouped
@@ -698,9 +797,9 @@ def handle_finding_view(
 
 def process_single_finding(
     chosen: Path,
-    plugin: "Plugin",
+    finding_type: "FindingType",
     finding: "Finding",
-    scan_dir: Path,
+    dataset_dir: Path,
     sev_dir: Optional[Path],
     use_sudo: bool,
     in_progress_total: List[str],
@@ -714,15 +813,15 @@ def process_single_finding(
 
     Args:
         chosen: Synthetic display path of the selected finding
-        plugin: Plugin metadata object
+        finding_type: FindingType metadata object
         finding: Finding database object (required)
-        scan_dir: Scan directory
+        dataset_dir: Dataset directory
         sev_dir: Severity directory
         use_sudo: Whether sudo is available
         in_progress_total: List to track findings marked in progress
         done_total: List to track findings marked done
         show_severity: Whether to show severity label (for MSF mode)
-        workflow_mapper: Optional workflow mapper for plugin workflows
+        workflow_mapper: Optional workflow mapper for finding_type workflows
         use_proxy: Whether to route tools through proxychains4
     """
     # Lazy imports to avoid circular dependencies
@@ -731,21 +830,28 @@ def process_single_finding(
     # Get hosts and ports from database
     hosts, ports_str = finding.get_hosts_and_ports()
 
-    # Construct display name from plugin metadata
-    display_name = finding_label(finding, plugin)
+    # Construct display name from finding_type metadata
+    display_name = finding_label(finding, finding_type)
 
     if not hosts:
-        info(
-            "Finding has no affected hosts. This usually means the vulnerability doesn't affect any hosts."
-        )
-        return
+        # A hand-authored finding may legitimately name no host -- an
+        # engagement-level observation has none -- and refusing to open it
+        # would make it uneditable, since [U] lives in this view.
+        from .constants import AUTHORED_SOURCES
+
+        if not finding_type or finding_type.source not in AUTHORED_SOURCES:
+            info(
+                "Finding has no affected hosts. This usually means the vulnerability doesn't affect any hosts."
+            )
+            return
+        info("This finding names no affected host. Press [U] to add one.")
 
     # Display finding preview panel
-    display_finding_preview(plugin, finding, sev_dir, chosen, workflow_mapper)
+    display_finding_preview(finding_type, finding, sev_dir, chosen, workflow_mapper)
 
-    # plugin_url is no longer used by the finding view (CVEs and the Tenable
-    # link come from the Plugin row); passed as None for call compatibility.
-    plugin_url = None
+    # details_url is no longer used by the finding view (CVEs and the Tenable
+    # link come from the FindingType row); passed as None for call compatibility.
+    details_url = None
 
     state_before = finding.review_state
 
@@ -753,10 +859,10 @@ def process_single_finding(
     result = handle_finding_view(
         chosen,
         finding=finding,
-        plugin=plugin,
-        plugin_url=plugin_url,
+        finding_type=finding_type,
+        details_url=details_url,
         workflow_mapper=workflow_mapper,
-        scan_dir=scan_dir,
+        dataset_dir=dataset_dir,
         sev_dir=sev_dir,
         hosts=hosts,
         ports_str=ports_str,

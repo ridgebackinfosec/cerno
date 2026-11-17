@@ -8,6 +8,8 @@ a benign ``sh`` command so execution is deterministic and tests orchestration
 (scope, skip_done, attribution, concurrency, gating), not tool generation.
 """
 
+from cerno_pkg.constants import SOURCE_OPERATOR
+
 import asyncio
 import sqlite3
 
@@ -17,13 +19,13 @@ import cerno_pkg.batch as batch
 import cerno_pkg.database as database
 from cerno_pkg.batch import execute_batch, plan_batch
 from cerno_pkg.config import CernoConfig
-from cerno_pkg.models import Finding, FindingVerdict, Host, Plugin, Port, Scan
+from cerno_pkg.models import Finding, FindingVerdict, Host, FindingType, Port, Dataset
 from cerno_pkg.query import FindingQuery
 
 
 def _add_affected(conn, finding_id, host_id, port):
     conn.execute(
-        "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, plugin_output) "
+        "INSERT INTO finding_affected_hosts (finding_id, host_id, port_number, evidence) "
         "VALUES (?, ?, ?, 'x')",
         (finding_id, host_id, port),
     )
@@ -42,23 +44,27 @@ def seeded(tmp_path, monkeypatch):
     conn.executescript(database.SCHEMA_SQL_VIEWS)
     conn.commit()
 
-    scan = Scan(scan_name="e", export_root=str(tmp_path)).save(conn)
+    dataset = Dataset(dataset_name="e", export_root=str(tmp_path)).save(conn)
     for pid, name in [("nessus:101", "A"), ("nessus:102", "B"), ("nessus:103", "C")]:
-        Plugin(plugin_id=pid, plugin_name=name, severity_int=4).save(conn)
-    f1 = Finding(scan_id=scan, plugin_id="nessus:101").save(conn)
-    f2 = Finding(scan_id=scan, plugin_id="nessus:102", review_state="done").save(conn)
-    f3 = Finding(scan_id=scan, plugin_id="nessus:103").save(conn)
+        FindingType(finding_type_id=pid, finding_type_name=name, severity_int=4).save(
+            conn
+        )
+    f1 = Finding(dataset_id=dataset, finding_type_id="nessus:101").save(conn)
+    f2 = Finding(
+        dataset_id=dataset, finding_type_id="nessus:102", review_state="done"
+    ).save(conn)
+    f3 = Finding(dataset_id=dataset, finding_type_id="nessus:103").save(conn)
     h = Host.get_or_create("10.0.0.9", "10.0.0.9", "ipv4", conn=conn)
     for p in (445,):
         Port.get_or_create(p, conn=conn)
     for fid in (f1, f2, f3):
         _add_affected(conn, fid, h, 445)
-    FindingVerdict.set(f3, "confirmed", conn=conn)
+    FindingVerdict.set(f3, "confirmed", SOURCE_OPERATOR, conn=conn)
     conn.commit()
     conn.close()
 
     monkeypatch.setattr(database, "DATABASE_PATH", dbfile)
-    return {"dbfile": dbfile, "scan": scan, "f1": f1, "f2": f2, "f3": f3}
+    return {"dbfile": dbfile, "scan": dataset, "f1": f1, "f2": f2, "f3": f3}
 
 
 def _conn(dbfile):
@@ -76,7 +82,7 @@ def test_plan_marks_executable_by_allowlist_and_installed(seeded):
     c = _conn(seeded["dbfile"])
     try:
         plan = plan_batch(
-            FindingQuery(scan_ids=[seeded["scan"]]),
+            FindingQuery(dataset_ids=[seeded["scan"]]),
             strategy="nmap",
             allowlist=["nmap"],
             denylist=[],
@@ -98,7 +104,7 @@ def test_plan_marks_manual_when_not_allowlisted(seeded):
     c = _conn(seeded["dbfile"])
     try:
         plan = plan_batch(
-            FindingQuery(scan_ids=[seeded["scan"]]),
+            FindingQuery(dataset_ids=[seeded["scan"]]),
             strategy="nmap",
             allowlist=["sh"],  # nmap not allowed
             denylist=[],
@@ -116,7 +122,7 @@ def test_plan_skip_done_skips_done_and_verdicted(seeded):
     c = _conn(seeded["dbfile"])
     try:
         plan = plan_batch(
-            FindingQuery(scan_ids=[seeded["scan"]]),
+            FindingQuery(dataset_ids=[seeded["scan"]]),
             strategy="nmap",
             allowlist=["nmap"],
             denylist=[],
@@ -134,7 +140,7 @@ def test_plan_skip_done_skips_done_and_verdicted(seeded):
 
 
 def _patch_sh_generation(monkeypatch):
-    def fake_gen(finding_id, strategy, plugin, use_credential, config, conn):
+    def fake_gen(finding_id, strategy, finding_type, use_credential, config, conn):
         return ["sh", "-c", f"echo ran {finding_id}"], "sh"
 
     monkeypatch.setattr(batch, "_generate_command", fake_gen)
@@ -148,7 +154,7 @@ def test_execute_runs_runnable_items_and_attributes_findings(seeded, monkeypatch
 
     async def go():
         return await execute_batch(
-            FindingQuery(scan_ids=[seeded["scan"]]),
+            FindingQuery(dataset_ids=[seeded["scan"]]),
             strategy="sh",
             skip_done=True,
             concurrency=2,
@@ -179,7 +185,7 @@ def test_execute_without_skip_done_runs_all(seeded, monkeypatch):
 
     async def go():
         return await execute_batch(
-            FindingQuery(scan_ids=[seeded["scan"]]),
+            FindingQuery(dataset_ids=[seeded["scan"]]),
             strategy="sh",
             skip_done=False,
             concurrency=1,
@@ -197,7 +203,7 @@ def test_execute_without_skip_done_runs_all(seeded, monkeypatch):
 def test_execute_reruns_the_policy_per_command(seeded, monkeypatch):
     # A generated command outside the allowlist must not run (defense in depth,
     # even though plan would have flagged it).
-    def bad_gen(finding_id, strategy, plugin, use_credential, config, conn):
+    def bad_gen(finding_id, strategy, finding_type, use_credential, config, conn):
         return ["rm", "-rf", "/tmp/x"], "rm"
 
     monkeypatch.setattr(batch, "_generate_command", bad_gen)
@@ -207,7 +213,7 @@ def test_execute_reruns_the_policy_per_command(seeded, monkeypatch):
 
     async def go():
         return await execute_batch(
-            FindingQuery(scan_ids=[seeded["scan"]]),
+            FindingQuery(dataset_ids=[seeded["scan"]]),
             strategy="x",
             skip_done=False,
             config=cfg,

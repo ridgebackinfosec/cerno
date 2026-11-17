@@ -18,7 +18,7 @@ from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .config import CernoConfig
-    from .models import Plugin, Finding
+    from .models import FindingType, Finding
 
 import pyperclip
 from rich.prompt import Prompt
@@ -522,7 +522,7 @@ def credential_placeholder(ref: str) -> str:
     return f"@cred:{ref}@"
 
 
-#: Filenames the suggested nuclei command writes into a scan's directory.
+#: Filenames the suggested nuclei command writes into a dataset's directory.
 #:
 #: ``cerno import nuclei`` reads the ``json`` one, so these must stay stable:
 #: the suggestion and the importer are two halves of the same loop.
@@ -541,7 +541,7 @@ def build_nuclei_cmd(
 ) -> str:
     """Build the nuclei command suggested after an import.
 
-    Every output path lands inside ``output_dir`` (the scan's directory) so the
+    Every output path lands inside ``output_dir`` (the dataset's directory) so the
     operator can run the command and then hand the JSON straight back to
     ``cerno import nuclei`` without retyping a path.
 
@@ -552,7 +552,7 @@ def build_nuclei_cmd(
 
     Args:
         urls_file: Target list to scan (``-l``), normally ``http_urls.txt``.
-        output_dir: Scan directory that receives the JSON, text and markdown
+        output_dir: Dataset directory that receives the JSON, text and markdown
             reports.
         config: Configuration supplying the templates path, profile,
             User-Agent and concurrency. Loaded if omitted.
@@ -592,7 +592,7 @@ def build_nuclei_cmd(
     return " ".join(parts)
 
 
-def build_nuclei_scan_cmd(
+def build_nuclei_dataset_cmd(
     targets_file: Path,
     oabase: Path,
     *,
@@ -640,7 +640,7 @@ def build_nuclei_scan_cmd(
         str(Path(cfg.nuclei_templates_path).expanduser()),
         "-duc",
         "-jle",
-        nuclei_scan_output(oabase),
+        nuclei_dataset_output(oabase),
     ]
 
     # A tag filter and a profile are alternatives: a profile already pins a
@@ -667,7 +667,7 @@ def build_nuclei_scan_cmd(
     return cmd
 
 
-def nuclei_scan_output(oabase: Path) -> str:
+def nuclei_dataset_output(oabase: Path) -> str:
     """Path of the JSON artifact a Cerno-run nuclei scan writes.
 
     One definition shared by the command builder, the artifact registration and
@@ -1147,14 +1147,14 @@ def _build_msfconsole_commands(term: str) -> list[str]:
     return [cmd]
 
 
-def show_msf_available(plugin_url: str) -> None:
+def show_msf_available(details_url: str) -> None:
     """
     Display notice that Metasploit module is available.
 
     Non-blocking informational message shown when file ends with '-MSF.txt'.
 
     Args:
-        plugin_url: URL of the plugin page (not used but kept for API
+        details_url: URL of the finding_type page (not used but kept for API
             compatibility)
     """
     header("Metasploit module available!")
@@ -1314,14 +1314,14 @@ def build_nuclei_workflow(ctx: "ToolContext") -> Optional["CommandResult"]:
     if ctx.use_proxy:
         warn("[!] Proxy mode: nuclei traffic will route through proxychains4")
 
-    cmd = build_nuclei_scan_cmd(
+    cmd = build_nuclei_dataset_cmd(
         ctx.tcp_sockets,
         ctx.oabase,
         tags=tags,
         config=config,
         use_proxy=ctx.use_proxy,
     )
-    output = nuclei_scan_output(ctx.oabase)
+    output = nuclei_dataset_output(ctx.oabase)
     return CommandResult(
         command=cmd,
         display_command=cmd,
@@ -1411,9 +1411,9 @@ def build_custom_workflow(ctx: "ToolContext") -> Optional["CommandResult"]:
 
 
 def run_tool_workflow(
-    plugin: "Plugin",
+    finding_type: "FindingType",
     finding: "Finding",
-    scan_dir: Path,
+    dataset_dir: Path,
     sev_dir: Path,
     hosts: list[str],
     ports_str: str,
@@ -1422,14 +1422,14 @@ def run_tool_workflow(
     """
     Execute tool selection and execution workflow.
 
-    NOTE: This function now accepts Plugin/Finding objects directly instead
-    of extracting plugin_id from filenames. This eliminates redundant parsing
+    NOTE: This function now accepts FindingType/Finding objects directly instead
+    of extracting finding_type_id from filenames. This eliminates redundant parsing
     and aligns with the database-first architecture.
 
     Args:
-        plugin: Plugin database object with metadata
+        finding_type: FindingType database object with metadata
         finding: Finding database object
-        scan_dir: Scan directory
+        dataset_dir: Dataset directory
         sev_dir: Severity directory
         hosts: List of target hosts
         ports_str: Comma-separated ports
@@ -1499,14 +1499,12 @@ def run_tool_workflow(
         )
 
     # Create synthetic filename for output directory structure
-    # Format: {plugin_id}_{plugin_name}
-    synthetic_filename = (
-        f"{plugin.plugin_id}_{plugin.plugin_name.replace(' ', '_').replace('/', '_')}"
-    )
+    # Format: {finding_type_id}_{finding_type_name}
+    synthetic_filename = f"{finding_type.finding_type_id}_{finding_type.finding_type_name.replace(' ', '_').replace('/', '_')}"
 
     out_dir_static = (
         get_results_root()
-        / scan_dir.name
+        / dataset_dir.name
         / pretty_severity_label(sev_dir.name)
         / synthetic_filename
     )
@@ -1514,11 +1512,11 @@ def run_tool_workflow(
 
     tool_used = False
 
-    # Get plugin details directly from Plugin object. Use the source-aware
+    # Get finding_type details directly from FindingType object. Use the source-aware
     # details URL (and the one captured at import) rather than assuming every
-    # plugin id is a Nessus one -- a Tenable link for a nuclei finding is dead.
-    plugin_url = plugin.details_url or ""
-    plugin_id = str(plugin.plugin_id)
+    # finding_type id is a Nessus one -- a Tenable link for a nuclei finding is dead.
+    details_url = finding_type.details_url or ""
+    finding_type_id = str(finding_type.finding_type_id)
 
     # Create synthetic path for ToolContext and logging (matches original chosen parameter)
     synthetic_path = Path(f"{synthetic_filename}.txt")
@@ -1556,7 +1554,7 @@ def run_tool_workflow(
             continue
 
         _tmp_dir, oabase = build_results_paths(
-            scan_dir, sev_dir, f"{synthetic_filename}.txt"
+            dataset_dir, sev_dir, f"{synthetic_filename}.txt"
         )
         results_dir = out_dir_static
 
@@ -1568,10 +1566,10 @@ def run_tool_workflow(
 
         # Special handling for metasploit (read-only from database)
         if tool_choice == "metasploit":
-            from .models import Plugin
+            from .models import FindingType
             from .database import get_connection
 
-            if not plugin_id:
+            if not finding_type_id:
                 warn(
                     "No finding ID for this finding; cannot look up Metasploit modules."
                 )
@@ -1582,25 +1580,29 @@ def run_tool_workflow(
                 header("Metasploit Module Information")
 
                 with get_connection() as conn:
-                    plugin_obj = Plugin.get_by_id(plugin_id, conn=conn)
+                    finding_type_obj = FindingType.get_by_id(finding_type_id, conn=conn)
 
-                if not plugin_obj or not plugin_obj.metasploit_names:
+                if not finding_type_obj or not finding_type_obj.metasploit_names:
                     warn("No Metasploit modules associated with this finding.")
                     continue
 
                 # Display available module names
-                info(f"Found {len(plugin_obj.metasploit_names)} Metasploit module(s):")
-                for idx, msf_name in enumerate(plugin_obj.metasploit_names, start=1):
+                info(
+                    f"Found {len(finding_type_obj.metasploit_names)} Metasploit module(s):"
+                )
+                for idx, msf_name in enumerate(
+                    finding_type_obj.metasploit_names, start=1
+                ):
                     _console_global.print(f"  {idx}. {msf_name}")
 
                 # Build list of all commands
                 one_liners = []
-                for msf_name in plugin_obj.metasploit_names:
+                for msf_name in finding_type_obj.metasploit_names:
                     cmd = f"msfconsole -q -x 'search {msf_name}; exit'"
                     one_liners.append(cmd)
 
-                if plugin_obj.cves:
-                    for cve in plugin_obj.cves:
+                if finding_type_obj.cves:
+                    for cve in finding_type_obj.cves:
                         cmd = f"msfconsole -q -x 'search {cve}; exit'"
                         one_liners.append(cmd)
 
@@ -1714,9 +1716,9 @@ def run_tool_workflow(
             workdir=workdir,
             results_dir=results_dir,
             oabase=oabase,
-            scan_dir=scan_dir,
+            dataset_dir=dataset_dir,
             sev_dir=sev_dir,
-            plugin_url=plugin_url,
+            details_url=details_url,
             chosen_file=synthetic_path,
         )
 
@@ -1855,7 +1857,7 @@ def run_tool_workflow(
                     host_count=host_count,
                     ports=ports_str if ports_str else None,
                     file_path=synthetic_path,
-                    scan_dir=scan_dir,
+                    dataset_dir=dataset_dir,
                     finding_id=finding.finding_id,
                 )
 

@@ -4,11 +4,11 @@
 
 # Cerno
 
-A **TUI tool** for reviewing vulnerability scan findings and orchestrating security tools (**nmap**, **NetExec**, **nuclei**, custom commands). Import `.nessus` exports and **nuclei** results into a SQLite database for organized, persistent vulnerability verification and exploitation.
+A **TUI tool** for reviewing vulnerability scan findings and orchestrating security tools (**nmap**, **NetExec**, **nuclei**, custom commands). Import `.nessus` exports, **nuclei** results and **Burp Suite** XML reports into a SQLite database — or write up what you found by hand — for organized, persistent vulnerability verification and exploitation.
 
 **Key capabilities:**
 - 🔍 Interactive TUI for browsing/reviewing vulnerability findings — triage hundreds of findings fast
-- 💾 SQLite-backed persistence — never lose review progress; track risk across scans
+- 💾 SQLite-backed persistence — never lose review progress; track risk across datasets
 - ⚡ One-command tool launches (nmap NSE scripts, NetExec, nuclei, custom workflows) — no retyping targets
 - 📊 CVE extraction, Metasploit module search, host comparison — go from finding to exploit path
 - 🔗 NetExec database integration — see where your credentials already work
@@ -57,6 +57,9 @@ cerno import nessus scan.nessus
 # ...or nuclei results (-je JSON or -jle/-jsonl)
 cerno import nuclei nuclei.json
 
+# ...or a Burp Suite "Report issues" XML export
+cerno import burp report.xml
+
 # Review findings interactively
 cerno review
 ```
@@ -70,10 +73,11 @@ cerno demo
 cerno review
 ```
 
-That loads four scans — two Nessus and two nuclei — so both import paths are
-covered. The nuclei scans target the same hosts the Nessus scans found, so at
-the `cerno review` scan prompt you can select one of each (e.g. `2,4`) and see
-where the two scanners agree, and what only nuclei caught.
+That loads five datasets — two Nessus, two nuclei and one Burp — so every import
+path is covered. The nuclei and Burp datasets target the same hosts the Nessus
+datasets found, so at the `cerno review` scan prompt you can select one of each
+(e.g. `2,4,5`) and see where the scanners agree, and what only one of them
+caught.
 
 The demo fixtures use documentation-only IP ranges and `.example` hostnames.
 See [docs/demo](docs/demo) for details.
@@ -89,7 +93,7 @@ See [docs/demo](docs/demo) for details.
 
 ## How It Works
 
-Cerno turns raw scanner output — a Nessus export, nuclei results, or both — into a tracked, actionable verification workflow:
+Cerno turns raw scanner output — a Nessus export, nuclei results, a Burp report, or all of them — into a tracked, actionable verification workflow, and lets you add the findings no scanner reported:
 
 <p align="center">
   <picture>
@@ -98,10 +102,10 @@ Cerno turns raw scanner output — a Nessus export, nuclei results, or both — 
   </picture>
 </p>
 
-1. **Import** — parse one or more `.nessus` files, or nuclei JSON/JSONL results, into a local SQLite database (`~/.cerno/cerno.db`). Both sources share one review loop, and a multi-scan review can span them.
+1. **Import** — parse one or more `.nessus` files, nuclei JSON/JSONL results, or Burp Suite XML reports into a local SQLite database (`~/.cerno/cerno.db`). Findings written by hand join them as two more sources, split by who wrote them: `[+]` in the review list files one as `operator:`, while the MCP `create_finding` tool files an agent's as `agent:` — so a finding you verified stays distinguishable from one an agent asserted. All of them share one review loop, and a multi-dataset review can span them.
 2. **Review** — browse findings in an interactive TUI: filter by severity, host, and exploitability; inspect finding detail, CVEs, and affected `host:port`s.
 3. **Act** — launch nmap / NetExec / nuclei / Metasploit / custom commands against the exact hosts and ports of a finding, with execution and artifacts logged automatically.
-4. **Track** — review state, sessions, and tool history persist in the database, so progress survives restarts and you can compare a host's risk across scans.
+4. **Track** — review state, sessions, and tool history persist in the database, so progress survives restarts and you can compare a host's risk across datasets.
 
 The same database and tooling are also exposed over the [Model Context Protocol](#mcp-server-beta), so an MCP client (e.g. Claude CLI) can query findings and generate commands programmatically.
 
@@ -235,7 +239,7 @@ Ask Claude questions about findings without leaving the TUI. Powered by the `cla
 
 **Three scopes:**
 - **Finding level** — press `[A]` inside a finding detail view to discuss that specific finding: CVEs, CVSS context, exploitability, verification steps
-- **Severity menu** — press `[A]` at the severity selection screen to discuss all findings across the selected scan(s)
+- **Severity menu** — press `[A]` at the severity selection screen to discuss all findings across the selected dataset(s)
 - **Findings list** — press `[A]` in the findings list footer to discuss the current set of findings (respects any active severity, name, or group filter)
 
 **Conversation persistence:** History is saved per-scope in SQLite and resumed automatically on re-entry. Inside the chat, Enter adds a new line, Alt+Enter (or Ctrl+J) sends, `/clear` clears history for the current scope, and Ctrl+C goes back.
@@ -249,7 +253,7 @@ npm install -g @anthropic-ai/claude-code   # or follow https://claude.ai/code
 cerno config set claude_assistant_enabled true
 ```
 
-**Opt-in (default off):** the assistant sends finding names, plugin metadata, affected hosts, ports, CVEs, workflow steps, and Nessus plugin output to the local `claude` CLI. Because that is sensitive engagement data, it is disabled by default. The first time you press `[A]` with `claude` installed, Cerno shows a data-path disclosure and, on confirmation, enables and remembers the choice. Enable it only if your engagement rules allow that data path.
+**Opt-in (default off):** the assistant sends finding names, finding-type metadata, affected hosts, ports, CVEs, workflow steps, and Nessus plugin output to the local `claude` CLI. Because that is sensitive engagement data, it is disabled by default. The first time you press `[A]` with `claude` installed, Cerno shows a data-path disclosure and, on confirmation, enables and remembers the choice. Enable it only if your engagement rules allow that data path.
 
 **Tool availability:** `[A]` is hidden only when `claude` is not on PATH. When installed but not yet enabled, `[A]` is shown and triggers the one-time opt-in prompt.
 
@@ -324,7 +328,7 @@ Verdicts, ingestion and batch runs are driven through the [MCP server](docs/MCP.
 - Finding status: Unreviewed → In Progress → Done, moved with `[M]`; Done findings are hidden until `[D]`, where `[M]` moves them back to Unreviewed
 - Session statistics (duration, per-severity breakdown)
 
-**Database:** SQLite-backed persistence at `~/.cerno/cerno.db` tracks scans, findings, sessions, tool executions, and artifacts. Cross-scan tracking enables host history queries. See [docs/DATABASE.md](docs/DATABASE.md) for schema details.
+**Database:** SQLite-backed persistence at `~/.cerno/cerno.db` tracks datasets, findings, sessions, tool executions, and artifacts. Cross-dataset tracking enables host history queries. See [docs/DATABASE.md](docs/DATABASE.md) for schema details.
 
 ---
 
@@ -355,7 +359,7 @@ Toggle it with `cerno config set proxychains_enabled true|false`.
 
 > **Requires:** `proxychains4` installed and available on PATH.
 
-**Remote scan mode (pivot SYN scans):** SOCKS can't carry raw-socket scans. In the nmap tool menu, `[R]` toggles remote mode: Cerno serves the target list over HTTPS on `pivot_interface`:`pivot_http_port` and gives you a `curl … | nmap` one-liner to run on the pivot host, plus an `scp` line to copy the results back into `results_root`.
+**Remote scan mode (pivot SYN scans):** SOCKS can't carry raw-socket datasets. In the nmap tool menu, `[R]` toggles remote mode: Cerno serves the target list over HTTPS on `pivot_interface`:`pivot_http_port` and gives you a `curl … | nmap` one-liner to run on the pivot host, plus an `scp` line to copy the results back into `results_root`.
 
 ---
 
@@ -363,7 +367,7 @@ Toggle it with `cerno config set proxychains_enabled true|false`.
 
 *Drive an engagement from an AI client — query findings, build target lists, and generate commands programmatically.*
 
-`cerno mcp` exposes the same scan database and tooling over the Model Context Protocol, so any MCP client (Claude CLI, Claude Desktop, etc.) can work with your findings. Read-only by default; execution and mutation are opt-in. See [MCP Server (BETA)](#mcp-server-beta) below for setup and the full capability reference.
+`cerno mcp` exposes the same database and tooling over the Model Context Protocol, so any MCP client (Claude CLI, Claude Desktop, etc.) can work with your findings. Read-only by default; execution and mutation are opt-in. See [MCP Server (BETA)](#mcp-server-beta) below for setup and the full capability reference.
 
 ---
 
@@ -374,16 +378,18 @@ Toggle it with `cerno config set proxychains_enabled true|false`.
 cerno import nessus <scan.nessus>              # Import a single .nessus file
 cerno import nessus <directory>                # Recursively import all .nessus files in a directory
 cerno import nuclei <nuclei.json>              # Import nuclei results (-je array or -jle/-jsonl)
-cerno import nuclei <f.json> --name webapp     # Override the scan name (defaults to the file stem)
-cerno demo [--overwrite] [--no-nxc]            # Import the bundled demo scans (Nessus + nuclei) + NetExec workspace
+cerno import nuclei <f.json> --name webapp     # Override the dataset name (defaults to the file stem)
+cerno import burp <report.xml>                 # Import a Burp Suite "Report issues" XML export
+cerno import burp <f.xml> --name webapp        # Override the dataset name (defaults to the file stem)
+cerno demo [--overwrite] [--no-nxc]            # Import the bundled demo datasets (Nessus + nuclei + Burp) + NetExec workspace
 cerno review                                   # Start interactive review (all behaviour from config.yaml)
 cerno check                                    # Check external tool availability and exit
 
-# Manage scans
-cerno scan list                                # Compact summary (--json for scripting; scan_list_wide for all severities)
-cerno scan delete <scan_name>
-cerno scan compare <scan1> <scan2>             # Compare findings between two scans
-cerno scan history <host_ip>                   # View vulnerability timeline for a host
+# Manage datasets
+cerno dataset list                                # Compact summary (--json for scripting; dataset_list_wide for all severities)
+cerno dataset delete <dataset_name>
+cerno dataset compare <dataset1> <dataset2>       # Compare findings between two datasets
+cerno dataset history <host_ip>                   # View vulnerability timeline for a host
 
 # View workflows
 cerno workflow list                            # Bundled + custom_workflows_path
@@ -407,18 +413,18 @@ cerno reset                                    # Purge ~/.cerno and return to fr
 cerno --version                                # Show version
 ```
 
-<!-- BEGIN GENERATED: scan-list -->
+<!-- BEGIN GENERATED: dataset-list -->
 <p align="center">
-  <img src="docs/images/examples/scan-list.svg" alt="cerno scan list" width="100%">
+  <img src="docs/images/examples/dataset-list.svg" alt="cerno dataset list" width="100%">
 </p>
-<!-- END GENERATED: scan-list -->
-<p align="center"><em>Every imported scan with the scanner it came from; scans from different sources are not comparable</em></p>
+<!-- END GENERATED: dataset-list -->
+<p align="center"><em>Every imported scan with the scanner it came from; datasets from different sources are not comparable</em></p>
 
 ---
 
 ## MCP Server (BETA)
 
-`cerno mcp` exposes your scan database and tooling over the [Model Context Protocol](https://modelcontextprotocol.io),
+`cerno mcp` exposes your database and tooling over the [Model Context Protocol](https://modelcontextprotocol.io),
 so any MCP client (Claude CLI, Claude Desktop, etc.) can query findings, build target lists, generate
 tool commands, and — when explicitly enabled — execute tools and update review state. It speaks over
 **stdio**, so it is launched by the client rather than run directly in a terminal.
@@ -487,6 +493,7 @@ scopes, and management commands.
 - `[E]` - CVE info for this finding
 - `[N]` - NetExec Data (per-host credential and access breakdown)
 - `[T]` - Run Tool (launch nmap, NetExec, nuclei, Metasploit, or custom workflow)
+- `[+]` - Add a finding you found by hand (findings list); `[U]` edits any hand-authored one, yours (`operator:`) or an agent's (`agent:`)
 - `[A]` - Ask Claude — chat about this specific finding
 - `[W]` - View workflow verification steps (when one is mapped)
 - `[M]` - Move to In Progress / Move to Done (label follows the finding's status)
@@ -511,7 +518,7 @@ cerno config set custom_workflows_exclusive true     # bundled set off
 ```yaml
 version: "1.0"
 workflows:
-  - finding_id: "nessus:57608"
+  - finding_type_id: "nessus:57608"
     workflow_name: "SMB Signing Not Required"
     steps:
       - title: "Verify SMB signing"
@@ -628,7 +635,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for dev setup, the test workflow, and the
 - To separate, sift through
 - To decide, determine, resolve
 
-The name reflects this tool's core purpose: **to help security professionals discern what matters** in large vulnerability scans. Just as *cernō* means to sift through and distinguish the important from the noise, Cerno helps you:
+The name reflects this tool's core purpose: **to help security professionals discern what matters** in large vulnerability datasets. Just as *cernō* means to sift through and distinguish the important from the noise, Cerno helps you:
 
 - **Discern** which findings require immediate action vs. can be deferred
 - **Separate** findings by severity, host, and exploitability

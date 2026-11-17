@@ -1,7 +1,7 @@
 """Tests for the workflow contribution feedback loop (cerno_pkg.workflow_contrib).
 
 Covers the pure sanitizer (``genericize_command``), the fail-closed leak gate
-(``scan_for_leaks`` / ``scan_candidate``), candidate classification
+(``scan_for_leaks`` / ``dataset_candidate``), candidate classification
 (new / enhanced / skip) from a seeded execution trail, and YAML round-trip through
 ``WorkflowMapper.load_additional_workflows``.
 """
@@ -12,8 +12,8 @@ import pytest
 import yaml
 
 from cerno_pkg import workflow_contrib as wc
-from cerno_pkg.parsing import plugin_ref
-from cerno_pkg.models import Finding, Host, Plugin, Port, Scan, ToolExecution
+from cerno_pkg.parsing import finding_type_ref
+from cerno_pkg.models import Finding, Host, FindingType, Port, Dataset, ToolExecution
 from cerno_pkg.workflow_mapper import WorkflowMapper
 
 HOSTS = ["10.20.0.11", "10.20.0.15", "dc01.acme.local", "DC01"]
@@ -64,7 +64,7 @@ class TestGenericizeCommand:
     def test_nxc_target_file_creds_and_logs(self):
         cmd = (
             "nxc smb /home/op/.cerno/artifacts/_mcp/418/run-p2x1/targets.txt "
-            "-u svc_scan -d ACME -p ******** --gen-relay-list /home/op/x/relay.txt "
+            "-u svc_dataset -d ACME -p ******** --gen-relay-list /home/op/x/relay.txt "
             "--shares --log /home/op/x/nxc.smb.log"
         )
         out = wc.genericize_command(cmd, HOSTS, PORTS)
@@ -117,21 +117,21 @@ class TestGenericizeNuclei:
     pipeline could not produce a nuclei workflow at all.
 
     The leak scan was right to refuse; these assert the sanitizer now hands it
-    something clean. ``build_nuclei_scan_cmd`` builds the command so the test
+    something clean. ``build_nuclei_dataset_cmd`` builds the command so the test
     cannot drift from what the TUI actually runs.
     """
 
     def _logged(self, tmp_path, **kwargs):
         """The exact ``command_text`` a TUI nuclei run logs (tools.py:1836)."""
         from cerno_pkg.config import CernoConfig
-        from cerno_pkg.tools import build_nuclei_scan_cmd
+        from cerno_pkg.tools import build_nuclei_dataset_cmd
 
         cfg = CernoConfig(
             nuclei_templates_path="/home/op/nuclei-templates",
             nuclei_profile="/home/op/nuclei-templates/profiles/pentest.yml",
             **kwargs,
         )
-        argv = build_nuclei_scan_cmd(
+        argv = build_nuclei_dataset_cmd(
             Path("/home/op/.cerno/artifacts/acme-q4/web/run-1/targets.txt"),
             Path("/home/op/.cerno/artifacts/acme-q4/web/run-1"),
             config=cfg,
@@ -146,7 +146,7 @@ class TestGenericizeNuclei:
         """
         cmd = self._logged(tmp_path)
         generic = wc.genericize_command(cmd, ["10.20.0.11"], ["8443"])
-        ctx = wc.LeakContext(host_identifiers=["10.20.0.11"], scan_names=["acme-q4"])
+        ctx = wc.LeakContext(host_identifiers=["10.20.0.11"], dataset_names=["acme-q4"])
         assert wc.scan_for_leaks(generic, ctx) == []
         assert "/home/op" not in generic and ".cerno" not in generic
 
@@ -177,12 +177,12 @@ class TestGenericizeNuclei:
         generic = wc.genericize_command(
             self._logged(tmp_path), ["10.20.0.11"], ["8443"]
         )
-        fid = _seed(temp_db, plugin_id="nuclei:tls-version", ports=(8443,))
+        fid = _seed(temp_db, finding_type_id="nuclei:tls-version", ports=(8443,))
         mapper = _mapper(
             tmp_path,
             [
                 {
-                    "finding_id": "nuclei:tls-version",
+                    "finding_type_id": "nuclei:tls-version",
                     "workflow_name": "w",
                     "description": "d",
                     "steps": [{"title": "t", "commands": [generic], "notes": ""}],
@@ -249,9 +249,9 @@ class TestGenericizeNuclei:
 def ctx():
     return wc.LeakContext(
         host_identifiers=["10.20.0.99", "web02.acme.local", "WEB02"],
-        scan_names=["acme-internal-2026q4"],
+        dataset_names=["acme-internal-2026q4"],
         extra=["ACME"],
-        usernames=["svc_scan", "anonymous"],
+        usernames=["svc_dataset", "anonymous"],
         secrets=["S3cr3t!pw", "anonymous"],
     )
 
@@ -278,7 +278,7 @@ class TestScanForLeaks:
         assert wc.scan_for_leaks("worst on WEB02", ctx)
         assert wc.scan_for_leaks("see web02.acme.local", ctx)
         assert wc.scan_for_leaks("from acme-internal-2026q4", ctx)
-        assert wc.scan_for_leaks("-u svc_scan", ctx)
+        assert wc.scan_for_leaks("-u svc_dataset", ctx)
 
     def test_identifier_case_insensitive(self, ctx):
         assert wc.scan_for_leaks("worst on web02", ctx)
@@ -297,8 +297,10 @@ class TestScanForLeaks:
         assert wc.scan_for_leaks("weak/anonymous/export ciphers", ctx) == []
 
     def test_usernames_skipped_only_when_asked(self, ctx):
-        assert wc.scan_for_leaks("owned by svc_scan", ctx)
-        assert wc.scan_for_leaks("owned by svc_scan", ctx, check_usernames=False) == []
+        assert wc.scan_for_leaks("owned by svc_dataset", ctx)
+        assert (
+            wc.scan_for_leaks("owned by svc_dataset", ctx, check_usernames=False) == []
+        )
         # host/scan/domain identifiers are still checked without usernames
         assert wc.scan_for_leaks("on WEB02", ctx, check_usernames=False)
         assert wc.scan_for_leaks("ACME domain", ctx, check_usernames=False)
@@ -371,29 +373,31 @@ class TestBaseline:
 
 def _seed(
     conn,
-    plugin_id="nessus:96982",
+    finding_type_id="nessus:96982",
     hosts=("10.20.0.11", "10.20.0.15"),
     ports=(445,),
-    plugin_name="SMB Protocol Version 1 Enabled",
+    finding_type_name="SMB Protocol Version 1 Enabled",
 ):
-    scan_id = Scan(scan_name="acme-internal-2026q4", export_root="/tmp").save(conn)
-    Plugin(
-        plugin_id=plugin_id,
-        plugin_name=plugin_name,
+    dataset_id = Dataset(dataset_name="acme-internal-2026q4", export_root="/tmp").save(
+        conn
+    )
+    FindingType(
+        finding_type_id=finding_type_id,
+        finding_type_name=finding_type_name,
         severity_int=2,
         cves=["CVE-2017-0144"],
         # Built from the source-native ref, as nessus_import does: the
         # Tenable URL takes the bare number, not the namespaced id.
-        plugin_url=f"https://www.tenable.com/plugins/nessus/{plugin_ref(plugin_id)}",
+        stored_details_url=f"https://www.tenable.com/plugins/nessus/{finding_type_ref(finding_type_id)}",
     ).save(conn)
-    fid = Finding(scan_id=scan_id, plugin_id=plugin_id).save(conn)
+    fid = Finding(dataset_id=dataset_id, finding_type_id=finding_type_id).save(conn)
     for ip in hosts:
         hid = Host.get_or_create(ip, ip, "ipv4", netbios_name="DC01", conn=conn)
         for p in ports:
             Port.get_or_create(p, conn=conn)
             conn.execute(
                 "INSERT OR IGNORE INTO finding_affected_hosts "
-                "(finding_id, host_id, port_number, plugin_output) VALUES (?, ?, ?, 'o')",
+                "(finding_id, host_id, port_number, evidence) VALUES (?, ?, ?, 'o')",
                 (fid, hid, p),
             )
     conn.commit()
@@ -419,7 +423,7 @@ def _mapper(tmp_path, workflows):
 
 EMPTY = []
 SMB_WORKFLOW = {
-    "finding_id": "nessus:96982,nessus:57608",
+    "finding_type_id": "nessus:96982,nessus:57608",
     "workflow_name": "SMB checks",
     "description": "existing",
     "steps": [
@@ -449,7 +453,7 @@ class TestBuildCandidate:
         finding = Finding.get_by_id(fid, temp_db)
         cand = wc.build_candidate(finding, temp_db, _mapper(tmp_path, EMPTY))
         assert cand is not None and cand.reason == "new"
-        assert cand.yaml_plugin_id == "nessus:96982"
+        assert cand.yaml_finding_type_id == "nessus:96982"
         assert cand.description == "Verify: SMB Protocol Version 1 Enabled"
         titles = [s.title for s in cand.steps]
         assert titles == ["Run NSE scripts: smb-protocols", "Check with NetExec (smb)"]
@@ -489,7 +493,7 @@ class TestBuildCandidate:
             is None
         )
 
-    def test_baseline_only_on_mapped_plugin_skips(self, temp_db, tmp_path):
+    def test_baseline_only_on_mapped_finding_type_skips(self, temp_db, tmp_path):
         fid = _seed(temp_db)
         _exec(temp_db, fid, "sudo nmap -A -iL /home/op/t.list -p 445 -oA /home/op/r")
         finding = Finding.get_by_id(fid, temp_db)
@@ -505,7 +509,7 @@ class TestBuildCandidate:
         cand = wc.build_candidate(finding, temp_db, _mapper(tmp_path, [SMB_WORKFLOW]))
         assert cand is not None and cand.reason == "enhanced"
         assert (
-            cand.yaml_plugin_id == "nessus:96982,nessus:57608"
+            cand.yaml_finding_type_id == "nessus:96982,nessus:57608"
         )  # multi-ID entry kept intact
         assert cand.workflow_name == "SMB checks"
         assert cand.steps[0].commands == SMB_WORKFLOW["steps"][0]["commands"]
@@ -531,7 +535,7 @@ NUCLEI_TEMPLATE_URL = (
 #: The bundled cross-source entry's shape (workflow_mappings.yaml), which a
 #: nuclei finding must enhance rather than replace.
 HSTS_WORKFLOW = {
-    "finding_id": "nessus:142960,nessus:84502,nuclei:http-missing-security-headers",
+    "finding_type_id": "nessus:142960,nessus:84502,nuclei:http-missing-security-headers",
     "workflow_name": "HSTS Missing From HTTPS Server (RFC 6797)",
     "description": "existing",
     "steps": [
@@ -547,49 +551,49 @@ HSTS_WORKFLOW = {
 
 def _seed_nuclei(
     conn,
-    plugin_id="nuclei:tls-version",
-    plugin_name="TLS Version",
+    finding_type_id="nuclei:tls-version",
+    finding_type_name="TLS Version",
     ports=(8443,),
-    plugin_url=None,
+    stored_details_url=None,
 ):
     """Seed a nuclei-sourced finding, as nuclei_import writes one.
 
     Mirrors ``_seed`` but with a namespaced nuclei id and the upstream template
-    URL that ``nuclei_import`` stores in ``plugin_url`` -- Nessus's Tenable URL
+    URL that ``nuclei_import`` stores in ``details_url`` -- Nessus's Tenable URL
     must never be fabricated for these.
     """
-    scan_id = Scan(scan_name="acme-q4-web", export_root="/tmp").save(conn)
-    Plugin(
-        plugin_id=plugin_id,
-        plugin_name=plugin_name,
+    dataset_id = Dataset(dataset_name="acme-q4-web", export_root="/tmp").save(conn)
+    FindingType(
+        finding_type_id=finding_type_id,
+        finding_type_name=finding_type_name,
         severity_int=0,
-        plugin_url=plugin_url or NUCLEI_TEMPLATE_URL,
+        stored_details_url=stored_details_url or NUCLEI_TEMPLATE_URL,
     ).save(conn)
-    fid = Finding(scan_id=scan_id, plugin_id=plugin_id).save(conn)
+    fid = Finding(dataset_id=dataset_id, finding_type_id=finding_type_id).save(conn)
     for ip in ("10.20.0.11",):
         hid = Host.get_or_create(ip, ip, "ipv4", conn=conn)
         for p in ports:
             Port.get_or_create(p, conn=conn)
             conn.execute(
                 "INSERT OR IGNORE INTO finding_affected_hosts "
-                "(finding_id, host_id, port_number, plugin_output) VALUES (?, ?, ?, 'o')",
+                "(finding_id, host_id, port_number, evidence) VALUES (?, ?, ?, 'o')",
                 (fid, hid, p),
             )
     conn.commit()
     return fid
 
 
-def _nuclei_run(tmp_path, scan="acme-q4-web"):
+def _nuclei_run(tmp_path, dataset="acme-q4-web"):
     """A real TUI nuclei command_text for the seeded finding."""
     from cerno_pkg.config import CernoConfig
-    from cerno_pkg.tools import build_nuclei_scan_cmd
+    from cerno_pkg.tools import build_nuclei_dataset_cmd
 
     cfg = CernoConfig(
         nuclei_templates_path="/home/op/nuclei-templates", nuclei_profile=""
     )
-    argv = build_nuclei_scan_cmd(
-        Path(f"/home/op/.cerno/artifacts/{scan}/run-1/targets.txt"),
-        Path(f"/home/op/.cerno/artifacts/{scan}/run-1"),
+    argv = build_nuclei_dataset_cmd(
+        Path(f"/home/op/.cerno/artifacts/{dataset}/run-1/targets.txt"),
+        Path(f"/home/op/.cerno/artifacts/{dataset}/run-1"),
         tags="ssl",
         config=cfg,
     )
@@ -611,7 +615,7 @@ class TestNucleiContribution:
         finding = Finding.get_by_id(fid, temp_db)
         cand = wc.build_candidate(finding, temp_db, _mapper(tmp_path, EMPTY))
         assert cand is not None and cand.reason == "new"
-        assert cand.yaml_plugin_id == "nuclei:tls-version"
+        assert cand.yaml_finding_type_id == "nuclei:tls-version"
         assert cand.steps[0].commands == [
             "nuclei -u <TARGET> -duc -tags ssl -rsr 10485760 -rss 1048576 "
             "-c 10 -stats"
@@ -619,7 +623,7 @@ class TestNucleiContribution:
 
     def test_references_use_the_template_url(self, temp_db, tmp_path):
         """No fabricated Tenable link for a finding that did not come from Nessus."""
-        from cerno_pkg.parsing import plugin_details_url
+        from cerno_pkg.parsing import finding_type_details_url
 
         fid = _seed_nuclei(temp_db)
         _exec(temp_db, fid, _nuclei_run(tmp_path))
@@ -629,11 +633,11 @@ class TestNucleiContribution:
         assert cand.references == [NUCLEI_TEMPLATE_URL]
         assert all("tenable.com" not in r for r in cand.references)
         # A nuclei id resolves to its own source's page, never Tenable's.
-        assert plugin_details_url("nuclei:tls-version") == (
+        assert finding_type_details_url("nuclei:tls-version") == (
             "https://cloud.projectdiscovery.io/public/tls-version"
         )
         # An unprefixed id has no known source, so it gets no fabricated page.
-        assert plugin_details_url("tls-version") is None
+        assert finding_type_details_url("tls-version") is None
 
     def test_yaml_fragment_round_trips(self, temp_db, tmp_path):
         """Submission step 3: the exported file must load and match the finding."""
@@ -655,25 +659,25 @@ class TestNucleiContribution:
         finding = Finding.get_by_id(fid, temp_db)
         cand = wc.build_candidate(finding, temp_db, _mapper(tmp_path, EMPTY))
         assert cand is not None
-        assert wc.scan_candidate(cand, wc.build_leak_context(finding, temp_db)) == []
+        assert wc.dataset_candidate(cand, wc.build_leak_context(finding, temp_db)) == []
 
     def test_enhanced_keeps_the_cross_source_key(self, temp_db, tmp_path):
         """A nuclei finding on the bundled cross-source entry enhances it.
 
         The multi-id key must survive intact; collapsing it to the bare nuclei
-        id would orphan the two Nessus plugins that share the workflow.
+        id would orphan the two Nessus finding_types that share the workflow.
         """
         fid = _seed_nuclei(
             temp_db,
-            plugin_id="nuclei:http-missing-security-headers",
-            plugin_name="HTTP Missing Security Headers",
+            finding_type_id="nuclei:http-missing-security-headers",
+            finding_type_name="HTTP Missing Security Headers",
             ports=(443,),
         )
         _exec(temp_db, fid, _nuclei_run(tmp_path))
         finding = Finding.get_by_id(fid, temp_db)
         cand = wc.build_candidate(finding, temp_db, _mapper(tmp_path, [HSTS_WORKFLOW]))
         assert cand is not None and cand.reason == "enhanced"
-        assert cand.yaml_plugin_id == HSTS_WORKFLOW["finding_id"]
+        assert cand.yaml_finding_type_id == HSTS_WORKFLOW["finding_type_id"]
         assert cand.workflow_name == HSTS_WORKFLOW["workflow_name"]
         assert cand.steps[-1].title == "Additional verification (contributed)"
 
@@ -695,7 +699,7 @@ class TestNucleiContribution:
 class TestAlsoCovers:
     """Contributing a cross-source co-mapping.
 
-    Before this, the entry key came only from the finding's own ``plugin_id``
+    Before this, the entry key came only from the finding's own ``finding_type_id``
     (or an existing entry's), so an operator who verified in the field that a
     nuclei template and a Nessus plugin are the same issue could only contribute
     a duplicate standalone entry. That co-mapped shape is what makes one ``[W]``
@@ -712,15 +716,15 @@ class TestAlsoCovers:
     def test_merges_and_keeps_own_id_first(self, temp_db, tmp_path):
         _, mapper, cand = self._draft(temp_db, tmp_path)
         wc.merge_also_covers(cand, ["nessus:84502"], mapper)
-        assert cand.yaml_plugin_id == "nuclei:tls-version,nessus:84502"
-        assert cand.to_entry()["finding_id"] == "nuclei:tls-version,nessus:84502"
+        assert cand.yaml_finding_type_id == "nuclei:tls-version,nessus:84502"
+        assert cand.to_entry()["finding_type_id"] == "nuclei:tls-version,nessus:84502"
 
     def test_unprefixed_id_rejected(self, temp_db, tmp_path):
         _, mapper, cand = self._draft(temp_db, tmp_path)
         with pytest.raises(ValueError, match="84502"):
             wc.merge_also_covers(cand, ["84502"], mapper)
         # key untouched by the failed call
-        assert cand.yaml_plugin_id == "nuclei:tls-version"
+        assert cand.yaml_finding_type_id == "nuclei:tls-version"
 
     def test_unknown_source_rejected(self, temp_db, tmp_path):
         _, mapper, cand = self._draft(temp_db, tmp_path)
@@ -734,7 +738,7 @@ class TestAlsoCovers:
             ["nessus:84502", "nessus:84502", "nuclei:tls-version"],
             mapper,
         )
-        assert cand.yaml_plugin_id == "nuclei:tls-version,nessus:84502"
+        assert cand.yaml_finding_type_id == "nuclei:tls-version,nessus:84502"
 
     def test_explain_why_hint_added(self, temp_db, tmp_path):
         _, mapper, cand = self._draft(temp_db, tmp_path)
@@ -745,7 +749,7 @@ class TestAlsoCovers:
         _, mapper, cand = self._draft(temp_db, tmp_path)
         before = list(cand.review_hints)
         wc.merge_also_covers(cand, [], mapper)
-        assert cand.yaml_plugin_id == "nuclei:tls-version"
+        assert cand.yaml_finding_type_id == "nuclei:tls-version"
         assert cand.review_hints == before
 
     def test_id_owned_by_another_entry_is_flagged(self, temp_db, tmp_path):
@@ -813,12 +817,12 @@ class TestOverrideAndYaml:
             "references": ["https://www.tenable.com/plugins/nessus/96982"],
         }
         edited = wc.candidate_from_override(finding, override, cand, temp_db, mapper)
-        assert edited.yaml_plugin_id == "nessus:96982"
+        assert edited.yaml_finding_type_id == "nessus:96982"
         assert edited.steps[0].commands == [
             "nmap -p <PORT> --script smb-protocols <TARGET>"
         ]
         ctx = wc.build_leak_context(finding, temp_db)
-        assert wc.scan_candidate(edited, ctx) == []
+        assert wc.dataset_candidate(edited, ctx) == []
 
     def test_override_bad_shape_rejected(self, temp_db, tmp_path):
         finding, mapper, cand = self._draft(temp_db, tmp_path)
@@ -827,7 +831,7 @@ class TestOverrideAndYaml:
                 finding, {"steps": "nope"}, cand, temp_db, mapper
             )
 
-    def test_scan_candidate_flags_notes_and_superseded(self, temp_db, tmp_path):
+    def test_dataset_candidate_flags_notes_and_superseded(self, temp_db, tmp_path):
         finding, mapper, cand = self._draft(temp_db, tmp_path)
         override = {
             "workflow_name": "x",
@@ -842,18 +846,18 @@ class TestOverrideAndYaml:
             "references": [],
         }
         edited = wc.candidate_from_override(finding, override, cand, temp_db, mapper)
-        hits = wc.scan_candidate(edited, wc.build_leak_context(finding, temp_db))
+        hits = wc.dataset_candidate(edited, wc.build_leak_context(finding, temp_db))
         assert any("steps[0].notes" in h for h in hits)
         assert any("DC01" in h for h in hits)
 
-    def test_anonymous_plugin_name_exports_clean(self, temp_db, tmp_path):
-        """Regression: plugin 10092 'FTP Anonymous Login' with an nxc cred
+    def test_anonymous_finding_type_name_exports_clean(self, temp_db, tmp_path):
+        """Regression: finding_type 10092 'FTP Anonymous Login' with an nxc cred
         username (and anon password) 'anonymous' must not block the export."""
         fid = _seed(
             temp_db,
-            plugin_id="nessus:10092",
+            finding_type_id="nessus:10092",
             ports=(21,),
-            plugin_name="FTP Anonymous Login",
+            finding_type_name="FTP Anonymous Login",
         )
         _exec(temp_db, fid, "nmap -p 21 --script ftp-anon 10.20.0.11")
         finding = Finding.get_by_id(fid, temp_db)
@@ -867,21 +871,21 @@ class TestOverrideAndYaml:
             finding, temp_db, _mapper(tmp_path, EMPTY), ctx
         ).candidate
         assert cand is not None and cand.workflow_name == "FTP Anonymous Login"
-        assert wc.scan_candidate(cand, ctx) == []
+        assert wc.dataset_candidate(cand, ctx) == []
 
     def test_real_username_in_name_ok_but_flagged_in_notes(self, temp_db, tmp_path):
         finding, mapper, cand = self._draft(temp_db, tmp_path)
         override = {
-            "workflow_name": "svc_scan check",
-            "description": "svc_scan check",
+            "workflow_name": "svc_dataset check",
+            "description": "svc_dataset check",
             "steps": [
-                {"title": "t", "commands": ["nmap <TARGET>"], "notes": "svc_scan"}
+                {"title": "t", "commands": ["nmap <TARGET>"], "notes": "svc_dataset"}
             ],
             "references": [],
         }
         edited = wc.candidate_from_override(finding, override, cand, temp_db, mapper)
-        ctx = wc.build_leak_context(finding, temp_db, usernames=["svc_scan"])
-        hits = wc.scan_candidate(edited, ctx)
+        ctx = wc.build_leak_context(finding, temp_db, usernames=["svc_dataset"])
+        hits = wc.dataset_candidate(edited, ctx)
         assert hits and all(h.startswith("steps[0].notes") for h in hits)
 
     @pytest.mark.parametrize(
@@ -922,17 +926,17 @@ class TestOverrideAndYaml:
         ctx = wc.build_leak_context(
             finding, temp_db, usernames=["anonymous"], secrets=["Winter2026!"]
         )
-        hits = wc.scan_candidate(edited, ctx)
+        hits = wc.dataset_candidate(edited, ctx)
         assert any(needle in h for h in hits), hits
         assert all("Winter2026" not in h for h in hits)
         assert all("31d6cfe0" not in h for h in hits)
 
     def test_copied_existing_paths_not_path_checked(self, temp_db, tmp_path):
-        fid = _seed(temp_db, plugin_id="nessus:40984")
+        fid = _seed(temp_db, finding_type_id="nessus:40984")
         _exec(temp_db, fid, "nmap -p 445 --script http-enum 10.20.0.11")
         finding = Finding.get_by_id(fid, temp_db)
         wf = {
-            "finding_id": "nessus:40984",
+            "finding_type_id": "nessus:40984",
             "workflow_name": "Browse",
             "description": "d",
             "steps": [
@@ -947,7 +951,7 @@ class TestOverrideAndYaml:
         mapper = _mapper(tmp_path, [wf])
         cand = wc.build_candidate(finding, temp_db, mapper)
         assert cand is not None and cand.reason == "enhanced"
-        assert wc.scan_candidate(cand, wc.build_leak_context(finding, temp_db)) == []
+        assert wc.dataset_candidate(cand, wc.build_leak_context(finding, temp_db)) == []
 
 
 @pytest.mark.integration
@@ -966,9 +970,9 @@ def test_get_host_identifiers_and_by_finding(temp_db):
 def test_prepare_workflow_fills_domain(temp_db, tmp_path):
     from cerno_pkg.workflow_prep import prepare_workflow
 
-    fid = _seed(temp_db, plugin_id="nessus:555")
+    fid = _seed(temp_db, finding_type_id="nessus:555")
     wf = {
-        "finding_id": "nessus:555",
+        "finding_type_id": "nessus:555",
         "workflow_name": "w",
         "description": "d",
         "steps": [
