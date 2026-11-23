@@ -27,7 +27,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "rich>=14.3,<16",
+    "rich>=15.0.0,<16",
     "typer>=0.27,<1",  # >=0.26 vendors Click, so suppressing `typer` covers it
     "shellingham>=1.5,<2",  # Required by typer for add_completion shell detection
     "pyperclip>=1.8,<2",
