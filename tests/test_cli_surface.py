@@ -23,6 +23,21 @@ from typer.testing import CliRunner
 
 from cerno_pkg import config as config_mod
 
+#: Typer force-enables color when ``GITHUB_ACTIONS`` (or ``FORCE_COLOR`` /
+#: ``PY_COLORS``) is set, so help output in CI is styled even though
+#: ``CliRunner`` captures to a non-tty. Rich then emits an option name as two
+#: styled spans -- ``\x1b[1;36m-\x1b[0m\x1b[1;36m-name\x1b[0m`` -- and the flag
+#: stops being a literal substring. Assert against the de-styled text instead:
+#: these tests pin the *surface*, not its colors. ``ansi.strip_unsafe_escapes()``
+#: is deliberately not reused here -- it keeps SGR by design.
+_SGR_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _plain(text: str) -> str:
+    """Drop SGR color codes so flag spellings match as written."""
+    return _SGR_RE.sub("", text)
+
+
 #: (argv, flag) for every flag spelling removed in the 3.4.0 surface cleanup.
 REMOVED_FLAGS = [
     (["review"], "--export-root"),
@@ -71,7 +86,7 @@ def test_removed_flag_is_rejected(argv, flag):
     result = CliRunner().invoke(app, [*argv, flag])
 
     assert result.exit_code != 0, f"{' '.join(argv)} still accepts {flag}"
-    assert "No such option" in result.output, result.output
+    assert "No such option" in _plain(result.output), result.output
 
 
 @pytest.mark.integration
@@ -86,7 +101,7 @@ def test_kept_flag_is_still_documented(argv, flag):
 
     assert result.exit_code == 0, result.output
     # Rich wraps long help lines, so match the flag token itself.
-    assert flag in result.output.replace("\n", " "), result.output
+    assert flag in _plain(result.output).replace("\n", " "), result.output
 
 
 @pytest.mark.integration
@@ -97,7 +112,7 @@ def test_review_takes_no_options():
     result = CliRunner().invoke(app, ["review", "--help"])
 
     assert result.exit_code == 0, result.output
-    options = result.output.split("Options")[-1]
+    options = _plain(result.output).split("Options")[-1]
     # --help is the only remaining entry.
     assert options.count("--") == 1, options
 

@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.2] - 2026-11-23
+
+### Changed
+
+- **Dependency floors raised** (all upper caps unchanged, so no resolver behaviour changes): runtime `rich>=15.0.0`, `typer>=0.29.2`, `mcp>=2.3.0`; build `setuptools>=84.2.1`; dev tooling `pytest>=9.2.0`, `pytest-cov>=7.1.0`, `pytest-mock>=3.17.0`, `black>=26.10.1`, `mypy>=2.4.1`, `pyright>=1.1.414`, `types-PyYAML>=6.0.12.20261113`. Re-run `pip install -e ".[dev]"` after pulling.
+  - The one visible consequence: the `typer>=0.29.2` floor means every install now gets typer 0.29's help rendering, which adds a type metavar to each option — `--help <bool>` where it used to be bare `--help`. Nothing about Cerno's own behaviour changes.
+
+## [4.0.1] - 2026-11-23
+
+### Added
+
+- **11 new bundled verification workflows (23 → 34)** covering Burp Suite issue types and the nuclei templates that had none: WAF detection, cookie security attributes, client-side desync, session token in URL, vulnerable/unsupported JavaScript dependency, CORS policy review, reflected input, request URL override and forwarding headers, email addresses disclosed, cacheable HTTPS response, and hostnames discovered in JavaScript. Several group ids across sources (e.g. `nuclei:weak-csp-detect` with four `burp:` CSP issue types) so one workflow serves the same finding however it was reported. The CSP and TLS workflows gained steps for front-end access gateways and issuer/SAN review.
+
+### Fixed
+
+- **The CLI-surface tests no longer fail wherever help output is colored.** Typer force-enables color when `GITHUB_ACTIONS`, `FORCE_COLOR` or `PY_COLORS` is set, even though `CliRunner` captures to a non-tty, and Rich then emits an option name as two styled spans (`-` then `-name`) — so `--name` stopped being a literal substring and 7 tests in `tests/test_cli_surface.py` failed on every CI run while passing on every developer machine. The assertions now compare against de-styled text (`_plain()`), since they pin the flag *surface*, not its colors. `ansi.strip_unsafe_escapes()` is not reused there: it keeps SGR by design.
+
 ## [4.0.0] - 2026-11-17
 
 ### Changed
