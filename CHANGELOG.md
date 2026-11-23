@@ -7,13 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-
-- **11 new bundled verification workflows (23 → 34)** covering Burp Suite issue types and the nuclei templates that had none: WAF detection, cookie security attributes, client-side desync, session token in URL, vulnerable/unsupported JavaScript dependency, CORS policy review, reflected input, request URL override and forwarding headers, email addresses disclosed, cacheable HTTPS response, and hostnames discovered in JavaScript. Several group ids across sources (e.g. `nuclei:weak-csp-detect` with four `burp:` CSP issue types) so one workflow serves the same finding however it was reported. The CSP and TLS workflows gained steps for front-end access gateways and issuer/SAN review.
-
 ### Changed
 
 - **Dependency floors raised** (all upper caps unchanged, so no resolver behaviour changes): runtime `rich>=15.0.0`, `typer>=0.27.3`, `mcp>=2.3.0`; build `setuptools>=84.2.1`; dev tooling `pytest>=9.2.0`, `pytest-cov>=7.1.0`, `pytest-mock>=3.17.0`, `black>=26.10.1`, `mypy>=2.4.1`, `pyright>=1.1.414`, `types-PyYAML>=6.0.12.20261103`. Re-run `pip install -e ".[dev]"` after pulling.
+
+## [4.0.1] - 2026-11-23
+
+### Added
+
+- **11 new bundled verification workflows (23 → 34)** covering Burp Suite issue types and the nuclei templates that had none: WAF detection, cookie security attributes, client-side desync, session token in URL, vulnerable/unsupported JavaScript dependency, CORS policy review, reflected input, request URL override and forwarding headers, email addresses disclosed, cacheable HTTPS response, and hostnames discovered in JavaScript. Several group ids across sources (e.g. `nuclei:weak-csp-detect` with four `burp:` CSP issue types) so one workflow serves the same finding however it was reported. The CSP and TLS workflows gained steps for front-end access gateways and issuer/SAN review.
 
 ### Fixed
 
