@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Dependency floors raised** (all upper caps unchanged, so no resolver behaviour changes): runtime `rich>=15.0.0`, `typer>=0.27.3`, `mcp>=2.3.0`; build `setuptools>=84.2.1`; dev tooling `pytest>=9.2.0`, `pytest-cov>=7.1.0`, `pytest-mock>=3.17.0`, `black>=26.10.1`, `mypy>=2.4.1`, `pyright>=1.1.414`, `types-PyYAML>=6.0.12.20261103`. Re-run `pip install -e ".[dev]"` after pulling.
+
+### Fixed
+
+- **The CLI-surface tests no longer fail wherever help output is colored.** Typer force-enables color when `GITHUB_ACTIONS`, `FORCE_COLOR` or `PY_COLORS` is set, even though `CliRunner` captures to a non-tty, and Rich then emits an option name as two styled spans (`-` then `-name`) — so `--name` stopped being a literal substring and 7 tests in `tests/test_cli_surface.py` failed on every CI run while passing on every developer machine. The assertions now compare against de-styled text (`_plain()`), since they pin the flag *surface*, not its colors. `ansi.strip_unsafe_escapes()` is not reused there: it keeps SGR by design.
+
 ## [4.0.0] - 2026-11-17
 
 ### Changed
