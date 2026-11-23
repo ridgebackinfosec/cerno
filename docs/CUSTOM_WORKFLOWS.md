@@ -980,7 +980,7 @@ git push --tags
 
 ## Additional Resources
 
-- **Bundled workflows**: See `cerno_pkg/workflow_mappings.yaml` for 23 complete examples
+- **Bundled workflows**: See `cerno_pkg/workflow_mappings.yaml` for 34 complete examples
 - **Configuration guide**: Run `cerno config show` to see all available settings
 - **Main documentation**: See [README.md](../README.md) for general Cerno usage
 - **Tool system guide**: See [TOOL_SYSTEM_GUIDE.md](TOOL_SYSTEM_GUIDE.md) for tool integration details
