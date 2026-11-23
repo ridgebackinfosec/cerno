@@ -7,9 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.2] - 2026-11-23
+
 ### Changed
 
-- **Dependency floors raised** (all upper caps unchanged, so no resolver behaviour changes): runtime `rich>=15.0.0`, `typer>=0.27.3`, `mcp>=2.3.0`; build `setuptools>=84.2.1`; dev tooling `pytest>=9.2.0`, `pytest-cov>=7.1.0`, `pytest-mock>=3.17.0`, `black>=26.10.1`, `mypy>=2.4.1`, `pyright>=1.1.414`, `types-PyYAML>=6.0.12.20261103`. Re-run `pip install -e ".[dev]"` after pulling.
+- **Dependency floors raised** (all upper caps unchanged, so no resolver behaviour changes): runtime `rich>=15.0.0`, `typer>=0.29.2`, `mcp>=2.3.0`; build `setuptools>=84.2.1`; dev tooling `pytest>=9.2.0`, `pytest-cov>=7.1.0`, `pytest-mock>=3.17.0`, `black>=26.10.1`, `mypy>=2.4.1`, `pyright>=1.1.414`, `types-PyYAML>=6.0.12.20261113`. Re-run `pip install -e ".[dev]"` after pulling.
+  - The one visible consequence: the `typer>=0.29.2` floor means every install now gets typer 0.29's help rendering, which adds a type metavar to each option — `--help <bool>` where it used to be bare `--help`. Nothing about Cerno's own behaviour changes.
 
 ## [4.0.1] - 2026-11-23
 
